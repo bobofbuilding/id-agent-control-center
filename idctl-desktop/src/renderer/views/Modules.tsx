@@ -209,6 +209,27 @@ export function Modules({ store }: { store: FleetStore }) {
   async function installSkillAll(skill: string) {
     await applyToTargets(`install ${skill}`, (a) => call('installSkill', skill, a.name));
   }
+  async function uninstallSkillAll(skill: string) {
+    await applyToTargets(`uninstall ${skill}`, (a) => call('uninstallSkill', skill, a.name));
+  }
+  // Two-step confirm for the destructive library delete (window.confirm is not
+  // reliable in Electron, and a single misclick must not nuke a skill).
+  const [confirmDel, setConfirmDel] = useState<string | null>(null);
+  async function removeSkill(name: string) {
+    setBusy(true);
+    setNote(`deleting ${name}…`);
+    try {
+      await call('deleteSkill', name);
+      setNote(`deleted skill ${name} ✓`);
+      setConfirmDel(null);
+      setTagFilter(new Set());
+      await reload();
+    } catch (err) {
+      setNote(`delete failed: ${err instanceof Error ? err.message : String(err)}`);
+    } finally {
+      setBusy(false);
+    }
+  }
 
   // ---- Skills catalog: search + tag filtering ----------------------------
   const [skillQuery, setSkillQuery] = useState('');
@@ -536,6 +557,21 @@ export function Modules({ store }: { store: FleetStore }) {
                   <button className="btn" disabled={busy || targetCount === 0 || all} onClick={() => void installSkillAll(s.name)}>
                     {all ? 'Installed' : `Install → ${targetLabel}`}
                   </button>
+                  {have > 0 ? (
+                    <button className="btn" disabled={busy} title={`Uninstall from ${targetLabel}`} onClick={() => void uninstallSkillAll(s.name)}>
+                      Uninstall
+                    </button>
+                  ) : null}
+                  {confirmDel === s.name ? (
+                    <>
+                      <button className="btn icon-danger" disabled={busy} title="Permanently delete this skill's SKILL.md from the library" onClick={() => void removeSkill(s.name)}>
+                        Delete?
+                      </button>
+                      <button className="btn" disabled={busy} onClick={() => setConfirmDel(null)}>Cancel</button>
+                    </>
+                  ) : (
+                    <button className="btn icon-danger" disabled={busy} title="Delete from library" onClick={() => setConfirmDel(s.name)}>✕</button>
+                  )}
                 </div>
                 {s.description ? <p className="muted small skill-desc">{s.description}</p> : null}
                 {(s.tags ?? []).length > 0 ? (

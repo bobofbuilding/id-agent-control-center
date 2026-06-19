@@ -91,6 +91,27 @@ export class ManagerClient {
     return (await res.json()) as T;
   }
 
+  private async del<T>(path: string, signal?: AbortSignal): Promise<T> {
+    let res: Response;
+    try {
+      res = await fetch(`${this.cfg.managerUrl}${path}`, { method: 'DELETE', headers: this.headers(), signal });
+    } catch (err) {
+      throw new NetworkError(err instanceof Error ? err.message : String(err));
+    }
+    if (!res.ok) {
+      let detail = '';
+      try {
+        const j = (await res.json()) as { error?: string };
+        detail = j?.error ? `: ${j.error}` : '';
+      } catch {
+        /* body not json */
+      }
+      if (res.status >= 500) throw new NetworkError(`DELETE ${path} → ${res.status}${detail}`);
+      throw new ManagerError(`DELETE ${path} → ${res.status} ${res.statusText}${detail}`);
+    }
+    return (await res.json()) as T;
+  }
+
   private async post<T>(path: string, body: unknown, signal?: AbortSignal): Promise<T> {
     let res: Response;
     try {
@@ -392,6 +413,16 @@ export class ManagerClient {
    */
   async createSkill(input: CreateSkillInput, signal?: AbortSignal): Promise<LibrarySkillEntry> {
     return this.post('/library/skills/create', input, signal);
+  }
+
+  /** Delete a library skill folder. Admin-gated; throws ManagerError on failure. */
+  async deleteSkill(name: string, signal?: AbortSignal): Promise<{ removed: string }> {
+    return this.del(`/library/skills/${encodeURIComponent(name)}`, signal);
+  }
+
+  /** Uninstall a skill from an agent (inverse of installSkill). */
+  async uninstallSkill(skill: string, agent: string, signal?: AbortSignal): Promise<{ uninstalled: string; agent: string; skills: string[] }> {
+    return this.post('/library/skills/uninstall', { skill, agent }, signal);
   }
 
   /** Attach external MCP servers to an agent. Takes effect on next rebuild. */

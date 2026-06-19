@@ -166,6 +166,8 @@ button.chip.tag.on { color: #04121c; }
 .skill-card-head { display: flex; align-items: center; gap: 8px; }
 .skill-desc { margin: 6px 0 0; }
 .skill-tags { margin-top: 8px; }
+.btn.icon-danger { color: var(--muted); padding: 2px 8px; }
+.btn.icon-danger:hover:not(:disabled) { color: var(--err); border-color: var(--err); }
 
 /* External links (open in the system browser via the main-process handler) */
 .ext-link { color: var(--accent); text-decoration: none; cursor: pointer; }
