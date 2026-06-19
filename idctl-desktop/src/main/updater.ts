@@ -92,6 +92,10 @@ async function fetchLatest(s: UpdateSettings): Promise<UpdateManifest | null> {
     const res = await fetch(`https://api.github.com/repos/${s.updateRepo}/releases/latest`, {
       headers: { Accept: 'application/vnd.github+json' },
     });
+    // 404 = the repo has no published Releases yet (or is private/unknown to an
+    // unauthenticated call). That's a normal "nothing to update to", not an
+    // error — return null so the UI shows "up to date" instead of a red error.
+    if (res.status === 404) return null;
     if (!res.ok) throw new Error(`github ${res.status}`);
     const rel = (await res.json()) as { tag_name?: string; body?: string; assets?: { name: string; browser_download_url: string }[] };
     const asset = (rel.assets ?? []).find((a) => /\.zip$/i.test(a.name));
