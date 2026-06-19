@@ -8,6 +8,11 @@ Every change pushed or merged to `main` carries its version number in the commit
 subject (`vX.Y.Z: …`), stamped automatically by the `commit-msg` hook — see
 [CONTRIBUTING.md](CONTRIBUTING.md).
 
+## [0.1.18] — 2026-06-19
+- UI: fix tiles/cards being compressed below their content on long pages — every
+  view now keeps cards at their natural height and scrolls instead of clipping
+  buttons/info (was previously fixed only for the Capabilities/Teams views).
+
 ## [0.1.17] — 2026-06-19
 - Capabilities → Skills: **remove skills** — delete a skill from the library
   (two-step inline confirm) and uninstall a skill from the selected agents.
@@ -36,6 +41,7 @@ subject (`vX.Y.Z: …`), stamped automatically by the `commit-msg` hook — see
   and terminal TUI (`idctl`) — a standalone control client for an
   [id-agents](https://github.com/idchain-world/id-agents) manager.
 
+[0.1.18]: https://github.com/bobofbuilding/id-agent-control-center/releases/tag/v0.1.18
 [0.1.17]: https://github.com/bobofbuilding/id-agent-control-center/releases/tag/v0.1.17
 [0.1.16]: https://github.com/bobofbuilding/id-agent-control-center/releases/tag/v0.1.16
 [0.1.15]: https://github.com/bobofbuilding/id-agent-control-center/releases/tag/v0.1.15

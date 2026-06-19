@@ -135,9 +135,15 @@ body {
 .hier-node.child { padding-left: 18px; color: var(--text); }
 .hier-node code { background: var(--bg-3); border-radius: 4px; padding: 1px 5px; }
 
-/* Modules view: stacked cards keep their natural height; the view scrolls
-   instead of letting flex shrink content into the card below. */
-.view.modules > .card { flex-shrink: 0; }
+/* Stacked cards keep their natural height in EVERY view; the view scrolls
+   instead of letting flex shrink content out of the card (buttons/info getting
+   clipped or spilling into the next tile). Cards that should fill space still
+   grow via .grow / .cols — flex-shrink:0 only stops them compressing below
+   their content. (Previously this was scoped to .view.modules only.) */
+.view > .card { flex-shrink: 0; }
+/* Cards sitting side-by-side in a row likewise shouldn't squeeze their content
+   narrower than it needs (buttons wrapping/clipping). */
+.cols > .card { min-width: 0; }
 
 /* Tab bar (Modules sub-pages) */
 .tabs { display: flex; gap: 2px; border-bottom: 1px solid var(--line); flex: 0 0 auto; }
