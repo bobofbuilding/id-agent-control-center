@@ -468,7 +468,7 @@ export function Modules({ store }: { store: FleetStore }) {
           </button>
         </div>
         <p className="muted small" style={{ marginTop: -4 }}>
-          Markdown instructions (the <a href="https://agentskills.io" target="_blank" rel="noreferrer">agentskills.io</a> <span className="mono">SKILL.md</span> standard) that teach an agent <i>how</i> to do things with the tools it already has. Browse, filter by tag, then install on <b>{targetLabel}</b> — applies to every selected agent immediately.
+          Markdown instructions (the <a className="ext-link" href="https://agentskills.io" target="_blank" rel="noreferrer">agentskills.io</a> <span className="mono">SKILL.md</span> standard) that teach an agent <i>how</i> to do things with the tools it already has. Browse, filter by tag, then install on <b>{targetLabel}</b> — applies to every selected agent immediately.
         </p>
 
         {showCreate ? (
@@ -575,11 +575,18 @@ export function Modules({ store }: { store: FleetStore }) {
           <tbody>
             {plugins.map((p) => {
               const provider = p.author || p.source || null;
+              const isUrl = !!provider && /^https?:\/\//i.test(provider);
               return (
                 <tr key={p.name}>
                   <td className="b">{p.name}</td>
                   <td className="muted small">{p.version ?? '—'}</td>
-                  <td className="muted small" title={p.source ?? undefined}>{provider ?? '—'}</td>
+                  <td className="muted small" title={p.source ?? undefined}>
+                    {provider == null ? '—' : isUrl ? (
+                      <a className="ext-link" href={provider} target="_blank" rel="noreferrer">
+                        {provider.replace(/^https?:\/\//i, '').replace(/\/$/, '')}
+                      </a>
+                    ) : provider}
+                  </td>
                   <td className="muted">{p.description ?? ''}</td>
                 </tr>
               );
