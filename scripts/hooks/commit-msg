@@ -1,0 +1,46 @@
+#!/bin/sh
+# commit-msg hook — stamp the ID Agents Control Center version onto every commit
+# subject so each change pushed/merged to `main` carries its version number,
+# e.g.  "Fix the gauge"  ->  "v0.1.17: Fix the gauge".
+#
+# Version source: idctl-desktop/package.json (the product version line; the
+# idctl TUI shares it). Enable with:  git config core.hooksPath scripts/hooks
+# (or run scripts/setup-hooks.sh). See CONTRIBUTING.md.
+#
+# The hook is intentionally defensive: it never aborts a commit (always exits 0)
+# and skips a subject that is already version-stamped (so --amend is idempotent).
+
+msg_file="$1"
+[ -n "$msg_file" ] || exit 0
+
+root="$(git rev-parse --show-toplevel 2>/dev/null)" || exit 0
+pkg="$root/idctl-desktop/package.json"
+[ -f "$pkg" ] || exit 0
+
+ver="$(sed -n 's/.*"version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$pkg" | head -1)"
+[ -n "$ver" ] || exit 0
+
+# Subject = first non-blank, non-comment line of the message.
+subject="$(grep -vE '^[[:space:]]*#' "$msg_file" 2>/dev/null | grep -vE '^[[:space:]]*$' 2>/dev/null | head -1)"
+[ -n "$subject" ] || exit 0
+
+# Already stamped (subject starts with vX...) — leave it alone.
+case "$subject" in
+  v[0-9]*) exit 0 ;;
+esac
+
+# Prepend "vX.Y.Z: " to that first real line, in place.
+tmp="$msg_file.idctl.tmp"
+awk -v ver="$ver" '
+  BEGIN { stamped = 0 }
+  {
+    if (!stamped && $0 !~ /^[[:space:]]*#/ && $0 !~ /^[[:space:]]*$/) {
+      printf "v%s: %s\n", ver, $0
+      stamped = 1
+    } else {
+      print $0
+    }
+  }
+' "$msg_file" > "$tmp" 2>/dev/null && mv "$tmp" "$msg_file"
+
+exit 0

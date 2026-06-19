@@ -1,0 +1,44 @@
+# Changelog
+
+All notable changes to **ID Agents Control Center** are recorded here, newest
+first. Versions track the desktop app (`idctl-desktop/package.json`); the
+`idctl` TUI shares the same backend and version line.
+
+Every change pushed or merged to `main` carries its version number in the commit
+subject (`vX.Y.Z: …`), stamped automatically by the `commit-msg` hook — see
+[CONTRIBUTING.md](CONTRIBUTING.md).
+
+## [0.1.17] — 2026-06-19
+- Capabilities → Skills: **remove skills** — delete a skill from the library
+  (two-step inline confirm) and uninstall a skill from the selected agents.
+
+## [0.1.16] — 2026-06-19
+- Self-update: treat a GitHub `releases/latest` **404 as "up to date"** (no
+  published releases) instead of surfacing it as an error.
+
+## [0.1.15] — 2026-06-19
+- Health: **local-model (Ollama) token throughput gauge** plus 24-hour and
+  7-day token-usage averages, with a per-agent breakdown. Cloud API runtimes are
+  intentionally excluded.
+
+## [0.1.14] — 2026-06-19
+- Capabilities → Plugins: the **provider column is now a clickable link** that
+  opens the source/homepage in the system browser.
+
+## [0.1.13] — 2026-06-19
+- Capabilities → Skills becomes a **searchable, tag-filtered catalog** with a
+  **Create-skill** form following the [agentskills.io](https://agentskills.io)
+  `SKILL.md` standard.
+- Capabilities → Plugins: shows each plugin's **provider** (author / source).
+
+## [0.1.12] — 2026-06-19
+- Initial public release: the ID Agents Control Center desktop GUI (`idctl-desktop`)
+  and terminal TUI (`idctl`) — a standalone control client for an
+  [id-agents](https://github.com/idchain-world/id-agents) manager.
+
+[0.1.17]: https://github.com/bobofbuilding/id-agent-control-center/releases/tag/v0.1.17
+[0.1.16]: https://github.com/bobofbuilding/id-agent-control-center/releases/tag/v0.1.16
+[0.1.15]: https://github.com/bobofbuilding/id-agent-control-center/releases/tag/v0.1.15
+[0.1.14]: https://github.com/bobofbuilding/id-agent-control-center/releases/tag/v0.1.14
+[0.1.13]: https://github.com/bobofbuilding/id-agent-control-center/releases/tag/v0.1.13
+[0.1.12]: https://github.com/bobofbuilding/id-agent-control-center/releases/tag/v0.1.12
