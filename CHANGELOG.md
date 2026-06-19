@@ -8,6 +8,12 @@ Every change pushed or merged to `main` carries its version number in the commit
 subject (`vX.Y.Z: …`), stamped automatically by the `commit-msg` hook — see
 [CONTRIBUTING.md](CONTRIBUTING.md).
 
+## [0.1.22] — 2026-06-19
+- Subscriptions: the "Install…" action for a missing CLI (e.g. Cursor) now opens
+  your Terminal and runs the vendor's official installer (falling back to copying
+  the command if Terminal automation is blocked), then re-checks — instead of
+  surfacing a "sign-in failed" message.
+
 ## [0.1.21] — 2026-06-19
 - UI: the Settings → Inference backends card now grows to fit its content
   (its bottom help text was getting clipped below the tile on long pages).
@@ -65,6 +71,7 @@ subject (`vX.Y.Z: …`), stamped automatically by the `commit-msg` hook — see
   and terminal TUI (`idctl`) — a standalone control client for an
   [id-agents](https://github.com/idchain-world/id-agents) manager.
 
+[0.1.22]: https://github.com/bobofbuilding/id-agent-control-center/releases/tag/v0.1.22
 [0.1.21]: https://github.com/bobofbuilding/id-agent-control-center/releases/tag/v0.1.21
 [0.1.20]: https://github.com/bobofbuilding/id-agent-control-center/releases/tag/v0.1.20
 [0.1.19]: https://github.com/bobofbuilding/id-agent-control-center/releases/tag/v0.1.19

@@ -38,6 +38,30 @@ const INSTALL_HINT: Record<string, string> = {
   chatgpt: 'codex CLI not installed',
 };
 
+/** The official one-line installer per provider's CLI (run in the user's Terminal). */
+const INSTALL_CMD: Partial<Record<SubProvider, string>> = {
+  cursor: 'curl https://cursor.com/install -fsS | bash',
+};
+
+/**
+ * Kick off a CLI install. Opens the user's Terminal and runs the vendor's
+ * official installer there — visible and abortable, the user's own shell — and
+ * returns the command either way so the UI can fall back to clipboard if macOS
+ * blocks Terminal automation.
+ */
+export async function subsInstall(provider: SubProvider): Promise<{ ok: boolean; ran: boolean; command?: string; error?: string }> {
+  const cmd = INSTALL_CMD[provider];
+  if (!cmd) return { ok: false, ran: false, error: 'no installer available for this provider' };
+  try {
+    const osa = `tell application "Terminal"\n  activate\n  do script "${cmd.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"\nend tell`;
+    await execFileP('osascript', ['-e', osa], { timeout: 8000 });
+    return { ok: true, ran: true, command: cmd };
+  } catch (e) {
+    // Automation likely blocked — let the renderer copy the command instead.
+    return { ok: false, ran: false, command: cmd, error: e instanceof Error ? e.message : String(e) };
+  }
+}
+
 export type SubProvider = 'claude' | 'chatgpt' | 'cursor';
 
 export interface SubStatus {

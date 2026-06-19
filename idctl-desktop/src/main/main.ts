@@ -7,7 +7,7 @@ import { app, BrowserWindow, ipcMain, shell } from 'electron';
 import { join } from 'node:path';
 import { call } from './bridge.ts';
 import { startUpdater, stopUpdater, checkForUpdate, getStatus, applyStagedAndRelaunch } from './updater.ts';
-import { subsStatus, subsSignin, subsSignout, type SubProvider } from './subscriptions.ts';
+import { subsStatus, subsSignin, subsSignout, subsInstall, type SubProvider } from './subscriptions.ts';
 import { ollamaTags, ollamaPull } from './ollama.ts';
 import { loadSettings, setUpdateSettings } from '../../../idctl/src/settings/store.ts';
 
@@ -80,6 +80,8 @@ async function appCall(method: string, args: unknown[]): Promise<unknown> {
       return subsSignin(args[0] as SubProvider);
     case 'subs:signout':
       return subsSignout(args[0] as SubProvider);
+    case 'subs:install':
+      return subsInstall(args[0] as SubProvider);
     case 'ollama:tags':
       return ollamaTags();
     case 'ollama:pull':

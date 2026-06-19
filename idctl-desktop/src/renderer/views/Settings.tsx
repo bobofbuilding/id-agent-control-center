@@ -75,6 +75,23 @@ export function Settings({ store }: { store: FleetStore }) {
       setSubBusy(null);
     }
   }
+  async function installSub(provider: SubKey) {
+    setSubBusy(provider);
+    try {
+      const r = await call<{ ok: boolean; ran: boolean; command?: string; error?: string }>('subs:install', provider);
+      if (r.ran) {
+        window.alert('Opened Terminal to install the Cursor CLI. Let it finish, then click “Re-check”.');
+        setTimeout(() => void recheckSubs(), 8000);
+      } else if (r.command) {
+        try { await navigator.clipboard.writeText(r.command); } catch { /* clipboard best-effort */ }
+        window.alert(`Couldn't open Terminal automatically — the install command is copied to your clipboard. Paste it into a terminal:\n\n${r.command}`);
+      } else {
+        window.alert(`install unavailable: ${r.error ?? 'unknown'}`);
+      }
+    } finally {
+      setSubBusy(null);
+    }
+  }
   async function signoutSub(provider: SubKey) {
     if (!window.confirm(`Sign out of ${provider === 'claude' ? 'Claude' : provider === 'cursor' ? 'Cursor' : 'ChatGPT'}? Agents on that runtime will lose subscription access until you sign back in.`)) return;
     setSubBusy(provider);
@@ -302,7 +319,7 @@ export function Settings({ store }: { store: FleetStore }) {
                 <span className="muted">○ not signed in</span>
               )}
               <span className="row-actions" style={{ display: 'inline-flex', marginLeft: 12 }}>
-                <button className="btn" disabled={subBusy === key} onClick={() => void signinSub(key)} title={s?.installed === false ? s.detail : undefined}>
+                <button className="btn" disabled={subBusy === key} onClick={() => void (s?.installed === false ? installSub(key) : signinSub(key))} title={s?.installed === false ? s.detail : undefined}>
                   {s?.loggedIn ? 'Switch account' : s?.installed === false ? 'Install…' : 'Sign in'}
                 </button>
                 {s?.loggedIn ? (
