@@ -1,0 +1,148 @@
+/**
+ * Wire types for the id-agents manager daemon (:4100).
+ *
+ * These mirror the shapes the manager actually returns (cross-checked against
+ * id-agents/src/tui/api/types.ts and the live daemon). Fields are kept optional
+ * where the daemon may omit them across runtimes (claude-code-cli, codex,
+ * cursor-cli, public-agent-remote).
+ */
+
+export interface AgentMetadata {
+  runtime?: string;
+  description?: string;
+  heartbeat?: boolean;
+  pid?: number;
+  skills?: string[];
+  plugins?: string[];
+  skillmesh_address?: string;
+  ows_wallet?: string;
+  idchain_domain?: string;
+  [key: string]: unknown;
+}
+
+export interface Agent {
+  id: string;
+  name: string;
+  alias?: string;
+  port: number;
+  status: string;
+  health?: string;
+  model?: string;
+  type?: string;
+  runtime?: string;
+  url?: string;
+  workingDirectory?: string;
+  createdAt: number;
+  lastHealthCheck?: number;
+  metadata?: AgentMetadata;
+  teamName?: string;
+  deploymentShape?: 'local-process' | 'remote-endpoint';
+  pid?: number | null;
+  customer_domain?: string | null;
+  public_endpoint_url?: string | null;
+  ows_wallet?: string | null;
+  idchain_domain?: string | null;
+  ssh_target?: string | null;
+  last_seen?: number | null;
+  last_probed_at?: number | null;
+  last_error?: string | null;
+  consecutive_failures?: number;
+}
+
+export interface Team {
+  id: string;
+  name: string;
+  agentCount: number;
+  createdAt?: string;
+}
+
+export interface ManagerEvent {
+  seq: number;
+  team?: string;
+  topic: string;
+  actor?: string;
+  subject?: string;
+  data?: Record<string, unknown>;
+  timestamp?: number;
+}
+
+export interface EventsResponse {
+  events: ManagerEvent[];
+  next_seq: number;
+  replay_truncated?: boolean;
+  earliest_available_seq?: number | null;
+}
+
+export interface Task {
+  name?: string;
+  uuid?: string;
+  shortId?: string;
+  title: string;
+  description?: string | null;
+  status: string;
+  ownerName?: string | null;
+  teamName?: string;
+  linkedEvents?: string[];
+  createdAt: number;
+  updatedAt?: number;
+  completedAt?: number | null;
+}
+
+/** A query awaiting a human/manager answer (manager inbox). */
+export interface InboxItem {
+  query_id: string;
+  prompt?: string | null;
+  message: string;
+  timestamp: number;
+  status: string;
+  session_id?: string | null;
+  from?: string | null;
+  reply_endpoint?: string | null;
+  schedule?: Record<string, unknown> | null;
+  mode?: string | null;
+}
+
+export interface NewsItem {
+  type: string;
+  timestamp: number;
+  message?: string;
+  in_reply_to?: string;
+  query_id?: string;
+  data?: Record<string, unknown>;
+}
+
+/** External query lifecycle vocabulary returned by GET /query/:id. */
+export type QueryStatus =
+  | 'pending'
+  | 'processing'
+  | 'delivered'
+  | 'failed'
+  | 'expired'
+  | 'cancelled';
+
+export interface QueryResult {
+  status: QueryStatus;
+  result?: { result?: string; message?: string } | string;
+  error?: string;
+  agent?: string;
+}
+
+export interface ProbeResult {
+  team: string;
+  probed: number;
+  passed: number;
+  failed: number;
+  results: Array<{
+    name: string;
+    status: 'ok' | 'failed' | string;
+    error?: string;
+    duration_ms?: number;
+  }>;
+}
+
+/** Standard envelope for /remote and most management endpoints. */
+export interface RemoteEnvelope<T = unknown> {
+  ok: boolean;
+  result?: T;
+  error?: string;
+}

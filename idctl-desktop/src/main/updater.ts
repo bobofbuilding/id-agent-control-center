@@ -1,0 +1,216 @@
+/**
+ * Self-update for the desktop app — "notify while running, upgrade on restart".
+ *
+ * Flow:
+ *   1. On launch + every checkIntervalHours, fetch an update manifest
+ *      ({ version, zipUrl, notes }) from updateManifestUrl, or the latest
+ *      GitHub release from updateRepo.
+ *   2. If the manifest version > the running version, download/stage the zip
+ *      into userData/staged-update/ and notify the renderer (banner).
+ *   3. On "Restart & update" (or, if autoUpgrade, on next quit) a detached
+ *      helper waits for this process to exit, swaps the new .app over the
+ *      installed bundle, and relaunches it.
+ *
+ * Bundle replacement can't happen in-process (the running .app is locked), so
+ * the swap runs in a small shell helper spawned detached right before quit.
+ */
+
+import { app, BrowserWindow } from 'electron';
+import { spawn } from 'node:child_process';
+import { existsSync, mkdirSync, writeFileSync, readFileSync, rmSync, copyFileSync } from 'node:fs';
+import { join, resolve } from 'node:path';
+import { loadSettings } from '../../../idctl/src/settings/store.ts';
+import type { UpdateSettings } from '../../../idctl/src/settings/schema.ts';
+
+export interface UpdateManifest {
+  version: string;
+  zipUrl: string;
+  notes?: string;
+}
+
+export interface UpdateStatus {
+  current: string;
+  latest?: string;
+  available: boolean;   // a newer version exists upstream
+  staged: boolean;      // the newer build is downloaded and ready to apply
+  checking: boolean;
+  notes?: string;
+  error?: string;
+  lastChecked?: number;
+}
+
+let status: UpdateStatus = { current: app.getVersion(), available: false, staged: false, checking: false };
+let timer: ReturnType<typeof setInterval> | null = null;
+let mainWindow: BrowserWindow | null = null;
+
+function stagedDir(): string {
+  return join(app.getPath('userData'), 'staged-update');
+}
+function stagedMetaPath(): string {
+  return join(stagedDir(), 'staged.json');
+}
+
+/** Path to the installed `.app` bundle, derived from the running executable. */
+function appBundlePath(): string {
+  // process.execPath = <App>.app/Contents/MacOS/<bin>
+  return resolve(process.execPath, '..', '..', '..');
+}
+
+/** Numeric semver compare: 1 if a>b, -1 if a<b, 0 if equal. Ignores pre-release. */
+export function compareVersions(a: string, b: string): number {
+  const pa = a.replace(/^v/, '').split('.').map((n) => parseInt(n, 10) || 0);
+  const pb = b.replace(/^v/, '').split('.').map((n) => parseInt(n, 10) || 0);
+  for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
+    const d = (pa[i] ?? 0) - (pb[i] ?? 0);
+    if (d !== 0) return d > 0 ? 1 : -1;
+  }
+  return 0;
+}
+
+function settings(): UpdateSettings | undefined {
+  return loadSettings().update;
+}
+
+function emit(): void {
+  mainWindow?.webContents.send('update:status', status);
+}
+
+async function readManifest(url: string): Promise<UpdateManifest> {
+  if (url.startsWith('file://') || url.startsWith('/')) {
+    const path = url.replace(/^file:\/\//, '');
+    return JSON.parse(readFileSync(path, 'utf8')) as UpdateManifest;
+  }
+  const res = await fetch(url);
+  if (!res.ok) throw new Error(`manifest ${res.status}`);
+  return (await res.json()) as UpdateManifest;
+}
+
+/** Fetch the manifest from updateManifestUrl, or the latest GitHub release. */
+async function fetchLatest(s: UpdateSettings): Promise<UpdateManifest | null> {
+  if (s.updateManifestUrl) return readManifest(s.updateManifestUrl);
+  if (s.updateRepo) {
+    const res = await fetch(`https://api.github.com/repos/${s.updateRepo}/releases/latest`, {
+      headers: { Accept: 'application/vnd.github+json' },
+    });
+    if (!res.ok) throw new Error(`github ${res.status}`);
+    const rel = (await res.json()) as { tag_name?: string; body?: string; assets?: { name: string; browser_download_url: string }[] };
+    const asset = (rel.assets ?? []).find((a) => /\.zip$/i.test(a.name));
+    if (!rel.tag_name || !asset) return null;
+    return { version: rel.tag_name.replace(/^v/, ''), zipUrl: asset.browser_download_url, notes: rel.body };
+  }
+  return null;
+}
+
+/** Copy/download the update zip into the staging dir. */
+async function stage(manifest: UpdateManifest): Promise<string> {
+  mkdirSync(stagedDir(), { recursive: true });
+  const dest = join(stagedDir(), `update-${manifest.version}.zip`);
+  if (manifest.zipUrl.startsWith('file://') || manifest.zipUrl.startsWith('/')) {
+    copyFileSync(manifest.zipUrl.replace(/^file:\/\//, ''), dest);
+  } else {
+    const res = await fetch(manifest.zipUrl);
+    if (!res.ok) throw new Error(`download ${res.status}`);
+    const buf = Buffer.from(await res.arrayBuffer());
+    writeFileSync(dest, buf);
+  }
+  writeFileSync(stagedMetaPath(), JSON.stringify({ version: manifest.version, zip: dest, notes: manifest.notes ?? '' }));
+  return dest;
+}
+
+function readStaged(): { version: string; zip: string; notes: string } | null {
+  try {
+    if (!existsSync(stagedMetaPath())) return null;
+    const m = JSON.parse(readFileSync(stagedMetaPath(), 'utf8'));
+    if (m?.zip && existsSync(m.zip) && compareVersions(m.version, status.current) > 0) return m;
+  } catch {
+    /* ignore */
+  }
+  return null;
+}
+
+export function getStatus(): UpdateStatus {
+  return status;
+}
+
+/** Check upstream for a newer version; stage it when found. */
+export async function checkForUpdate(): Promise<UpdateStatus> {
+  const s = settings();
+  status = { ...status, checking: true, error: undefined };
+  emit();
+  try {
+    if (!s || (!s.updateManifestUrl && !s.updateRepo)) {
+      status = { ...status, checking: false, available: false, lastChecked: Date.now() };
+      return status;
+    }
+    const latest = await fetchLatest(s);
+    const lastChecked = Date.now();
+    if (latest && compareVersions(latest.version, status.current) > 0) {
+      // Newer version — stage it so a restart can apply it.
+      const already = readStaged();
+      if (!already || already.version !== latest.version) await stage(latest);
+      status = { ...status, checking: false, available: true, staged: true, latest: latest.version, notes: latest.notes, lastChecked };
+    } else {
+      status = { ...status, checking: false, available: false, staged: !!readStaged(), latest: latest?.version, lastChecked };
+    }
+  } catch (err) {
+    status = { ...status, checking: false, error: err instanceof Error ? err.message : String(err), lastChecked: Date.now() };
+  }
+  emit();
+  return status;
+}
+
+/**
+ * Apply the staged update on restart: spawn a detached helper that waits for
+ * this process to exit, swaps the new bundle over the installed one, and
+ * relaunches it. Then quit. Returns false if nothing is staged.
+ */
+export function applyStagedAndRelaunch(): boolean {
+  const staged = readStaged();
+  if (!staged) return false;
+  const bundle = appBundlePath();
+  const helper = join(stagedDir(), 'apply-update.sh');
+  const reopen = process.env.IDCTL_UPDATE_NOOPEN ? '' : '/usr/bin/open "$BUNDLE"';
+  const script = `#!/bin/bash
+set -e
+APP_PID="$1"; BUNDLE="$2"; ZIP="$3"
+# wait for the running app to fully exit (bundle is locked while running)
+for i in $(seq 1 200); do kill -0 "$APP_PID" 2>/dev/null || break; sleep 0.25; done
+sleep 0.5
+TMP="$(mktemp -d)"
+/usr/bin/ditto -x -k "$ZIP" "$TMP"
+NEW="$(/usr/bin/find "$TMP" -maxdepth 2 -name '*.app' | head -1)"
+if [ -n "$NEW" ]; then
+  /bin/rm -rf "$BUNDLE"
+  /usr/bin/ditto "$NEW" "$BUNDLE"
+fi
+/bin/rm -rf "$TMP"
+${reopen}
+`;
+  writeFileSync(helper, script, { mode: 0o755 });
+  const child = spawn('/bin/bash', [helper, String(process.pid), bundle, staged.zip], {
+    detached: true,
+    stdio: 'ignore',
+  });
+  child.unref();
+  // Clear staged marker so we don't loop; the zip is consumed by the helper.
+  try { rmSync(stagedMetaPath(), { force: true }); } catch { /* ignore */ }
+  setTimeout(() => app.quit(), 150);
+  return true;
+}
+
+/** Start periodic checks and wire the window for push notifications. */
+export function startUpdater(win: BrowserWindow): void {
+  mainWindow = win;
+  status = { ...status, current: app.getVersion(), staged: !!readStaged() };
+  // Headless screenshot runs: skip background checks.
+  if (process.env.IDCTL_SHOT) return;
+  const hours = settings()?.checkIntervalHours ?? 12;
+  // Initial check shortly after launch (let the window settle).
+  setTimeout(() => void checkForUpdate(), 2500);
+  timer = setInterval(() => void checkForUpdate(), Math.max(1, hours) * 3600_000);
+}
+
+export function stopUpdater(): void {
+  if (timer) clearInterval(timer);
+  timer = null;
+}

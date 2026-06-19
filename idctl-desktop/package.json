@@ -1,0 +1,52 @@
+{
+  "name": "idagents-control-center",
+  "productName": "ID Agents Control Center",
+  "version": "0.1.12",
+  "description": "Desktop control center for id-agents \u2014 live fleet dashboard, manager chat, teams, keys.",
+  "private": true,
+  "main": "out/main/main.cjs",
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "start": "npm run build && electron .",
+    "dev": "node scripts/build.mjs && electron .",
+    "dist": "npm run build && electron-builder --dir",
+    "dmg": "npm run build && electron-builder",
+    "typecheck": "tsc --noEmit",
+    "tauri": "tauri",
+    "tauri:dev": "tauri dev",
+    "tauri:build": "node scripts/build-tauri.mjs && tauri build"
+  },
+  "build": {
+    "appId": "world.idchain.idagents-control",
+    "productName": "ID Agents Control Center",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "out/**/*"
+    ],
+    "mac": {
+      "icon": "build/icon.icns",
+      "category": "public.app-category.developer-tools",
+      "target": [
+        "dir"
+      ]
+    }
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^2.11.2",
+    "@types/node": "^22.19.21",
+    "@types/react": "^18.3.12",
+    "@types/react-dom": "^18.3.1",
+    "electron": "^33.2.0",
+    "electron-builder": "^25.1.8",
+    "esbuild": "^0.28.1",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "typescript": "^5.6.3"
+  },
+  "dependencies": {
+    "@tauri-apps/api": "^2.11.1",
+    "@tauri-apps/plugin-http": "^2.5.9"
+  }
+}
