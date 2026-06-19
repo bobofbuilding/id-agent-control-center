@@ -10,15 +10,17 @@ import { Health } from './views/Health.tsx';
 import { Identity } from './views/Identity.tsx';
 import { Schedule } from './views/Schedule.tsx';
 import { Modules } from './views/Modules.tsx';
+import { Projects } from './views/Projects.tsx';
 import { Settings } from './views/Settings.tsx';
 
-type ViewId = 'dashboard' | 'chat' | 'inbox' | 'tasks' | 'health' | 'identity' | 'schedule' | 'teams' | 'modules' | 'settings';
+type ViewId = 'dashboard' | 'chat' | 'inbox' | 'tasks' | 'projects' | 'health' | 'identity' | 'schedule' | 'teams' | 'modules' | 'settings';
 
 const NAV: { id: ViewId; label: string; icon: string }[] = [
   { id: 'dashboard', label: 'Dashboard', icon: '▦' },
   { id: 'chat', label: 'Chat', icon: '✦' },
   { id: 'inbox', label: 'Inbox', icon: '✉' },
   { id: 'tasks', label: 'Tasks', icon: '☑' },
+  { id: 'projects', label: 'Projects', icon: '◆' },
   { id: 'health', label: 'Health', icon: '✚' },
   { id: 'identity', label: 'Identity & Keys', icon: '⬡' },
   { id: 'schedule', label: 'Schedule', icon: '◷' },
@@ -128,6 +130,8 @@ function Router({ view, store }: { view: ViewId; store: ReturnType<typeof useFle
       return <Schedule store={store} />;
     case 'modules':
       return <Modules store={store} />;
+    case 'projects':
+      return <Projects store={store} />;
     case 'settings':
       return <Settings store={store} />;
     default:

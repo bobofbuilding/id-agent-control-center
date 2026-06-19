@@ -175,6 +175,14 @@ button.chip.tag.on { color: #04121c; }
 .btn.icon-danger { color: var(--muted); padding: 2px 8px; }
 .btn.icon-danger:hover:not(:disabled) { color: var(--err); border-color: var(--err); }
 
+/* Projects — status badges */
+.st-badge { font-size: 10px; text-transform: uppercase; letter-spacing: .04em; font-weight: 700; border-radius: 5px; padding: 2px 7px; border: 1px solid var(--line); }
+.st-badge.st-active { color: var(--ok); border-color: color-mix(in srgb, var(--ok) 45%, transparent); background: color-mix(in srgb, var(--ok) 12%, transparent); }
+.st-badge.st-paused { color: var(--warn); border-color: color-mix(in srgb, var(--warn) 45%, transparent); background: color-mix(in srgb, var(--warn) 12%, transparent); }
+.st-badge.st-blocked { color: var(--err); border-color: color-mix(in srgb, var(--err) 45%, transparent); background: color-mix(in srgb, var(--err) 12%, transparent); }
+.st-badge.st-done { color: var(--muted); }
+.cell-select.small { font-size: 11px; padding: 2px 4px; }
+
 /* External links (open in the system browser via the main-process handler) */
 .ext-link { color: var(--accent); text-decoration: none; cursor: pointer; }
 .ext-link:hover { text-decoration: underline; }

@@ -8,6 +8,13 @@ Every change pushed or merged to `main` carries its version number in the commit
 subject (`vX.Y.Z: …`), stamped automatically by the `commit-msg` hook — see
 [CONTRIBUTING.md](CONTRIBUTING.md).
 
+## [0.1.20] — 2026-06-19
+- New **Projects** page — track projects locally (name, status, description,
+  team link, tags, links, notes) with status filters; stored in your config.
+- Capabilities → MCP servers: a bigger **catalog** — Playwright, Browser MCP,
+  Fetch, Context7, Tavily, Exa, Firecrawl, Notion, Figma, Slack — and the
+  Brave Search entry repointed to its current official package.
+
 ## [0.1.19] — 2026-06-19
 - Settings → Inference backends: a **provider catalog** — pick Groq, OpenRouter,
   Together, Mistral, DeepSeek, xAI, Fireworks, Cerebras, Gemini, DeepInfra,
@@ -51,6 +58,7 @@ subject (`vX.Y.Z: …`), stamped automatically by the `commit-msg` hook — see
   and terminal TUI (`idctl`) — a standalone control client for an
   [id-agents](https://github.com/idchain-world/id-agents) manager.
 
+[0.1.20]: https://github.com/bobofbuilding/id-agent-control-center/releases/tag/v0.1.20
 [0.1.19]: https://github.com/bobofbuilding/id-agent-control-center/releases/tag/v0.1.19
 [0.1.18]: https://github.com/bobofbuilding/id-agent-control-center/releases/tag/v0.1.18
 [0.1.17]: https://github.com/bobofbuilding/id-agent-control-center/releases/tag/v0.1.17

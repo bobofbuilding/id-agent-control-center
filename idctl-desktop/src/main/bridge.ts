@@ -22,9 +22,11 @@ import {
   setPrimaryCoordinator,
   upsertMcpServer,
   removeMcpServer,
+  upsertProject,
+  removeProject,
 } from '../../../idctl/src/settings/store.ts';
 import { ProviderClient } from '../../../idctl/src/settings/ProviderClient.ts';
-import { kindNeedsKey, type ProviderProfile, type McpServerProfile } from '../../../idctl/src/settings/schema.ts';
+import { kindNeedsKey, type ProviderProfile, type McpServerProfile, type ProjectEntry } from '../../../idctl/src/settings/schema.ts';
 import { buildRuntimeCatalog } from '../../../idctl/src/settings/runtimeCatalog.ts';
 import { testMcpServer } from './mcpTest.ts';
 import { readFileSync } from 'node:fs';
@@ -171,6 +173,17 @@ const METHODS: Record<string, (...a: any[]) => Promise<unknown>> = {
     return loadSettings().mcpServers ?? [];
   },
   'mcp:test': (spec: McpServerSpec) => testMcpServer(spec),
+
+  // projects (local tracker — client-side config)
+  'projects:list': async () => loadSettings().projects ?? [],
+  'projects:save': async (p: ProjectEntry) => {
+    upsertProject(p);
+    return loadSettings().projects ?? [];
+  },
+  'projects:remove': async (id: string) => {
+    removeProject(String(id));
+    return loadSettings().projects ?? [];
+  },
 
   // identity & keys (Safe + ERC-4337 session keys; mock today)
   'keys:caps': async () => keys.capabilities(),

@@ -9,7 +9,7 @@
 
 import { existsSync, mkdirSync, readFileSync, writeFileSync, statSync, chmodSync, renameSync, unlinkSync } from 'node:fs';
 import { resolveConfigPath, configDir } from './paths.ts';
-import { emptyConfig, defaultUpdateSettings, DEFAULT_TEAM, type IdctlConfig, type ManagerProfile, type McpServerProfile, type ProviderProfile, type ProviderSync, type UpdateSettings } from './schema.ts';
+import { emptyConfig, defaultUpdateSettings, DEFAULT_TEAM, type IdctlConfig, type ManagerProfile, type McpServerProfile, type ProjectEntry, type ProviderProfile, type ProviderSync, type UpdateSettings } from './schema.ts';
 
 export function loadSettings(file = resolveConfigPath()): IdctlConfig {
   if (!existsSync(file)) return emptyConfig();
@@ -39,6 +39,7 @@ export function loadSettings(file = resolveConfigPath()): IdctlConfig {
       // Absent → scope to just the default team (the shipped behaviour). An
       // explicit null/[] means "show all teams" (filtering disabled).
       knownTeams: raw.knownTeams === undefined ? [DEFAULT_TEAM] : raw.knownTeams,
+      projects: Array.isArray(raw.projects) ? raw.projects : undefined,
     };
     // Validation: at most one default provider.
     let seenDefault = false;
@@ -201,6 +202,26 @@ export function upsertMcpServer(s: McpServerProfile, file = resolveConfigPath())
 export function removeMcpServer(name: string, file = resolveConfigPath()): IdctlConfig {
   const cfg = loadSettings(file);
   cfg.mcpServers = (cfg.mcpServers ?? []).filter((x) => x.name !== name);
+  saveSettings(cfg, file);
+  return cfg;
+}
+
+// ---- Projects (local tracker) ---------------------------------------------
+
+export function upsertProject(p: ProjectEntry, file = resolveConfigPath()): IdctlConfig {
+  const cfg = loadSettings(file);
+  const list = cfg.projects ?? [];
+  const i = list.findIndex((x) => x.id === p.id);
+  if (i >= 0) list[i] = p;
+  else list.push(p);
+  cfg.projects = list;
+  saveSettings(cfg, file);
+  return cfg;
+}
+
+export function removeProject(id: string, file = resolveConfigPath()): IdctlConfig {
+  const cfg = loadSettings(file);
+  cfg.projects = (cfg.projects ?? []).filter((x) => x.id !== id);
   saveSettings(cfg, file);
   return cfg;
 }

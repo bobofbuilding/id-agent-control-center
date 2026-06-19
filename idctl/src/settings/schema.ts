@@ -45,6 +45,26 @@ export interface IdctlConfig {
    * actions append to it. Set to null/[] to disable filtering (show all).
    */
   knownTeams?: string[];
+  /** Local project tracker entries (the "Projects" page). Client-side only. */
+  projects?: ProjectEntry[];
+}
+
+export type ProjectStatus = 'active' | 'paused' | 'blocked' | 'done';
+
+/** A tracked project (local to the control center — not a manager concept). */
+export interface ProjectEntry {
+  id: string;
+  name: string;
+  status: ProjectStatus;
+  description?: string;
+  /** Optional linked team name. */
+  team?: string;
+  tags?: string[];
+  /** Related URLs (repo, dashboard, docs…). */
+  links?: string[];
+  notes?: string;
+  createdAt: number;
+  updatedAt: number;
 }
 
 export interface UpdateSettings {

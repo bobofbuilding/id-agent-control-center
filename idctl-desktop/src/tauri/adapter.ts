@@ -10,7 +10,7 @@ import { ManagerClient } from '../../../idctl/src/api/client.ts';
 import { ProviderClient } from '../../../idctl/src/settings/ProviderClient.ts';
 import { SCOPE_PRESETS, TTL_PRESETS } from '../../../idctl/src/keys/types.ts';
 import type { AgentAccount, SessionKey } from '../../../idctl/src/keys/types.ts';
-import { kindNeedsKey, type ProviderProfile, type McpServerProfile } from '../../../idctl/src/settings/schema.ts';
+import { kindNeedsKey, type ProviderProfile, type McpServerProfile, type ProjectEntry } from '../../../idctl/src/settings/schema.ts';
 import { buildRuntimeCatalog } from '../../../idctl/src/settings/runtimeCatalog.ts';
 import type { McpServerSpec, CreateSkillInput } from '../../../idctl/src/api/client.ts';
 
@@ -146,6 +146,21 @@ const M: Record<string, (...a: any[]) => Promise<unknown>> = {
     return list;
   },
   'mcp:test': async () => ({ ok: false, error: 'Test requires the Electron build.' }),
+
+  // projects (local tracker)
+  'projects:list': async () => lsGet<ProjectEntry[]>('idctl.projects', []),
+  'projects:save': async (p: ProjectEntry) => {
+    const list = lsGet<ProjectEntry[]>('idctl.projects', []);
+    const i = list.findIndex((x) => x.id === p.id);
+    if (i >= 0) list[i] = p; else list.push(p);
+    lsSet('idctl.projects', list);
+    return list;
+  },
+  'projects:remove': async (id: string) => {
+    const list = lsGet<ProjectEntry[]>('idctl.projects', []).filter((x) => x.id !== id);
+    lsSet('idctl.projects', list);
+    return list;
+  },
 
   // keys (localStorage mock)
   'keys:caps': async () => ({ provider: 'mock', chainId: CHAIN, chainLabel: 'Base Sepolia (mock)', live: false }),
