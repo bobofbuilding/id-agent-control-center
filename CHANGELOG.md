@@ -8,6 +8,16 @@ Every change pushed or merged to `main` carries its version number in the commit
 subject (`vX.Y.Z: …`), stamped automatically by the `commit-msg` hook — see
 [CONTRIBUTING.md](CONTRIBUTING.md).
 
+## [0.1.19] — 2026-06-19
+- Settings → Inference backends: a **provider catalog** — pick Groq, OpenRouter,
+  Together, Mistral, DeepSeek, xAI, Fireworks, Cerebras, Gemini, DeepInfra,
+  Nebius, Perplexity, or a local server (vLLM / llama.cpp / LocalAI / Jan) and
+  its endpoint is filled in; Connect & sync discovers the live model list.
+- Settings → **Local models (Ollama)**: list installed models and **download** a
+  new one with live streamed progress (Ollama `/api/pull`).
+- Settings → Subscriptions: add **Cursor** (`cursor-agent`) alongside Claude and
+  ChatGPT.
+
 ## [0.1.18] — 2026-06-19
 - UI: fix tiles/cards being compressed below their content on long pages — every
   view now keeps cards at their natural height and scrolls instead of clipping
@@ -41,6 +51,7 @@ subject (`vX.Y.Z: …`), stamped automatically by the `commit-msg` hook — see
   and terminal TUI (`idctl`) — a standalone control client for an
   [id-agents](https://github.com/idchain-world/id-agents) manager.
 
+[0.1.19]: https://github.com/bobofbuilding/id-agent-control-center/releases/tag/v0.1.19
 [0.1.18]: https://github.com/bobofbuilding/id-agent-control-center/releases/tag/v0.1.18
 [0.1.17]: https://github.com/bobofbuilding/id-agent-control-center/releases/tag/v0.1.17
 [0.1.16]: https://github.com/bobofbuilding/id-agent-control-center/releases/tag/v0.1.16

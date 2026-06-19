@@ -25,14 +25,28 @@ function cliEnv(): NodeJS.ProcessEnv {
   return { ...process.env, PATH: [...dirs, ...existing].join(':') };
 }
 
+export type SubProvider = 'claude' | 'chatgpt' | 'cursor';
+
 export interface SubStatus {
-  provider: 'claude' | 'chatgpt';
+  provider: SubProvider;
   loggedIn: boolean;
   plan?: string;
   email?: string;
   method?: string;
   detail?: string;
 }
+
+/** login / logout CLI invocations per subscription provider. */
+const LOGIN_CMD: Record<SubProvider, [string, string[]]> = {
+  claude: ['claude', ['auth', 'login']],
+  chatgpt: ['codex', ['login']],
+  cursor: ['cursor-agent', ['login']],
+};
+const LOGOUT_CMD: Record<SubProvider, [string, string[]]> = {
+  claude: ['claude', ['auth', 'logout']],
+  chatgpt: ['codex', ['logout']],
+  cursor: ['cursor-agent', ['logout']],
+};
 
 async function claudeStatus(): Promise<SubStatus> {
   try {
@@ -55,9 +69,23 @@ async function codexStatus(): Promise<SubStatus> {
   }
 }
 
-export async function subsStatus(): Promise<{ claude: SubStatus; chatgpt: SubStatus }> {
-  const [claude, chatgpt] = await Promise.all([claudeStatus(), codexStatus()]);
-  return { claude, chatgpt };
+/** Cursor subscription via `cursor-agent status` (Pro/Business OAuth). */
+async function cursorStatus(): Promise<SubStatus> {
+  try {
+    const { stdout, stderr } = await execFileP('cursor-agent', ['status'], { env: cliEnv(), timeout: 8000 });
+    const out = `${stdout}${stderr}`.trim();
+    const loggedIn = /logged in|authenticated|signed in/i.test(out) && !/not logged in|not authenticated|signed out/i.test(out);
+    const email = out.match(/[\w.+-]+@[\w.-]+\.\w+/)?.[0];
+    return { provider: 'cursor', loggedIn, email, detail: out.slice(0, 200) };
+  } catch (e: unknown) {
+    const err = e as { stdout?: string; message?: string };
+    return { provider: 'cursor', loggedIn: false, detail: (err.stdout || err.message || '').trim() };
+  }
+}
+
+export async function subsStatus(): Promise<{ claude: SubStatus; chatgpt: SubStatus; cursor: SubStatus }> {
+  const [claude, chatgpt, cursor] = await Promise.all([claudeStatus(), codexStatus(), cursorStatus()]);
+  return { claude, chatgpt, cursor };
 }
 
 /**
@@ -65,8 +93,8 @@ export async function subsStatus(): Promise<{ claude: SubStatus; chatgpt: SubSta
  * it prints, as a fallback). Resolves once the flow is underway — the user
  * completes sign-in in the browser, then re-checks status.
  */
-export function subsSignin(provider: 'claude' | 'chatgpt'): Promise<{ started: boolean; url?: string; error?: string }> {
-  const [bin, args] = provider === 'claude' ? ['claude', ['auth', 'login']] : ['codex', ['login']];
+export function subsSignin(provider: SubProvider): Promise<{ started: boolean; url?: string; error?: string }> {
+  const [bin, args] = LOGIN_CMD[provider] ?? LOGIN_CMD.claude;
   return new Promise((resolve) => {
     let child;
     try {
@@ -103,8 +131,8 @@ export function subsSignin(provider: 'claude' | 'chatgpt'): Promise<{ started: b
   });
 }
 
-export async function subsSignout(provider: 'claude' | 'chatgpt'): Promise<{ ok: boolean; error?: string }> {
-  const [bin, args] = provider === 'claude' ? ['claude', ['auth', 'logout']] : ['codex', ['logout']];
+export async function subsSignout(provider: SubProvider): Promise<{ ok: boolean; error?: string }> {
+  const [bin, args] = LOGOUT_CMD[provider] ?? LOGOUT_CMD.claude;
   try {
     await execFileP(bin, args, { env: cliEnv(), timeout: 15000 });
     return { ok: true };

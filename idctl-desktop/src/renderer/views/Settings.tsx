@@ -2,6 +2,7 @@ import { Fragment, useEffect, useState } from 'react';
 import { call, type FleetStore } from '../store.ts';
 import { defaultBaseUrl, kindNeedsKey, type ProviderKind, type ProviderProfile } from '../../../../idctl/src/settings/schema.ts';
 import type { ProbeOutcome } from '../../../../idctl/src/settings/ProviderClient.ts';
+import { PROVIDER_CATALOG, findProvider } from '../../../../idctl/src/settings/providerCatalog.ts';
 
 const KINDS: ProviderKind[] = ['ollama', 'lmstudio', 'openai-compatible', 'anthropic', 'openai'];
 
@@ -23,10 +24,20 @@ export function Settings({ store }: { store: FleetStore }) {
   const [expanded, setExpanded] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   // add-provider form
-  const [kind, setKind] = useState<ProviderKind>('ollama');
-  const [name, setName] = useState('');
-  const [baseUrl, setBaseUrl] = useState(defaultBaseUrl('ollama'));
+  const [catalogId, setCatalogId] = useState<string>('groq');
+  const [kind, setKind] = useState<ProviderKind>('openai-compatible');
+  const [name, setName] = useState('groq');
+  const [baseUrl, setBaseUrl] = useState('https://api.groq.com/openai/v1');
   const [apiKey, setApiKey] = useState('');
+  function pickProvider(id: string) {
+    setCatalogId(id);
+    if (id === 'custom') { setKind('openai-compatible'); setBaseUrl(defaultBaseUrl('openai-compatible')); return; }
+    const e = findProvider(id);
+    if (!e) return;
+    setKind(e.kind);
+    setBaseUrl(e.baseUrl);
+    setName(e.id);
+  }
   // lead hierarchy (#10)
   const [hier, setHier] = useState<{ primary: { team: string; agent: string } | null; coordinators: Record<string, string> }>({ primary: null, coordinators: {} });
   // self-update
@@ -36,7 +47,8 @@ export function Settings({ store }: { store: FleetStore }) {
   const [manifestUrl, setManifestUrl] = useState('');
   // subscriptions (runtime OAuth: Claude / ChatGPT)
   type Sub = { provider: string; loggedIn: boolean; plan?: string; email?: string; method?: string; detail?: string };
-  const [subs, setSubs] = useState<{ claude: Sub; chatgpt: Sub } | null>(null);
+  type SubKey = 'claude' | 'chatgpt' | 'cursor';
+  const [subs, setSubs] = useState<{ claude: Sub; chatgpt: Sub; cursor: Sub } | null>(null);
   const [subBusy, setSubBusy] = useState<string | null>(null);
 
   async function reload() {
@@ -47,12 +59,12 @@ export function Settings({ store }: { store: FleetStore }) {
     setUpd(u);
     setManifestUrl(u?.updateManifestUrl ?? '');
     setUpdStatus(await call<typeof updStatus>('update:status').catch(() => null));
-    setSubs(await call<{ claude: Sub; chatgpt: Sub }>('subs:status').catch(() => null));
+    setSubs(await call<{ claude: Sub; chatgpt: Sub; cursor: Sub }>('subs:status').catch(() => null));
   }
   async function recheckSubs() {
-    setSubs(await call<{ claude: Sub; chatgpt: Sub }>('subs:status').catch(() => null));
+    setSubs(await call<{ claude: Sub; chatgpt: Sub; cursor: Sub }>('subs:status').catch(() => null));
   }
-  async function signinSub(provider: 'claude' | 'chatgpt') {
+  async function signinSub(provider: SubKey) {
     setSubBusy(provider);
     try {
       const r = await call<{ started: boolean; url?: string; error?: string }>('subs:signin', provider);
@@ -63,8 +75,8 @@ export function Settings({ store }: { store: FleetStore }) {
       setSubBusy(null);
     }
   }
-  async function signoutSub(provider: 'claude' | 'chatgpt') {
-    if (!window.confirm(`Sign out of ${provider === 'claude' ? 'Claude' : 'ChatGPT'}? Agents on that runtime will lose subscription access until you sign back in.`)) return;
+  async function signoutSub(provider: SubKey) {
+    if (!window.confirm(`Sign out of ${provider === 'claude' ? 'Claude' : provider === 'cursor' ? 'Cursor' : 'ChatGPT'}? Agents on that runtime will lose subscription access until you sign back in.`)) return;
     setSubBusy(provider);
     try {
       await call('subs:signout', provider);
@@ -93,7 +105,13 @@ export function Settings({ store }: { store: FleetStore }) {
   }
 
   async function addProvider() {
+    const entry = findProvider(catalogId);
     const p: ProviderProfile = { name: name.trim() || kind, kind, baseUrl: baseUrl.trim() || defaultBaseUrl(kind), apiKey: apiKey.trim() || undefined, enabled: true };
+    // Providers with no GET /models endpoint (Perplexity) ship a preset list so
+    // their models appear without a (failing) discovery probe.
+    if (entry?.models?.length) {
+      p.lastSync = { at: Date.now(), status: 'preset', modelCount: entry.models.length, models: entry.models };
+    }
     setBusy(true);
     try {
       setProviders(await call<ProviderRow[]>('providers:add', p));
@@ -119,6 +137,41 @@ export function Settings({ store }: { store: FleetStore }) {
   async function toggle(n: string) {
     setProviders(await call<ProviderRow[]>('providers:toggle', n));
   }
+
+  // Local models (Ollama): list installed + download a new one (streamed progress).
+  const POPULAR = ['llama3.2:1b', 'llama3.2:3b', 'qwen2.5:3b', 'qwen3:1.7b', 'gemma3:1b', 'gemma2:2b', 'phi3.5', 'deepseek-r1:1.5b', 'smollm2:1.7b', 'mistral'];
+  const [ollamaModels, setOllamaModels] = useState<{ name: string; size?: number; parameterSize?: string }[]>([]);
+  const [pullName, setPullName] = useState('llama3.2:1b');
+  const [pulling, setPulling] = useState(false);
+  const [pullMsg, setPullMsg] = useState('');
+  async function loadOllama() {
+    const r = await call<{ ok: boolean; models: { name: string; size?: number; parameterSize?: string }[] }>('ollama:tags').catch(() => ({ ok: false, models: [] as { name: string }[] }));
+    setOllamaModels(r.models ?? []);
+  }
+  async function pullModel() {
+    const m = pullName.trim();
+    if (!m || pulling) return;
+    setPulling(true);
+    setPullMsg(`starting ${m}…`);
+    try {
+      const r = await call<{ ok: boolean; error?: string }>('ollama:pull', m);
+      if (!r.ok) setPullMsg(`failed: ${r.error}`);
+      else { setPullMsg(`downloaded ${m} ✓`); await loadOllama(); }
+    } finally {
+      setPulling(false);
+    }
+  }
+  useEffect(() => {
+    void loadOllama();
+    const idagents = (window as { idagents?: { onOllamaPull?: (cb: (p: unknown) => void) => () => void } }).idagents;
+    const off = idagents?.onOllamaPull?.((p) => {
+      const o = p as { model?: string; status?: string; pct?: number; done?: boolean; error?: string };
+      if (o.done) setPullMsg(o.error ? `failed: ${o.error}` : `downloaded ${o.model} ✓`);
+      else setPullMsg(`${o.model}: ${o.status ?? 'pulling'}${o.pct != null ? ` · ${o.pct}%` : ''}`);
+    });
+    return () => off?.();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   return (
     <div className="view">
@@ -224,15 +277,15 @@ export function Settings({ store }: { store: FleetStore }) {
       </section>
 
       <section className="card">
-        <h3>Subscriptions (Claude · ChatGPT)</h3>
+        <h3>Subscriptions (Claude · ChatGPT · Cursor)</h3>
         <p className="muted small" style={{ marginTop: -4 }}>
-          Sign in with your subscription — these power the <span className="mono">claude-*</span> and{' '}
-          <span className="mono">codex</span> runtimes via OAuth (no API key, no metering). Separate from the metered API backends below.
+          Sign in with your subscription — these power the <span className="mono">claude-*</span>, <span className="mono">codex</span> and <span className="mono">cursor-cli</span> runtimes via OAuth (no API key, no metering). Separate from the metered API backends below.
         </p>
         {([
           ['claude', 'Claude (Anthropic)', subs?.claude],
           ['chatgpt', 'OpenAI (ChatGPT)', subs?.chatgpt],
-        ] as ['claude' | 'chatgpt', string, Sub | undefined][]).map(([key, label, s]) => (
+          ['cursor', 'Cursor', subs?.cursor],
+        ] as [SubKey, string, Sub | undefined][]).map(([key, label, s]) => (
           <div className="kv" key={key} style={{ marginBottom: 8 }}>
             <span>{label}</span>
             <b>
@@ -262,6 +315,34 @@ export function Settings({ store }: { store: FleetStore }) {
         <div className="row-actions" style={{ marginTop: 6 }}>
           <span className="muted small grow">Sign-in opens your browser to complete OAuth; status refreshes after.</span>
           <button className="btn" onClick={() => void recheckSubs()}>Re-check</button>
+        </div>
+      </section>
+
+      <section className="card">
+        <h3>Local models (Ollama)</h3>
+        <p className="muted small" style={{ marginTop: -4 }}>
+          Download a model to run locally via Ollama (<span className="mono">127.0.0.1:11434</span>) — these power the <span className="mono">ollama</span> runtime with no API key, fully offline.
+        </p>
+        <div className="row-actions" style={{ flexWrap: 'wrap', gap: 6 }}>
+          <span className="muted small">installed:</span>
+          {ollamaModels.length === 0 ? (
+            <span className="muted small grow">none yet</span>
+          ) : (
+            <span className="chips grow">
+              {ollamaModels.map((m) => (
+                <span className="chip" key={m.name} title={m.parameterSize ? `${m.parameterSize}` : undefined}>{m.name}</span>
+              ))}
+            </span>
+          )}
+          <button className="btn small" title="Refresh installed list" onClick={() => void loadOllama()}>↻</button>
+        </div>
+        <div className="row-actions" style={{ marginTop: 10 }}>
+          <input list="ollama-popular" style={{ width: 240 }} placeholder="model, e.g. llama3.2:1b" value={pullName} disabled={pulling} onChange={(e) => setPullName(e.target.value)} />
+          <datalist id="ollama-popular">{POPULAR.map((m) => <option key={m} value={m} />)}</datalist>
+          <button className="btn primary" disabled={pulling || !pullName.trim()} onClick={() => void pullModel()}>
+            {pulling ? 'Downloading…' : 'Download'}
+          </button>
+          {pullMsg ? <span className={`small grow ${/failed/.test(pullMsg) ? 'status-error' : pulling ? 'warn-text' : 'ok-text'}`}>{pullMsg}</span> : null}
         </div>
       </section>
 
@@ -357,20 +438,20 @@ export function Settings({ store }: { store: FleetStore }) {
         </table>
 
         <div className="add-provider">
-          <select
-            value={kind}
-            onChange={(e) => {
-              const k = e.target.value as ProviderKind;
-              setKind(k);
-              setBaseUrl(defaultBaseUrl(k));
-            }}
-          >
-            {KINDS.map((k) => (
-              <option key={k} value={k}>
-                {k}
-              </option>
-            ))}
+          <select value={catalogId} onChange={(e) => pickProvider(e.target.value)} title="Pick a provider to fill its endpoint">
+            <optgroup label="Local">
+              {PROVIDER_CATALOG.filter((e) => e.local).map((e) => <option key={e.id} value={e.id}>{e.name}</option>)}
+            </optgroup>
+            <optgroup label="Cloud">
+              {PROVIDER_CATALOG.filter((e) => !e.local).map((e) => <option key={e.id} value={e.id}>{e.name}</option>)}
+            </optgroup>
+            <option value="custom">Custom…</option>
           </select>
+          {catalogId === 'custom' ? (
+            <select value={kind} onChange={(e) => { const k = e.target.value as ProviderKind; setKind(k); setBaseUrl(defaultBaseUrl(k)); }}>
+              {KINDS.map((k) => <option key={k} value={k}>{k}</option>)}
+            </select>
+          ) : null}
           <input placeholder="name" value={name} onChange={(e) => setName(e.target.value)} />
           <input placeholder="base URL" value={baseUrl} onChange={(e) => setBaseUrl(e.target.value)} />
           <input

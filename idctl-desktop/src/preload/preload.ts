@@ -10,6 +10,8 @@ export interface IdAgentsApi {
   call<T = unknown>(method: string, ...args: unknown[]): Promise<{ ok: boolean; result?: T; error?: string }>;
   /** Subscribe to self-update status pushes from the main process. Returns an unsubscribe fn. */
   onUpdateStatus(cb: (status: unknown) => void): () => void;
+  /** Subscribe to Ollama model-pull progress. Returns an unsubscribe fn. */
+  onOllamaPull(cb: (progress: unknown) => void): () => void;
 }
 
 const api: IdAgentsApi = {
@@ -18,6 +20,11 @@ const api: IdAgentsApi = {
     const listener = (_e: unknown, status: unknown) => cb(status);
     ipcRenderer.on('update:status', listener);
     return () => ipcRenderer.removeListener('update:status', listener);
+  },
+  onOllamaPull: (cb) => {
+    const listener = (_e: unknown, progress: unknown) => cb(progress);
+    ipcRenderer.on('ollama:pull-progress', listener);
+    return () => ipcRenderer.removeListener('ollama:pull-progress', listener);
   },
 };
 

@@ -36,10 +36,12 @@ function normalizeBase(url: string): string {
   return url.trim().replace('://localhost', '://127.0.0.1').replace(/\/+$/, '');
 }
 
-/** Append the OpenAI-style models path without doubling a /v1 segment. */
+/** Append the OpenAI-style models path. If the base already ends at an API root
+ *  (`/v1` like Groq/Together, or `/openai` like Gemini's shim / DeepInfra), just
+ *  add `/models`; otherwise assume a bare host and add `/v1/models`. */
 function openAiModelsUrl(base: string): string {
   const b = normalizeBase(base);
-  return /\/v1$/.test(b) ? `${b}/models` : `${b}/v1/models`;
+  return /\/(v1|openai)$/.test(b) ? `${b}/models` : `${b}/v1/models`;
 }
 
 export class ProviderClient {

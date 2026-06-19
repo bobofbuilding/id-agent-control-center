@@ -7,7 +7,8 @@ import { app, BrowserWindow, ipcMain, shell } from 'electron';
 import { join } from 'node:path';
 import { call } from './bridge.ts';
 import { startUpdater, stopUpdater, checkForUpdate, getStatus, applyStagedAndRelaunch } from './updater.ts';
-import { subsStatus, subsSignin, subsSignout } from './subscriptions.ts';
+import { subsStatus, subsSignin, subsSignout, type SubProvider } from './subscriptions.ts';
+import { ollamaTags, ollamaPull } from './ollama.ts';
 import { loadSettings, setUpdateSettings } from '../../../idctl/src/settings/store.ts';
 
 // Bundled as CommonJS → __dirname is the output dir (out/main/).
@@ -76,9 +77,13 @@ async function appCall(method: string, args: unknown[]): Promise<unknown> {
     case 'subs:status':
       return subsStatus();
     case 'subs:signin':
-      return subsSignin(args[0] as 'claude' | 'chatgpt');
+      return subsSignin(args[0] as SubProvider);
     case 'subs:signout':
-      return subsSignout(args[0] as 'claude' | 'chatgpt');
+      return subsSignout(args[0] as SubProvider);
+    case 'ollama:tags':
+      return ollamaTags();
+    case 'ollama:pull':
+      return ollamaPull(args[0] as string);
     default:
       return call(method, args);
   }
