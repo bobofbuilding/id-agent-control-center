@@ -30,6 +30,21 @@ export async function call<T = unknown>(method: string, ...args: unknown[]): Pro
   return res.result as T;
 }
 
+/**
+ * The team's coordinator ("lead") agent name: the explicit coordinator if it
+ * names a current agent, else a lead/manager-named agent, else the first agent.
+ */
+export function resolveCoordinator(agents: Agent[], coordinator?: string): string | undefined {
+  if (coordinator && agents.some((a) => a.name === coordinator)) return coordinator;
+  return agents.find((a) => /^(lead|manager)$/i.test(a.name))?.name ?? agents[0]?.name;
+}
+/** Agents with the coordinator/lead first; the rest keep their existing order. */
+export function agentsLeadFirst(agents: Agent[], coordinator?: string): Agent[] {
+  const lead = resolveCoordinator(agents, coordinator);
+  if (!lead) return agents;
+  return [...agents].sort((a, b) => Number(b.name === lead) - Number(a.name === lead));
+}
+
 export interface FleetStore {
   connection: Connection;
   managerUrl: string;

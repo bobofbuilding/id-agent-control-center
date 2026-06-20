@@ -8,6 +8,11 @@ Every change pushed or merged to `main` carries its version number in the commit
 subject (`vX.Y.Z: …`), stamped automatically by the `commit-msg` hook — see
 [CONTRIBUTING.md](CONTRIBUTING.md).
 
+## [0.1.40] — 2026-06-20
+- Dashboard, Chat, and Teams now list the team's **coordinator (lead) first**.
+  In Chat the lead is also **auto-selected** as the message target (falling back
+  to it on a team switch), so you can start typing to the lead immediately.
+
 ## [0.1.39] — 2026-06-20
 - Update prompt repositioned to the **bottom-left of the sidebar, under Settings**
   — a small card (`⬆ vCURRENT → vNEW` + Restart & update + ✕) pinned to the

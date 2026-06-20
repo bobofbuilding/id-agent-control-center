@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { call, type FleetStore } from '../store.ts';
+import { call, agentsLeadFirst, type FleetStore } from '../store.ts';
 import { usePrompt } from '../components/prompt.tsx';
 import { offerableRuntimes } from '../../../../idctl/src/settings/runtimeCatalog.ts';
 
@@ -382,7 +382,7 @@ export function Teams({ store }: { store: FleetStore }) {
         {store.agents.length === 0 ? (
           <p className="muted small">No agents in {activeTeam}.</p>
         ) : (
-          store.agents.map((a) => {
+          agentsLeadFirst(store.agents, store.coordinator).map((a) => {
             const pol = (a.metadata as { delegates_to?: unknown })?.delegates_to;
             const m = agentEditing === a.id ? 'select' : modeOf(Array.isArray(pol) ? (pol as string[]) : null);
             const label =

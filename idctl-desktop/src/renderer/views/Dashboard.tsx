@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { call, type FleetStore } from '../store.ts';
+import { call, agentsLeadFirst, type FleetStore } from '../store.ts';
 import type { Agent } from '../../../../idctl/src/api/types.ts';
 import { RUNTIMES, offerableRuntimes } from '../../../../idctl/src/settings/runtimeCatalog.ts';
 
@@ -98,7 +98,9 @@ export function Dashboard({ store }: { store: FleetStore }) {
   const [catalog, setCatalog] = useState<Record<string, string[]>>({});
   const [providers, setProviders] = useState<ProviderRow[]>([]);
   const modelRefs = useRef<Record<string, HTMLSelectElement | null>>({});
-  const sel: Agent | undefined = store.agents.find((a) => a.id === selected) ?? store.agents[0];
+  // Coordinator/lead first, so the team's lead sits at the top of the table.
+  const orderedAgents = agentsLeadFirst(store.agents, store.coordinator);
+  const sel: Agent | undefined = orderedAgents.find((a) => a.id === selected) ?? orderedAgents[0];
   // Resolve agent ids → names for the activity feed (so it reads "coder replied",
   // not "agent_178…"). Recomputed each render; the fleet is small.
   const agentById = new Map(store.agents.map((a) => [a.id, a.name] as const));
@@ -219,7 +221,7 @@ export function Dashboard({ store }: { store: FleetStore }) {
               </tr>
             </thead>
             <tbody>
-              {store.agents.map((a) => {
+              {orderedAgents.map((a) => {
                 // Only models available for this agent's runtime, plus its current one.
                 const runtimeModels = catalog[a.runtime ?? ''] ?? [];
                 const modelOpts = Array.from(new Set([a.model, ...runtimeModels].filter(Boolean))) as string[];

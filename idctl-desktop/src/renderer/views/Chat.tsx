@@ -1,5 +1,5 @@
 import { useMemo, useRef, useState, useEffect } from 'react';
-import { call, type FleetStore } from '../store.ts';
+import { call, resolveCoordinator, agentsLeadFirst, type FleetStore } from '../store.ts';
 
 interface Msg {
   id: number;
@@ -10,16 +10,16 @@ interface Msg {
 }
 
 export function Chat({ store }: { store: FleetStore }) {
+  // The team's coordinator/lead is the default chat target — auto-selected.
   const defaultTarget = useMemo(
-    () =>
-      store.coordinator ??
-      store.agents.find((a) => /^(lead|manager)$/i.test(a.name))?.name ??
-      store.agents[0]?.name ??
-      'lead',
+    () => resolveCoordinator(store.agents, store.coordinator) ?? 'lead',
     [store.agents, store.coordinator],
   );
-  const [target, setTarget] = useState(defaultTarget);
-  useEffect(() => setTarget((t) => (store.agents.some((a) => a.name === t) ? t : defaultTarget)), [defaultTarget, store.agents]);
+  // `picked` is the user's manual choice; the active target falls back to the
+  // coordinator whenever nothing valid is picked (on load, or after a team switch).
+  const [picked, setPicked] = useState<string | null>(null);
+  const target = picked && store.agents.some((a) => a.name === picked) ? picked : defaultTarget;
+  const orderedAgents = agentsLeadFirst(store.agents, store.coordinator);
 
   const [input, setInput] = useState('');
   const [msgs, setMsgs] = useState<Msg[]>([
@@ -92,9 +92,9 @@ export function Chat({ store }: { store: FleetStore }) {
 
         <aside className="card targets">
           <h3>Address</h3>
-          {store.agents.map((a) => (
+          {orderedAgents.map((a) => (
             <div key={a.id} className={`target-row${a.name === target ? ' active' : ''}`}>
-              <button className="target" onClick={() => setTarget(a.name)}>
+              <button className="target" onClick={() => setPicked(a.name)}>
                 {a.name}
               </button>
               <button
