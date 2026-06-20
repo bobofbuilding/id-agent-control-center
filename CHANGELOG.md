@@ -8,6 +8,14 @@ Every change pushed or merged to `main` carries its version number in the commit
 subject (`vX.Y.Z: …`), stamped automatically by the `commit-msg` hook — see
 [CONTRIBUTING.md](CONTRIBUTING.md).
 
+## [0.1.41] — 2026-06-20
+- Dashboard layout: the agents table now sizes to its content (all columns show,
+  no horizontal scroll on open) and the **Activity feed absorbs the horizontal
+  stretch** when you widen the window.
+- Activity lines carry more context: each query now shows the **kind of response**
+  (message / heartbeat / error / code / question) and a **preview of the reply**
+  text — e.g. `coder replied · message · "Sent reply to remote"`.
+
 ## [0.1.40] — 2026-06-20
 - Dashboard, Chat, and Teams now list the team's **coordinator (lead) first**.
   In Chat the lead is also **auto-selected** as the message target (falling back

@@ -93,8 +93,12 @@ body {
 /* Dashboard: top row fills the window height; activity stretches with it. */
 .dash-top { flex: 1 1 auto; min-height: 0; }
 .dash-top > .card { min-height: 0; display: flex; flex-direction: column; }
-.dash-top > .grow:first-child { flex: 1.3; overflow: auto; }
-.dash-top > .feed { flex: 1.25; max-width: none; min-width: 340px; }
+/* Agents table sizes to its content (all columns show — no horizontal scroll on
+   open) and neither grows nor shrinks; the Activity feed absorbs all the
+   horizontal stretch when the window widens. */
+.dash-top > .grow:first-child { flex: 0 0 auto; overflow: visible; }
+.dash-top > .grow:first-child .grid { width: max-content; }
+.dash-top > .feed { flex: 1 1 auto; max-width: none; min-width: 300px; }
 .dash-top .feed-list { flex: 1; min-height: 0; }
 .center { display: flex; align-items: center; justify-content: center; }
 .pad { padding: 40px; }

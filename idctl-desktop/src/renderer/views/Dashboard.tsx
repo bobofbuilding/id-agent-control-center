@@ -61,10 +61,29 @@ function agentLabel(idOrName: string, byId: Map<string, string>): string {
   return byId.get(idOrName) ?? (/^agent_\d+_/.test(idOrName) ? '@' + idOrName.replace(/^agent_\d+_/, '') : idOrName);
 }
 const QUERY_VERB: Record<string, string> = {
-  dispatched: 'was sent a query', received: 'received a query', processing: 'is thinking',
+  dispatched: 'was asked', received: 'received a query', processing: 'is thinking',
   delivered: 'replied', done: 'finished', complete: 'finished', completed: 'finished',
-  failed: 'failed a query', timeout: 'timed out', cancelled: 'was cancelled', queued: 'queued a query',
+  failed: 'failed', timeout: 'timed out', cancelled: 'was cancelled', queued: 'queued a query',
 };
+/** Collapse whitespace and clip to n chars with an ellipsis. */
+function clip(s: string, n: number): string {
+  const t = s.replace(/\s+/g, ' ').trim();
+  return t.length > n ? t.slice(0, n) + '…' : t;
+}
+/** Best message/preview field carried by an event. */
+function previewOf(d: Record<string, unknown>): string {
+  return str(d.message_preview) || str(d.preview) || str(d.message) || str(d.text) || str(d.title) || str(d.note);
+}
+/** A short label for the kind of reply, inferred from its content. */
+function replyKind(preview: string): string {
+  const p = preview.toLowerCase();
+  if (!preview) return '';
+  if (/^ready\b/.test(p) || p === 'ok' || p === 'ack') return 'heartbeat';
+  if (/\b(error|failed|exception|cannot|denied|timeout)\b/.test(p)) return 'error';
+  if (/```|function|const |class |def |import |\bSELECT\b/.test(preview)) return 'code';
+  if (/\?$/.test(preview.trim())) return 'question';
+  return 'message';
+}
 /** Turn a raw manager event into a plain-English line, with agent names resolved. */
 function describe(e: { topic: string; subject?: unknown; actor?: string; data?: Record<string, unknown> }, name: (id: string) => string): string {
   const d = e.data ?? {};
@@ -73,17 +92,24 @@ function describe(e: { topic: string; subject?: unknown; actor?: string; data?: 
   if (t.startsWith('query:')) {
     const st = str(d.status) || t.split(':')[1] || '';
     const verb = QUERY_VERB[st] || (st ? `query ${st}` : 'query');
-    return who ? `${who} ${verb}` : verb;
+    const preview = previewOf(d);
+    const head = who ? `${who} ${verb}` : verb;
+    // e.g. "coder replied · message · "Here's the analysis of the…""
+    if (preview) {
+      const kind = replyKind(preview);
+      return `${head}${kind ? ` · ${kind}` : ''} · “${clip(preview, 88)}”`;
+    }
+    return head;
   }
-  if (t.startsWith('task:')) return [who, str(d.title) || str(d.status) || t.split(':')[1]].filter(Boolean).join(' — ');
+  if (t.startsWith('task:')) return [who, clip(previewOf(d) || str(d.status) || t.split(':')[1], 100)].filter(Boolean).join(' — ');
   if (t.startsWith('agent:')) return [who, t.split(':')[1]].filter(Boolean).join(' ');
-  if (t.startsWith('checkin')) return [name(str(d.delegate)) || who, str(d.title)].filter(Boolean).join(' — ');
+  if (t.startsWith('checkin')) return [name(str(d.delegate)) || who, clip(str(d.title), 90)].filter(Boolean).join(' — ');
   if (/relay|delegat|ask|deleg/.test(t)) {
     const to = name(str(d.to) || str(d.target) || str(d.delegate));
     return [who, to].filter(Boolean).join(' → ');
   }
-  const detail = str(d.status) || str(d.title) || str(d.message) || str(d.note);
-  return [who, detail].filter(Boolean).join(' · ') || t;
+  const detail = previewOf(d) || str(d.status);
+  return [who, clip(detail, 100)].filter(Boolean).join(' · ') || t;
 }
 function topicClass(t: string): string {
   if (/online|delivered|done|complete/.test(t)) return 'ok';
