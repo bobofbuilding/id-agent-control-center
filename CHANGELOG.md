@@ -8,6 +8,16 @@ Every change pushed or merged to `main` carries its version number in the commit
 subject (`vX.Y.Z: …`), stamped automatically by the `commit-msg` hook — see
 [CONTRIBUTING.md](CONTRIBUTING.md).
 
+## [0.1.28] — 2026-06-20
+- Local Models: each model now shows its **download size, parameters and context
+  window**, with a per-model **⚠ warning** when it's too large for the commanded
+  machine's RAM/disk (the manager host's CPU/RAM/free-disk is shown above the
+  list). One-click **Download** and **Remove** for models.
+- Local LLM stacks: **clickable Install / Uninstall** — opens the command in your
+  Terminal (visible and abortable; nothing runs silently), app-only stacks link
+  to their download — instead of copy-only. Plus a **port-collision ⚠** when a
+  stack's default port is already in use on the machine or shared by another stack.
+
 ## [0.1.27] — 2026-06-20
 - New **Local LLM stacks** catalog (Settings) — 21 self-hostable serving stacks
   from [awesome-llm-services](https://github.com/av/awesome-llm-services) you can

@@ -4,10 +4,13 @@ import { defaultBaseUrl, kindNeedsKey, type ProviderKind, type ProviderProfile }
 import type { ProbeOutcome } from '../../../../idctl/src/settings/ProviderClient.ts';
 import type { DiscoveredServer } from '../../../../idctl/src/settings/localDiscovery.ts';
 import { PROVIDER_CATALOG, findProvider } from '../../../../idctl/src/settings/providerCatalog.ts';
-import { LOCAL_MODEL_CATALOG, type ModelCapability } from '../../../../idctl/src/settings/modelCatalog.ts';
-import { LOCAL_STACKS } from '../../../../idctl/src/settings/localStacks.ts';
+import { LOCAL_MODEL_CATALOG, type ModelCapability, type LocalModelEntry } from '../../../../idctl/src/settings/modelCatalog.ts';
+import { LOCAL_STACKS, type LocalStackEntry } from '../../../../idctl/src/settings/localStacks.ts';
 
 const MODEL_CAPS: ModelCapability[] = ['general', 'tools', 'reasoning', 'coding', 'vision', 'embedding', 'fast'];
+
+/** Hardware of the machine the control center commands (the manager host; localhost here). */
+type HardwareInfo = { platform: string; arch: string; appleSilicon: boolean; cpu: string; totalRamGB: number; freeDiskGB: number | null };
 
 /** A discovered local server enriched by the bridge with whether it's already configured. */
 type Discovered = DiscoveredServer & { alreadyAdded: boolean };
@@ -241,6 +244,10 @@ export function Settings({ store }: { store: FleetStore }) {
   const [modelCap, setModelCap] = useState<ModelCapability | 'all'>('all');
   const [stackTag, setStackTag] = useState<string>('all');
   const [copied, setCopied] = useState<string | null>(null);
+  const [hardware, setHardware] = useState<HardwareInfo | null>(null);
+  const [confirmRemove, setConfirmRemove] = useState<string | null>(null);
+  const [removing, setRemoving] = useState<string | null>(null);
+  const [stackConfirm, setStackConfirm] = useState<string | null>(null);
   async function loadOllama() {
     const r = await call<{ ok: boolean; models: { name: string; size?: number; parameterSize?: string }[] }>('ollama:tags').catch(() => ({ ok: false, models: [] as { name: string }[] }));
     setOllamaModels(r.models ?? []);
@@ -275,8 +282,57 @@ export function Settings({ store }: { store: FleetStore }) {
   const stackTags = Array.from(new Set(LOCAL_STACKS.flatMap((s) => s.tags ?? []))).sort();
   const filteredStacks = stackTag === 'all' ? LOCAL_STACKS : LOCAL_STACKS.filter((s) => (s.tags ?? []).includes(stackTag));
   const runningPorts = new Set((discovered ?? []).map((d) => d.port));
+
+  function providerPort(p: ProviderRow): number | null {
+    try { const x = new URL(p.baseUrl).port; return x ? Number(x) : null; } catch { return null; }
+  }
+  /** Warn if a model is too large for the commanded machine's RAM/disk. */
+  function fitWarn(m: LocalModelEntry): { level: 'warn' | 'error'; msg: string } | null {
+    if (!hardware || !m.approxSizeGB) return null;
+    const size = m.approxSizeGB;
+    if (hardware.freeDiskGB != null && size > hardware.freeDiskGB) return { level: 'error', msg: `needs ${size}GB · ${hardware.freeDiskGB}GB disk free` };
+    const ram = hardware.totalRamGB; // unified memory on Apple Silicon bounds Ollama
+    if (size > ram * 0.9) return { level: 'error', msg: `~${size}GB won't fit in ${ram}GB RAM` };
+    if (size > ram * 0.6) return { level: 'warn', msg: `heavy for ${ram}GB RAM` };
+    return null;
+  }
+  async function removeModel(id: string) {
+    setRemoving(id); setPullMsg(`removing ${id}…`);
+    try {
+      const r = await call<{ ok: boolean; error?: string }>('ollama:remove', id);
+      setPullMsg(r.ok ? `removed ${id} ✓` : `remove failed: ${r.error}`);
+      if (r.ok) await loadOllama();
+    } finally { setRemoving(null); setConfirmRemove(null); }
+  }
+  // Stack install commands: runnable (open Terminal) vs app-download (link out).
+  const RUNNABLE_RE = /^(brew|pip|pipx|uv|cargo|curl|docker|conda|npm|npx)\b/;
+  function stackCmd(s: LocalStackEntry): string { return (s.install ?? '').split('#')[0].trim(); }
+  function stackInstallCmd(s: LocalStackEntry): string | null { const c = stackCmd(s); return c && RUNNABLE_RE.test(c) ? c : null; }
+  function stackUninstallCmd(s: LocalStackEntry): string | null {
+    const c = stackCmd(s); let m: RegExpMatchArray | null;
+    if ((m = c.match(/^brew install --cask (\S+)/))) return `brew uninstall --cask ${m[1]}`;
+    if ((m = c.match(/^brew install (\S+)/))) return `brew uninstall ${m[1]}`;
+    if ((m = c.match(/^pipx install (\S+)/))) return `pipx uninstall ${m[1]}`;
+    if ((m = c.match(/^pip install (\S+)/))) return `pip uninstall -y ${m[1]}`;
+    return null;
+  }
+  async function runStackCmd(key: string, cmd: string) {
+    setStackConfirm(null);
+    const r = await call<{ ran: boolean }>('app:runInTerminal', cmd).catch(() => ({ ran: false }));
+    if (!r.ran) await copyText(key, cmd); // Terminal automation blocked → clipboard fallback
+  }
+  /** Port-conflict risk for a stack: already-in-use (strong) or shared default (info). */
+  function stackPortWarn(s: LocalStackEntry): { level: 'warn' | 'error'; msg: string } | null {
+    if (s.defaultPort == null) return null;
+    if (runningPorts.has(s.defaultPort) || providers.some((p) => providerPort(p) === s.defaultPort)) {
+      return { level: 'error', msg: `port ${s.defaultPort} already in use on this machine` };
+    }
+    const others = LOCAL_STACKS.filter((x) => x.id !== s.id && x.defaultPort === s.defaultPort).length;
+    return others ? { level: 'warn', msg: `port ${s.defaultPort} also default for ${others} other${others > 1 ? 's' : ''}` } : null;
+  }
   useEffect(() => {
     void loadOllama();
+    void call<HardwareInfo>('app:hardware').then(setHardware).catch(() => {});
     const idagents = (window as { idagents?: { onOllamaPull?: (cb: (p: unknown) => void) => () => void } }).idagents;
     const off = idagents?.onOllamaPull?.((p) => {
       const o = p as { model?: string; status?: string; pct?: number; done?: boolean; error?: string };
@@ -439,6 +495,11 @@ export function Settings({ store }: { store: FleetStore }) {
         <p className="muted small" style={{ marginTop: -4 }}>
           Download a model to run locally via Ollama (<span className="mono">127.0.0.1:11434</span>) — these power the <span className="mono">ollama</span> runtime with no API key, fully offline.
         </p>
+        {hardware ? (
+          <p className="muted small" style={{ marginTop: -2 }}>
+            Commanded machine: <b>{hardware.cpu}</b> · {hardware.totalRamGB}GB RAM{hardware.freeDiskGB != null ? ` · ${hardware.freeDiskGB}GB disk free` : ''} — size warnings below are checked against it.
+          </p>
+        ) : null}
         <div className="row-actions" style={{ flexWrap: 'wrap', gap: 6 }}>
           <span className="muted small">installed:</span>
           {ollamaModels.length === 0 ? (
@@ -476,17 +537,29 @@ export function Settings({ store }: { store: FleetStore }) {
           <div className="catalog-grid">
             {filteredModels.map((m) => {
               const inst = modelInstalled(m.id);
+              const warn = fitWarn(m);
               return (
                 <div className="catalog-row" key={m.id} title={`${m.blurb ?? ''}${m.license ? `  ·  ${m.license}` : ''}`}>
                   <span className="b mono">{m.id}{m.recommended ? <span className="ok-text small" title="Recommended in its size class"> ★</span> : null}</span>
-                  <span className="muted small">{m.params}{m.approxSizeGB ? ` · ~${m.approxSizeGB}GB` : ''}</span>
+                  <span className="muted small">{m.params}{m.approxSizeGB ? ` · ~${m.approxSizeGB}GB` : ''}{m.contextLabel ? ` · ${m.contextLabel} ctx` : ''}</span>
                   <span className="chips grow">
-                    {m.capabilities.slice(0, 4).map((c) => <span key={c} className="chip tag">{c}</span>)}
+                    {m.capabilities.slice(0, 3).map((c) => <span key={c} className="chip tag">{c}</span>)}
                   </span>
+                  {warn ? <span className={`small ${warn.level === 'error' ? 'status-error' : 'warn-text'}`} title="Checked against the commanded machine's RAM/disk">⚠ {warn.msg}</span> : null}
                   {inst ? (
-                    <span className="ok-text small">installed ✓</span>
+                    confirmRemove === m.id ? (
+                      <>
+                        <button className="btn small icon-danger" disabled={removing === m.id} onClick={() => void removeModel(m.id)}>{removing === m.id ? '…' : 'Remove?'}</button>
+                        <button className="btn small" disabled={removing === m.id} onClick={() => setConfirmRemove(null)}>Cancel</button>
+                      </>
+                    ) : (
+                      <>
+                        <span className="ok-text small">installed ✓</span>
+                        <button className="btn small icon-danger" title="Uninstall this model" onClick={() => setConfirmRemove(m.id)}>✕</button>
+                      </>
+                    )
                   ) : (
-                    <button className="btn small primary" disabled={pulling} onClick={() => void pull(m.id)}>Download</button>
+                    <button className="btn small primary" disabled={pulling} title={warn ? warn.msg : undefined} onClick={() => void pull(m.id)}>Download</button>
                   )}
                 </div>
               );
@@ -499,7 +572,7 @@ export function Settings({ store }: { store: FleetStore }) {
       <section className="card">
         <h3>Local LLM stacks</h3>
         <p className="muted small" style={{ marginTop: -4 }}>
-          Self-hostable inference servers you can run <b>next to Ollama</b> — from <a className="ext-link" href="https://github.com/av/awesome-llm-services" target="_blank" rel="noreferrer">awesome-llm-services</a>. Install one, then it shows up under <b>Discover local servers</b> below and can be added as a backend. Commands are shown to run yourself — nothing is executed for you.
+          Self-hostable inference servers you can run <b>next to Ollama</b> — from <a className="ext-link" href="https://github.com/av/awesome-llm-services" target="_blank" rel="noreferrer">awesome-llm-services</a>. <b>Install</b> opens the command in your Terminal (visible and abortable — nothing runs silently); app-only stacks link to their download. Once installed it appears under <b>Discover local servers</b> below and can be added as a backend. ⚠ flags a port already in use on this machine.
         </p>
         <div className="row-actions" style={{ flexWrap: 'wrap', gap: 6 }}>
           <span className="chips grow">
@@ -514,6 +587,9 @@ export function Settings({ store }: { store: FleetStore }) {
         <div className="stack-list">
           {filteredStacks.map((s) => {
             const running = s.defaultPort != null && runningPorts.has(s.defaultPort);
+            const pw = stackPortWarn(s);
+            const ic = stackInstallCmd(s);
+            const uc = stackUninstallCmd(s);
             return (
               <div className="stack-row" key={s.id}>
                 <div className="stack-head">
@@ -522,16 +598,39 @@ export function Settings({ store }: { store: FleetStore }) {
                   <span className="muted small">{s.openaiCompatible ? 'OpenAI-compatible' : s.apiKind}</span>
                   {s.appleSilicon ? <span className="chip tag" title="Apple-Silicon native">Apple Silicon</span> : null}
                   {running ? <span className="ok-text small" title="Detected running by the last scan">● running</span> : null}
+                  {pw ? <span className={`small ${pw.level === 'error' ? 'status-error' : 'warn-text'}`} title="Port-conflict risk if you run this on its default port">⚠ {pw.msg}</span> : null}
                   <span className="grow" />
                   <a className="ext-link small" href={s.homepage} target="_blank" rel="noreferrer">docs ↗</a>
                 </div>
                 <p className="muted small stack-blurb">{s.blurb}</p>
-                {s.install ? (
-                  <div className="stack-install">
-                    <code className="mono">{s.install}</code>
-                    <button className="btn small" onClick={() => void copyText(s.id, s.install!)}>{copied === s.id ? 'copied ✓' : 'copy'}</button>
-                  </div>
-                ) : null}
+                <div className="stack-install">
+                  <code className="mono">{s.install ?? '(see docs)'}</code>
+                  <span className="row-actions">
+                    {ic ? (
+                      stackConfirm === `i:${s.id}` ? (
+                        <>
+                          <button className="btn small primary" title="Runs the install in your Terminal — visible and abortable" onClick={() => void runStackCmd(s.id, ic)}>Run in Terminal</button>
+                          <button className="btn small" onClick={() => setStackConfirm(null)}>Cancel</button>
+                        </>
+                      ) : (
+                        <button className="btn small primary" onClick={() => setStackConfirm(`i:${s.id}`)}>Install</button>
+                      )
+                    ) : (
+                      <a className="btn small" href={s.homepage} target="_blank" rel="noreferrer" title="No CLI install — opens the download page">Get ↗</a>
+                    )}
+                    {uc ? (
+                      stackConfirm === `u:${s.id}` ? (
+                        <>
+                          <button className="btn small icon-danger" onClick={() => void runStackCmd(s.id, uc)}>Uninstall in Terminal</button>
+                          <button className="btn small" onClick={() => setStackConfirm(null)}>Cancel</button>
+                        </>
+                      ) : (
+                        <button className="btn small" onClick={() => setStackConfirm(`u:${s.id}`)}>Uninstall</button>
+                      )
+                    ) : null}
+                    <button className="btn small" title="Copy the command" onClick={() => void copyText(s.id, s.install ?? '')}>{copied === s.id ? '✓' : 'copy'}</button>
+                  </span>
+                </div>
               </div>
             );
           })}

@@ -8,7 +8,8 @@ import { join } from 'node:path';
 import { call } from './bridge.ts';
 import { startUpdater, stopUpdater, checkForUpdate, getStatus, applyStagedAndRelaunch } from './updater.ts';
 import { subsStatus, subsSignin, subsSignout, subsInstall, type SubProvider } from './subscriptions.ts';
-import { ollamaTags, ollamaPull } from './ollama.ts';
+import { ollamaTags, ollamaPull, ollamaRemove } from './ollama.ts';
+import { getHardware, runInTerminal } from './system.ts';
 import { loadSettings, setUpdateSettings } from '../../../idctl/src/settings/store.ts';
 
 // Bundled as CommonJS → __dirname is the output dir (out/main/).
@@ -116,6 +117,12 @@ async function appCall(method: string, args: unknown[]): Promise<unknown> {
       return ollamaTags();
     case 'ollama:pull':
       return ollamaPull(args[0] as string);
+    case 'ollama:remove':
+      return ollamaRemove(args[0] as string);
+    case 'app:hardware':
+      return getHardware();
+    case 'app:runInTerminal':
+      return runInTerminal(args[0] as string);
     default:
       return call(method, args);
   }

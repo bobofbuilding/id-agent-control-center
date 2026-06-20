@@ -34,6 +34,29 @@ export async function ollamaTags(): Promise<{ ok: boolean; models: OllamaModel[]
   }
 }
 
+/** Delete an installed model (`DELETE /api/delete`). */
+export async function ollamaRemove(model: string): Promise<{ ok: boolean; error?: string }> {
+  const name = String(model || '').trim();
+  if (!name || name.length > 128 || !/^[A-Za-z0-9][A-Za-z0-9._:@/-]*$/.test(name)) {
+    return { ok: false, error: 'invalid model name' };
+  }
+  try {
+    const res = await fetch(`${OLLAMA}/api/delete`, {
+      method: 'DELETE',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ model: name }),
+      signal: AbortSignal.timeout(15000),
+    });
+    if (!res.ok) {
+      const t = await res.text().catch(() => '');
+      return { ok: false, error: `HTTP ${res.status} ${t}`.trim() };
+    }
+    return { ok: true };
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : String(e) };
+  }
+}
+
 function emit(progress: unknown): void {
   for (const w of BrowserWindow.getAllWindows()) w.webContents.send(PROGRESS_CHANNEL, progress);
 }
