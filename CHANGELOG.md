@@ -8,6 +8,10 @@ Every change pushed or merged to `main` carries its version number in the commit
 subject (`vX.Y.Z: …`), stamped automatically by the `commit-msg` hook — see
 [CONTRIBUTING.md](CONTRIBUTING.md).
 
+## [0.1.31] — 2026-06-20
+- Teams: moved the **Lead hierarchy** card to the bottom of the page, below the
+  team list, add-agent, and relay sections.
+
 ## [0.1.30] — 2026-06-20
 - Settings now opens with a **Hardware** card — the commanded machine's compute
   spec (chip/CPU, CPU + GPU cores, unified/RAM, free-of-total disk, platform),

@@ -252,39 +252,6 @@ export function Teams({ store }: { store: FleetStore }) {
       </section>
 
       <section className="card">
-        <h3>Lead hierarchy</h3>
-        <p className="muted small" style={{ marginTop: -4 }}>
-          The primary coordinator across teams — it delegates to each team's lead, which delegates to its workers.
-        </p>
-        <div className="hierarchy">
-          {hier.primary ? (
-            <>
-              <div className="hier-node primary">
-                ⭑ {hier.primary.team}/{hier.primary.agent} <span className="muted">— primary lead</span>
-              </div>
-              {Object.entries(hier.coordinators)
-                .filter(([t, ag]) => !(t === hier.primary!.team && ag === hier.primary!.agent))
-                .map(([t, ag]) => (
-                  <div className="hier-node child" key={t}>
-                    └ {t}/{ag} <span className="muted">— reports to primary</span>
-                  </div>
-                ))}
-            </>
-          ) : (
-            <div className="muted">
-              No primary lead set. With several team leads, designate one as the top of the hierarchy — it delegates
-              across teams to the per-team coordinators (via <code>/ask &lt;team&gt;/&lt;agent&gt;</code>).
-            </div>
-          )}
-        </div>
-        <div className="row-actions" style={{ marginTop: 10 }}>
-          <button className="btn" disabled={busy} onClick={() => void makePrimary()}>
-            Make “{activeTeam}” coordinator the primary lead
-          </button>
-        </div>
-      </section>
-
-      <section className="card">
         <h3>Add agent — {activeTeam}</h3>
         <p className="muted small" style={{ marginTop: -4 }}>
           Create and start a new agent in <b>{activeTeam}</b>. Only a name is required; everything else has sensible defaults.
@@ -452,6 +419,39 @@ export function Teams({ store }: { store: FleetStore }) {
             );
           })
         )}
+      </section>
+
+      <section className="card">
+        <h3>Lead hierarchy</h3>
+        <p className="muted small" style={{ marginTop: -4 }}>
+          The primary coordinator across teams — it delegates to each team's lead, which delegates to its workers.
+        </p>
+        <div className="hierarchy">
+          {hier.primary ? (
+            <>
+              <div className="hier-node primary">
+                ⭑ {hier.primary.team}/{hier.primary.agent} <span className="muted">— primary lead</span>
+              </div>
+              {Object.entries(hier.coordinators)
+                .filter(([t, ag]) => !(t === hier.primary!.team && ag === hier.primary!.agent))
+                .map(([t, ag]) => (
+                  <div className="hier-node child" key={t}>
+                    └ {t}/{ag} <span className="muted">— reports to primary</span>
+                  </div>
+                ))}
+            </>
+          ) : (
+            <div className="muted">
+              No primary lead set. With several team leads, designate one as the top of the hierarchy — it delegates
+              across teams to the per-team coordinators (via <code>/ask &lt;team&gt;/&lt;agent&gt;</code>).
+            </div>
+          )}
+        </div>
+        <div className="row-actions" style={{ marginTop: 10 }}>
+          <button className="btn" disabled={busy} onClick={() => void makePrimary()}>
+            Make “{activeTeam}” coordinator the primary lead
+          </button>
+        </div>
       </section>
 
       {msg ? <p className="muted">{msg}</p> : null}
