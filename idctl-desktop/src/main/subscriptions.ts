@@ -13,7 +13,8 @@
 import { execFile, spawn } from 'node:child_process';
 import { promisify } from 'node:util';
 import { homedir } from 'node:os';
-import { existsSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { shell } from 'electron';
 
 const execFileP = promisify(execFile);
@@ -97,11 +98,55 @@ async function claudeStatus(): Promise<SubStatus> {
   }
 }
 
+/** codex stores OAuth tokens at $CODEX_HOME/auth.json (default ~/.codex). */
+function codexHome(): string {
+  return process.env.CODEX_HOME || join(homedir(), '.codex');
+}
+
+/** Prettify an OpenAI `chatgpt_plan_type` token (best-effort; raw value as fallback). */
+function prettyChatgptPlan(t: string): string {
+  const map: Record<string, string> = {
+    free: 'Free', plus: 'Plus', pro: 'Pro', prolite: 'Pro (lite)',
+    team: 'Team', business: 'Business', enterprise: 'Enterprise', edu: 'Edu',
+  };
+  return map[t.toLowerCase()] ?? t.charAt(0).toUpperCase() + t.slice(1);
+}
+
+/**
+ * Best-effort identity for a ChatGPT-authenticated codex install. `codex login
+ * status` only prints "Logged in using ChatGPT" — the email and plan live in the
+ * OAuth id_token (a JWT) inside ~/.codex/auth.json. We decode ONLY the JWT's
+ * identity claims (email + plan); the access/refresh tokens are never read out.
+ * Never throws — returns {} if the file/token is absent or malformed (e.g. an
+ * API-key login, which carries no id_token).
+ */
+function codexAccount(): { email?: string; plan?: string } {
+  try {
+    const file = join(codexHome(), 'auth.json');
+    if (!existsSync(file)) return {};
+    const auth = JSON.parse(readFileSync(file, 'utf8')) as { tokens?: { id_token?: string } };
+    const idToken = auth.tokens?.id_token;
+    if (!idToken || idToken.split('.').length !== 3) return {};
+    // JWT payload is the middle base64url segment; decode just its claims.
+    const payload = JSON.parse(Buffer.from(idToken.split('.')[1], 'base64url').toString('utf8')) as Record<string, unknown>;
+    const email = typeof payload.email === 'string' ? payload.email : undefined;
+    const authClaim = payload['https://api.openai.com/auth'] as { chatgpt_plan_type?: string } | undefined;
+    const planType = authClaim?.chatgpt_plan_type;
+    const plan = typeof planType === 'string' && planType ? prettyChatgptPlan(planType) : undefined;
+    return { email, plan };
+  } catch {
+    return {};
+  }
+}
+
 async function codexStatus(): Promise<SubStatus> {
   try {
     const { stdout, stderr } = await execFileP('codex', ['login', 'status'], { env: cliEnv(), timeout: 8000 });
     const out = `${stdout}${stderr}`.trim();
-    return { provider: 'chatgpt', loggedIn: /logged in/i.test(out), detail: out };
+    const loggedIn = /logged in/i.test(out);
+    // Only surface identity when actually signed in (don't read stale tokens otherwise).
+    const acct = loggedIn ? codexAccount() : {};
+    return { provider: 'chatgpt', loggedIn, plan: acct.plan, email: acct.email, detail: out };
   } catch (e: unknown) {
     const err = e as { stdout?: string; message?: string };
     return { provider: 'chatgpt', loggedIn: false, detail: (err.stdout || err.message || '').trim() };

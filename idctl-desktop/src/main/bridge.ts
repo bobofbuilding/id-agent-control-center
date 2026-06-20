@@ -26,6 +26,7 @@ import {
   removeProject,
 } from '../../../idctl/src/settings/store.ts';
 import { ProviderClient } from '../../../idctl/src/settings/ProviderClient.ts';
+import { discoverLocalServers, type DiscoveredServer } from '../../../idctl/src/settings/localDiscovery.ts';
 import { kindNeedsKey, type ProviderProfile, type McpServerProfile, type ProjectEntry } from '../../../idctl/src/settings/schema.ts';
 import { buildRuntimeCatalog } from '../../../idctl/src/settings/runtimeCatalog.ts';
 import { testMcpServer } from './mcpTest.ts';
@@ -234,7 +235,19 @@ const METHODS: Record<string, (...a: any[]) => Promise<unknown>> = {
     });
     return { providers: listProvidersEnriched(), outcome };
   },
+  // Scan localhost for running LLM servers and flag which are already configured
+  // (matched by normalized baseUrl, so adding the same server twice is avoided).
+  'providers:discover': async () => {
+    const found = await discoverLocalServers();
+    const have = new Set(loadSettings().providers.map((p) => normUrl(p.baseUrl)));
+    return found.map((s: DiscoveredServer) => ({ ...s, alreadyAdded: have.has(normUrl(s.baseUrl)) }));
+  },
 };
+
+/** Loose URL normalization for de-duping discovered servers against existing providers. */
+function normUrl(u: string): string {
+  return u.trim().toLowerCase().replace('://localhost', '://127.0.0.1').replace(/\/+$/, '');
+}
 
 export async function call(method: string, args: unknown[] = []): Promise<unknown> {
   if (method === 'setTeam') {

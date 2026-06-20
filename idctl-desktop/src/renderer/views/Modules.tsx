@@ -6,6 +6,19 @@ import {
   type McpTransport,
 } from '../../../../idctl/src/settings/schema.ts';
 import { MCP_CATALOG, buildFromCatalog } from '../../../../idctl/src/settings/mcpCatalog.ts';
+import { runtimeSupports, capabilityDenyReason, type RuntimeCapability } from '../../../../idctl/src/settings/runtimeCatalog.ts';
+import type { Agent } from '../../../../idctl/src/api/types.ts';
+
+/** Each Capabilities tab maps to the runtime capability an agent must support. */
+const TAB_CAPABILITY: Record<'mcp' | 'skills' | 'plugins', RuntimeCapability> = {
+  mcp: 'mcp',
+  skills: 'skills',
+  plugins: 'plugins',
+};
+/** An agent's effective runtime (top-level, falling back to metadata). */
+function agentRuntime(a: Agent): string | undefined {
+  return a.runtime ?? a.metadata?.runtime;
+}
 
 const TRANSPORTS: McpTransport[] = ['stdio', 'http', 'sse'];
 
@@ -67,6 +80,15 @@ export function Modules({ store }: { store: FleetStore }) {
   // selected agents; switch teams with the team picker in the header. Default
   // (untouched) = every agent in the team; toggling switches to an explicit set.
   const activeTeam = store.team ?? 'default';
+  // Capability gating: an agent can only be a target for the active tab's
+  // capability if its runtime can actually consume it (e.g. ollama can't use
+  // MCP — see LOCAL_MODEL_TOOL_CALLING_PLAN.md). Incompatible agents are shown
+  // disabled and excluded from every apply/attach/install action.
+  const capForTab: RuntimeCapability = TAB_CAPABILITY[tab];
+  const agentSupports = (a: Agent) => runtimeSupports(agentRuntime(a), capForTab);
+  const eligibleAgents = store.agents.filter(agentSupports);
+  const incompatAgents = store.agents.filter((a) => !agentSupports(a));
+
   const [touched, setTouched] = useState(false);
   const [explicit, setExplicit] = useState<Set<string>>(new Set());
   useEffect(() => {
@@ -74,11 +96,18 @@ export function Modules({ store }: { store: FleetStore }) {
     setExplicit(new Set());
     setNote('');
   }, [store.team]);
-  const selectedIds: Set<string> = touched ? explicit : new Set(store.agents.map((a) => a.id));
-  const targetAgents = store.agents.filter((a) => selectedIds.has(a.id));
+  // Switching tabs changes the eligible set, so reset the explicit selection.
+  useEffect(() => {
+    setTouched(false);
+    setExplicit(new Set());
+  }, [tab]);
+  // Default (untouched) = every ELIGIBLE agent; an explicit set is always
+  // intersected with eligibility so an incompatible agent can never be a target.
+  const selectedIds: Set<string> = touched ? explicit : new Set(eligibleAgents.map((a) => a.id));
+  const targetAgents = eligibleAgents.filter((a) => selectedIds.has(a.id));
   const targetCount = targetAgents.length;
   function baseSet(): Set<string> {
-    return touched ? explicit : new Set(store.agents.map((a) => a.id));
+    return touched ? new Set(explicit) : new Set(eligibleAgents.map((a) => a.id));
   }
   function toggleAgent(id: string) {
     const n = baseSet();
@@ -86,7 +115,7 @@ export function Modules({ store }: { store: FleetStore }) {
     setExplicit(n);
     setTouched(true);
   }
-  function selectAll() { setExplicit(new Set(store.agents.map((a) => a.id))); setTouched(true); }
+  function selectAll() { setExplicit(new Set(eligibleAgents.map((a) => a.id))); setTouched(true); }
   function selectNone() { setExplicit(new Set()); setTouched(true); }
 
   // How many selected agents currently have a given MCP server / skill.
@@ -319,16 +348,24 @@ export function Modules({ store }: { store: FleetStore }) {
             <>
               <span className="chips">
                 {store.agents.map((a) => {
-                  const on = selectedIds.has(a.id);
+                  const compat = agentSupports(a);
+                  const on = compat && selectedIds.has(a.id);
+                  const why = compat ? undefined : `${a.name} · ${agentRuntime(a) ?? 'unknown runtime'} — ${capabilityDenyReason(agentRuntime(a), capForTab)}`;
                   return (
-                    <button key={a.id} className={`chip${on ? ' on' : ''}`} disabled={busy} onClick={() => toggleAgent(a.id)}>
-                      {on ? '✓ ' : ''}{a.name}
+                    <button
+                      key={a.id}
+                      className={`chip${on ? ' on' : ''}${compat ? '' : ' incompat'}`}
+                      disabled={busy || !compat}
+                      title={why}
+                      onClick={() => compat && toggleAgent(a.id)}
+                    >
+                      {on ? '✓ ' : ''}{a.name}{compat ? '' : ' ⊘'}
                     </button>
                   );
                 })}
               </span>
-              <button className="btn small" disabled={busy} onClick={() => (targetCount === store.agents.length ? selectNone() : selectAll())}>
-                {targetCount === store.agents.length ? 'none' : 'all'}
+              <button className="btn small" disabled={busy || eligibleAgents.length === 0} onClick={() => (targetCount === eligibleAgents.length ? selectNone() : selectAll())}>
+                {targetCount === eligibleAgents.length ? 'none' : 'all'}
               </button>
             </>
           )}
@@ -347,13 +384,19 @@ export function Modules({ store }: { store: FleetStore }) {
         ))}
       </div>
 
+      {incompatAgents.length > 0 ? (
+        <div className="muted small" title={incompatAgents.map((a) => `${a.name} (${agentRuntime(a) ?? 'unknown'})`).join(', ')}>
+          ⊘ {incompatAgents.length} agent{incompatAgents.length > 1 ? 's' : ''} can’t use {tab === 'mcp' ? 'MCP' : tab} on their runtime{eligibleAgents.length === 0 ? ' — no eligible agents in this team' : ''} — {incompatAgents.map((a) => a.name).join(', ')}.
+        </div>
+      ) : null}
+
       {note ? <div className="muted small">{note}</div> : null}
 
       {tab === 'mcp' ? (
       <section className="card grow">
         <h3>MCP servers — new tools via external servers</h3>
         <p className="muted small" style={{ marginTop: -4 }}>
-          External tool servers your agent connects to — they give it brand-new <b>tools</b> (filesystem, web search, databases, GitHub…). Pick one, <b>Test</b> it (launches it and lists its tools), then <b>Attach</b> to <b>{targetLabel}</b> and Rebuild. Attach/Detach apply to every selected agent. Claude-runtime agents only.
+          External tool servers your agent connects to — they give it brand-new <b>tools</b> (filesystem, web search, databases, GitHub…). Pick one, <b>Test</b> it (launches it and lists its tools), then <b>Attach</b> to <b>{targetLabel}</b> and Rebuild. Attach/Detach apply to every selected agent. <b>Claude & Codex runtimes</b> only — local models gain MCP once the tool-calling loop ships.
         </p>
         <table className="grid">
           <thead>

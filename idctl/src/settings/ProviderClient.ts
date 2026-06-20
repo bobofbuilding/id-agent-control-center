@@ -30,6 +30,23 @@ export interface ProbeOutcome {
   httpStatus?: number;
   models: DiscoveredModel[];
   message?: string;
+  /**
+   * Whether the JSON body had the expected list shape (ollama → `models[]`,
+   * OpenAI-style → `data[]`). Lets discovery reject a random 200-OK JSON service
+   * squatting on a probed port without also rejecting a real-but-empty server.
+   */
+  shaped?: boolean;
+}
+
+/**
+ * Bound + sanitize a model id from an untrusted server: strip control/bidi
+ * characters and cap length, so a hostile or buggy process on a probed loopback
+ * port can't write megabyte / homoglyph / RTL-spoofed ids into the config file
+ * or the DOM. Returns '' (dropped by the caller) when nothing usable remains.
+ */
+function sanitizeModelId(s: string): string {
+  const cleaned = s.replace(/[\u0000-\u001F\u007F-\u009F\u200B-\u200F\u202A-\u202E\u2066-\u2069]/g, '').trim();
+  return cleaned.length > 0 && cleaned.length <= 256 ? cleaned : '';
 }
 
 function normalizeBase(url: string): string {
@@ -100,7 +117,9 @@ export class ProviderClient {
     } catch {
       return { ok: false, status: 'error', httpStatus: res.status, models: [], message: 'response was not JSON' };
     }
-    return { ok: true, status: 'live', httpStatus: res.status, models: this.parse(body) };
+    const b = body as Record<string, unknown>;
+    const shaped = this.p.kind === 'ollama' ? Array.isArray(b?.models) : Array.isArray(b?.data);
+    return { ok: true, status: 'live', httpStatus: res.status, models: this.parse(body), shaped };
   }
 
   private parse(body: unknown): DiscoveredModel[] {
@@ -109,7 +128,7 @@ export class ProviderClient {
       const models = Array.isArray(b?.models) ? (b.models as Record<string, unknown>[]) : [];
       return models
         .map((m): DiscoveredModel | null => {
-          const id = String(m.name ?? m.model ?? '');
+          const id = sanitizeModelId(String(m.name ?? m.model ?? ''));
           const d = (m.details ?? {}) as Record<string, unknown>;
           const detail = [d.parameter_size, d.quantization_level].filter(Boolean).join(' ');
           return id ? { id, detail: detail || undefined } : null;
@@ -120,7 +139,7 @@ export class ProviderClient {
     const data = Array.isArray(b?.data) ? (b.data as Record<string, unknown>[]) : [];
     return data
       .map((m): DiscoveredModel | null => {
-        const id = String(m.id ?? '');
+        const id = sanitizeModelId(String(m.id ?? ''));
         const label = m.display_name ? String(m.display_name) : undefined;
         return id ? { id, label } : null;
       })

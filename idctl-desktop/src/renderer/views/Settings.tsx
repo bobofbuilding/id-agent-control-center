@@ -2,7 +2,15 @@ import { Fragment, useEffect, useState } from 'react';
 import { call, type FleetStore } from '../store.ts';
 import { defaultBaseUrl, kindNeedsKey, type ProviderKind, type ProviderProfile } from '../../../../idctl/src/settings/schema.ts';
 import type { ProbeOutcome } from '../../../../idctl/src/settings/ProviderClient.ts';
+import type { DiscoveredServer } from '../../../../idctl/src/settings/localDiscovery.ts';
 import { PROVIDER_CATALOG, findProvider } from '../../../../idctl/src/settings/providerCatalog.ts';
+import { LOCAL_MODEL_CATALOG, type ModelCapability } from '../../../../idctl/src/settings/modelCatalog.ts';
+import { LOCAL_STACKS } from '../../../../idctl/src/settings/localStacks.ts';
+
+const MODEL_CAPS: ModelCapability[] = ['general', 'tools', 'reasoning', 'coding', 'vision', 'embedding', 'fast'];
+
+/** A discovered local server enriched by the bridge with whether it's already configured. */
+type Discovered = DiscoveredServer & { alreadyAdded: boolean };
 
 const KINDS: ProviderKind[] = ['ollama', 'lmstudio', 'openai-compatible', 'anthropic', 'openai'];
 
@@ -29,6 +37,9 @@ export function Settings({ store }: { store: FleetStore }) {
   const [name, setName] = useState('groq');
   const [baseUrl, setBaseUrl] = useState('https://api.groq.com/openai/v1');
   const [apiKey, setApiKey] = useState('');
+  // local LLM discovery (scan localhost for running servers)
+  const [discovering, setDiscovering] = useState(false);
+  const [discovered, setDiscovered] = useState<Discovered[] | null>(null);
   function pickProvider(id: string) {
     setCatalogId(id);
     if (id === 'custom') { setKind('openai-compatible'); setBaseUrl(defaultBaseUrl('openai-compatible')); return; }
@@ -155,18 +166,87 @@ export function Settings({ store }: { store: FleetStore }) {
     setProviders(await call<ProviderRow[]>('providers:toggle', n));
   }
 
+  // Local LLM discovery: scan localhost for running servers, then one-click add.
+  async function runDiscover() {
+    setDiscovering(true);
+    try {
+      setDiscovered(await call<Discovered[]>('providers:discover').catch(() => []));
+    } finally {
+      setDiscovering(false);
+    }
+  }
+  /** Normalize a baseUrl for matching a discovered server against existing providers. */
+  function normUrl(u: string): string {
+    return u.trim().toLowerCase().replace('://localhost', '://127.0.0.1').replace(/\/+$/, '');
+  }
+  /** "Already a backend?" recomputed against the LIVE providers (not the frozen scan flag). */
+  function isAdded(s: Discovered): boolean {
+    return providers.some((p) => normUrl(p.baseUrl) === normUrl(s.baseUrl)) || s.alreadyAdded;
+  }
+  /** A provider name that won't overwrite an existing, differently-pointed provider. */
+  function uniqueProviderName(base: string, taken: Set<string>): string {
+    if (!taken.has(base)) return base;
+    let i = 2;
+    while (taken.has(`${base}-${i}`)) i++;
+    return `${base}-${i}`;
+  }
+  /** Turn a discovered server into a provider profile (carrying its model list). */
+  function discoveredToProfile(s: Discovered, providerName: string): ProviderProfile {
+    return {
+      name: providerName,
+      kind: s.kind,
+      baseUrl: s.baseUrl,
+      enabled: true,
+      ...(s.status === 'live' && s.models.length
+        ? { lastSync: { at: Date.now(), status: 'live', modelCount: s.modelCount, models: s.models.slice(0, 200) } }
+        : {}),
+    };
+  }
+  async function addDiscovered(s: Discovered) {
+    setBusy(true);
+    try {
+      const providerName = uniqueProviderName(s.id, new Set(providers.map((p) => p.name)));
+      await call('providers:add', discoveredToProfile(s, providerName));
+      await reload();
+      await runDiscover(); // refresh the alreadyAdded flags
+    } finally {
+      setBusy(false);
+    }
+  }
+  async function addAllDiscovered() {
+    const list = (discovered ?? []).filter((s) => !isAdded(s) && s.status === 'live');
+    setBusy(true);
+    try {
+      const taken = new Set(providers.map((p) => p.name));
+      for (const s of list) {
+        const providerName = uniqueProviderName(s.id, taken);
+        taken.add(providerName);
+        await call('providers:add', discoveredToProfile(s, providerName));
+      }
+      await reload();
+      await runDiscover();
+    } finally {
+      setBusy(false);
+    }
+  }
+
   // Local models (Ollama): list installed + download a new one (streamed progress).
   const POPULAR = ['llama3.2:1b', 'llama3.2:3b', 'qwen2.5:3b', 'qwen3:1.7b', 'gemma3:1b', 'gemma2:2b', 'phi3.5', 'deepseek-r1:1.5b', 'smollm2:1.7b', 'mistral'];
   const [ollamaModels, setOllamaModels] = useState<{ name: string; size?: number; parameterSize?: string }[]>([]);
   const [pullName, setPullName] = useState('llama3.2:1b');
   const [pulling, setPulling] = useState(false);
   const [pullMsg, setPullMsg] = useState('');
+  // catalog browsers: model filters + stacks filter + copy feedback
+  const [modelQuery, setModelQuery] = useState('');
+  const [modelCap, setModelCap] = useState<ModelCapability | 'all'>('all');
+  const [stackTag, setStackTag] = useState<string>('all');
+  const [copied, setCopied] = useState<string | null>(null);
   async function loadOllama() {
     const r = await call<{ ok: boolean; models: { name: string; size?: number; parameterSize?: string }[] }>('ollama:tags').catch(() => ({ ok: false, models: [] as { name: string }[] }));
     setOllamaModels(r.models ?? []);
   }
-  async function pullModel() {
-    const m = pullName.trim();
+  async function pull(modelId: string) {
+    const m = modelId.trim();
     if (!m || pulling) return;
     setPulling(true);
     setPullMsg(`starting ${m}…`);
@@ -178,6 +258,23 @@ export function Settings({ store }: { store: FleetStore }) {
       setPulling(false);
     }
   }
+  async function pullModel() { await pull(pullName); }
+  /** Is a catalog model already pulled? (handles implicit :latest tags) */
+  function modelInstalled(id: string): boolean {
+    if (ollamaModels.some((m) => m.name === id)) return true;
+    return !id.includes(':') && ollamaModels.some((m) => m.name.split(':')[0] === id);
+  }
+  async function copyText(key: string, text: string) {
+    try { await navigator.clipboard.writeText(text); setCopied(key); setTimeout(() => setCopied(null), 1200); } catch { /* clipboard blocked */ }
+  }
+  const filteredModels = LOCAL_MODEL_CATALOG.filter((m) => {
+    if (modelCap !== 'all' && !m.capabilities.includes(modelCap)) return false;
+    const q = modelQuery.trim().toLowerCase();
+    return !q || m.id.toLowerCase().includes(q) || m.family.toLowerCase().includes(q) || (m.blurb ?? '').toLowerCase().includes(q);
+  });
+  const stackTags = Array.from(new Set(LOCAL_STACKS.flatMap((s) => s.tags ?? []))).sort();
+  const filteredStacks = stackTag === 'all' ? LOCAL_STACKS : LOCAL_STACKS.filter((s) => (s.tags ?? []).includes(stackTag));
+  const runningPorts = new Set((discovered ?? []).map((d) => d.port));
   useEffect(() => {
     void loadOllama();
     const idagents = (window as { idagents?: { onOllamaPull?: (cb: (p: unknown) => void) => () => void } }).idagents;
@@ -363,10 +460,130 @@ export function Settings({ store }: { store: FleetStore }) {
           </button>
           {pullMsg ? <span className={`small grow ${/failed/.test(pullMsg) ? 'status-error' : pulling ? 'warn-text' : 'ok-text'}`}>{pullMsg}</span> : null}
         </div>
+
+        {/* Browsable model catalog */}
+        <div className="model-catalog">
+          <div className="row-actions" style={{ flexWrap: 'wrap', gap: 6, marginTop: 12 }}>
+            <input className="catalog-search" placeholder="search models…" value={modelQuery} onChange={(e) => setModelQuery(e.target.value)} />
+            <span className="chips">
+              {(['all', ...MODEL_CAPS] as (ModelCapability | 'all')[]).map((c) => (
+                <button key={c} className={`chip${modelCap === c ? ' on' : ''}`} onClick={() => setModelCap(c)}>
+                  {modelCap === c ? '✓ ' : ''}{c}
+                </button>
+              ))}
+            </span>
+          </div>
+          <div className="catalog-grid">
+            {filteredModels.map((m) => {
+              const inst = modelInstalled(m.id);
+              return (
+                <div className="catalog-row" key={m.id} title={`${m.blurb ?? ''}${m.license ? `  ·  ${m.license}` : ''}`}>
+                  <span className="b mono">{m.id}{m.recommended ? <span className="ok-text small" title="Recommended in its size class"> ★</span> : null}</span>
+                  <span className="muted small">{m.params}{m.approxSizeGB ? ` · ~${m.approxSizeGB}GB` : ''}</span>
+                  <span className="chips grow">
+                    {m.capabilities.slice(0, 4).map((c) => <span key={c} className="chip tag">{c}</span>)}
+                  </span>
+                  {inst ? (
+                    <span className="ok-text small">installed ✓</span>
+                  ) : (
+                    <button className="btn small primary" disabled={pulling} onClick={() => void pull(m.id)}>Download</button>
+                  )}
+                </div>
+              );
+            })}
+            {filteredModels.length === 0 ? <p className="muted small center pad">No models match.</p> : null}
+          </div>
+        </div>
+      </section>
+
+      <section className="card">
+        <h3>Local LLM stacks</h3>
+        <p className="muted small" style={{ marginTop: -4 }}>
+          Self-hostable inference servers you can run <b>next to Ollama</b> — from <a className="ext-link" href="https://github.com/av/awesome-llm-services" target="_blank" rel="noreferrer">awesome-llm-services</a>. Install one, then it shows up under <b>Discover local servers</b> below and can be added as a backend. Commands are shown to run yourself — nothing is executed for you.
+        </p>
+        <div className="row-actions" style={{ flexWrap: 'wrap', gap: 6 }}>
+          <span className="chips grow">
+            {(['all', ...stackTags]).map((t) => (
+              <button key={t} className={`chip${stackTag === t ? ' on' : ''}`} onClick={() => setStackTag(t)}>
+                {stackTag === t ? '✓ ' : ''}{t}
+              </button>
+            ))}
+          </span>
+          <button className="btn small" disabled={discovering} onClick={() => void runDiscover()}>{discovering ? 'Scanning…' : '⟳ Scan running'}</button>
+        </div>
+        <div className="stack-list">
+          {filteredStacks.map((s) => {
+            const running = s.defaultPort != null && runningPorts.has(s.defaultPort);
+            return (
+              <div className="stack-row" key={s.id}>
+                <div className="stack-head">
+                  <span className="b">{s.name}</span>
+                  {s.defaultPort ? <span className="muted small mono">:{s.defaultPort}</span> : null}
+                  <span className="muted small">{s.openaiCompatible ? 'OpenAI-compatible' : s.apiKind}</span>
+                  {s.appleSilicon ? <span className="chip tag" title="Apple-Silicon native">Apple Silicon</span> : null}
+                  {running ? <span className="ok-text small" title="Detected running by the last scan">● running</span> : null}
+                  <span className="grow" />
+                  <a className="ext-link small" href={s.homepage} target="_blank" rel="noreferrer">docs ↗</a>
+                </div>
+                <p className="muted small stack-blurb">{s.blurb}</p>
+                {s.install ? (
+                  <div className="stack-install">
+                    <code className="mono">{s.install}</code>
+                    <button className="btn small" onClick={() => void copyText(s.id, s.install!)}>{copied === s.id ? 'copied ✓' : 'copy'}</button>
+                  </div>
+                ) : null}
+              </div>
+            );
+          })}
+        </div>
       </section>
 
       <section className="card grow">
         <h3>Inference backends</h3>
+
+        <div className="discover-local">
+          <div className="row-actions" style={{ alignItems: 'baseline' }}>
+            <span className="muted small grow">Auto-detect local LLM servers running on this machine (Ollama, LM Studio, llama.cpp, vLLM…) and add them in one click.</span>
+            <button className="btn" disabled={discovering} onClick={() => void runDiscover()}>
+              {discovering ? 'Scanning…' : '⟳ Discover local servers'}
+            </button>
+          </div>
+          {discovered ? (
+            discovered.length === 0 ? (
+              <p className="muted small" style={{ marginTop: 6 }}>
+                No local servers found on the usual ports. Start one (e.g. <span className="mono">ollama serve</span> or LM Studio's server) and scan again.
+              </p>
+            ) : (
+              <div className="discovered-list">
+                {discovered.map((s) => (
+                  <div className="discovered-row" key={s.id}>
+                    <span className="b">{s.name}</span>
+                    <span className="muted small mono grow" title={s.sharesPortWith?.length ? `also possibly: ${s.sharesPortWith.join(', ')}` : undefined}>
+                      {s.kind} · {s.baseUrl}
+                    </span>
+                    {s.status === 'auth-error' ? (
+                      <span className="warn-text small" title="Server is up but its API needs a key">up · needs key</span>
+                    ) : (
+                      <span className="ok-text small">{s.modelCount} model{s.modelCount === 1 ? '' : 's'}</span>
+                    )}
+                    {isAdded(s) ? (
+                      <span className="muted small">added ✓</span>
+                    ) : (
+                      <button className="btn small primary" disabled={busy} onClick={() => void addDiscovered(s)}>Add</button>
+                    )}
+                  </div>
+                ))}
+                {discovered.some((s) => !isAdded(s) && s.status === 'live') ? (
+                  <div className="row-actions" style={{ marginTop: 6 }}>
+                    <span className="grow" />
+                    <button className="btn small" disabled={busy} onClick={() => void addAllDiscovered()}>Add all new</button>
+                  </div>
+                ) : null}
+              </div>
+            )
+          ) : null}
+        </div>
+
         <table className="grid">
           <thead>
             <tr>

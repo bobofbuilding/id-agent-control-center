@@ -45,9 +45,39 @@ function createWindow() {
   // data has loaded, write a PNG, and quit. Lets the build be proven headlessly.
   const shot = process.env.IDCTL_SHOT;
   if (shot) {
+    // Optional: scroll before capturing so sections below the fold can be
+    // verified headlessly. 'bottom' or a CSS selector / text fragment.
+    const shotScroll = process.env.IDCTL_SHOT_SCROLL;
     win.webContents.once('did-finish-load', () => {
       setTimeout(async () => {
         try {
+          if (shotScroll) {
+            const js = shotScroll === 'bottom'
+              ? 'window.scrollTo(0, document.body.scrollHeight)'
+              : `(${((sel: string) => {
+                  const bySel = document.querySelector(sel);
+                  if (bySel) { bySel.scrollIntoView({ block: 'start' }); return; }
+                  const el = [...document.querySelectorAll('h2,h3,section,.card')]
+                    .find((n) => (n.textContent || '').toLowerCase().includes(sel.toLowerCase()));
+                  el?.scrollIntoView({ block: 'start' });
+                }).toString()})(${JSON.stringify(shotScroll)})`;
+            await win!.webContents.executeJavaScript(js);
+            await new Promise((r) => setTimeout(r, 350));
+          }
+          // Optional: click a control (by CSS selector or button text) and wait,
+          // so async UI (e.g. a discovery scan) can be captured headlessly.
+          const shotClick = process.env.IDCTL_SHOT_CLICK;
+          if (shotClick) {
+            const clickJs = `(${((sel: string) => {
+              const bySel = document.querySelector(sel) as HTMLElement | null;
+              const el = bySel || [...document.querySelectorAll('button')]
+                .find((b) => (b.textContent || '').toLowerCase().includes(sel.toLowerCase())) as HTMLElement | undefined;
+              el?.click();
+              return !!el;
+            }).toString()})(${JSON.stringify(shotClick)})`;
+            await win!.webContents.executeJavaScript(clickJs);
+            await new Promise((r) => setTimeout(r, Number(process.env.IDCTL_SHOT_CLICK_WAIT) || 2000));
+          }
           const img = await win!.webContents.capturePage();
           await import('node:fs').then((fs) => fs.writeFileSync(shot, img.toPNG()));
         } catch (err) {
