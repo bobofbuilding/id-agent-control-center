@@ -8,6 +8,11 @@ Every change pushed or merged to `main` carries its version number in the commit
 subject (`vX.Y.Z: …`), stamped automatically by the `commit-msg` hook — see
 [CONTRIBUTING.md](CONTRIBUTING.md).
 
+## [0.1.29] — 2026-06-20
+- Local LLM stacks: simplified the row UI — dropped the always-visible command +
+  copy button. **Install / Uninstall** is one click; the exact command is revealed
+  only at the confirm step before it runs in your Terminal.
+
 ## [0.1.28] — 2026-06-20
 - Local Models: each model now shows its **download size, parameters and context
   window**, with a per-model **⚠ warning** when it's too large for the commanded

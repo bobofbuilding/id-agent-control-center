@@ -243,7 +243,6 @@ export function Settings({ store }: { store: FleetStore }) {
   const [modelQuery, setModelQuery] = useState('');
   const [modelCap, setModelCap] = useState<ModelCapability | 'all'>('all');
   const [stackTag, setStackTag] = useState<string>('all');
-  const [copied, setCopied] = useState<string | null>(null);
   const [hardware, setHardware] = useState<HardwareInfo | null>(null);
   const [confirmRemove, setConfirmRemove] = useState<string | null>(null);
   const [removing, setRemoving] = useState<string | null>(null);
@@ -271,8 +270,8 @@ export function Settings({ store }: { store: FleetStore }) {
     if (ollamaModels.some((m) => m.name === id)) return true;
     return !id.includes(':') && ollamaModels.some((m) => m.name.split(':')[0] === id);
   }
-  async function copyText(key: string, text: string) {
-    try { await navigator.clipboard.writeText(text); setCopied(key); setTimeout(() => setCopied(null), 1200); } catch { /* clipboard blocked */ }
+  async function copyText(text: string) {
+    try { await navigator.clipboard.writeText(text); } catch { /* clipboard blocked */ }
   }
   const filteredModels = LOCAL_MODEL_CATALOG.filter((m) => {
     if (modelCap !== 'all' && !m.capabilities.includes(modelCap)) return false;
@@ -316,10 +315,10 @@ export function Settings({ store }: { store: FleetStore }) {
     if ((m = c.match(/^pip install (\S+)/))) return `pip uninstall -y ${m[1]}`;
     return null;
   }
-  async function runStackCmd(key: string, cmd: string) {
+  async function runStackCmd(cmd: string) {
     setStackConfirm(null);
     const r = await call<{ ran: boolean }>('app:runInTerminal', cmd).catch(() => ({ ran: false }));
-    if (!r.ran) await copyText(key, cmd); // Terminal automation blocked → clipboard fallback
+    if (!r.ran) await copyText(cmd); // Terminal automation blocked → silent clipboard fallback
   }
   /** Port-conflict risk for a stack: already-in-use (strong) or shared default (info). */
   function stackPortWarn(s: LocalStackEntry): { level: 'warn' | 'error'; msg: string } | null {
@@ -604,32 +603,30 @@ export function Settings({ store }: { store: FleetStore }) {
                 </div>
                 <p className="muted small stack-blurb">{s.blurb}</p>
                 <div className="stack-install">
-                  <code className="mono">{s.install ?? '(see docs)'}</code>
-                  <span className="row-actions">
-                    {ic ? (
-                      stackConfirm === `i:${s.id}` ? (
-                        <>
-                          <button className="btn small primary" title="Runs the install in your Terminal — visible and abortable" onClick={() => void runStackCmd(s.id, ic)}>Run in Terminal</button>
-                          <button className="btn small" onClick={() => setStackConfirm(null)}>Cancel</button>
-                        </>
-                      ) : (
-                        <button className="btn small primary" onClick={() => setStackConfirm(`i:${s.id}`)}>Install</button>
-                      )
+                  {ic ? (
+                    stackConfirm === `i:${s.id}` ? (
+                      <>
+                        <code className="mono">{ic}</code>
+                        <button className="btn small primary" title="Runs in your Terminal — visible and abortable" onClick={() => void runStackCmd(ic)}>Run in Terminal</button>
+                        <button className="btn small" onClick={() => setStackConfirm(null)}>Cancel</button>
+                      </>
                     ) : (
-                      <a className="btn small" href={s.homepage} target="_blank" rel="noreferrer" title="No CLI install — opens the download page">Get ↗</a>
-                    )}
-                    {uc ? (
-                      stackConfirm === `u:${s.id}` ? (
-                        <>
-                          <button className="btn small icon-danger" onClick={() => void runStackCmd(s.id, uc)}>Uninstall in Terminal</button>
-                          <button className="btn small" onClick={() => setStackConfirm(null)}>Cancel</button>
-                        </>
-                      ) : (
-                        <button className="btn small" onClick={() => setStackConfirm(`u:${s.id}`)}>Uninstall</button>
-                      )
-                    ) : null}
-                    <button className="btn small" title="Copy the command" onClick={() => void copyText(s.id, s.install ?? '')}>{copied === s.id ? '✓' : 'copy'}</button>
-                  </span>
+                      <button className="btn small primary" title={ic} onClick={() => setStackConfirm(`i:${s.id}`)}>Install</button>
+                    )
+                  ) : (
+                    <a className="btn small" href={s.homepage} target="_blank" rel="noreferrer" title="No CLI install — opens the download page">Get ↗</a>
+                  )}
+                  {uc ? (
+                    stackConfirm === `u:${s.id}` ? (
+                      <>
+                        <code className="mono">{uc}</code>
+                        <button className="btn small icon-danger" title="Runs in your Terminal" onClick={() => void runStackCmd(uc)}>Run in Terminal</button>
+                        <button className="btn small" onClick={() => setStackConfirm(null)}>Cancel</button>
+                      </>
+                    ) : (
+                      <button className="btn small" onClick={() => setStackConfirm(`u:${s.id}`)}>Uninstall</button>
+                    )
+                  ) : null}
                 </div>
               </div>
             );
