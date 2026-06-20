@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { call, type FleetStore } from '../store.ts';
 import { usePrompt } from '../components/prompt.tsx';
 import type { Agent } from '../../../../idctl/src/api/types.ts';
@@ -73,6 +73,7 @@ export function Dashboard({ store }: { store: FleetStore }) {
   const [selected, setSelected] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [catalog, setCatalog] = useState<Record<string, string[]>>({});
+  const modelRefs = useRef<Record<string, HTMLSelectElement | null>>({});
   const prompt = usePrompt();
   const sel: Agent | undefined = store.agents.find((a) => a.id === selected) ?? store.agents[0];
 
@@ -107,10 +108,20 @@ export function Dashboard({ store }: { store: FleetStore }) {
   async function setModel(a: Agent, model: string) {
     if (model === '__custom') {
       const m = await prompt({ title: `Model for ${a.name}:`, defaultValue: a.model ?? '', okLabel: 'Set model' });
-      if (m?.trim()) void run(`model ${a.name}`, `/model ${a.name} ${m.trim()}`);
-      return;
+      if (!m?.trim()) return;
+      model = m.trim();
     }
-    if (model && model !== a.model) void run(`model ${a.name}`, `/model ${a.name} ${model}`);
+    if (!model || model === a.model) return;
+    setBusy(`model ${a.name}`);
+    try {
+      await call('remote', `/model ${a.name} ${model}`);
+      await call('remote', `/agent ${a.name} rebuild`); // apply immediately — no confirm
+      store.refresh();
+      setBusy(null);
+    } catch (err) {
+      setBusy(`model change failed — ${err instanceof Error ? err.message : String(err)}`);
+      setTimeout(() => setBusy(null), 4000);
+    }
   }
   function action(a: Agent, act: string) {
     if (!act) return;
@@ -120,20 +131,31 @@ export function Dashboard({ store }: { store: FleetStore }) {
     }
     void run(`${act} ${a.name}`, `/agent ${a.name} ${act.toLowerCase()}`);
   }
+  // Switching runtime: set it, pick a model the new runtime can actually serve,
+  // drop the model dropdown open for fine-tuning, and rebuild — all without any
+  // confirmation/alert popup.
   async function setRuntime(a: Agent, runtime: string) {
     if (!runtime || runtime === a.runtime) return;
     setBusy(`runtime ${a.name}`);
     try {
       await call('setAgentRuntime', a.id, runtime);
+      // A model from the OLD runtime usually won't run on the new one → default
+      // to the first model the new runtime offers when the current one mismatches.
+      const models = catalog[runtime] ?? [];
+      const model = !a.model || runtimeModelMismatch(runtime, a.model) ? models[0] ?? a.model : a.model;
+      if (model && model !== a.model) await call('remote', `/model ${a.name} ${model}`);
       store.refresh();
-      if (window.confirm(`Runtime set to ${runtime}. Rebuild ${a.name} now to apply?`)) {
-        await call('remote', `/agent ${a.name} rebuild`);
-      }
+      // Auto-open the model dropdown so the pick is one click away. Native
+      // showPicker() needs recent user activation — the change event provides it,
+      // and we fire well inside the window. Best-effort; harmless if unavailable.
+      setTimeout(() => { try { modelRefs.current[a.id]?.showPicker?.(); } catch { /* no activation */ } }, 250);
+      // Rebuild to apply the new runtime + model — no confirmation.
+      await call('remote', `/agent ${a.name} rebuild`);
       store.refresh();
-    } catch (err) {
-      window.alert(`runtime change failed: ${err instanceof Error ? err.message : String(err)}`);
-    } finally {
       setBusy(null);
+    } catch (err) {
+      setBusy(`runtime change failed — ${err instanceof Error ? err.message : String(err)}`);
+      setTimeout(() => setBusy(null), 4000);
     }
   }
 
@@ -194,6 +216,7 @@ export function Dashboard({ store }: { store: FleetStore }) {
                     </td>
                     <td onClick={(e) => e.stopPropagation()}>
                       <select
+                        ref={(el) => { modelRefs.current[a.id] = el; }}
                         className={`cell-select${mismatch ? ' mismatch' : ''}`}
                         value={a.model ?? ''}
                         onChange={(e) => void setModel(a, e.target.value)}

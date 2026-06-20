@@ -8,6 +8,12 @@ Every change pushed or merged to `main` carries its version number in the commit
 subject (`vX.Y.Z: …`), stamped automatically by the `commit-msg` hook — see
 [CONTRIBUTING.md](CONTRIBUTING.md).
 
+## [0.1.32] — 2026-06-20
+- Dashboard: switching an agent's **runtime** now picks a compatible model for
+  the new runtime, **auto-opens the model dropdown** to fine-tune, and
+  **auto-rebuilds** the agent — with no confirmation popup. Changing the **model**
+  also rebuilds automatically. (The destructive delete still confirms.)
+
 ## [0.1.31] — 2026-06-20
 - Teams: moved the **Lead hierarchy** card to the bottom of the page, below the
   team list, add-agent, and relay sections.
