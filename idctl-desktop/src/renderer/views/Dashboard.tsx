@@ -2,7 +2,9 @@ import { useEffect, useRef, useState } from 'react';
 import { call, type FleetStore } from '../store.ts';
 import { usePrompt } from '../components/prompt.tsx';
 import type { Agent } from '../../../../idctl/src/api/types.ts';
-import { RUNTIMES } from '../../../../idctl/src/settings/runtimeCatalog.ts';
+import { RUNTIMES, offerableRuntimes } from '../../../../idctl/src/settings/runtimeCatalog.ts';
+
+type ProviderRow = { kind: string; enabled?: boolean; keySource?: string; lastSync?: { status?: string } };
 
 function runtimeLabel(r: string): string {
   return r.replace('claude-code-', 'claude-').replace('claude-agent-sdk', 'claude-sdk').replace('-cli', '');
@@ -73,6 +75,7 @@ export function Dashboard({ store }: { store: FleetStore }) {
   const [selected, setSelected] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [catalog, setCatalog] = useState<Record<string, string[]>>({});
+  const [providers, setProviders] = useState<ProviderRow[]>([]);
   const modelRefs = useRef<Record<string, HTMLSelectElement | null>>({});
   const prompt = usePrompt();
   const sel: Agent | undefined = store.agents.find((a) => a.id === selected) ?? store.agents[0];
@@ -81,6 +84,7 @@ export function Dashboard({ store }: { store: FleetStore }) {
   // fleet snapshot updates so provider syncs from Settings flow through.
   useEffect(() => {
     call<Record<string, string[]>>('runtime:models').then(setCatalog).catch(() => setCatalog({}));
+    call<ProviderRow[]>('providers:list').then(setProviders).catch(() => setProviders([]));
   }, [store.lastUpdated]);
 
   async function probeRuntimes() {
@@ -193,7 +197,7 @@ export function Dashboard({ store }: { store: FleetStore }) {
                 const runtimeModels = catalog[a.runtime ?? ''] ?? [];
                 const modelOpts = Array.from(new Set([a.model, ...runtimeModels].filter(Boolean))) as string[];
                 const isLocal = (a.type ?? '') === 'claude' || RUNTIMES.includes(a.runtime ?? '');
-                const runtimeOpts = Array.from(new Set([a.runtime, ...RUNTIMES].filter(Boolean))) as string[];
+                const runtimeOpts = Array.from(new Set([a.runtime, ...offerableRuntimes(providers, a.runtime ?? undefined)].filter(Boolean))) as string[];
                 const mismatch = runtimeModelMismatch(a.runtime, a.model);
                 return (
                   <tr key={a.id} className={sel?.id === a.id ? 'sel' : ''} onClick={() => setSelected(a.id)}>

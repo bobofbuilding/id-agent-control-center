@@ -62,6 +62,37 @@ export function capabilityDenyReason(runtime: string | undefined, cap: RuntimeCa
   return runtimeSupports(runtime, cap) ? '' : CAPABILITY_DENY_REASON[cap];
 }
 
+/** Minimal provider shape needed to decide runtime availability. */
+type ProviderForRuntime = { kind: string; enabled?: boolean; keySource?: string; lastSync?: { status?: string } };
+
+/**
+ * Is the Anthropic API backend usable — wired in (an enabled `anthropic`
+ * provider), key found (resolved from config or env), AND a live connect/sync?
+ * The `claude-agent-sdk` runtime is the only one that calls the metered Anthropic
+ * API (it needs `ANTHROPIC_API_KEY`), so the picker gates it on this. The other
+ * claude-* runtimes use the CLI subscription and don't need a provider.
+ */
+export function anthropicApiReady(providers: ProviderForRuntime[]): boolean {
+  return providers.some(
+    (p) =>
+      p.kind === 'anthropic' &&
+      p.enabled !== false &&
+      (p.keySource === 'config' || p.keySource === 'env') &&
+      p.lastSync?.status === 'live',
+  );
+}
+
+/**
+ * Runtimes to offer in the runtime picker given the configured providers. Today
+ * the only conditional one is `claude-agent-sdk`, withheld until
+ * anthropicApiReady(). Pass `keep` to always retain an agent's CURRENT runtime
+ * even if it just became ineligible (so an existing SDK agent isn't broken).
+ */
+export function offerableRuntimes(providers: ProviderForRuntime[], keep?: string): string[] {
+  const sdkOk = anthropicApiReady(providers);
+  return RUNTIMES.filter((r) => r !== 'claude-agent-sdk' || sdkOk || r === keep);
+}
+
 /** Current known models per runtime, used when no probeable provider is configured. */
 export const RUNTIME_CURATED: Record<string, string[]> = {
   'claude-agent-sdk': ['claude-opus-4-8', 'claude-sonnet-4-6', 'claude-haiku-4-5'],

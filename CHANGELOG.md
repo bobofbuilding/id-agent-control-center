@@ -8,6 +8,14 @@ Every change pushed or merged to `main` carries its version number in the commit
 subject (`vX.Y.Z: …`), stamped automatically by the `commit-msg` hook — see
 [CONTRIBUTING.md](CONTRIBUTING.md).
 
+## [0.1.33] — 2026-06-20
+- Runtime picker (Dashboard + Teams): the **claude-sdk** runtime
+  (`claude-agent-sdk`) is now only offered when an **Anthropic API backend is
+  live** — i.e. an `anthropic` inference backend is enabled, has a key (config or
+  env), and last Connect&sync returned live. It's the only runtime that uses the
+  metered Anthropic API, so without a working key it's hidden. An agent already on
+  that runtime keeps it regardless.
+
 ## [0.1.32] — 2026-06-20
 - Dashboard: switching an agent's **runtime** now picks a compatible model for
   the new runtime, **auto-opens the model dropdown** to fine-tune, and

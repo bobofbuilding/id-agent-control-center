@@ -1,7 +1,9 @@
 import { useEffect, useState } from 'react';
 import { call, type FleetStore } from '../store.ts';
 import { usePrompt } from '../components/prompt.tsx';
-import { RUNTIMES } from '../../../../idctl/src/settings/runtimeCatalog.ts';
+import { offerableRuntimes } from '../../../../idctl/src/settings/runtimeCatalog.ts';
+
+type ProviderRow = { kind: string; enabled?: boolean; keySource?: string; lastSync?: { status?: string } };
 import type { LibrarySkillEntry } from '../../../../idctl/src/api/client.ts';
 
 type RelayMode = 'permissive' | 'all' | 'select' | 'none';
@@ -110,11 +112,13 @@ export function Teams({ store }: { store: FleetStore }) {
   const [naSkills, setNaSkills] = useState<string[]>([]);
   const [modelCatalog, setModelCatalog] = useState<Record<string, string[]>>({});
   const [skillCatalog, setSkillCatalog] = useState<string[]>([]);
+  const [providers, setProviders] = useState<ProviderRow[]>([]);
   const [adding, setAdding] = useState(false);
 
   useEffect(() => {
     call<Record<string, string[]>>('runtime:models').then(setModelCatalog).catch(() => setModelCatalog({}));
     call<LibrarySkillEntry[]>('librarySkills').then((s) => setSkillCatalog(s.map((x) => x.name))).catch(() => setSkillCatalog([]));
+    call<ProviderRow[]>('providers:list').then(setProviders).catch(() => setProviders([]));
   }, [store.lastUpdated]);
 
   const naModels = modelCatalog[na.runtime] ?? [];
@@ -269,7 +273,7 @@ export function Teams({ store }: { store: FleetStore }) {
               value={na.runtime}
               onChange={(e) => setNa((p) => ({ ...p, runtime: e.target.value, model: '' }))}
             >
-              {RUNTIMES.map((r) => (
+              {offerableRuntimes(providers).map((r) => (
                 <option key={r} value={r}>{runtimeLabel(r)}</option>
               ))}
             </select>{' '}
