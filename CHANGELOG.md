@@ -8,6 +8,15 @@ Every change pushed or merged to `main` carries its version number in the commit
 subject (`vX.Y.Z: …`), stamped automatically by the `commit-msg` hook — see
 [CONTRIBUTING.md](CONTRIBUTING.md).
 
+## [0.1.43] — 2026-06-20
+- Tasks page overhaul. **Fixed broken actions** — the buttons sent malformed
+  commands (`/task <id> claim`, `/task <id> complete`, `/task add …`) that the
+  manager ignored; they now use the correct verbs (`create`/`done`/`assign`/
+  `status`/`remove`). Added: search, status filter (all/open/done), a **hide
+  routine** toggle that hides the noisy heartbeat tasks, an **Age** column,
+  open/done counts, per-task **assign-to-agent**, **Done/Reopen**, **Delete**
+  (with confirm), and a **Clear completed** bulk action.
+
 ## [0.1.42] — 2026-06-20
 - Chat: the selected agent now **persists** — it's saved per-team and restored
   when you return to Chat (or restart the app), instead of resetting to the lead
