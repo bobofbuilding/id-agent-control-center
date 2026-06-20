@@ -8,6 +8,40 @@ Every change pushed or merged to `main` carries its version number in the commit
 subject (`vX.Y.Z: …`), stamped automatically by the `commit-msg` hook — see
 [CONTRIBUTING.md](CONTRIBUTING.md).
 
+## [0.1.27] — 2026-06-20
+- New **Local LLM stacks** catalog (Settings) — 21 self-hostable serving stacks
+  from [awesome-llm-services](https://github.com/av/awesome-llm-services) you can
+  run next to Ollama (llama.cpp, vLLM, mistral.rs, MLX, LM Studio, KoboldCpp…),
+  each with its default port, OpenAI-compat, a copy-able install command and docs
+  link. "Scan running" reuses discovery to flag which are live.
+- Local Models card is now a browsable **model catalog** — ~50 Ollama-pullable
+  models (Qwen3, Llama, Gemma 3, Phi-4-mini, Qwen2.5-Coder, DeepSeek-R1, vision,
+  embeddings…) with size/params/capability tags, search + filters, one-click
+  download and installed detection.
+
+## [0.1.26] — 2026-06-20
+- Fix: the **ollama** runtime's model picker no longer offers cloud (e.g.
+  OpenRouter) models — only models from local providers, so you can't select a
+  model the local harness can't load (which previously failed with
+  "model not found" at probe/run time).
+
+## [0.1.25] — 2026-06-20
+- New **Discover local servers** (Settings → Inference backends) — scan localhost
+  for running LLM servers (Ollama, LM Studio, llama.cpp, vLLM, Jan, …) and add
+  them as inference backends in one click, with their model list. Hardened to
+  ignore non-LLM services on the same ports.
+
+## [0.1.24] — 2026-06-20
+- Subscriptions: the **OpenAI (ChatGPT)** tile now shows the connected email and
+  plan (decoded from the codex OAuth token), matching the Claude and Cursor tiles.
+
+## [0.1.23] — 2026-06-20
+- Capabilities: attaching MCP servers / skills / plugins is now **gated to the
+  runtimes that can use them** — incompatible agents are shown disabled (with a
+  reason) and skipped by apply/attach/install actions, instead of silently doing
+  nothing. (MCP: Claude + Codex runtimes; local models gain it once the
+  tool-calling loop ships.)
+
 ## [0.1.22] — 2026-06-19
 - Subscriptions: the "Install…" action for a missing CLI (e.g. Cursor) now opens
   your Terminal and runs the vendor's official installer (falling back to copying
