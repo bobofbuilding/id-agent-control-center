@@ -74,24 +74,6 @@ export function App() {
       <div className="titlebar">
         <span className="titlebar-name">ID Agents Control Center{version ? ` · v${version}` : ''}</span>
       </div>
-      {update?.available && update.staged && dismissed !== update.latest ? (
-        <div className="update-toast">
-          <button className="update-toast-x" title="Later" onClick={() => setDismissed(update.latest ?? '')}>✕</button>
-          <div className="update-toast-title">⬆ Update ready</div>
-          <div className="update-toast-ver">
-            <span className="from">v{update.current}</span>
-            <span className="arrow">→</span>
-            <span className="to">v{update.latest}</span>
-          </div>
-          <p className="muted small update-toast-note">Downloaded and ready — the app will close and reopen to apply.</p>
-          <div className="update-toast-actions">
-            <button className="btn" disabled={applying} onClick={() => setDismissed(update.latest ?? '')}>Later</button>
-            <button className="btn primary" disabled={applying} onClick={() => void applyUpdate()}>
-              {applying ? 'Updating…' : 'Update & restart'}
-            </button>
-          </div>
-        </div>
-      ) : null}
       <div className="body">
         <nav className="sidebar">
           {NAV.map((n) => (
@@ -111,7 +93,13 @@ export function App() {
 
         <main className="content">
           <Router view={view} store={store} />
-          <StatusBar store={store} />
+          <StatusBar
+            store={store}
+            update={update?.available && update.staged && dismissed !== update.latest ? update : null}
+            applying={applying}
+            onApply={() => void applyUpdate()}
+            onDismiss={() => setDismissed(update?.latest ?? '')}
+          />
         </main>
       </div>
     </div>
@@ -148,11 +136,30 @@ function Router({ view, store }: { view: ViewId; store: ReturnType<typeof useFle
   }
 }
 
-function StatusBar({ store }: { store: ReturnType<typeof useFleet> }) {
+function StatusBar({
+  store,
+  update,
+  applying,
+  onApply,
+  onDismiss,
+}: {
+  store: ReturnType<typeof useFleet>;
+  update: UpdateStatus | null;
+  applying: boolean;
+  onApply: () => void;
+  onDismiss: () => void;
+}) {
   const dot =
     store.connection === 'online' ? 'ok' : store.connection === 'offline' ? 'err' : 'warn';
   return (
     <footer className="statusbar">
+      {update ? (
+        <span className="sb-update" title={`Update downloaded — restart to apply v${update.latest}`}>
+          ⬆ <span className="uv-from">v{update.current}</span> → <span className="uv-to">v{update.latest}</span>
+          <button className="btn primary uv-go" disabled={applying} onClick={onApply}>{applying ? '…' : 'Restart'}</button>
+          <button className="uv-x" title="Later" onClick={onDismiss}>✕</button>
+        </span>
+      ) : null}
       <span className={`pill ${dot}`}>● {store.connection}</span>
       <span className="muted">{store.managerUrl || '—'}</span>
       <span className="sep">·</span>

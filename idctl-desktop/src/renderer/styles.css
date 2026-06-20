@@ -35,23 +35,18 @@ body {
 .titlebar-name { font-size: 12px; font-weight: 600; color: var(--muted); letter-spacing: .02em; }
 
 /* Self-update banner */
-/* Bottom-corner update toast — styled like a tile, floats over the page. */
-.update-toast {
-  position: fixed; right: 18px; bottom: 40px; width: 320px; z-index: 1000;
-  background: var(--bg-2); border: 1px solid var(--accent); border-radius: 10px;
-  padding: 14px 16px 12px; box-shadow: 0 10px 34px rgba(0, 0, 0, 0.5);
-  animation: toast-in 0.22s ease;
+/* Compact update chip in the status bar, just left of the "● online" pill. */
+.sb-update {
+  display: inline-flex; align-items: center; gap: 5px;
+  padding: 2px 4px 2px 9px; margin-right: 4px;
+  border: 1px solid var(--accent); border-radius: 12px; background: var(--bg-3);
+  font-family: var(--mono, ui-monospace, monospace);
 }
-@keyframes toast-in { from { transform: translateY(14px); opacity: 0; } to { transform: none; opacity: 1; } }
-.update-toast-x { position: absolute; top: 7px; right: 9px; background: none; border: none; color: var(--muted); cursor: pointer; font-size: 13px; line-height: 1; }
-.update-toast-x:hover { color: var(--text); }
-.update-toast-title { font-weight: 600; font-size: 13px; margin-bottom: 6px; }
-.update-toast-ver { display: flex; align-items: center; gap: 10px; font-family: var(--mono, ui-monospace, monospace); font-size: 16px; margin: 2px 0 4px; }
-.update-toast-ver .from { color: var(--muted); }
-.update-toast-ver .arrow { color: var(--accent); }
-.update-toast-ver .to { color: var(--ok); font-weight: 700; }
-.update-toast-note { margin: 4px 0 12px; }
-.update-toast-actions { display: flex; justify-content: flex-end; gap: 8px; }
+.sb-update .uv-from { color: var(--muted); }
+.sb-update .uv-to { color: var(--ok); font-weight: 700; }
+.sb-update .uv-go { font-size: 11px; padding: 1px 8px; border-radius: 10px; }
+.sb-update .uv-x { background: none; border: none; color: var(--muted); cursor: pointer; font-size: 11px; line-height: 1; padding: 0 2px; }
+.sb-update .uv-x:hover { color: var(--text); }
 
 .body { flex: 1; display: flex; min-height: 0; }
 

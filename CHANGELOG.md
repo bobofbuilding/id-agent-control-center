@@ -8,6 +8,11 @@ Every change pushed or merged to `main` carries its version number in the commit
 subject (`vX.Y.Z: …`), stamped automatically by the `commit-msg` hook — see
 [CONTRIBUTING.md](CONTRIBUTING.md).
 
+## [0.1.38] — 2026-06-20
+- Update prompt moved into the **status bar** as a compact chip (`⬆ vCURRENT →
+  vNEW · Restart · ✕`), just left of the "● online" pill, instead of a floating
+  corner toast.
+
 ## [0.1.37] — 2026-06-20
 - Self-update **now relaunches** after applying. The freshly-swapped (unsigned)
   bundle carried a `com.apple.quarantine` xattr that made macOS silently refuse to
