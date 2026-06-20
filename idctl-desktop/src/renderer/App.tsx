@@ -48,6 +48,7 @@ export function App() {
   const [version, setVersion] = useState<string>('');
   const [update, setUpdate] = useState<UpdateStatus | null>(null);
   const [applying, setApplying] = useState(false);
+  const [dismissed, setDismissed] = useState<string>(''); // latest version the user said "Later" to
 
   useEffect(() => {
     call<string>('app:version').then(setVersion).catch(() => {});
@@ -73,14 +74,22 @@ export function App() {
       <div className="titlebar">
         <span className="titlebar-name">ID Agents Control Center{version ? ` · v${version}` : ''}</span>
       </div>
-      {update?.available && update.staged ? (
-        <div className="update-banner">
-          <span>
-            ⬆ Update available — <b>v{update.latest}</b> (you're on v{update.current}). Downloaded and ready.
-          </span>
-          <button className="btn primary" disabled={applying} onClick={() => void applyUpdate()}>
-            {applying ? 'Restarting…' : 'Restart & update'}
-          </button>
+      {update?.available && update.staged && dismissed !== update.latest ? (
+        <div className="update-toast">
+          <button className="update-toast-x" title="Later" onClick={() => setDismissed(update.latest ?? '')}>✕</button>
+          <div className="update-toast-title">⬆ Update ready</div>
+          <div className="update-toast-ver">
+            <span className="from">v{update.current}</span>
+            <span className="arrow">→</span>
+            <span className="to">v{update.latest}</span>
+          </div>
+          <p className="muted small update-toast-note">Downloaded and ready — the app will close and reopen to apply.</p>
+          <div className="update-toast-actions">
+            <button className="btn" disabled={applying} onClick={() => setDismissed(update.latest ?? '')}>Later</button>
+            <button className="btn primary" disabled={applying} onClick={() => void applyUpdate()}>
+              {applying ? 'Updating…' : 'Update & restart'}
+            </button>
+          </div>
         </div>
       ) : null}
       <div className="body">

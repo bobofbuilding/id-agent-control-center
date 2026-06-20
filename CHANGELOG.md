@@ -8,6 +8,16 @@ Every change pushed or merged to `main` carries its version number in the commit
 subject (`vX.Y.Z: …`), stamped automatically by the `commit-msg` hook — see
 [CONTRIBUTING.md](CONTRIBUTING.md).
 
+## [0.1.37] — 2026-06-20
+- Self-update **now relaunches** after applying. The freshly-swapped (unsigned)
+  bundle carried a `com.apple.quarantine` xattr that made macOS silently refuse to
+  reopen it; the apply helper now strips quarantine, has a robust `open` fallback,
+  always runs the relaunch (no early `set -e` exit), and logs to
+  `staged-update/apply-update.log`.
+- The "update available" notice is now a **bottom-corner toast** (styled like a
+  tile) that shows **vCURRENT → vNEW** with **Update & restart** / **Later**,
+  instead of a top banner.
+
 ## [0.1.36] — 2026-06-20
 - Dashboard **Activity** feed is now readable: agent ids resolve to **names** and
   events render as plain English ("coder replied", "lead is thinking",

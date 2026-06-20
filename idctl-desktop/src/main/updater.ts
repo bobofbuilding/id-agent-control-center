@@ -173,22 +173,36 @@ export function applyStagedAndRelaunch(): boolean {
   if (!staged) return false;
   const bundle = appBundlePath();
   const helper = join(stagedDir(), 'apply-update.sh');
-  const reopen = process.env.IDCTL_UPDATE_NOOPEN ? '' : '/usr/bin/open "$BUNDLE"';
+  const reopen = process.env.IDCTL_UPDATE_NOOPEN ? 'echo "[apply] reopen skipped"' : '/usr/bin/open "$BUNDLE" || /usr/bin/open -n "$BUNDLE"';
+  // No `set -e`: the swap is guarded individually, but the relaunch must ALWAYS
+  // run (the previous version could quit, swap, then never reopen). Output goes
+  // to staged-update/apply-update.log for diagnosis.
   const script = `#!/bin/bash
-set -e
+LOG="$(dirname "$0")/apply-update.log"
+exec >>"$LOG" 2>&1
+echo "[apply] $(date) pid=$1 bundle=$2"
 APP_PID="$1"; BUNDLE="$2"; ZIP="$3"
-# wait for the running app to fully exit (bundle is locked while running)
-for i in $(seq 1 200); do kill -0 "$APP_PID" 2>/dev/null || break; sleep 0.25; done
+# wait for the running app to fully exit (the bundle is locked while running)
+for i in $(seq 1 240); do kill -0 "$APP_PID" 2>/dev/null || break; sleep 0.25; done
 sleep 0.5
 TMP="$(mktemp -d)"
-/usr/bin/ditto -x -k "$ZIP" "$TMP"
-NEW="$(/usr/bin/find "$TMP" -maxdepth 2 -name '*.app' | head -1)"
-if [ -n "$NEW" ]; then
-  /bin/rm -rf "$BUNDLE"
-  /usr/bin/ditto "$NEW" "$BUNDLE"
+if /usr/bin/ditto -x -k "$ZIP" "$TMP"; then
+  NEW="$(/usr/bin/find "$TMP" -maxdepth 2 -name '*.app' | head -1)"
+  if [ -n "$NEW" ]; then
+    /bin/rm -rf "$BUNDLE"
+    /usr/bin/ditto "$NEW" "$BUNDLE" && echo "[apply] bundle swapped"
+  else
+    echo "[apply] ERROR: no .app inside the update zip"
+  fi
+else
+  echo "[apply] ERROR: failed to extract $ZIP"
 fi
 /bin/rm -rf "$TMP"
+# A freshly-downloaded, unsigned .app carries com.apple.quarantine, which makes
+# 'open' silently refuse to relaunch it — strip it before reopening.
+/usr/bin/xattr -dr com.apple.quarantine "$BUNDLE" 2>/dev/null || true
 ${reopen}
+echo "[apply] relaunch issued"
 `;
   writeFileSync(helper, script, { mode: 0o755 });
   const child = spawn('/bin/bash', [helper, String(process.pid), bundle, staged.zip], {
