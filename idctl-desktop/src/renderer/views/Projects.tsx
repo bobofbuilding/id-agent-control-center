@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { call, type FleetStore } from '../store.ts';
+import { call, resolveCoordinator, type FleetStore } from '../store.ts';
 import type { ProjectEntry, ProjectStatus } from '../../../../idctl/src/settings/schema.ts';
 
 const STATUSES: ProjectStatus[] = ['active', 'paused', 'blocked', 'done'];
@@ -21,6 +21,9 @@ type GitInfo = {
   error?: string;
 };
 type Readme = { found: boolean; name?: string; description?: string };
+/** GitHub repo metadata (from the main process via the GitHub API). */
+type GithubMeta = { ok: boolean; name?: string; description?: string; topics?: string[]; language?: string; isPrivate?: boolean; error?: string };
+type CloneResult = { ok: boolean; path?: string; name?: string; error?: string };
 
 function newId(): string {
   return `p_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 7)}`;
@@ -62,6 +65,10 @@ export function Projects({ store }: { store: FleetStore }) {
   const [busy, setBusy] = useState(false);
   const [note, setNote] = useState('');
   const [confirmDel, setConfirmDel] = useState<string | null>(null);
+  const [ghOpen, setGhOpen] = useState(false);
+  const [ghUrl, setGhUrl] = useState('');
+
+  const lead = resolveCoordinator(store.agents, store.coordinator);
 
   async function loadGit(list: ProjectEntry[]) {
     const withPath = list.filter((p) => p.path);
@@ -113,6 +120,68 @@ export function Projects({ store }: { store: FleetStore }) {
     setForm({ ...BLANK, path: p, name: r?.name || '', description: r?.description || '' });
     setEditing('new');
     setNote(r?.found ? 'imported folder — README read; review and Save' : 'imported folder (no README found)');
+  }
+  /** One-step "Add from GitHub": clone the repo, then auto-fill name/desc/tags. */
+  async function addFromGithub() {
+    const url = ghUrl.trim();
+    if (!url) { setNote('paste a GitHub repo URL'); return; }
+    if (!/github\.com[/:][^/\s]+\/[^/\s]+/i.test(url)) { setNote('that doesn’t look like a GitHub repo URL'); return; }
+    setBusy(true);
+    try {
+      setNote('choose where to clone it…');
+      const parent = await call<string | null>('project:pickFolder').catch(() => null);
+      if (!parent) { setNote('cancelled'); return; }
+      setNote('cloning… (large repos take a moment)');
+      const c = await call<CloneResult>('project:cloneGithub', url, parent);
+      if (!c.ok || !c.path) { setNote(`clone failed: ${c.error ?? 'unknown error'}`); return; }
+      const [meta, readme] = await Promise.all([
+        call<GithubMeta>('project:githubMeta', url).catch((): GithubMeta => ({ ok: false })),
+        call<Readme>('project:readme', c.path).catch((): Readme => ({ found: false })),
+      ]);
+      const tags = [...(meta.language ? [meta.language] : []), ...(meta.topics ?? [])];
+      setForm({
+        ...BLANK,
+        name: meta.name || readme.name || c.name || '',
+        description: meta.description || readme.description || '',
+        tags: tags.join(', '),
+        path: c.path,
+        links: url.replace(/^https?:\/\//i, '').replace(/\.git$/i, ''),
+      });
+      setGhOpen(false); setGhUrl('');
+      setEditing('new');
+      const src = meta.ok && meta.description ? 'GitHub' : readme.found ? 'README' : 'folder';
+      setNote(`cloned ${c.name} ✓ — auto-filled from ${src}; review & Save${lead ? ' (or “Refine with lead”)' : ''}`);
+    } finally {
+      setBusy(false);
+    }
+  }
+  /** Route description/tags through the team lead (it can use its GitHub tools). */
+  async function refineWithLead() {
+    const slug = form.links.split(/[,\n]/)[0]?.trim() || form.name.trim();
+    if (!slug) { setNote('need a repo or name to summarize'); return; }
+    if (!lead) { setNote('no team lead online to route through'); return; }
+    setBusy(true);
+    setNote(`asking ${lead} to summarize…`);
+    try {
+      const ask = `Summarize the GitHub repo ${slug} for a project tracker. Use your GitHub tools to look it up if needed. Reply with ONLY a JSON object and nothing else: {"description":"<one concise sentence>","tags":["tag1","tag2","tag3"]}. Tags lowercase, 3-6 of them.`;
+      const reply = await call<string>('dispatch', `/ask ${lead} ${ask}`).catch(() => '');
+      const m = String(reply).match(/\{[\s\S]*\}/);
+      if (m) {
+        try {
+          const o = JSON.parse(m[0]) as { description?: unknown; tags?: unknown };
+          const desc = typeof o.description === 'string' ? o.description.trim() : '';
+          const tags = Array.isArray(o.tags) ? o.tags.map((t) => String(t).trim()).filter(Boolean) : [];
+          if (desc || tags.length) {
+            setForm((f) => ({ ...f, description: desc || f.description, tags: tags.length ? tags.join(', ') : f.tags }));
+            setNote(`refined by ${lead} ✓ — review & Save`);
+            return;
+          }
+        } catch { /* unparseable — fall through */ }
+      }
+      setNote(`${lead} reply wasn’t usable — kept current values`);
+    } finally {
+      setBusy(false);
+    }
   }
   async function save() {
     const name = form.name.trim();
@@ -175,12 +244,33 @@ export function Projects({ store }: { store: FleetStore }) {
       <header className="view-head">
         <h1>Projects</h1>
         <div className="row-actions">
+          <button className="btn" disabled={busy} onClick={() => { setGhOpen((v) => !v); setNote(''); }}>{ghOpen ? '− Cancel' : '⤓ Add from GitHub'}</button>
           <button className="btn" disabled={busy} onClick={() => void importFolder()}>Import folder…</button>
           <button className="btn primary" disabled={busy} onClick={() => (editing === 'new' ? setEditing(null) : openNew())}>
             {editing === 'new' ? '− Cancel' : '+ New project'}
           </button>
         </div>
       </header>
+
+      {ghOpen ? (
+        <section className="card gh-add">
+          <h3>Add from GitHub</h3>
+          <p className="muted small">Paste a repo URL — it clones into a folder you pick, then auto-fills name, description, and tags. You review before saving.</p>
+          <div className="row-actions" style={{ gap: 8, flexWrap: 'wrap' }}>
+            <input
+              style={{ flex: 1, minWidth: 320 }}
+              className="mono"
+              placeholder="https://github.com/owner/repo"
+              value={ghUrl}
+              disabled={busy}
+              autoFocus
+              onChange={(e) => setGhUrl(e.target.value)}
+              onKeyDown={(e) => { if (e.key === 'Enter') void addFromGithub(); }}
+            />
+            <button className="btn primary" disabled={busy || !ghUrl.trim()} onClick={() => void addFromGithub()}>{busy ? 'Cloning…' : 'Clone & add'}</button>
+          </div>
+        </section>
+      ) : null}
 
       <div className="row-actions" style={{ flexWrap: 'wrap', gap: 6 }}>
         {(['all', ...STATUSES] as const).map((s) => (
@@ -226,6 +316,9 @@ export function Projects({ store }: { store: FleetStore }) {
             <b><textarea style={{ width: '100%', minHeight: 60 }} placeholder="freeform notes" value={form.notes} onChange={(e) => setForm((f) => ({ ...f, notes: e.target.value }))} /></b>
           </div>
           <div className="row-actions" style={{ marginTop: 10 }}>
+            {lead && (form.links.trim() || form.name.trim()) ? (
+              <button className="btn" disabled={busy} title={`Have ${lead} write a cleaner description + tags`} onClick={() => void refineWithLead()}>✨ Refine with lead</button>
+            ) : null}
             <span className="grow" />
             <button className="btn" disabled={busy} onClick={() => setEditing(null)}>Cancel</button>
             <button className="btn primary" disabled={busy || !form.name.trim()} onClick={() => void save()}>Save</button>

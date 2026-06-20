@@ -8,6 +8,18 @@ Every change pushed or merged to `main` carries its version number in the commit
 subject (`vX.Y.Z: …`), stamped automatically by the `commit-msg` hook — see
 [CONTRIBUTING.md](CONTRIBUTING.md).
 
+## [0.1.45] — 2026-06-20
+- **Add a project straight from a GitHub URL.** New "⤓ Add from GitHub" on the
+  Projects page: paste a repo URL, pick where to clone it, and the app **clones
+  the repo** (SSH first, HTTPS fallback) and **auto-fills the name, description,
+  and tags** — description + topics + primary language come from the GitHub API
+  (using your configured token for private repos), falling back to the README.
+- **✨ Refine with lead** button on the project form routes the
+  description/tags through your team lead, which can use its GitHub tools to
+  write a cleaner summary — handy for repos with no GitHub description/topics.
+- The cloned folder is wired in immediately, so the new project shows git
+  tracking (branch, ahead/behind/fork, fetch/pull/…) the moment you save.
+
 ## [0.1.44] — 2026-06-20
 - Projects page now tracks **folders and git repos**. Each project can point at a
   local folder; for git repos it shows the **branch and whether you're up to date,

@@ -17,8 +17,83 @@ import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import { join, basename } from 'node:path';
+import { loadSettings } from '../../../idctl/src/settings/store.ts';
 
 const execFileP = promisify(execFile);
+
+/** Parse owner/repo from a GitHub URL or git@ remote. */
+function repoSlug(url: string): string | null {
+  const m = url.trim().match(/github\.com[/:]([^/\s]+)\/([^/\s]+?)(?:\.git)?(?:[/#?].*)?$/i);
+  return m ? `${m[1]}/${m[2]}` : null;
+}
+/** The user's GitHub PAT, read from the configured github MCP server. */
+function githubToken(): string | undefined {
+  try {
+    return loadSettings().mcpServers?.find((s) => s.name === 'github')?.env?.GITHUB_PERSONAL_ACCESS_TOKEN;
+  } catch {
+    return undefined;
+  }
+}
+
+export interface GithubMeta {
+  ok: boolean;
+  slug?: string;
+  name?: string;
+  description?: string;
+  topics?: string[];
+  language?: string;
+  defaultBranch?: string;
+  isPrivate?: boolean;
+  error?: string;
+}
+
+/** Repo metadata from the GitHub API (description, topics→tags, language). */
+export async function githubMeta(url: string): Promise<GithubMeta> {
+  const slug = repoSlug(url);
+  if (!slug) return { ok: false, error: 'not a GitHub repo URL' };
+  const tok = githubToken();
+  const headers: Record<string, string> = { Accept: 'application/vnd.github+json', 'User-Agent': 'idctl' };
+  if (tok) headers.Authorization = `Bearer ${tok}`;
+  try {
+    const r = await fetch(`https://api.github.com/repos/${slug}`, { headers, signal: AbortSignal.timeout(12000) });
+    if (!r.ok) return { ok: false, error: `GitHub API ${r.status}` };
+    const repo = (await r.json()) as Record<string, unknown>;
+    return {
+      ok: true,
+      slug,
+      name: String(repo.name ?? slug.split('/')[1]),
+      description: (repo.description as string) || undefined,
+      topics: Array.isArray(repo.topics) ? (repo.topics as string[]) : [],
+      language: (repo.language as string) || undefined,
+      defaultBranch: (repo.default_branch as string) || undefined,
+      isPrivate: !!repo.private,
+    };
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : String(e) };
+  }
+}
+
+/** Clone a GitHub repo into `parentDir/<repo>`. Prefers SSH (the user's auth). */
+export async function cloneGithub(url: string, parentDir: string): Promise<{ ok: boolean; path?: string; name?: string; error?: string }> {
+  const slug = repoSlug(url);
+  if (!slug) return { ok: false, error: 'not a GitHub repo URL' };
+  if (!parentDir || !existsSync(parentDir)) return { ok: false, error: 'destination folder not found' };
+  const name = slug.split('/')[1];
+  const dest = join(parentDir, name);
+  if (existsSync(dest)) return { ok: false, error: `folder already exists: ${dest}` };
+  const attempts = [`git@github.com:${slug}.git`, `https://github.com/${slug}.git`];
+  let lastErr = '';
+  for (const remote of attempts) {
+    try {
+      await execFileP('git', ['clone', remote, dest], { timeout: 300000 });
+      return { ok: true, path: dest, name };
+    } catch (e) {
+      const err = e as { stderr?: string; message?: string };
+      lastErr = (err.stderr || err.message || 'clone failed').trim();
+    }
+  }
+  return { ok: false, error: lastErr };
+}
 
 /** Run a git command in `cwd`, returning trimmed stdout (throws on failure). */
 async function git(cwd: string, args: string[], timeoutMs = 10000): Promise<string> {
