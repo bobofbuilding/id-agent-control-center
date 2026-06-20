@@ -8,6 +8,12 @@ Every change pushed or merged to `main` carries its version number in the commit
 subject (`vX.Y.Z: …`), stamped automatically by the `commit-msg` hook — see
 [CONTRIBUTING.md](CONTRIBUTING.md).
 
+## [0.1.36] — 2026-06-20
+- Dashboard **Activity** feed is now readable: agent ids resolve to **names** and
+  events render as plain English ("coder replied", "lead is thinking",
+  "researcher went offline") instead of `query:delivered agent_178…`. The panel
+  is wider, rows wrap to show the full line, and live events show a relative time.
+
 ## [0.1.35] — 2026-06-20
 - Settings → Self-update: removed the **manifest URL** field. Updates come from
   the app's GitHub releases; the self-hosted-manifest override was an unused

@@ -86,8 +86,8 @@ body {
 /* Dashboard: top row fills the window height; activity stretches with it. */
 .dash-top { flex: 1 1 auto; min-height: 0; }
 .dash-top > .card { min-height: 0; display: flex; flex-direction: column; }
-.dash-top > .grow:first-child { flex: 1.9; overflow: auto; }
-.dash-top > .feed { flex: 1; max-width: none; min-width: 280px; }
+.dash-top > .grow:first-child { flex: 1.3; overflow: auto; }
+.dash-top > .feed { flex: 1.25; max-width: none; min-width: 340px; }
 .dash-top .feed-list { flex: 1; min-height: 0; }
 .center { display: flex; align-items: center; justify-content: center; }
 .pad { padding: 40px; }
@@ -110,14 +110,16 @@ body {
 .dot.err { background: var(--err); }
 
 /* Activity feed */
-.feed-list { display: flex; flex-direction: column; gap: 5px; overflow: auto; }
-.feed-row { display: flex; gap: 8px; align-items: baseline; font-size: 12px; }
+.feed-list { display: flex; flex-direction: column; gap: 2px; overflow: auto; }
+.feed-row { display: flex; gap: 8px; align-items: baseline; font-size: 12.5px; line-height: 1.5; padding: 3px 4px; border-radius: 5px; }
+.feed-row:hover { background: var(--bg-3); }
 .feed-row .topic { white-space: nowrap; font-weight: 500; }
 .feed-row .topic.ok { color: var(--ok); }
 .feed-row .topic.warn { color: var(--warn); }
 .feed-row .topic.err { color: var(--err); }
 .feed-row .topic.accent { color: var(--accent); }
-.feed-row .desc { color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.feed-row .desc { color: var(--text); flex: 1; white-space: normal; overflow-wrap: anywhere; }
+.feed-row .topic { text-transform: uppercase; font-size: 10px; letter-spacing: .03em; opacity: .85; min-width: 52px; }
 .feed-row .t { margin-left: auto; color: var(--muted); }
 
 /* In-table dropdowns (per-agent model + actions) */

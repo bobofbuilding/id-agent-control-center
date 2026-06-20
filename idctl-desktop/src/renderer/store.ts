@@ -120,14 +120,22 @@ export function useFleet(): FleetStore {
   useEffect(() => {
     let alive = true;
     let since = 0;
+    let replayed = false;
     const myEpoch = epoch.current;
     const loop = async () => {
       while (alive && epoch.current === myEpoch) {
         try {
           const resp = await call<{ events: ManagerEvent[]; next_seq: number }>('events', since);
           if (!alive) return;
-          if (resp.events?.length) setEvents((prev) => [...prev, ...resp.events].slice(-EVENT_BUFFER));
+          if (resp.events?.length) {
+            // Manager events carry no timestamp; stamp LIVE ones (everything after
+            // the initial historical replay) with arrival time so the activity
+            // feed can show "5s / 2m ago".
+            const batch = replayed ? resp.events.map((e) => (e.timestamp ? e : { ...e, timestamp: Date.now() })) : resp.events;
+            setEvents((prev) => [...prev, ...batch].slice(-EVENT_BUFFER));
+          }
           since = resp.next_seq ?? since;
+          replayed = true;
         } catch {
           await new Promise((r) => setTimeout(r, 3000));
         }

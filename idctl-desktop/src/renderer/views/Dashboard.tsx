@@ -55,13 +55,35 @@ function skillsOf(a: Agent): string[] {
 function str(x: unknown): string {
   return typeof x === 'string' ? x : '';
 }
-function describe(e: { topic: string; subject?: string; actor?: string; data?: Record<string, unknown> }): string {
+/** Resolve an agent id (or name) to a readable name; compact `@suffix` if unknown. */
+function agentLabel(idOrName: string, byId: Map<string, string>): string {
+  if (!idOrName) return '';
+  return byId.get(idOrName) ?? (/^agent_\d+_/.test(idOrName) ? '@' + idOrName.replace(/^agent_\d+_/, '') : idOrName);
+}
+const QUERY_VERB: Record<string, string> = {
+  dispatched: 'was sent a query', received: 'received a query', processing: 'is thinking',
+  delivered: 'replied', done: 'finished', complete: 'finished', completed: 'finished',
+  failed: 'failed a query', timeout: 'timed out', cancelled: 'was cancelled', queued: 'queued a query',
+};
+/** Turn a raw manager event into a plain-English line, with agent names resolved. */
+function describe(e: { topic: string; subject?: unknown; actor?: string; data?: Record<string, unknown> }, name: (id: string) => string): string {
   const d = e.data ?? {};
-  const who = [e.subject, d.from, d.name, d.agent, e.actor].map(str).find(Boolean) ?? '';
-  if (e.topic.startsWith('task:')) return [who, str(d.title)].filter(Boolean).join(' — ');
-  if (e.topic.startsWith('query:')) return [who, str(d.status)].filter(Boolean).join(' · ');
-  if (e.topic.startsWith('checkin')) return [str(d.delegate), str(d.title)].filter(Boolean).join(' ');
-  return who;
+  const who = name(str(d.agent) || str(e.actor) || str(d.from) || str(d.name));
+  const t = e.topic;
+  if (t.startsWith('query:')) {
+    const st = str(d.status) || t.split(':')[1] || '';
+    const verb = QUERY_VERB[st] || (st ? `query ${st}` : 'query');
+    return who ? `${who} ${verb}` : verb;
+  }
+  if (t.startsWith('task:')) return [who, str(d.title) || str(d.status) || t.split(':')[1]].filter(Boolean).join(' — ');
+  if (t.startsWith('agent:')) return [who, t.split(':')[1]].filter(Boolean).join(' ');
+  if (t.startsWith('checkin')) return [name(str(d.delegate)) || who, str(d.title)].filter(Boolean).join(' — ');
+  if (/relay|delegat|ask|deleg/.test(t)) {
+    const to = name(str(d.to) || str(d.target) || str(d.delegate));
+    return [who, to].filter(Boolean).join(' → ');
+  }
+  const detail = str(d.status) || str(d.title) || str(d.message) || str(d.note);
+  return [who, detail].filter(Boolean).join(' · ') || t;
 }
 function topicClass(t: string): string {
   if (/online|delivered|done|complete/.test(t)) return 'ok';
@@ -77,6 +99,10 @@ export function Dashboard({ store }: { store: FleetStore }) {
   const [providers, setProviders] = useState<ProviderRow[]>([]);
   const modelRefs = useRef<Record<string, HTMLSelectElement | null>>({});
   const sel: Agent | undefined = store.agents.find((a) => a.id === selected) ?? store.agents[0];
+  // Resolve agent ids → names for the activity feed (so it reads "coder replied",
+  // not "agent_178…"). Recomputed each render; the fleet is small.
+  const agentById = new Map(store.agents.map((a) => [a.id, a.name] as const));
+  const resolveAgent = (id: string) => agentLabel(id, agentById);
 
   // Per-runtime model catalog (synced providers + curated). Refreshed when the
   // fleet snapshot updates so provider syncs from Settings flow through.
@@ -270,13 +296,13 @@ export function Dashboard({ store }: { store: FleetStore }) {
         </section>
 
         <aside className="card feed grow">
-          <h3>Activity</h3>
+          <h3>Activity <span className="muted small">· live fleet events</span></h3>
           <div className="feed-list">
-            {store.events.slice(-60).reverse().map((e) => (
-              <div className="feed-row" key={e.seq}>
-                <span className={`topic ${topicClass(e.topic)}`}>{e.topic}</span>
-                <span className="desc">{describe(e)}</span>
-                <span className="muted t">{ago(e.timestamp)}</span>
+            {store.events.slice(-120).reverse().map((e) => (
+              <div className="feed-row" key={e.seq} title={e.topic}>
+                <span className={`topic ${topicClass(e.topic)}`}>{e.topic.split(':')[0]}</span>
+                <span className="desc">{describe(e, resolveAgent)}</span>
+                {e.timestamp ? <span className="muted t">{ago(e.timestamp)}</span> : null}
               </div>
             ))}
             {store.events.length === 0 ? <div className="muted">waiting for events…</div> : null}
