@@ -8,6 +8,11 @@ Every change pushed or merged to `main` carries its version number in the commit
 subject (`vX.Y.Z: …`), stamped automatically by the `commit-msg` hook — see
 [CONTRIBUTING.md](CONTRIBUTING.md).
 
+## [0.1.42] — 2026-06-20
+- Chat: the selected agent now **persists** — it's saved per-team and restored
+  when you return to Chat (or restart the app), instead of resetting to the lead
+  every time you navigate away.
+
 ## [0.1.41] — 2026-06-20
 - Dashboard layout: the agents table now sizes to its content (all columns show,
   no horizontal scroll on open) and the **Activity feed absorbs the horizontal

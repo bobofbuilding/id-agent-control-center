@@ -69,14 +69,19 @@ function createWindow() {
           // so async UI (e.g. a discovery scan) can be captured headlessly.
           const shotClick = process.env.IDCTL_SHOT_CLICK;
           if (shotClick) {
-            const clickJs = `(${((sel: string) => {
-              const bySel = document.querySelector(sel) as HTMLElement | null;
-              const el = bySel || [...document.querySelectorAll('button')]
-                .find((b) => (b.textContent || '').toLowerCase().includes(sel.toLowerCase())) as HTMLElement | undefined;
-              el?.click();
-              return !!el;
-            }).toString()})(${JSON.stringify(shotClick)})`;
-            await win!.webContents.executeJavaScript(clickJs);
+            // Pipe-separated sequence: click each (by CSS selector or button text)
+            // with a gap between — lets navigation flows be exercised headlessly.
+            for (const sel of shotClick.split('|')) {
+              const clickJs = `(${((s: string) => {
+                const bySel = document.querySelector(s) as HTMLElement | null;
+                const el = bySel || [...document.querySelectorAll('button')]
+                  .find((b) => (b.textContent || '').toLowerCase().includes(s.toLowerCase())) as HTMLElement | undefined;
+                el?.click();
+                return !!el;
+              }).toString()})(${JSON.stringify(sel)})`;
+              await win!.webContents.executeJavaScript(clickJs);
+              await new Promise((r) => setTimeout(r, 500));
+            }
             await new Promise((r) => setTimeout(r, Number(process.env.IDCTL_SHOT_CLICK_WAIT) || 2000));
           }
           const img = await win!.webContents.capturePage();

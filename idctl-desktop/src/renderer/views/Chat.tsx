@@ -15,9 +15,19 @@ export function Chat({ store }: { store: FleetStore }) {
     () => resolveCoordinator(store.agents, store.coordinator) ?? 'lead',
     [store.agents, store.coordinator],
   );
-  // `picked` is the user's manual choice; the active target falls back to the
-  // coordinator whenever nothing valid is picked (on load, or after a team switch).
-  const [picked, setPicked] = useState<string | null>(null);
+  // `picked` is the user's chosen target, persisted per-team in localStorage so
+  // the agent you started chatting with stays selected across navigation and app
+  // restarts. Falls back to the coordinator when nothing valid is saved.
+  const storeKey = `idctl.chat.target.${store.team ?? 'default'}`;
+  const [picked, setPicked] = useState<string | null>(() => {
+    try { return localStorage.getItem(`idctl.chat.target.${store.team ?? 'default'}`); } catch { return null; }
+  });
+  // Reload the saved pick when the team changes.
+  useEffect(() => { try { setPicked(localStorage.getItem(storeKey)); } catch { /* ignore */ } }, [storeKey]);
+  function pick(name: string) {
+    setPicked(name);
+    try { localStorage.setItem(storeKey, name); } catch { /* ignore */ }
+  }
   const target = picked && store.agents.some((a) => a.name === picked) ? picked : defaultTarget;
   const orderedAgents = agentsLeadFirst(store.agents, store.coordinator);
 
@@ -94,7 +104,7 @@ export function Chat({ store }: { store: FleetStore }) {
           <h3>Address</h3>
           {orderedAgents.map((a) => (
             <div key={a.id} className={`target-row${a.name === target ? ' active' : ''}`}>
-              <button className="target" onClick={() => setPicked(a.name)}>
+              <button className="target" onClick={() => pick(a.name)}>
                 {a.name}
               </button>
               <button
