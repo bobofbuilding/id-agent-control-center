@@ -10,6 +10,7 @@ import { startUpdater, stopUpdater, checkForUpdate, getStatus, applyStagedAndRel
 import { subsStatus, subsSignin, subsSignout, subsInstall, type SubProvider } from './subscriptions.ts';
 import { ollamaTags, ollamaPull, ollamaRemove } from './ollama.ts';
 import { getHardware, runInTerminal } from './system.ts';
+import { pickProjectFolder, openProjectFolder, projectReadme, projectGit, projectGitRun } from './projects.ts';
 import { loadSettings, setUpdateSettings } from '../../../idctl/src/settings/store.ts';
 
 // Bundled as CommonJS → __dirname is the output dir (out/main/).
@@ -126,6 +127,16 @@ async function appCall(method: string, args: unknown[]): Promise<unknown> {
       return ollamaRemove(args[0] as string);
     case 'app:hardware':
       return getHardware();
+    case 'project:pickFolder':
+      return pickProjectFolder();
+    case 'project:openFolder':
+      return openProjectFolder(args[0] as string);
+    case 'project:readme':
+      return projectReadme(args[0] as string);
+    case 'project:git':
+      return projectGit(args[0] as string);
+    case 'project:gitRun':
+      return projectGitRun(args[0] as string, args[1] as string);
     case 'app:runInTerminal':
       return runInTerminal(args[0] as string);
     default:

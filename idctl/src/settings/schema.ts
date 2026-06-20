@@ -62,6 +62,8 @@ export interface ProjectEntry {
   tags?: string[];
   /** Related URLs (repo, dashboard, docs…). */
   links?: string[];
+  /** Local folder this project lives in (enables git tracking + README import). */
+  path?: string;
   notes?: string;
   createdAt: number;
   updatedAt: number;

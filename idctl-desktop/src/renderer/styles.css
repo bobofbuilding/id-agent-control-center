@@ -219,6 +219,13 @@ button.chip.incompat:hover { border-color: var(--line); }
 .st-badge.st-done { color: var(--muted); }
 .cell-select.small { font-size: 11px; padding: 2px 4px; }
 
+/* Projects → git tracking */
+.accent-text { color: var(--accent); }
+.project-git { margin-top: 8px; border-top: 1px solid var(--line); padding-top: 8px; }
+.git-badge { display: inline-flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.project-path { margin-top: 4px; opacity: .8; word-break: break-all; }
+.git-out { background: var(--bg-3); border: 1px solid var(--line); border-radius: 6px; padding: 7px 9px; font-family: var(--mono, ui-monospace, monospace); font-size: 11px; line-height: 1.5; white-space: pre-wrap; max-height: 200px; overflow: auto; margin: 8px 0 0; }
+
 /* External links (open in the system browser via the main-process handler) */
 .ext-link { color: var(--accent); text-decoration: none; cursor: pointer; }
 .ext-link:hover { text-decoration: underline; }

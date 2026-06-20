@@ -8,6 +8,16 @@ Every change pushed or merged to `main` carries its version number in the commit
 subject (`vX.Y.Z: …`), stamped automatically by the `commit-msg` hook — see
 [CONTRIBUTING.md](CONTRIBUTING.md).
 
+## [0.1.44] — 2026-06-20
+- Projects page now tracks **folders and git repos**. Each project can point at a
+  local folder; for git repos it shows the **branch and whether you're up to date,
+  ahead, behind, or a customized fork** (ahead/behind measured vs the relevant
+  remote's main branch — upstream's for forks), plus an "uncommitted" flag.
+- One-click **git commands** per project (fetch / pull / status / log / diff) with
+  inline output, an "open folder", and a "remote ↗" link.
+- **Import folder…** (and a Browse + Read-README button on the form) pulls a folder
+  in and **auto-fills the name and description from its README**.
+
 ## [0.1.43] — 2026-06-20
 - Tasks page overhaul. **Fixed broken actions** — the buttons sent malformed
   commands (`/task <id> claim`, `/task <id> complete`, `/task add …`) that the
