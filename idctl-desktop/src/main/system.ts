@@ -23,26 +23,59 @@ export interface HardwareInfo {
   /** macOS + arm64 → unified memory; the RAM figure bounds GPU use too. */
   appleSilicon: boolean;
   cpu: string;
+  cpuCores: number;
+  /** GPU / chipset model (macOS only); undefined elsewhere. */
+  gpu?: string;
+  /** GPU core count (macOS only). */
+  gpuCores?: number;
   totalRamGB: number;
-  /** Free space on the volume holding the home dir; null if unavailable. */
+  /** Free / total space on the volume holding the home dir; null if unavailable. */
   freeDiskGB: number | null;
+  totalDiskGB: number | null;
+}
+
+// The system_profiler probe is slowish (~1s) but its result is static — cache it
+// so only the first Settings open pays for it; disk free is re-read every call.
+let _gpuCache: { gpu?: string; gpuCores?: number } | null = null;
+async function detectGpu(): Promise<{ gpu?: string; gpuCores?: number }> {
+  if (_gpuCache) return _gpuCache;
+  let out: { gpu?: string; gpuCores?: number } = {};
+  if (osPlatform() === 'darwin') {
+    try {
+      const { stdout } = await execFileP('system_profiler', ['SPDisplaysDataType'], { timeout: 6000 });
+      const gpu = stdout.match(/Chipset Model:\s*(.+)/)?.[1]?.trim();
+      const cores = stdout.match(/Total Number of Cores:\s*(\d+)/)?.[1];
+      out = { gpu, gpuCores: cores ? Number(cores) : undefined };
+    } catch {
+      /* system_profiler unavailable / timed out */
+    }
+  }
+  _gpuCache = out;
+  return out;
 }
 
 export async function getHardware(): Promise<HardwareInfo> {
   let freeDiskGB: number | null = null;
+  let totalDiskGB: number | null = null;
   try {
     const s = await statfs(homedir());
     freeDiskGB = +(((s.bavail as number) * (s.bsize as number)) / GB).toFixed(1);
+    totalDiskGB = Math.round(((s.blocks as number) * (s.bsize as number)) / GB);
   } catch {
     /* statfs unavailable on this platform/runtime */
   }
+  const { gpu, gpuCores } = await detectGpu();
   return {
     platform: osPlatform(),
     arch: osArch(),
     appleSilicon: osPlatform() === 'darwin' && osArch() === 'arm64',
     cpu: cpus()[0]?.model ?? 'unknown',
+    cpuCores: cpus().length,
+    gpu,
+    gpuCores,
     totalRamGB: +(totalmem() / GB).toFixed(1),
     freeDiskGB,
+    totalDiskGB,
   };
 }
 

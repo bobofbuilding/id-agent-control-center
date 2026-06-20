@@ -10,7 +10,7 @@ import { LOCAL_STACKS, type LocalStackEntry } from '../../../../idctl/src/settin
 const MODEL_CAPS: ModelCapability[] = ['general', 'tools', 'reasoning', 'coding', 'vision', 'embedding', 'fast'];
 
 /** Hardware of the machine the control center commands (the manager host; localhost here). */
-type HardwareInfo = { platform: string; arch: string; appleSilicon: boolean; cpu: string; totalRamGB: number; freeDiskGB: number | null };
+type HardwareInfo = { platform: string; arch: string; appleSilicon: boolean; cpu: string; cpuCores: number; gpu?: string; gpuCores?: number; totalRamGB: number; freeDiskGB: number | null; totalDiskGB: number | null };
 
 /** A discovered local server enriched by the bridge with whether it's already configured. */
 type Discovered = DiscoveredServer & { alreadyAdded: boolean };
@@ -52,8 +52,6 @@ export function Settings({ store }: { store: FleetStore }) {
     setBaseUrl(e.baseUrl);
     setName(e.id);
   }
-  // lead hierarchy (#10)
-  const [hier, setHier] = useState<{ primary: { team: string; agent: string } | null; coordinators: Record<string, string> }>({ primary: null, coordinators: {} });
   // self-update
   const [version, setVersion] = useState('');
   const [upd, setUpd] = useState<{ autoUpgrade?: boolean; updateManifestUrl?: string; updateRepo?: string } | null>(null);
@@ -67,7 +65,6 @@ export function Settings({ store }: { store: FleetStore }) {
 
   async function reload() {
     setProviders(await call<ProviderRow[]>('providers:list').catch(() => []));
-    setHier(await call<typeof hier>('coordinator:hierarchy').catch(() => ({ primary: null, coordinators: {} })));
     setVersion(await call<string>('app:version').catch(() => ''));
     const u = await call<typeof upd>('update:getSettings').catch(() => null);
     setUpd(u);
@@ -128,12 +125,6 @@ export function Settings({ store }: { store: FleetStore }) {
     reload();
   }, [store.team, store.coordinator]);
 
-  async function makePrimary() {
-    const agent = store.coordinator ?? store.agents.find((a) => /^(lead|manager)$/i.test(a.name))?.name;
-    if (!agent) return;
-    await call('coordinator:setPrimary', store.team ?? 'default', agent);
-    reload();
-  }
 
   async function addProvider() {
     const entry = findProvider(catalogId);
@@ -349,6 +340,35 @@ export function Settings({ store }: { store: FleetStore }) {
       </header>
 
       <section className="card">
+        <h3>Hardware — compute on the commanded machine</h3>
+        <p className="muted small" style={{ marginTop: -4 }}>
+          The machine running the manager and Ollama (where local models download and run){store.managerUrl ? <> · <span className="mono">{store.managerUrl.replace(/^https?:\/\//, '')}</span></> : null}. Local-model size warnings are checked against it.
+        </p>
+        {hardware ? (
+          <div className="kv hw-grid" style={{ gridTemplateColumns: '120px 1fr', gap: '5px 12px' }}>
+            <span>chip / CPU</span>
+            <b>{hardware.cpu}{hardware.appleSilicon ? ' · Apple Silicon' : ''}</b>
+            <span>CPU cores</span>
+            <b>{hardware.cpuCores}</b>
+            {hardware.gpu || hardware.gpuCores ? (
+              <>
+                <span>GPU</span>
+                <b>{hardware.gpu ?? 'integrated'}{hardware.gpuCores ? ` · ${hardware.gpuCores} cores` : ''}</b>
+              </>
+            ) : null}
+            <span>memory</span>
+            <b>{hardware.totalRamGB} GB{hardware.appleSilicon ? ' unified' : ' RAM'}</b>
+            <span>disk free</span>
+            <b>{hardware.freeDiskGB != null ? `${hardware.freeDiskGB} GB${hardware.totalDiskGB ? ` of ${hardware.totalDiskGB} GB` : ''}` : '—'}</b>
+            <span>platform</span>
+            <b className="mono">{hardware.platform} · {hardware.arch}</b>
+          </div>
+        ) : (
+          <p className="muted small">detecting…</p>
+        )}
+      </section>
+
+      <section className="card">
         <h3>Connection</h3>
         <div className="kv">
           <span>manager</span>
@@ -416,36 +436,6 @@ export function Settings({ store }: { store: FleetStore }) {
       </section>
 
       <section className="card">
-        <h3>Lead hierarchy</h3>
-        <div className="hierarchy">
-          {hier.primary ? (
-            <>
-              <div className="hier-node primary">
-                ⭑ {hier.primary.team}/{hier.primary.agent} <span className="muted">— primary lead</span>
-              </div>
-              {Object.entries(hier.coordinators)
-                .filter(([t, ag]) => !(t === hier.primary!.team && ag === hier.primary!.agent))
-                .map(([t, ag]) => (
-                  <div className="hier-node child" key={t}>
-                    └ {t}/{ag} <span className="muted">— reports to primary</span>
-                  </div>
-                ))}
-            </>
-          ) : (
-            <div className="muted">
-              No primary lead set. With several team leads, designate one as the top of the hierarchy — it delegates
-              across teams to the per-team coordinators (via <code>/ask &lt;team&gt;/&lt;agent&gt;</code>).
-            </div>
-          )}
-        </div>
-        <div className="row-actions" style={{ marginTop: 10 }}>
-          <button className="btn" onClick={() => void makePrimary()}>
-            Make “{store.team ?? 'default'}” coordinator the primary lead
-          </button>
-        </div>
-      </section>
-
-      <section className="card">
         <h3>Subscriptions (Claude · ChatGPT · Cursor)</h3>
         <p className="muted small" style={{ marginTop: -4 }}>
           Sign in with your subscription — these power the <span className="mono">claude-*</span>, <span className="mono">codex</span> and <span className="mono">cursor-cli</span> runtimes via OAuth (no API key, no metering). Separate from the metered API backends below.
@@ -492,13 +482,8 @@ export function Settings({ store }: { store: FleetStore }) {
       <section className="card">
         <h3>Local models (Ollama)</h3>
         <p className="muted small" style={{ marginTop: -4 }}>
-          Download a model to run locally via Ollama (<span className="mono">127.0.0.1:11434</span>) — these power the <span className="mono">ollama</span> runtime with no API key, fully offline.
+          Download a model to run locally via Ollama (<span className="mono">127.0.0.1:11434</span>) — these power the <span className="mono">ollama</span> runtime with no API key, fully offline. Size warnings are checked against your hardware (shown at the top).
         </p>
-        {hardware ? (
-          <p className="muted small" style={{ marginTop: -2 }}>
-            Commanded machine: <b>{hardware.cpu}</b> · {hardware.totalRamGB}GB RAM{hardware.freeDiskGB != null ? ` · ${hardware.freeDiskGB}GB disk free` : ''} — size warnings below are checked against it.
-          </p>
-        ) : null}
         <div className="row-actions" style={{ flexWrap: 'wrap', gap: 6 }}>
           <span className="muted small">installed:</span>
           {ollamaModels.length === 0 ? (

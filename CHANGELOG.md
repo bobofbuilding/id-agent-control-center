@@ -8,6 +8,13 @@ Every change pushed or merged to `main` carries its version number in the commit
 subject (`vX.Y.Z: …`), stamped automatically by the `commit-msg` hook — see
 [CONTRIBUTING.md](CONTRIBUTING.md).
 
+## [0.1.30] — 2026-06-20
+- Settings now opens with a **Hardware** card — the commanded machine's compute
+  spec (chip/CPU, CPU + GPU cores, unified/RAM, free-of-total disk, platform),
+  the same machine local-model size warnings are checked against.
+- Moved the **Lead hierarchy** tile from Settings to the **Teams** page, where it
+  sits with the rest of team/coordinator management.
+
 ## [0.1.29] — 2026-06-20
 - Local LLM stacks: simplified the row UI — dropped the always-visible command +
   copy button. **Install / Uninstall** is one click; the exact command is revealed
