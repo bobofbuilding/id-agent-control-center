@@ -11,6 +11,7 @@ import { subsStatus, subsSignin, subsSignout, subsInstall, type SubProvider } fr
 import { ollamaTags, ollamaPull, ollamaRemove } from './ollama.ts';
 import { getHardware, runInTerminal } from './system.ts';
 import { pickProjectFolder, openProjectFolder, projectReadme, projectGit, projectGitRun, githubMeta, cloneGithub, detectProjectsRoot, scanProjectsRoot } from './projects.ts';
+import { pickChatFiles, saveChatFiles } from './chatfiles.ts';
 import { loadSettings, setUpdateSettings } from '../../../idctl/src/settings/store.ts';
 
 // Bundled as CommonJS → __dirname is the output dir (out/main/).
@@ -145,6 +146,10 @@ async function appCall(method: string, args: unknown[]): Promise<unknown> {
       return detectProjectsRoot(args[0] as string | undefined);
     case 'project:scanRoot':
       return scanProjectsRoot(args[0] as string);
+    case 'chat:pickFiles':
+      return pickChatFiles();
+    case 'chat:saveFiles':
+      return saveChatFiles(args[0] as string, args[1] as string[]);
     case 'app:runInTerminal':
       return runInTerminal(args[0] as string);
     default:

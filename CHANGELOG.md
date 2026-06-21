@@ -8,6 +8,18 @@ Every change pushed or merged to `main` carries its version number in the commit
 subject (`vX.Y.Z: …`), stamped automatically by the `commit-msg` hook — see
 [CONTRIBUTING.md](CONTRIBUTING.md).
 
+## [0.1.49] — 2026-06-21
+- **Chat: focus on a project.** A new "focus" dropdown scopes the conversation
+  to a tracked project — its name, folder path, and repo are sent to the agent
+  as context with every message, so it knows what you're working on. The
+  selection persists per team, and the focused project's path shows under the
+  header with an "open ↗".
+- **Chat: attach images and files.** A 📎 button in the composer opens a
+  multi-file picker; selected files are copied (binary-safe) into the focused
+  project's `uploads/` folder — or the target agent's workspace if no project is
+  focused — and their paths are included in the message so the agent can read
+  them (images included). Attachments show as removable chips before sending.
+
 ## [0.1.48] — 2026-06-21
 - Self-update: a build that was already downloaded in a previous session now
   surfaces the "Restart & update" chip **immediately on launch**, instead of
