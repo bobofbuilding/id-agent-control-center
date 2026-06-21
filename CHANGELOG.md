@@ -8,6 +8,13 @@ Every change pushed or merged to `main` carries its version number in the commit
 subject (`vX.Y.Z: …`), stamped automatically by the `commit-msg` hook — see
 [CONTRIBUTING.md](CONTRIBUTING.md).
 
+## [0.1.48] — 2026-06-21
+- Self-update: a build that was already downloaded in a previous session now
+  surfaces the "Restart & update" chip **immediately on launch**, instead of
+  waiting for the next online re-check (which could fail offline and hide a
+  ready update). The chip appears whenever a staged build is newer than the
+  running one.
+
 ## [0.1.47] — 2026-06-21
 - The folder picker (Add from GitHub's "Clone & add", Import folder, Browse,
   change-root) now **opens at your standard projects folder** by default — so

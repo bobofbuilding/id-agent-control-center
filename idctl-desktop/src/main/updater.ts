@@ -219,7 +219,11 @@ echo "[apply] relaunch issued"
 /** Start periodic checks and wire the window for push notifications. */
 export function startUpdater(win: BrowserWindow): void {
   mainWindow = win;
-  status = { ...status, current: app.getVersion(), staged: !!readStaged() };
+  // If a newer build was already downloaded in a prior session, surface the
+  // "Restart & update" chip immediately on launch — don't wait for (or depend
+  // on) the next online re-check, which could fail offline and hide it.
+  const staged = readStaged();
+  status = { ...status, current: app.getVersion(), staged: !!staged, available: !!staged, latest: staged?.version ?? status.latest, notes: staged?.notes ?? status.notes };
   // Headless screenshot runs: skip background checks.
   if (process.env.IDCTL_SHOT) return;
   const hours = settings()?.checkIntervalHours ?? 12;
