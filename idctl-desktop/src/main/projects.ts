@@ -15,11 +15,86 @@
 import { BrowserWindow, dialog, shell } from 'electron';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
-import { existsSync, readFileSync, readdirSync } from 'node:fs';
+import { existsSync, readFileSync, readdirSync, realpathSync, statSync } from 'node:fs';
 import { join, basename } from 'node:path';
+import { homedir } from 'node:os';
 import { loadSettings } from '../../../idctl/src/settings/store.ts';
 
 const execFileP = promisify(execFile);
+
+const MANAGER_PLIST = join(homedir(), 'Library/LaunchAgents/io.bittrees.idagents-manager.plist');
+
+/**
+ * The folder whose subdirectories are tracked as projects. Resolution order:
+ *   1. an explicitly configured root (the saved projectsRoot),
+ *   2. $ID_WORKSPACE_DIR/projects (the manager's own env, if the app inherits it),
+ *   3. ID_WORKSPACE_DIR from the manager's launchd plist + /projects (standard install),
+ *   4. a few well-known relative candidates.
+ * Returns the first one that exists, else null.
+ */
+export function detectProjectsRoot(configured?: string): string | null {
+  const candidates: string[] = [];
+  if (configured && configured.trim()) candidates.push(configured.trim());
+  if (process.env.ID_WORKSPACE_DIR) candidates.push(join(process.env.ID_WORKSPACE_DIR, 'projects'));
+  // ID_WORKSPACE_DIR declared in the manager's launchd plist (the canonical
+  // source on a standard install — the GUI rarely inherits the env itself).
+  try {
+    if (existsSync(MANAGER_PLIST)) {
+      const xml = readFileSync(MANAGER_PLIST, 'utf8');
+      const m = xml.match(/<key>\s*ID_WORKSPACE_DIR\s*<\/key>\s*<string>([^<]+)<\/string>/);
+      if (m) candidates.push(join(m[1].trim(), 'projects'));
+    }
+  } catch {
+    /* plist unreadable */
+  }
+  for (const rel of ['id-agents/workspace/projects', '../id-agents/workspace/projects', 'workspace/projects']) {
+    candidates.push(join(process.cwd(), rel));
+  }
+  for (const c of candidates) {
+    try { if (existsSync(c) && readdirSync(c)) return c; } catch { /* skip */ }
+  }
+  return null;
+}
+
+function isDir(p: string): boolean {
+  try { return statSync(p).isDirectory(); } catch { return false; }
+}
+
+export interface DiscoveredProject {
+  name: string;
+  path: string;
+  description?: string;
+  remoteUrl?: string;
+}
+
+/** Immediate subdirectories of `root` as candidate projects (name/desc/remote). */
+export async function scanProjectsRoot(root: string): Promise<{ root: string; found: DiscoveredProject[]; error?: string }> {
+  if (!root || !existsSync(root)) return { root, found: [], error: 'projects folder not found' };
+  let entries: string[] = [];
+  try {
+    entries = readdirSync(root, { withFileTypes: true })
+      .filter((d) => !d.name.startsWith('.'))
+      // Directories, plus symlinks that resolve to a directory (checked-out repos
+      // are sometimes symlinked into the projects folder).
+      .filter((d) => d.isDirectory() || (d.isSymbolicLink() && isDir(join(root, d.name))))
+      .map((d) => d.name)
+      .sort();
+  } catch (e) {
+    return { root, found: [], error: e instanceof Error ? e.message : String(e) };
+  }
+  const found = await Promise.all(
+    entries.map(async (name): Promise<DiscoveredProject> => {
+      let path = join(root, name);
+      try { path = realpathSync(path); } catch { /* keep as-is */ }
+      const readme = projectReadme(path);
+      // Only use a remote when the folder is its OWN repo root — a plain folder
+      // nested in a larger repo would otherwise return the enclosing repo's URL.
+      const remoteUrl = (await isOwnRepoRoot(path)) ? await git(path, ['remote', 'get-url', 'origin']).catch(() => '') : '';
+      return { name: readme.name || name, path, description: readme.description, remoteUrl: remoteUrl || undefined };
+    }),
+  );
+  return { root, found };
+}
 
 /** Parse owner/repo from a GitHub URL or git@ remote. */
 function repoSlug(url: string): string | null {
@@ -102,6 +177,14 @@ async function git(cwd: string, args: string[], timeoutMs = 10000): Promise<stri
 }
 async function gitOk(cwd: string, args: string[]): Promise<boolean> {
   return git(cwd, args).then(() => true).catch(() => false);
+}
+/** True only when `path` is a git repo's own root — not a plain folder that
+ *  merely sits inside a larger repo (whose status/remote would be misleading). */
+async function isOwnRepoRoot(path: string): Promise<boolean> {
+  const top = await git(path, ['rev-parse', '--show-toplevel']).catch(() => '');
+  if (!top) return false;
+  const norm = (p: string) => { try { return realpathSync(p); } catch { return p.replace(/\/+$/, ''); } };
+  return norm(top) === norm(path);
 }
 
 export async function pickProjectFolder(): Promise<string | null> {
@@ -192,7 +275,9 @@ async function defaultBranchOf(path: string, remote: string): Promise<string> {
 export async function projectGit(path: string): Promise<GitInfo> {
   if (!path || !existsSync(path)) return { isRepo: false, error: 'folder not found' };
   try {
-    if ((await git(path, ['rev-parse', '--is-inside-work-tree']).catch(() => '')) !== 'true') {
+    // Treat as a repo only when the folder is its OWN root; a plain folder that
+    // merely sits inside a larger repo would otherwise report that repo's status.
+    if (!(await isOwnRepoRoot(path))) {
       return { isRepo: false };
     }
     const branch = await git(path, ['rev-parse', '--abbrev-ref', 'HEAD']).catch(() => '');

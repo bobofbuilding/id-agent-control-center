@@ -26,6 +26,10 @@ export function loadSettings(file = resolveConfigPath()): IdctlConfig {
     }
     const raw = JSON.parse(readFileSync(file, 'utf8')) as Partial<IdctlConfig>;
     const cfg: IdctlConfig = {
+      // Preserve any unknown top-level keys (forward-compat + parity with the
+      // standalone sync script, which does a naive read-modify-write), then
+      // normalize the known fields over them.
+      ...(raw as IdctlConfig),
       version: 1,
       managers: Array.isArray(raw.managers) ? raw.managers : [],
       providers: Array.isArray(raw.providers) ? raw.providers : [],
@@ -40,6 +44,7 @@ export function loadSettings(file = resolveConfigPath()): IdctlConfig {
       // explicit null/[] means "show all teams" (filtering disabled).
       knownTeams: raw.knownTeams === undefined ? [DEFAULT_TEAM] : raw.knownTeams,
       projects: Array.isArray(raw.projects) ? raw.projects : undefined,
+      projectsRoot: typeof raw.projectsRoot === 'string' ? raw.projectsRoot : undefined,
     };
     // Validation: at most one default provider.
     let seenDefault = false;
@@ -60,6 +65,18 @@ export function loadSettings(file = resolveConfigPath()): IdctlConfig {
 }
 
 export function saveSettings(cfg: IdctlConfig, file = resolveConfigPath()): void {
+  // SAFETY: never overwrite a config file that exists but doesn't parse — the
+  // lenient loader returns an empty config on a parse error, and writing that
+  // back would silently destroy unreadable secrets (API keys, MCP tokens).
+  // An absent or empty file is fine to create.
+  if (existsSync(file)) {
+    try {
+      const cur = readFileSync(file, 'utf8');
+      if (cur.trim()) JSON.parse(cur);
+    } catch {
+      throw new Error(`refusing to overwrite unparseable config at ${file}; fix or remove it first`);
+    }
+  }
   const dir = configDir(file);
   mkdirSync(dir, { recursive: true, mode: 0o700 });
   try {
@@ -222,6 +239,13 @@ export function upsertProject(p: ProjectEntry, file = resolveConfigPath()): Idct
 export function removeProject(id: string, file = resolveConfigPath()): IdctlConfig {
   const cfg = loadSettings(file);
   cfg.projects = (cfg.projects ?? []).filter((x) => x.id !== id);
+  saveSettings(cfg, file);
+  return cfg;
+}
+
+export function setProjectsRoot(root: string | undefined, file = resolveConfigPath()): IdctlConfig {
+  const cfg = loadSettings(file);
+  cfg.projectsRoot = root && root.trim() ? root.trim() : undefined;
   saveSettings(cfg, file);
   return cfg;
 }

@@ -47,6 +47,12 @@ export interface IdctlConfig {
   knownTeams?: string[];
   /** Local project tracker entries (the "Projects" page). Client-side only. */
   projects?: ProjectEntry[];
+  /**
+   * Folder whose immediate subdirectories are tracked as projects (the "Sync
+   * from workspace" feature). Defaults to the id-agents `$ID_WORKSPACE_DIR/
+   * projects` dir, auto-detected on first run. Client-side only.
+   */
+  projectsRoot?: string;
 }
 
 export type ProjectStatus = 'active' | 'paused' | 'blocked' | 'done';

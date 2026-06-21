@@ -8,6 +8,24 @@ Every change pushed or merged to `main` carries its version number in the commit
 subject (`vX.Y.Z: …`), stamped automatically by the `commit-msg` hook — see
 [CONTRIBUTING.md](CONTRIBUTING.md).
 
+## [0.1.46] — 2026-06-21
+- **Sync the Projects page from your id-agents workspace.** New "⟳ Sync
+  workspace" button auto-discovers the projects folder
+  (`$ID_WORKSPACE_DIR/projects`, detected from the manager's launchd config) and
+  tracks each subfolder as a project — pulling **name + description from the
+  README**, the **git remote as a link**, and a `workspace` tag. The merge is
+  additive and idempotent: it dedupes by folder, adopts a same-named manual
+  entry, and never overwrites your edits or deletes anything.
+- On first run with no projects yet, the page **auto-syncs** the detected
+  workspace, so it's populated out of the box. The root is shown with a
+  "change…" link to point it elsewhere.
+- Git tracking now only treats a folder as a repo when it's the repo's **own
+  root** — a plain folder nested inside a larger repo no longer borrows the
+  enclosing repo's branch/status/remote.
+- Standard install: an `io.bittrees.projects-sync` launchd agent keeps the
+  tracker in sync with the workspace folder on a schedule, so a fresh idagents
+  install has its projects tracked without opening the app.
+
 ## [0.1.45] — 2026-06-20
 - **Add a project straight from a GitHub URL.** New "⤓ Add from GitHub" on the
   Projects page: paste a repo URL, pick where to clone it, and the app **clones

@@ -24,7 +24,11 @@ import {
   removeMcpServer,
   upsertProject,
   removeProject,
+  saveSettings,
 } from '../../../idctl/src/settings/store.ts';
+import { detectProjectsRoot, scanProjectsRoot } from './projects.ts';
+import { realpathSync } from 'node:fs';
+import { createHash } from 'node:crypto';
 import { ProviderClient } from '../../../idctl/src/settings/ProviderClient.ts';
 import { discoverLocalServers, type DiscoveredServer } from '../../../idctl/src/settings/localDiscovery.ts';
 import { kindNeedsKey, type ProviderProfile, type McpServerProfile, type ProjectEntry } from '../../../idctl/src/settings/schema.ts';
@@ -40,6 +44,25 @@ import { homedir } from 'node:os';
  * subscription. Visibility 'list' = user-selectable; sort by priority to match
  * the CLI's picker order. [] on any error (cache absent / not signed in).
  */
+// ---- Projects-sync helpers -------------------------------------------------
+/** Canonical path for dedup: realpath when it exists, else trailing-slash-trimmed. */
+function normPath(p?: string): string {
+  if (!p) return '';
+  try { return realpathSync(p); } catch { return p.replace(/\/+$/, ''); }
+}
+/** Loose name key for adopting a same-named manual entry (case/punctuation-insensitive). */
+function normName(n: string): string {
+  return (n || '').toLowerCase().replace(/[^a-z0-9]+/g, '');
+}
+/** A git remote → a clean github.com/owner/repo link (best-effort, non-github passes through). */
+function ghLink(remote: string): string {
+  return remote.trim().replace(/^git@github\.com:/, 'github.com/').replace(/^https?:\/\//, '').replace(/\.git$/, '');
+}
+/** Deterministic, collision-resistant id from a path (re-syncs reuse the id). */
+function stableHash(s: string): string {
+  return createHash('sha1').update(s).digest('hex').slice(0, 16);
+}
+
 function codexModelsFromCache(): string[] {
   try {
     const raw = readFileSync(join(homedir(), '.codex', 'models_cache.json'), 'utf8');
@@ -184,6 +207,66 @@ const METHODS: Record<string, (...a: any[]) => Promise<unknown>> = {
   'projects:remove': async (id: string) => {
     removeProject(String(id));
     return loadSettings().projects ?? [];
+  },
+  // Detect the projects root (returns null if none found).
+  'projects:detectRoot': async (root?: string) => detectProjectsRoot(typeof root === 'string' ? root : loadSettings().projectsRoot),
+  // Sync the workspace projects folder into the tracker. Additive + idempotent:
+  // dedupes by folder path, adopts a path-less manual entry of the same name,
+  // never deletes or overwrites your edits. Persists the resolved root.
+  'projects:syncRoot': async (rootArg?: string) => {
+    const root = detectProjectsRoot(typeof rootArg === 'string' && rootArg.trim() ? rootArg.trim() : loadSettings().projectsRoot);
+    if (!root) return { ok: false, root: null, added: 0, adopted: 0, total: (loadSettings().projects ?? []).length, error: 'no projects folder found' };
+    const scan = await scanProjectsRoot(root);
+    // Load once, merge in memory, write once (atomic). A single read-modify-write
+    // shrinks the cross-process window vs the launchd syncer (no N-write burst).
+    const cfg = loadSettings();
+    const projects = cfg.projects ?? [];
+    if (scan.error) {
+      cfg.projects = projects;
+      cfg.projectsRoot = root;
+      saveSettings(cfg);
+      return { ok: false, root, added: 0, adopted: 0, total: projects.length, error: scan.error };
+    }
+    const byPath = new Set(projects.map((p) => normPath(p.path)).filter(Boolean) as string[]);
+    const pathlessByName = new Map<string, ProjectEntry>();
+    for (const p of projects) { const k = normName(p.name); if (!p.path && k) pathlessByName.set(k, p); }
+    let added = 0;
+    let adopted = 0;
+    const now = Date.now();
+    for (const d of scan.found) {
+      const np = normPath(d.path);
+      if (np && byPath.has(np)) continue; // already tracked
+      const link = d.remoteUrl ? ghLink(d.remoteUrl) : '';
+      const key = normName(d.name);
+      const adopt = key ? pathlessByName.get(key) : undefined; // never adopt on an empty key
+      if (adopt) {
+        adopt.path = d.path;
+        if (!adopt.description && d.description) adopt.description = d.description;
+        if (link && !(adopt.links ?? []).includes(link)) adopt.links = [...(adopt.links ?? []), link];
+        adopt.updatedAt = now;
+        pathlessByName.delete(key);
+        if (np) byPath.add(np);
+        adopted++;
+        continue;
+      }
+      projects.push({
+        id: `ws_${stableHash(d.path)}`,
+        name: d.name,
+        status: 'active',
+        description: d.description,
+        tags: ['workspace'],
+        links: link ? [link] : [],
+        path: d.path,
+        createdAt: now,
+        updatedAt: now,
+      });
+      if (np) byPath.add(np);
+      added++;
+    }
+    cfg.projects = projects;
+    cfg.projectsRoot = root;
+    saveSettings(cfg);
+    return { ok: true, root, added, adopted, total: projects.length };
   },
 
   // identity & keys (Safe + ERC-4337 session keys; mock today)

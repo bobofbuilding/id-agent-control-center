@@ -67,6 +67,8 @@ export function Projects({ store }: { store: FleetStore }) {
   const [confirmDel, setConfirmDel] = useState<string | null>(null);
   const [ghOpen, setGhOpen] = useState(false);
   const [ghUrl, setGhUrl] = useState('');
+  const [root, setRoot] = useState<string | null>(null);
+  const [syncing, setSyncing] = useState(false);
 
   const lead = resolveCoordinator(store.agents, store.coordinator);
 
@@ -81,8 +83,40 @@ export function Projects({ store }: { store: FleetStore }) {
     const list = await call<ProjectEntry[]>('projects:list').catch(() => []);
     setProjects(list);
     void loadGit(list);
+    const r = await call<string | null>('projects:detectRoot').catch(() => null);
+    setRoot(r);
+    // First-run convenience: nothing tracked yet but we found the workspace
+    // projects folder → sync it so the page is populated out of the box.
+    if (list.length === 0 && r) void doSync(undefined, true);
   }
   useEffect(() => { void load(); }, []);
+
+  type SyncResult = { ok: boolean; root: string | null; added: number; adopted: number; total: number; error?: string };
+  /** Scan the workspace projects folder and merge each subfolder into the tracker. */
+  async function doSync(rootArg?: string, silent = false) {
+    setSyncing(true);
+    if (!silent) setNote('syncing from workspace…');
+    try {
+      const res = await call<SyncResult>('projects:syncRoot', rootArg).catch((): SyncResult => ({ ok: false, root: null, added: 0, adopted: 0, total: 0, error: 'sync failed' }));
+      if (res.root) setRoot(res.root);
+      if (!res.ok) { setNote(res.error ? `sync: ${res.error}` : 'no projects folder found'); return; }
+      const list = await call<ProjectEntry[]>('projects:list').catch(() => []);
+      setProjects(list);
+      void loadGit(list);
+      const parts: string[] = [];
+      if (res.added) parts.push(`${res.added} added`);
+      if (res.adopted) parts.push(`${res.adopted} linked`);
+      setNote(parts.length ? `synced from workspace — ${parts.join(', ')} ✓` : 'workspace already in sync ✓');
+    } finally {
+      setSyncing(false);
+    }
+  }
+  /** Point the tracker at a different projects folder, then sync it. */
+  async function changeRoot() {
+    const p = await call<string | null>('project:pickFolder').catch(() => null);
+    if (!p) return;
+    await doSync(p);
+  }
 
   const shown = useMemo(
     () => projects.filter((p) => filter === 'all' || p.status === filter).sort((a, b) => (b.updatedAt ?? 0) - (a.updatedAt ?? 0)),
@@ -244,6 +278,7 @@ export function Projects({ store }: { store: FleetStore }) {
       <header className="view-head">
         <h1>Projects</h1>
         <div className="row-actions">
+          <button className="btn" disabled={busy || syncing} title={root ? `Scan ${root} and track each subfolder` : 'Find the id-agents workspace projects folder and track its subfolders'} onClick={() => void doSync()}>{syncing ? 'Syncing…' : '⟳ Sync workspace'}</button>
           <button className="btn" disabled={busy} onClick={() => { setGhOpen((v) => !v); setNote(''); }}>{ghOpen ? '− Cancel' : '⤓ Add from GitHub'}</button>
           <button className="btn" disabled={busy} onClick={() => void importFolder()}>Import folder…</button>
           <button className="btn primary" disabled={busy} onClick={() => (editing === 'new' ? setEditing(null) : openNew())}>
@@ -251,6 +286,14 @@ export function Projects({ store }: { store: FleetStore }) {
           </button>
         </div>
       </header>
+
+      <div className="projects-root muted small">
+        {root ? (
+          <>workspace: <span className="mono" title={root}>{root}</span> · <button className="link-btn" disabled={busy || syncing} onClick={() => void changeRoot()}>change…</button></>
+        ) : (
+          <>No workspace projects folder detected. <button className="link-btn" disabled={busy || syncing} onClick={() => void changeRoot()}>Choose a folder…</button> to auto-track its subfolders.</>
+        )}
+      </div>
 
       {ghOpen ? (
         <section className="card gh-add">
