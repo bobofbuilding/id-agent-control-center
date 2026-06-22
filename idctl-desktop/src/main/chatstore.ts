@@ -41,6 +41,9 @@ export interface ChatSession {
   named?: boolean;
   /** true when an agent reply landed that the user hasn't viewed yet (drives the Chat nav badge). */
   unread?: boolean;
+  /** An in-flight dispatch awaiting a reply — persisted so the chat can resume
+   *  polling after navigation, a long wait, or an app restart. */
+  inflight?: { queryId: string; replyId: number; target: string; startedAt: number; plan?: { request: boolean; text: string } } | null;
   team: string;
   target: string;
   projectId?: string;
@@ -77,6 +80,30 @@ export function listChats(team?: string): ChatSummary[] {
     } catch { /* skip a corrupt file */ }
   }
   return out.sort((a, b) => b.updatedAt - a.updatedAt);
+}
+
+/** Sessions that have a persisted in-flight dispatch — so the renderer can resume
+ *  polling ALL of them on mount (not just the last-open one), and a reply to a
+ *  backgrounded chat still lands with an unread badge after a restart. `delivered`
+ *  is true when the reply already landed (stale inflight → caller drops it). */
+export function listInflightChats(team?: string): Array<{ id: string; inflight: NonNullable<ChatSession['inflight']>; delivered: boolean }> {
+  const dir = chatsDir();
+  const out: Array<{ id: string; inflight: NonNullable<ChatSession['inflight']>; delivered: boolean }> = [];
+  let files: string[] = [];
+  try { files = readdirSync(dir); } catch { return out; }
+  for (const f of files) {
+    if (!f.endsWith('.json')) continue;
+    try {
+      const s = JSON.parse(readFileSync(join(dir, f), 'utf8')) as ChatSession;
+      if (team && s.team !== team) continue;
+      const inf = s.inflight;
+      if (!inf?.queryId) continue;
+      const reply = (s.messages || []).find((m) => m.id === inf.replyId);
+      const delivered = !!(reply && ((reply.text && reply.text.trim()) || reply.image));
+      out.push({ id: s.id, inflight: inf, delivered });
+    } catch { /* skip a corrupt file */ }
+  }
+  return out;
 }
 
 /** Strip the renderer-only `pending` flag before a message is persisted. */
@@ -150,6 +177,7 @@ export interface ChatPatch {
   target?: string;
   projectId?: string;
   unread?: boolean;
+  inflight?: { queryId: string; replyId: number; target: string; startedAt: number; plan?: { request: boolean; text: string } } | null; // set to null to clear
   appendMessage?: ChatMessage;
   patchMessage?: { id: number; patch: Partial<ChatMessage> };
   touch?: boolean;          // bump updatedAt (default true; false = don't reorder)
@@ -165,6 +193,7 @@ export function patchChat(id: string, p: ChatPatch): { ok: boolean; session?: Ch
     if (p.target !== undefined) s.target = p.target;
     if (p.projectId !== undefined) s.projectId = p.projectId;
     if (p.unread !== undefined) s.unread = p.unread;
+    if (p.inflight !== undefined) s.inflight = p.inflight; // {…} to set, null to clear
     if (Array.isArray(s.messages) === false) s.messages = [];
     if (p.appendMessage) s.messages = [...s.messages, stripPending(p.appendMessage)];
     if (p.patchMessage) s.messages = s.messages.map((m) => (m.id === p.patchMessage!.id ? stripPending({ ...m, ...p.patchMessage!.patch }) : m));
@@ -188,8 +217,17 @@ export function saveChat(session: ChatSession): { ok: boolean; id: string; skipp
   if (!hasContent(session)) return { ok: true, id: session.id, skipped: true };
   const f = fileFor(session.id);
   const now = Date.now();
+  // `inflight` is owned exclusively by patchChat (a targeted, atomic field). A
+  // full save carries whatever snapshot the renderer happened to hold, which can
+  // be stale (e.g. a title/target edit mid-dispatch, or right after a reply
+  // cleared it) — so preserve the authoritative on-disk value and never let a
+  // full save resurrect or wipe an inflight. Only the create case uses the
+  // incoming value (there's nothing on disk yet to preserve).
+  let inflight = session.inflight ?? null;
+  try { if (existsSync(f)) inflight = (JSON.parse(readFileSync(f, 'utf8')) as ChatSession).inflight ?? null; } catch { /* file unreadable → keep incoming */ }
   const payload: ChatSession = {
     ...session,
+    inflight,
     title: (session.title || '').slice(0, 200),
     // Strip the renderer-only `pending` flag so an in-flight reply interrupted by
     // a switch/quit doesn't persist as a frozen "thinking…" spinner.

@@ -131,6 +131,24 @@ const METHODS: Record<string, (...a: any[]) => Promise<unknown>> = {
   dispatch: (command: string) => client.dispatch(String(command)),
   remote: (command: string, agent?: string) => client.remote(String(command), agent),
 
+  // Resumable dispatch: START returns a queryId (or an inline reply for
+  // manager-local commands); POLL checks that query. The renderer owns the loop
+  // so an in-flight reply survives navigation, long tasks, and app restarts.
+  'dispatch:start': async (command: string) => {
+    const env = await client.remote<{ queryId?: string; status?: string; result?: string; message?: string }>(String(command));
+    const r = env.result as any;
+    const queryId = r?.queryId;
+    if (queryId) return { queryId: String(queryId) };
+    const inline = typeof r === 'string' ? r : (r?.result ?? r?.message ?? '');
+    return { inline: String(inline || '(no reply)') };
+  },
+  'query:poll': async (queryId: string, wait?: number) => {
+    const q = await client.query(String(queryId), typeof wait === 'number' ? wait : undefined);
+    const r = q.result as any;
+    const text = typeof r === 'string' ? r : (r?.result ?? r?.message ?? '');
+    return { status: q.status, text: String(text || ''), error: q.error };
+  },
+
   // auto-decompose work for the fleet: lead splits an objective into sub-tasks…
   'work:decompose': async (objective: string, lead: string) => {
     const agents = await client.agents().catch(() => []);

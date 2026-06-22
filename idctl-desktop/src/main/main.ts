@@ -12,7 +12,7 @@ import { ollamaTags, ollamaPull, ollamaRemove } from './ollama.ts';
 import { getHardware, runInTerminal } from './system.ts';
 import { pickProjectFolder, openProjectFolder, projectReadme, projectGit, projectGitRun, githubMeta, cloneGithub, detectProjectsRoot, scanProjectsRoot } from './projects.ts';
 import { pickChatFiles, saveChatFiles, savePastedFile } from './chatfiles.ts';
-import { listChats, getChat, saveChat, renameChat, removeChat, genTitle, unreadChatCount, markChatRead, patchChat, type ChatSession, type ChatPatch } from './chatstore.ts';
+import { listChats, listInflightChats, getChat, saveChat, renameChat, removeChat, genTitle, unreadChatCount, markChatRead, patchChat, type ChatSession, type ChatPatch } from './chatstore.ts';
 import { listPlans, getPlan, savePlan, removePlan, type Plan } from './planstore.ts';
 import { generateImage, readImage, imageModels, getImageServer, detectImageServer } from './images.ts';
 import { loadSettings, setUpdateSettings, setImageServer } from '../../../idctl/src/settings/store.ts';
@@ -183,6 +183,8 @@ async function appCall(method: string, args: unknown[]): Promise<unknown> {
       return savePastedFile(args[0] as string, args[1] as string);
     case 'chats:list':
       return listChats(args[0] as string | undefined);
+    case 'chats:inflight':
+      return listInflightChats(args[0] as string | undefined);
     case 'chats:get':
       return getChat(args[0] as string);
     case 'chats:save':

@@ -8,6 +8,27 @@ Every change pushed or merged to `main` carries its version number in the commit
 subject (`vX.Y.Z: …`), stamped automatically by the `commit-msg` hook — see
 [CONTRIBUTING.md](CONTRIBUTING.md).
 
+## [0.1.70] — 2026-06-22
+- **Chat replies survive long tasks, navigating away, and restarts.** Dispatches
+  are now resumable: the in-flight query is persisted on the chat, and the chat
+  resumes polling when you come back to it — instead of giving up with “timed
+  out waiting for reply” and losing the answer. Switching pages and returning no
+  longer wipes the live activity; it re-attaches and the reply lands when ready.
+  Replies always land in the **right** chat (with an unread badge if you’ve moved
+  on), and **every** waiting chat resumes after a restart — not just the last one
+  you had open. (Replaces the single fixed-timeout long-poll with a renderer-owned
+  resumable poll loop; while the manager is reachable it never abandons a running
+  task — it defers to the manager’s own result/expiry — and a brief outage just
+  keeps waiting with a soft notice instead of dropping the reply.)
+- **More reliable delegation.** The Coordinator preset now tells the lead to
+  prefer synchronous \`/talk-to\` (the manager handles the wait) over hand-rolled
+  async polling, which could hang waiting for a teammate that never woke.
+- **Sturdier composer + plans.** The composer is locked while a reply is in
+  flight so a fast double-press can’t fire two dispatches (or two billed image
+  generations); a plan request still auto-saves to **Work › Plans** even when its
+  reply lands after you navigated away or restarted; and the per-reply “behind
+  the scenes” trace is captured per dispatch.
+
 ## [0.1.69] — 2026-06-22
 - **Readable supervision check-ins.** The check-in list no longer shows cryptic
   `chk_…` ids. Each row now reads **“Watching: <task title> · <owner> · every
