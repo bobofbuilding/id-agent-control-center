@@ -373,6 +373,16 @@ export class ManagerClient {
     return d.checkins ?? [];
   }
 
+  /** Manually close a supervision check-in (stops it firing). */
+  async closeCheckin(id: string, reason = 'closed from control center', signal?: AbortSignal): Promise<{ ok: boolean }> {
+    try {
+      await this.post(`/checkins/${encodeURIComponent(id)}/close`, { reason }, signal);
+      return { ok: true };
+    } catch {
+      return { ok: false };
+    }
+  }
+
   /** All schedule definitions for the team (heartbeats + calendar check-ins), with last-run. */
   async schedules(signal?: AbortSignal): Promise<ScheduleEntry[]> {
     const env = await this.remote<{ schedules?: ScheduleEntry[] }>('/schedule list', undefined, signal);
@@ -556,13 +566,16 @@ export interface DeployPreflight {
 
 export interface CheckIn {
   id?: string | number;
-  title?: string;
-  dispatcher?: string;
-  delegate?: string;
-  status?: string;
-  intervalSeconds?: number;
-  nextDueAt?: number;
-  linkedTask?: string;
+  status?: string;                 // active | snoozed | closed | expired
+  intervalSeconds?: number | null;
+  iterationCount?: number;
+  maxIterations?: number | null;
+  nextFireAt?: number | null;      // ms epoch
+  lastFireAt?: number | null;      // ms epoch
+  owner?: string | null;           // the dispatcher (who delegated), resolved name
+  closedReason?: string | null;
+  /** The task this check-in supervises, resolved server-side (newer managers). */
+  linkedTask?: { name?: string; title?: string; status?: string; owner?: string | null; gone?: boolean } | null;
   [key: string]: unknown;
 }
 

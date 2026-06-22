@@ -29,6 +29,26 @@ function relTime(unixSec: number | null): string {
   if (s < 86400) return `${Math.round(s / 3600)}h ago`;
   return `${Math.round(s / 86400)}d ago`;
 }
+/** Relative time from a millisecond-epoch timestamp (check-in fire times). */
+function fmtMsAgo(ms?: number | null): string {
+  if (!ms) return 'not yet';
+  const s = Math.max(0, Math.round((Date.now() - ms) / 1000));
+  if (s < 60) return `${s}s ago`;
+  if (s < 3600) return `${Math.round(s / 60)}m ago`;
+  if (s < 86400) return `${Math.round(s / 3600)}h ago`;
+  return `${Math.round(s / 86400)}d ago`;
+}
+function fmtMsIn(ms?: number | null): string {
+  if (!ms) return '—';
+  const s = Math.round((ms - Date.now()) / 1000);
+  if (s <= 0) return 'due now';
+  if (s < 60) return `in ${s}s`;
+  if (s < 3600) return `in ${Math.round(s / 60)}m`;
+  if (s < 86400) return `in ${Math.round(s / 3600)}h`;
+  return `in ${Math.round(s / 86400)}d`;
+}
+const isTerminalTask = (s?: string): boolean => !!s && /done|complete|closed|cancel/i.test(s);
+
 /** A heartbeat is "missed" when active but its last run is older than ~2 intervals. */
 function isMissed(s: ScheduleEntry): boolean {
   if (s.kind !== 'heartbeat' || !s.active || !s.intervalSeconds) return false;
@@ -145,21 +165,64 @@ export function Schedule({ store }: { store: FleetStore }) {
       </section>
 
       <section className="card grow">
-        <h3>Supervision check-ins ({checkins.length})</h3>
-        {checkins.length === 0 ? (
-          <p className="muted">No active supervision check-ins.</p>
-        ) : (
-          <div className="feed-list">
-            {checkins.map((c, i) => (
-              <div className="feed-row" key={String(c.id ?? i)}>
-                <span className="dot warn" />
-                <span>{String(c.title ?? c.delegate ?? c.id ?? 'check-in')}</span>
-                {c.delegate ? <span className="muted">→ {c.delegate}</span> : null}
-                {c.status ? <span className="muted small">· {c.status}</span> : null}
+        {(() => {
+          const ranked = [...checkins].sort((a, b) => {
+            const open = (c: CheckIn) => (/(active|snoozed)/i.test(String(c.status)) ? 0 : 1);
+            return open(a) - open(b) || (a.nextFireAt ?? Infinity) - (b.nextFireAt ?? Infinity);
+          });
+          const openCount = ranked.filter((c) => /(active|snoozed)/i.test(String(c.status))).length;
+          const stale = ranked.filter((c) => /(active|snoozed)/i.test(String(c.status)) && isTerminalTask(c.linkedTask?.status)).length;
+          return (
+            <>
+              <div className="row-actions" style={{ alignItems: 'center', marginBottom: 4 }}>
+                <h3 style={{ margin: 0 }}>Supervision check-ins</h3>
+                <span className="muted small">· {openCount} active{ranked.length - openCount ? ` · ${ranked.length - openCount} closed` : ''}</span>
+                <span className="grow" />
+                {stale > 0 ? <span className="warn-text small">⚠ {stale} watching finished work</span> : null}
               </div>
-            ))}
-          </div>
-        )}
+              <p className="muted small" style={{ marginTop: 0 }}>
+                A check-in watches a delegated task and pings the agent that delegated it on a cadence, auto-closing when the task is done.
+              </p>
+              {ranked.length === 0 ? (
+                <p className="muted center pad">No supervision check-ins — these appear when an agent delegates tracked work to a teammate.</p>
+              ) : (
+                <div className="ci-list">
+                  {ranked.map((c, i) => {
+                    const open = /(active|snoozed)/i.test(String(c.status));
+                    const lt = c.linkedTask;
+                    const title = lt?.gone ? 'a removed task' : (lt?.title || 'a delegated task');
+                    const taskDone = isTerminalTask(lt?.status);
+                    const fired = typeof c.iterationCount === 'number' ? c.iterationCount : 0;
+                    const cap = c.maxIterations ? `/${c.maxIterations}` : '';
+                    const meta = [
+                      lt?.owner ? `${lt.owner}` : null,
+                      c.intervalSeconds ? `every ${fmtInterval(c.intervalSeconds)}` : null,
+                      `checked ${fired}${cap}×`,
+                      open ? `next ${fmtMsIn(c.nextFireAt)}` : (c.closedReason ? `closed · ${c.closedReason}` : `last ${fmtMsAgo(c.lastFireAt)}`),
+                    ].filter(Boolean).join(' · ');
+                    return (
+                      <div className={`ci-row${open ? '' : ' closed'}`} key={String(c.id ?? i)}>
+                        <span className={`dot ${open ? (taskDone ? 'warn' : 'ok') : 'muted'}`} />
+                        <div className="ci-main">
+                          <div className="ci-title b" title={lt?.name || String(c.id)}>Watching: {title}</div>
+                          <div className="muted small">
+                            {meta}
+                            {open && taskDone ? <span className="warn-text"> · ⚠ task already {lt?.status} — safe to close</span> : null}
+                          </div>
+                        </div>
+                        {open ? (
+                          <button className="btn small" disabled={busy} title="Stop this check-in firing" onClick={() => void act('closing check-in', () => call('checkins:close', c.id))}>Close</button>
+                        ) : (
+                          <span className="muted small" style={{ alignSelf: 'center' }}>{c.status}</span>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </>
+          );
+        })()}
       </section>
     </>
   );

@@ -151,6 +151,7 @@ const METHODS: Record<string, (...a: any[]) => Promise<unknown>> = {
 
   // scheduling
   checkins: () => client.checkins(),
+  'checkins:close': (id: string) => client.closeCheckin(String(id)),
   schedules: () => client.schedules(),
   addHeartbeat: (agent: string, seconds: number, message: string, delivery?: 'internal' | 'talk') =>
     client.addHeartbeat(String(agent), Number(seconds), String(message), delivery),

@@ -133,6 +133,13 @@ input, textarea { -webkit-user-select: text; user-select: text; }
 .feed-list { display: flex; flex-direction: column; gap: 2px; overflow: auto; }
 .feed-row { display: flex; gap: 8px; align-items: baseline; font-size: 12.5px; line-height: 1.5; padding: 3px 4px; border-radius: 5px; }
 .feed-row:hover { background: var(--bg-3); }
+/* Supervision check-ins — legible two-line rows. */
+.ci-list { display: flex; flex-direction: column; gap: 4px; }
+.ci-row { display: flex; align-items: flex-start; gap: 9px; padding: 7px 9px; background: var(--bg-2); border: 1px solid var(--line); border-radius: 8px; }
+.ci-row.closed { opacity: .55; }
+.ci-row .dot { margin-top: 5px; flex: 0 0 auto; }
+.ci-main { flex: 1 1 auto; min-width: 0; }
+.ci-title { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .feed-row .topic { white-space: nowrap; font-weight: 500; }
 .feed-row .topic.ok { color: var(--ok); }
 .feed-row .topic.warn { color: var(--warn); }

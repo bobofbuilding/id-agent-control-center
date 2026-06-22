@@ -8,6 +8,15 @@ Every change pushed or merged to `main` carries its version number in the commit
 subject (`vX.Y.Z: …`), stamped automatically by the `commit-msg` hook — see
 [CONTRIBUTING.md](CONTRIBUTING.md).
 
+## [0.1.69] — 2026-06-22
+- **Readable supervision check-ins.** The check-in list no longer shows cryptic
+  `chk_…` ids. Each row now reads **“Watching: <task title> · <owner> · every
+  10m · checked 6× · next in 3m”** with the live status, sorted active-first.
+  A header flags any check-in still watching finished work (“⚠ N watching
+  finished work”), each active one gets a **Close** button, and closed ones are
+  dimmed with their reason. (The manager now resolves each check-in’s linked
+  task title/owner; older managers degrade to “a delegated task”.)
+
 ## [0.1.68] — 2026-06-22
 - **Coordinator preset no longer leaves stale “doing” tasks.** When the lead
   delegated synchronously it was auto-attaching a tracked task that never closed
