@@ -8,6 +8,12 @@ Every change pushed or merged to `main` carries its version number in the commit
 subject (`vX.Y.Z: …`), stamped automatically by the `commit-msg` hook — see
 [CONTRIBUTING.md](CONTRIBUTING.md).
 
+## [0.1.51] — 2026-06-22
+- Update checks now also fire **when you focus the app window** (debounced to
+  once per 5 min), so a release cut while the app is open surfaces the
+  "Restart & update" chip in seconds instead of waiting up to the periodic
+  timer. Default check interval lowered 12h → 4h as a backstop.
+
 ## [0.1.50] — 2026-06-22
 - **Chat is now saved and resumable.** Every conversation is a persisted session
   (one JSON file under `~/.config/idctl/chats/`), so threads survive navigation

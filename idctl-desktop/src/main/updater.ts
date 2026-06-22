@@ -226,11 +226,19 @@ export function startUpdater(win: BrowserWindow): void {
   status = { ...status, current: app.getVersion(), staged: !!staged, available: !!staged, latest: staged?.version ?? status.latest, notes: staged?.notes ?? status.notes };
   // Headless screenshot runs: skip background checks.
   if (process.env.IDCTL_SHOT) return;
-  const hours = settings()?.checkIntervalHours ?? 12;
+  const hours = settings()?.checkIntervalHours ?? 4;
   // Initial check shortly after launch (let the window settle).
   setTimeout(() => void checkForUpdate(), 2500);
   timer = setInterval(() => void checkForUpdate(), Math.max(1, hours) * 3600_000);
+  // Re-check whenever the user focuses the window (debounced) — so a release cut
+  // while the app is open surfaces in seconds instead of waiting for the timer.
+  win.on('focus', () => {
+    if (Date.now() - lastFocusCheck < 5 * 60_000) return;
+    lastFocusCheck = Date.now();
+    void checkForUpdate();
+  });
 }
+let lastFocusCheck = 0;
 
 export function stopUpdater(): void {
   if (timer) clearInterval(timer);
