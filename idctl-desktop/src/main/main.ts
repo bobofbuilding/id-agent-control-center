@@ -13,6 +13,7 @@ import { getHardware, runInTerminal } from './system.ts';
 import { pickProjectFolder, openProjectFolder, projectReadme, projectGit, projectGitRun, githubMeta, cloneGithub, detectProjectsRoot, scanProjectsRoot } from './projects.ts';
 import { pickChatFiles, saveChatFiles } from './chatfiles.ts';
 import { listChats, getChat, saveChat, renameChat, removeChat, genTitle, type ChatSession } from './chatstore.ts';
+import { listPlans, getPlan, savePlan, removePlan, type Plan } from './planstore.ts';
 import { generateImage, readImage, imageModels } from './images.ts';
 import { loadSettings, setUpdateSettings } from '../../../idctl/src/settings/store.ts';
 
@@ -164,6 +165,14 @@ async function appCall(method: string, args: unknown[]): Promise<unknown> {
       return removeChat(args[0] as string);
     case 'chat:genTitle':
       return genTitle(args[0] as string);
+    case 'plans:list':
+      return listPlans(args[0] as string | undefined);
+    case 'plans:get':
+      return getPlan(args[0] as string);
+    case 'plans:save':
+      return savePlan(args[0] as Plan);
+    case 'plans:remove':
+      return removePlan(args[0] as string);
     case 'image:generate':
       return generateImage(args[0] as string, args[1] as string | undefined);
     case 'image:read':

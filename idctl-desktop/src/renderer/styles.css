@@ -271,6 +271,9 @@ button.chip.incompat:hover { border-color: var(--line); }
 .msg.system .msg-body { background: transparent; color: var(--muted); font-style: italic; padding-left: 0; }
 .spin { color: var(--warn); }
 .skill-card.editing { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent) inset; }
+.plan-detail { margin-top: 8px; border-top: 1px solid var(--line); padding-top: 8px; }
+.plan-content { background: var(--bg-3); border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; white-space: pre-wrap; word-break: break-word; font-size: 12.5px; line-height: 1.55; max-height: 460px; overflow: auto; margin: 0; font-family: var(--font-sans, inherit); }
+.plan-log { border-top: 1px dashed var(--line); margin-top: 8px; padding-top: 4px; }
 .roster-group { margin-top: 12px; }
 .roster-group:first-of-type { margin-top: 4px; }
 .roster-team { display: flex; align-items: center; padding: 4px 0 2px; border-bottom: 1px solid var(--line); margin-bottom: 4px; }

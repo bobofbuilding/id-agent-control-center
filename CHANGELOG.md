@@ -8,6 +8,14 @@ Every change pushed or merged to `main` carries its version number in the commit
 subject (`vX.Y.Z: …`), stamped automatically by the `commit-msg` hook — see
 [CONTRIBUTING.md](CONTRIBUTING.md).
 
+## [0.1.56] — 2026-06-22
+- **New Plans tab in Work.** Request a plan and an agent drafts it (Markdown),
+  saved to the Plans tab. **Generate** new plans right from there (objective +
+  agent), **update** an existing plan with instructions — each update is a new
+  **version** with a **changelog** entry — and browse/restore-view past
+  versions. Rename, set status (draft/active/done/archived), delete. Plans are
+  stored per-plan under `~/.config/idctl/plans/`.
+
 ## [0.1.55] — 2026-06-22
 - **Unified composer — one Send, no 🎨 button.** The composer now auto-decides
   between chat and image generation from your prompt. A clear image request

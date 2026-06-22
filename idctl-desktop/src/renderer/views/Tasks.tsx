@@ -4,10 +4,12 @@ import { usePrompt } from '../components/prompt.tsx';
 import type { Task } from '../../../../idctl/src/api/types.ts';
 import { Schedule } from './Schedule.tsx';
 import { Loops } from './Loops.tsx';
+import { Plans } from './Plans.tsx';
 
-type Tab = 'tasks' | 'schedule' | 'loops';
+type Tab = 'tasks' | 'plans' | 'schedule' | 'loops';
 const TABS: { id: Tab; label: string }[] = [
   { id: 'tasks', label: 'Tasks' },
+  { id: 'plans', label: 'Plans' },
   { id: 'schedule', label: 'Schedule' },
   { id: 'loops', label: 'Loops' },
 ];
@@ -58,6 +60,7 @@ export function Tasks({ store, initialTab }: { store: FleetStore; initialTab?: T
         ))}
       </div>
       {tab === 'tasks' ? <TasksPanel store={store} /> : null}
+      {tab === 'plans' ? <Plans store={store} /> : null}
       {tab === 'schedule' ? <Schedule store={store} /> : null}
       {tab === 'loops' ? <Loops store={store} /> : null}
     </div>
