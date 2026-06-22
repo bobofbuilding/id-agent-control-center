@@ -8,6 +8,12 @@ Every change pushed or merged to `main` carries its version number in the commit
 subject (`vX.Y.Z: …`), stamped automatically by the `commit-msg` hook — see
 [CONTRIBUTING.md](CONTRIBUTING.md).
 
+## [0.1.67] — 2026-06-22
+- **Settings re-checks for updates on open.** The Self-update card now kicks a
+  fresh check whenever you open Settings, so it never shows a stale “latest”
+  version (previously it showed the last cached check until the next interval /
+  focus re-check or a manual “Check now”).
+
 ## [0.1.66] — 2026-06-22
 - **Chat survives an agent restart.** Dispatches now auto-retry transient
   failures — the target agent briefly rebuilding, the manager restarting, or a

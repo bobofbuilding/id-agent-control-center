@@ -68,6 +68,9 @@ export function Settings({ store }: { store: FleetStore }) {
     const u = await call<typeof upd>('update:getSettings').catch(() => null);
     setUpd(u);
     setUpdStatus(await call<typeof updStatus>('update:status').catch(() => null));
+    // Kick a FRESH check so the card reflects the true latest when you open
+    // Settings (the cached status above can lag a release until the next check).
+    void call<typeof updStatus>('update:check').then((s) => { if (s) setUpdStatus(s); }).catch(() => {});
     setSubs(await call<{ claude: Sub; chatgpt: Sub; cursor: Sub }>('subs:status').catch(() => null));
   }
   async function recheckSubs() {
