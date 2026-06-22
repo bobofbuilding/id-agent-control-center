@@ -84,7 +84,10 @@ export function App() {
               <span className="nav-icon">{n.icon}</span>
               <span className="nav-label">{n.label}</span>
               {n.id === 'inbox' && store.inbox.length > 0 ? (
-                <span className="nav-badge">{store.inbox.length}</span>
+                <span className="nav-badge" title={`${store.inbox.length} pending message${store.inbox.length === 1 ? '' : 's'}`}>{store.inbox.length}</span>
+              ) : null}
+              {n.id === 'chat' && store.chatUnread > 0 ? (
+                <span className="nav-badge" title={`${store.chatUnread} chat${store.chatUnread === 1 ? '' : 's'} with new replies`}>{store.chatUnread}</span>
               ) : null}
             </button>
           ))}

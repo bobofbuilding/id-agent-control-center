@@ -12,7 +12,7 @@ import { ollamaTags, ollamaPull, ollamaRemove } from './ollama.ts';
 import { getHardware, runInTerminal } from './system.ts';
 import { pickProjectFolder, openProjectFolder, projectReadme, projectGit, projectGitRun, githubMeta, cloneGithub, detectProjectsRoot, scanProjectsRoot } from './projects.ts';
 import { pickChatFiles, saveChatFiles } from './chatfiles.ts';
-import { listChats, getChat, saveChat, renameChat, removeChat, genTitle, type ChatSession } from './chatstore.ts';
+import { listChats, getChat, saveChat, renameChat, removeChat, genTitle, unreadChatCount, markChatRead, patchChat, type ChatSession, type ChatPatch } from './chatstore.ts';
 import { listPlans, getPlan, savePlan, removePlan, type Plan } from './planstore.ts';
 import { generateImage, readImage, imageModels } from './images.ts';
 import { loadSettings, setUpdateSettings } from '../../../idctl/src/settings/store.ts';
@@ -188,6 +188,12 @@ async function appCall(method: string, args: unknown[]): Promise<unknown> {
       return renameChat(args[0] as string, args[1] as string);
     case 'chats:remove':
       return removeChat(args[0] as string);
+    case 'chats:unreadCount':
+      return unreadChatCount(args[0] as string | undefined);
+    case 'chats:markRead':
+      return markChatRead(args[0] as string);
+    case 'chats:patch':
+      return patchChat(args[0] as string, (args[1] as ChatPatch) ?? {});
     case 'chat:genTitle':
       return genTitle(args[0] as string);
     case 'plans:list':

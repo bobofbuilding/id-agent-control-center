@@ -8,6 +8,13 @@ Every change pushed or merged to `main` carries its version number in the commit
 subject (`vX.Y.Z: …`), stamped automatically by the `commit-msg` hook — see
 [CONTRIBUTING.md](CONTRIBUTING.md).
 
+## [0.1.59] — 2026-06-22
+- **Unread badges on Chat & Inbox.** The Chat nav item now shows a count when an
+  agent reply lands in a thread you haven’t viewed; opening the thread (or the
+  Chat view, for the most recent) clears it. Unread threads are also marked with
+  a ● in the chat switcher. The Inbox badge (pending manager questions) is
+  unchanged. Both are scoped to the active team.
+
 ## [0.1.58] — 2026-06-22
 - **Select & copy chat text + spellcheck.** Chat messages — both what you type
   and the agent’s replies (plus the live trace and generated-image captions) —

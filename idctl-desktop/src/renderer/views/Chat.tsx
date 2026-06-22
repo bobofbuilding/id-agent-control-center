@@ -20,6 +20,7 @@ interface Session {
   id: string;
   title: string;
   named?: boolean; // user has manually renamed → don't auto-title over it
+  unread?: boolean; // an agent reply landed that the user hasn't viewed (drives the Chat nav badge)
   team: string;
   target: string;
   projectId?: string;
@@ -27,7 +28,7 @@ interface Session {
   createdAt: number;
   updatedAt: number;
 }
-type ChatSummary = { id: string; title: string; team: string; messageCount: number; updatedAt: number };
+type ChatSummary = { id: string; title: string; team: string; messageCount: number; updatedAt: number; unread?: boolean };
 type ImageResult = { ok: boolean; path?: string; dataUrl?: string; model?: string; costUsd?: number; error?: string };
 
 /** Quote a free-text message as ONE token for the manager's tokenizer (matches client.ts qArg). */
@@ -162,6 +163,14 @@ export function Chat({ store }: { store: FleetStore }) {
   const sessionRef = useRef<Session | null>(null); // mirror of the active session (to persist a gated empty chat)
   const deletedRef = useRef<Set<string>>(new Set()); // sessions deleted this run — drop their late writes
   const liveTraceRef = useRef<TraceLine[]>([]); // latest derived trace (read at completion to persist)
+  const aliveRef = useRef(true); // false once unmounted (Chat view not on screen) → late replies count as unread
+  useEffect(() => { aliveRef.current = true; return () => { aliveRef.current = false; }; }, []);
+
+  /** Clear a session's unread flag (the user is now viewing it) + refresh the
+   *  badge and the session list (so the dropdown's ● clears too). */
+  function markRead(sid: string) {
+    void call('chats:markRead', sid).then(() => { void store.refreshChatUnread(); void refreshList(); }).catch(() => {});
+  }
 
   // Resolve agent ids → readable names for the live activity feed.
   const agentNameById = useMemo(() => {
@@ -196,7 +205,10 @@ export function Chat({ store }: { store: FleetStore }) {
     // can never land on an unrelated message that happens to share a small int.
     idRef.current = Math.max(idRef.current, ...s.messages.map((m) => m.id), 0) + 1;
     sessionIdRef.current = s.id;
-    setSession(s);
+    // Viewing it clears unread — in memory (so a later save doesn't re-flag it)
+    // and on disk (the badge reads the file).
+    setSession(s.unread ? { ...s, unread: false } : s);
+    if (s.unread) markRead(s.id);
     try { localStorage.setItem(activeKey, s.id); } catch { /* ignore */ }
   }
 
@@ -205,6 +217,9 @@ export function Chat({ store }: { store: FleetStore }) {
   }
   // Load projects, image models, the saved session list, and restore the active chat.
   useEffect(() => {
+    // Forget the previous team's open session id immediately, so a late reply
+    // for it can never be judged "seen" against the team we just switched to.
+    sessionIdRef.current = '';
     void call<ProjectEntry[]>('projects:list').then(setProjects).catch(() => {});
     void call<string[]>('image:models').then((m) => setCanImage(m.length > 0)).catch(() => {});
     let alive = true;
@@ -255,33 +270,35 @@ export function Chat({ store }: { store: FleetStore }) {
    *  it if that chat was deleted; the file is authoritative so nothing is lost. */
   async function resolveMsg(sid: string, id: number, patchMsg: Partial<Msg>) {
     if (deletedRef.current.has(sid)) return;
+    // A reply is "seen" only if the Chat view is on screen AND this is the open
+    // session; otherwise it lands as unread so the nav badge surfaces it.
+    const seen = aliveRef.current && sessionIdRef.current === sid;
     // Reflect immediately if that session is the one on screen.
     setSession((cur) => (cur && cur.id === sid
-      ? { ...cur, messages: cur.messages.map((x) => (x.id === id ? { ...x, ...patchMsg } : x)), updatedAt: Date.now() }
+      ? { ...cur, messages: cur.messages.map((x) => (x.id === id ? { ...x, ...patchMsg } : x)), unread: false, updatedAt: Date.now() }
       : cur));
-    // Authoritative: patch the session's file. If it doesn't exist yet (an empty
-    // chat wasn't cached) but it's the active one, persist the in-memory session
-    // now that this update gives it real content.
-    const s = await call<Session | null>('chats:get', sid).catch(() => null);
-    if (deletedRef.current.has(sid)) return;
-    const patchMsgs = (ms: Msg[]) => ms.map((x) => (x.id === id ? { ...x, ...patchMsg } : x));
-    if (s) {
-      s.messages = patchMsgs(s.messages);
-      await call('chats:save', s).catch(() => {});
-    } else if (sessionRef.current && sessionRef.current.id === sid) {
+    // Authoritative + atomic: patch only this message + unread on the file
+    // (main-side read-merge-write) so a concurrent title-gen / system-notice
+    // write can't clobber the reply. If the file doesn't exist yet (an empty
+    // chat wasn't cached) but it's the active one, persist the in-memory session.
+    const r = await call<{ ok: boolean }>('chats:patch', sid, { patchMessage: { id, patch: patchMsg }, unread: !seen }).catch(() => ({ ok: false }));
+    if (!r.ok && !deletedRef.current.has(sid) && sessionRef.current && sessionRef.current.id === sid) {
       const cur = sessionRef.current;
-      await call('chats:save', { ...cur, messages: patchMsgs(cur.messages), updatedAt: Date.now() }).catch(() => {});
+      const patched = { ...cur, messages: cur.messages.map((x) => (x.id === id ? { ...x, ...patchMsg } : x)), unread: !seen, updatedAt: Date.now() };
+      await call('chats:save', patched).catch(() => {});
     }
+    if (!seen) void store.refreshChatUnread(); // surface the new unread on the badge (no poll-loop restart)
     void refreshList();
   }
 
-  /** Append a system line to session `sid` even after a chat switch (file-authoritative). */
+  /** Append a system line to session `sid` even after a chat switch. Atomic
+   *  main-side append so it can't clobber a concurrent reply/title write. */
   async function appendSystem(sid: string, text: string) {
     const m: Msg = { id: idRef.current++, role: 'system', who: '', text };
     if (sessionRef.current?.id === sid) { pushMsgs(m); return; }
     if (deletedRef.current.has(sid)) return;
-    const s = await call<Session | null>('chats:get', sid).catch(() => null);
-    if (s && !deletedRef.current.has(sid)) { s.messages = [...s.messages, m]; await call('chats:save', s).catch(() => {}); void refreshList(); }
+    await call('chats:patch', sid, { appendMessage: m }).catch(() => {});
+    void refreshList();
   }
   /** Save a chat reply as a Plan (Work › Plans). Returns the plan title, or '' on failure. */
   async function savePlanFromChat(request: string, content: string, agent: string): Promise<string> {
@@ -305,6 +322,7 @@ export function Chat({ store }: { store: FleetStore }) {
   async function deleteChat(id: string) {
     deletedRef.current.add(id); // drop any in-flight reply destined for this chat
     await call('chats:remove', id).catch(() => {});
+    void store.refreshChatUnread(); // removing an unread chat must drop the badge now
     const list = await call<ChatSummary[]>('chats:list', team).catch(() => []);
     setSessions(list);
     if (id === session?.id) {
@@ -324,8 +342,10 @@ export function Chat({ store }: { store: FleetStore }) {
   async function applyAutoTitle(sid: string, title: string) {
     if (!title || deletedRef.current.has(sid)) return;
     setSession((cur) => (cur && cur.id === sid && !cur.named ? { ...cur, title } : cur));
-    const s = await call<Session | null>('chats:get', sid).catch(() => null);
-    if (s && !s.named && !deletedRef.current.has(sid)) { s.title = title; await call('chats:save', s).catch(() => {}); void refreshList(); }
+    // Atomic main-side: sets the title only if not user-named, without bumping
+    // updatedAt (no reorder) and without clobbering a concurrent reply write.
+    await call('chats:patch', sid, { autoTitle: title, touch: false }).catch(() => {});
+    void refreshList();
   }
   /** Generate a concise title from the opening message (local Ollama; best-effort). */
   async function genTitle(sid: string, text: string) {
@@ -439,7 +459,7 @@ export function Chat({ store }: { store: FleetStore }) {
         <div className="row-actions" style={{ alignItems: 'center', gap: 8 }}>
           <select className="cell-select" value={session?.id ?? ''} onChange={(e) => void openChat(e.target.value)} title="Open a saved chat" style={{ maxWidth: 220 }}>
             {session && !sessions.some((s) => s.id === session.id) ? <option value={session.id}>{session.title || '(this chat)'}</option> : null}
-            {sessions.map((s) => <option key={s.id} value={s.id}>{(s.title || '(untitled)')} · {fmtAge(s.updatedAt)}</option>)}
+            {sessions.map((s) => <option key={s.id} value={s.id}>{s.unread ? '● ' : ''}{(s.title || '(untitled)')} · {fmtAge(s.updatedAt)}</option>)}
           </select>
           <button className="btn" disabled={busy} onClick={newChat}>＋ New</button>
         </div>

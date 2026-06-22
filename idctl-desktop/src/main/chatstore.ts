@@ -39,6 +39,8 @@ export interface ChatSession {
   title: string;
   /** true once the user has manually edited the title — stops auto-titling from clobbering it. */
   named?: boolean;
+  /** true when an agent reply landed that the user hasn't viewed yet (drives the Chat nav badge). */
+  unread?: boolean;
   team: string;
   target: string;
   projectId?: string;
@@ -54,7 +56,7 @@ function fileFor(id: string): string {
   return join(chatsDir(), `${safe}.json`);
 }
 
-export interface ChatSummary { id: string; title: string; team: string; messageCount: number; updatedAt: number }
+export interface ChatSummary { id: string; title: string; team: string; messageCount: number; updatedAt: number; unread?: boolean }
 
 /** A session is worth keeping once it has a real exchange (not just the greeting). */
 function hasContent(s: ChatSession): boolean {
@@ -71,10 +73,105 @@ export function listChats(team?: string): ChatSummary[] {
       // Prune empty chats (no real message) left over from earlier behavior.
       if (!hasContent(s)) { try { rmSync(join(dir, f), { force: true }); } catch { /* */ } continue; }
       if (team && s.team !== team) continue;
-      out.push({ id: s.id, title: s.title || '(untitled)', team: s.team, messageCount: s.messages.length, updatedAt: s.updatedAt || 0 });
+      out.push({ id: s.id, title: s.title || '(untitled)', team: s.team, messageCount: s.messages.length, updatedAt: s.updatedAt || 0, unread: !!s.unread });
     } catch { /* skip a corrupt file */ }
   }
   return out.sort((a, b) => b.updatedAt - a.updatedAt);
+}
+
+/** Strip the renderer-only `pending` flag before a message is persisted. */
+function stripPending(m: ChatMessage): ChatMessage {
+  const { pending: _p, ...rest } = m as ChatMessage & { pending?: boolean };
+  return rest;
+}
+/** Atomic write of a session file (tmp + rename, 0600). */
+function writeSession(f: string, s: ChatSession): void {
+  const tmp = `${f}.${process.pid}.tmp`;
+  writeFileSync(tmp, JSON.stringify(s), { mode: 0o600 });
+  try { renameSync(tmp, f); } catch (e) { try { rmSync(tmp, { force: true }); } catch { /* */ } throw e; }
+  try { if ((statSync(f).mode & 0o077) !== 0) chmodSync(f, 0o600); } catch { /* best-effort */ }
+}
+
+// Cache the unread tally keyed by a cheap directory signature (filename + mtime
+// + size of each chat file). Any chat write changes a file's mtime → the
+// signature changes → we recompute; otherwise the 3s poll skips the JSON parse.
+let _unreadCache: { sig: string; teams: string[] } | null = null;
+function dirSignature(dir: string, files: string[]): string {
+  const parts: string[] = [];
+  for (const f of files) {
+    try { const st = statSync(join(dir, f)); parts.push(`${f}:${st.mtimeMs}:${st.size}`); } catch { /* gone */ }
+  }
+  return parts.join('|');
+}
+
+/** Count saved chats with an unviewed agent reply (the Chat nav badge). Scoped
+ *  to `team` when given so it matches the team whose chats are on screen. */
+export function unreadChatCount(team?: string): number {
+  try {
+    const dir = chatsDir();
+    const files = readdirSync(dir).filter((f) => f.endsWith('.json')).sort();
+    const sig = dirSignature(dir, files);
+    if (!_unreadCache || _unreadCache.sig !== sig) {
+      const teams: string[] = [];
+      for (const f of files) {
+        try {
+          const s = JSON.parse(readFileSync(join(dir, f), 'utf8')) as ChatSession;
+          if (s.unread && hasContent(s)) teams.push(s.team);
+        } catch { /* skip a corrupt file */ }
+      }
+      _unreadCache = { sig, teams };
+    }
+    return team ? _unreadCache.teams.filter((t) => t === team).length : _unreadCache.teams.length;
+  } catch { return 0; }
+}
+
+/** Clear a chat's unread flag (user has now viewed it). Preserves updatedAt so
+ *  reading a thread never reorders the session list. No-op if already read. */
+export function markChatRead(id: string): { ok: boolean } {
+  try {
+    const f = fileFor(id);
+    if (!existsSync(f)) return { ok: true };
+    const s = JSON.parse(readFileSync(f, 'utf8')) as ChatSession;
+    if (!s.unread) return { ok: true };
+    s.unread = false;
+    writeSession(f, s);
+    return { ok: true };
+  } catch { return { ok: false }; }
+}
+
+/** Targeted patch for a session field/message — atomic main-side read-merge-write
+ *  so concurrent background writers (title-gen, reply-resolve, system notices)
+ *  can't clobber each other (the lost-update class). Returns {ok:false} when the
+ *  file doesn't exist yet (caller falls back to a full saveChat). */
+export interface ChatPatch {
+  title?: string;           // explicit rename — always applied
+  autoTitle?: string;       // generated title — applied only when not user-named
+  named?: boolean;
+  target?: string;
+  projectId?: string;
+  unread?: boolean;
+  appendMessage?: ChatMessage;
+  patchMessage?: { id: number; patch: Partial<ChatMessage> };
+  touch?: boolean;          // bump updatedAt (default true; false = don't reorder)
+}
+export function patchChat(id: string, p: ChatPatch): { ok: boolean; session?: ChatSession } {
+  try {
+    const f = fileFor(id);
+    if (!existsSync(f)) return { ok: false };
+    const s = JSON.parse(readFileSync(f, 'utf8')) as ChatSession;
+    if (p.title !== undefined) s.title = String(p.title).slice(0, 200);
+    if (p.autoTitle !== undefined && !s.named) s.title = String(p.autoTitle).slice(0, 200);
+    if (p.named !== undefined) s.named = p.named;
+    if (p.target !== undefined) s.target = p.target;
+    if (p.projectId !== undefined) s.projectId = p.projectId;
+    if (p.unread !== undefined) s.unread = p.unread;
+    if (Array.isArray(s.messages) === false) s.messages = [];
+    if (p.appendMessage) s.messages = [...s.messages, stripPending(p.appendMessage)];
+    if (p.patchMessage) s.messages = s.messages.map((m) => (m.id === p.patchMessage!.id ? stripPending({ ...m, ...p.patchMessage!.patch }) : m));
+    if (p.touch !== false) s.updatedAt = Date.now();
+    writeSession(f, s);
+    return { ok: true, session: s };
+  } catch { return { ok: false }; }
 }
 
 export function getChat(id: string): ChatSession | null {

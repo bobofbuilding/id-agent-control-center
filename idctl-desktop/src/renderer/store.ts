@@ -54,9 +54,11 @@ export interface FleetStore {
   teams: Team[];
   events: ManagerEvent[];
   inbox: InboxItem[];
+  chatUnread: number;
   lastError?: string;
   lastUpdated?: number;
   refresh: () => void;
+  refreshChatUnread: () => Promise<void>;
   setTeam: (team: string) => Promise<void>;
   setCoordinator: (agent: string) => Promise<void>;
 }
@@ -72,12 +74,22 @@ export function useFleet(): FleetStore {
   const [teams, setTeams] = useState<Team[]>([]);
   const [events, setEvents] = useState<ManagerEvent[]>([]);
   const [inbox, setInbox] = useState<InboxItem[]>([]);
+  const [chatUnread, setChatUnread] = useState(0);
   const [lastError, setLastError] = useState<string>();
   const [lastUpdated, setLastUpdated] = useState<number>();
   const [tick, setTick] = useState(0);
+  const [streamEpoch, setStreamEpoch] = useState(0); // bumped ONLY on team change → never resets the event cursor on a plain refresh
   const epoch = useRef(0); // bump on team change to reset the event cursor loop
+  const teamRef = useRef<string | undefined>(undefined);
+  useEffect(() => { teamRef.current = team; }, [team]);
 
   const refresh = useCallback(() => setTick((t) => t + 1), []);
+  // Cheap, targeted badge refresh — re-reads ONLY the unread count, without
+  // restarting the snapshot/event-stream poll loops (a plain refresh() would).
+  const refreshChatUnread = useCallback(async () => {
+    const cu = await call<number>('chats:unreadCount', teamRef.current).catch(() => 0);
+    setChatUnread(typeof cu === 'number' ? cu : 0);
+  }, []);
 
   const setTeam = useCallback(async (t: string) => {
     const i = await call<{ team?: string; coordinator?: string }>('setTeam', t);
@@ -86,6 +98,7 @@ export function useFleet(): FleetStore {
     setEvents([]);
     setAgents([]);
     epoch.current += 1;
+    setStreamEpoch((e) => e + 1); // restart the event cursor for the new team
     refresh();
   }, [refresh]);
 
@@ -116,6 +129,9 @@ export function useFleet(): FleetStore {
         setConnection('online');
         setLastError(undefined);
         setLastUpdated(Date.now());
+        // Unviewed-chat count for the Chat nav badge (scoped to the active team).
+        const cu = await call<number>('chats:unreadCount', info.team).catch(() => 0);
+        if (alive) setChatUnread(typeof cu === 'number' ? cu : 0);
       } catch (err) {
         if (!alive) return;
         setConnection('offline');
@@ -160,7 +176,9 @@ export function useFleet(): FleetStore {
     return () => {
       alive = false;
     };
-  }, [tick]);
+    // Depends on streamEpoch (team change) only — a plain refresh() must NOT
+    // restart this loop, or it would reset the cursor to 0 and replay history.
+  }, [streamEpoch]);
 
-  return { connection, managerUrl, team, coordinator, agents, teams, events, inbox, lastError, lastUpdated, refresh, setTeam, setCoordinator };
+  return { connection, managerUrl, team, coordinator, agents, teams, events, inbox, chatUnread, lastError, lastUpdated, refresh, refreshChatUnread, setTeam, setCoordinator };
 }
