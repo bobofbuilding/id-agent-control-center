@@ -8,6 +8,10 @@ Every change pushed or merged to `main` carries its version number in the commit
 subject (`vX.Y.Z: …`), stamped automatically by the `commit-msg` hook — see
 [CONTRIBUTING.md](CONTRIBUTING.md).
 
+## [0.1.62] — 2026-06-22
+- **Cleaner composer.** Removed the helper hint line under the chat input
+  (image/plan/live-feed tips); the behavior is unchanged.
+
 ## [0.1.61] — 2026-06-22
 - **Chat auto-scrolls to follow new activity.** The thread now stays pinned to
   the latest as replies and the live “working” feed stream in, so you don’t have

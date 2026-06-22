@@ -611,10 +611,6 @@ export function Chat({ store }: { store: FleetStore }) {
             />
             <button className="btn primary" disabled={busy || (!input.trim() && attachments.length === 0)} onClick={() => void send()}>{busy ? '…' : 'Send'}</button>
           </div>
-          <div className="muted small" style={{ marginTop: 6 }}>
-            {canImage ? <>Send auto-detects image requests (“generate an image of…”, “/image …”) → 🎨; </> : null}
-            ask for a plan (“draft a plan for…”, “/plan …”) and the reply is saved to <b>Work › Plans</b>. Everything else goes to {target} — watch the live feed below the reply.
-          </div>
         </section>
 
         <aside className="card targets">
