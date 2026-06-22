@@ -355,6 +355,33 @@ export function Chat({ store }: { store: FleetStore }) {
     try { await call('plans:save', plan); return title; } catch { return ''; }
   }
 
+  /** Dispatch with auto-retry for TRANSIENT failures — the agent briefly
+   *  restarting (rebuild), the manager restarting, or a network blip. Never
+   *  retries a timeout (that means work is still in flight). Shows a
+   *  "reconnecting…" note on the pending reply between attempts. */
+  async function dispatchWithRetry(cmd: string, replyId: number): Promise<string> {
+    const TRANSIENT = /fetch failed|failed to fetch|ECONNREFUSED|ECONNRESET|socket hang up|network|ENOTFOUND|EAI_AGAIN|terminated|other side closed|\b50[234]\b|agent failed|not running|unavailable|\bstarting\b|rebuild/i;
+    const IN_FLIGHT = /timed out|timeout|expired/i;
+    const MAX = 3;
+    let lastErr = '';
+    for (let attempt = 1; attempt <= MAX; attempt++) {
+      try {
+        return await call<string>('dispatch', cmd);
+      } catch (e) {
+        lastErr = e instanceof Error ? e.message : String(e);
+        if (attempt < MAX && TRANSIENT.test(lastErr) && !IN_FLIGHT.test(lastErr)) {
+          setSession((cur) => (cur && cur.id === sessionIdRef.current
+            ? { ...cur, messages: cur.messages.map((x) => (x.id === replyId ? { ...x, text: `reconnecting — the agent may be restarting… (${attempt}/${MAX - 1})` } : x)) }
+            : cur));
+          await new Promise((r) => setTimeout(r, 2000 * attempt));
+          continue;
+        }
+        throw e;
+      }
+    }
+    throw new Error(lastErr);
+  }
+
   function newChat() { const s = blankSession(); adoptSession(s); persist(s); }
   async function openChat(id: string) {
     if (id === session?.id) return;
@@ -482,7 +509,7 @@ export function Chat({ store }: { store: FleetStore }) {
       activitySinceRef.current = -1; // -1 = floor the cursor on the first poll (no blocking pre-dispatch call)
       setRunning({ sid, replyId, startedAt: Date.now(), sinceSeq, target });
       try {
-        const reply = await call<string>('dispatch', `/ask ${target} ${qArg(message)}`);
+        const reply = await dispatchWithRetry(`/ask ${target} ${qArg(message)}`, replyId);
         // Final catch-up poll so the persisted trace includes steps from the last
         // ~1.2s window the interval may have missed.
         if (activitySinceRef.current >= 0) {
@@ -506,7 +533,12 @@ export function Chat({ store }: { store: FleetStore }) {
           }
         }
       } catch (err) {
-        await resolveMsg(sid, replyId, { role: 'system', text: `✗ ${err instanceof Error ? err.message : String(err)}`, pending: false });
+        const raw = err instanceof Error ? err.message : String(err);
+        // Friendlier copy for the unreachable/rebuilding case (after auto-retry exhausted).
+        const friendly = /fetch failed|failed to fetch|ECONNREFUSED|ECONNRESET|socket hang up|terminated|other side closed|agent failed|not running|unavailable|\bstarting\b/i.test(raw)
+          ? `✗ couldn’t reach ${target} — it may be restarting or the manager is offline. Try again in a moment. (${raw})`
+          : `✗ ${raw}`;
+        await resolveMsg(sid, replyId, { role: 'system', text: friendly, pending: false });
       } finally {
         setRunning(null);
       }

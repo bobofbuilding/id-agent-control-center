@@ -8,6 +8,14 @@ Every change pushed or merged to `main` carries its version number in the commit
 subject (`vX.Y.Z: …`), stamped automatically by the `commit-msg` hook — see
 [CONTRIBUTING.md](CONTRIBUTING.md).
 
+## [0.1.66] — 2026-06-22
+- **Chat survives an agent restart.** Dispatches now auto-retry transient
+  failures — the target agent briefly rebuilding, the manager restarting, or a
+  network blip — with a “reconnecting…” note, instead of surfacing a hard
+  “agent failed” / “fetch failed”. Timeouts (work still in flight) are not
+  retried. If it still can’t connect after retries, the error explains it
+  plainly (the agent may be restarting).
+
 ## [0.1.65] — 2026-06-22
 - **Make the lead actually coordinate its team.** New **Teams → Agent
   instructions** section: a persistent per-agent system-prompt directive with a
