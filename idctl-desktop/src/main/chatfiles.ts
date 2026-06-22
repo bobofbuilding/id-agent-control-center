@@ -11,9 +11,10 @@
  */
 
 import { BrowserWindow, dialog } from 'electron';
-import { existsSync, mkdirSync, statSync, lstatSync, constants } from 'node:fs';
+import { existsSync, mkdirSync, statSync, lstatSync, writeFileSync, mkdtempSync, constants } from 'node:fs';
 import { copyFile } from 'node:fs/promises';
 import { join, basename, extname } from 'node:path';
+import { tmpdir } from 'node:os';
 
 const IMAGE_EXT = new Set(['.png', '.jpg', '.jpeg', '.gif', '.webp', '.bmp', '.svg', '.heic', '.heif', '.tiff', '.avif']);
 const isImage = (name: string): boolean => IMAGE_EXT.has(extname(name).toLowerCase());
@@ -23,6 +24,31 @@ export interface PickedFile {
   name: string;
   size: number;
   isImage: boolean;
+}
+
+const PASTE_MAX = 25 * 1024 * 1024; // 25 MB cap on a single pasted/dropped blob
+
+/**
+ * Write a pasted (or dropped) in-memory blob to a private temp file, returning a
+ * PickedFile so it flows through the SAME saveChatFiles(destDir, [path]) pipeline
+ * as a picked file when the message is sent. The temp dir is unique per paste.
+ */
+export function savePastedFile(name: string, dataBase64: string): PickedFile | { error: string } {
+  // Sanitize to a bare, safe basename (defends the temp path even though this is local).
+  let safe = basename(String(name || '')).replace(/[^A-Za-z0-9._-]/g, '_').replace(/^\.+/, '').slice(0, 80);
+  if (!safe) safe = `pasted-${Date.now()}`;
+  let buf: Buffer;
+  try { buf = Buffer.from(String(dataBase64 || ''), 'base64'); } catch { return { error: 'could not decode pasted data' }; }
+  if (!buf.length) return { error: 'empty paste' };
+  if (buf.length > PASTE_MAX) return { error: 'pasted file too large (max 25 MB)' };
+  try {
+    const dir = mkdtempSync(join(tmpdir(), 'idctl-paste-'));
+    const path = join(dir, safe);
+    writeFileSync(path, buf, { mode: 0o600 });
+    return { path, name: safe, size: buf.length, isImage: isImage(safe) };
+  } catch (e) {
+    return { error: e instanceof Error ? e.message : String(e) };
+  }
 }
 
 export async function pickChatFiles(): Promise<PickedFile[]> {

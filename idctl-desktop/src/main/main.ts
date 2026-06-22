@@ -11,7 +11,7 @@ import { subsStatus, subsSignin, subsSignout, subsInstall, type SubProvider } fr
 import { ollamaTags, ollamaPull, ollamaRemove } from './ollama.ts';
 import { getHardware, runInTerminal } from './system.ts';
 import { pickProjectFolder, openProjectFolder, projectReadme, projectGit, projectGitRun, githubMeta, cloneGithub, detectProjectsRoot, scanProjectsRoot } from './projects.ts';
-import { pickChatFiles, saveChatFiles } from './chatfiles.ts';
+import { pickChatFiles, saveChatFiles, savePastedFile } from './chatfiles.ts';
 import { listChats, getChat, saveChat, renameChat, removeChat, genTitle, unreadChatCount, markChatRead, patchChat, type ChatSession, type ChatPatch } from './chatstore.ts';
 import { listPlans, getPlan, savePlan, removePlan, type Plan } from './planstore.ts';
 import { generateImage, readImage, imageModels, getImageServer, detectImageServer } from './images.ts';
@@ -179,6 +179,8 @@ async function appCall(method: string, args: unknown[]): Promise<unknown> {
       return pickChatFiles();
     case 'chat:saveFiles':
       return saveChatFiles(args[0] as string, args[1] as string[]);
+    case 'chat:savePasted':
+      return savePastedFile(args[0] as string, args[1] as string);
     case 'chats:list':
       return listChats(args[0] as string | undefined);
     case 'chats:get':

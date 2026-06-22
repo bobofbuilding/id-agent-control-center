@@ -8,6 +8,12 @@ Every change pushed or merged to `main` carries its version number in the commit
 subject (`vX.Y.Z: …`), stamped automatically by the `commit-msg` hook — see
 [CONTRIBUTING.md](CONTRIBUTING.md).
 
+## [0.1.64] — 2026-06-22
+- **Paste images & files into chat.** Paste a screenshot or a copied file
+  straight into the message box and it’s attached (alongside the 📎 button),
+  then sent into the focused project / agent workspace on Send like any other
+  attachment. Plain-text paste is unaffected. 25 MB per item.
+
 ## [0.1.63] — 2026-06-22
 - **Local image generation (free) — preferred over the cloud.** Image creation
   in chat now uses a **local image server first**, falling back to the cloud

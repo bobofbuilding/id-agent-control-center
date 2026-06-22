@@ -401,6 +401,33 @@ export function Chat({ store }: { store: FleetStore }) {
   }
   function removeAttachment(path: string) { setAttachments((a) => a.filter((f) => f.path !== path)); }
 
+  /** Read a pasted/dropped blob as base64 and stage it as an attachment (it then
+   *  rides the normal saveFiles pipeline on Send). */
+  async function attachBlob(f: File) {
+    const isImg = (f.type || '').startsWith('image/');
+    const ext = isImg ? '.' + ((f.type.split('/')[1] || 'png').replace('jpeg', 'jpg').replace('svg+xml', 'svg').replace('x-icon', 'ico')) : '';
+    const name = f.name || `pasted-${Date.now().toString(36)}${Math.random().toString(36).slice(2, 5)}${ext}`;
+    try {
+      const dataUrl = await new Promise<string>((res, rej) => { const r = new FileReader(); r.onload = () => res(String(r.result)); r.onerror = () => rej(new Error('read failed')); r.readAsDataURL(f); });
+      const b64 = dataUrl.split(',')[1] || '';
+      if (!b64) return;
+      const saved = await call<PickedFile | { error: string }>('chat:savePasted', name, b64).catch(() => null);
+      if (saved && 'path' in saved) setAttachments((a) => (a.some((x) => x.path === saved.path) ? a : [...a, saved]));
+      else pushMsgs({ id: idRef.current++, role: 'system', who: '', text: `✗ Couldn't attach ${clip(name, 40)}: ${(saved as { error?: string } | null)?.error ?? 'failed'}` });
+    } catch { /* skip a blob we can't read */ }
+  }
+  /** Clipboard paste: stage any image/file blobs as attachments; plain text
+   *  paste falls through to the input unchanged. */
+  async function onPaste(e: React.ClipboardEvent) {
+    const dt = e.clipboardData;
+    if (!dt || busy) return;
+    const files: File[] = [...Array.from(dt.files || [])];
+    if (!files.length) for (const it of Array.from(dt.items || [])) { if (it.kind === 'file') { const f = it.getAsFile(); if (f) files.push(f); } }
+    if (!files.length) return; // no blobs → let the normal text paste happen
+    e.preventDefault();
+    for (const f of files) await attachBlob(f);
+  }
+
   function compose(text: string, saved: SavedFile[]): string {
     const parts: string[] = [];
     if (focused) {
@@ -598,7 +625,7 @@ export function Chat({ store }: { store: FleetStore }) {
           ) : null}
 
           <div className="composer">
-            <button className="btn attach-btn" title={destDir ? 'Attach files' : 'Focus a project or pick an agent with a workspace to attach files'} disabled={busy || !destDir} onClick={() => void addAttachments()}>📎</button>
+            <button className="btn attach-btn" title={destDir ? 'Attach files (or paste an image/file into the message)' : 'Focus a project or pick an agent with a workspace to attach files'} disabled={busy || !destDir} onClick={() => void addAttachments()}>📎</button>
             <input
               className="composer-input"
               value={input}
@@ -607,6 +634,7 @@ export function Chat({ store }: { store: FleetStore }) {
               spellCheck
               autoCorrect="on"
               onChange={(e) => setInput(e.target.value)}
+              onPaste={(e) => void onPaste(e)}
               onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); void send(); } }}
             />
             <button className="btn primary" disabled={busy || (!input.trim() && attachments.length === 0)} onClick={() => void send()}>{busy ? '…' : 'Send'}</button>
