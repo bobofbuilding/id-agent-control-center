@@ -168,6 +168,8 @@ export function Chat({ store }: { store: FleetStore }) {
   const [, setTick] = useState(0); // 1 Hz re-render so the elapsed timer ticks
   const idRef = useRef(1);
   const endRef = useRef<HTMLDivElement>(null);
+  const listRef = useRef<HTMLDivElement>(null); // the scrollable messages container
+  const stickRef = useRef(true);                // user is following the bottom (auto-scroll on) vs scrolled up to read
   const sessionIdRef = useRef(''); // the currently-active session id (for late-arriving replies)
   const sessionRef = useRef<Session | null>(null); // mirror of the active session (to persist a gated empty chat)
   const deletedRef = useRef<Set<string>>(new Set()); // sessions deleted this run — drop their late writes
@@ -272,7 +274,17 @@ export function Chat({ store }: { store: FleetStore }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [team]);
 
-  useEffect(() => { endRef.current?.scrollIntoView({ behavior: 'smooth' }); }, [session?.messages]);
+  function scrollToBottom(smooth = true) {
+    const el = listRef.current;
+    if (el) el.scrollTo({ top: el.scrollHeight, behavior: smooth ? 'smooth' : 'auto' });
+  }
+  // Stay pinned to the latest as new content arrives — including the live
+  // activity feed + trace that stream in while an agent works — UNLESS the user
+  // has scrolled up to read (then we don't yank them back down).
+  useEffect(() => { if (stickRef.current) scrollToBottom(true); }, [session?.messages, activitySteps, liveTrace, running, attachments]);
+  // Jump straight to the bottom (no animation) when the open chat changes.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => { stickRef.current = true; scrollToBottom(false); }, [session?.id]);
   useEffect(() => { sessionRef.current = session; }, [session]);
 
   const msgs = session?.messages ?? [];
@@ -410,6 +422,7 @@ export function Chat({ store }: { store: FleetStore }) {
       return;
     }
     const sid = session.id;
+    stickRef.current = true; // sending re-engages auto-scroll so you follow your message + the reply
     setBusy(true);
     try {
       let saved: SavedFile[] = [];
@@ -479,6 +492,7 @@ export function Chat({ store }: { store: FleetStore }) {
     const prompt = (promptArg ?? input).trim();
     if (!prompt || busy || !session) return;
     const sid = session.id;
+    stickRef.current = true; // generating re-engages auto-scroll
     setBusy(true);
     const genId = idRef.current++;
     pushMsgs({ id: genId, role: 'system', who: '', text: `🎨 generating image — "${clip(prompt, 60)}"…`, pending: true });
@@ -530,7 +544,14 @@ export function Chat({ store }: { store: FleetStore }) {
 
       <div className="cols chat-cols">
         <section className="card chat">
-          <div className="messages">
+          <div
+            className="messages"
+            ref={listRef}
+            onScroll={() => {
+              const el = listRef.current;
+              if (el) stickRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 120;
+            }}
+          >
             {msgs.map((m) => {
               const live = running && running.replyId === m.id;
               const elapsed = live ? Math.max(0, Math.floor((Date.now() - running.startedAt) / 1000)) : 0;

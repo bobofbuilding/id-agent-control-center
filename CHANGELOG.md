@@ -8,6 +8,13 @@ Every change pushed or merged to `main` carries its version number in the commit
 subject (`vX.Y.Z: …`), stamped automatically by the `commit-msg` hook — see
 [CONTRIBUTING.md](CONTRIBUTING.md).
 
+## [0.1.61] — 2026-06-22
+- **Chat auto-scrolls to follow new activity.** The thread now stays pinned to
+  the latest as replies and the live “working” feed stream in, so you don’t have
+  to scroll down to keep up. Scrolling up to read history pauses the follow (it
+  won’t yank you back down); sending a message or opening a chat re-pins to the
+  bottom.
+
 ## [0.1.60] — 2026-06-22
 - **Live agent activity streamed into chat.** While an agent works on your
   message, the chat now shows what it’s actually doing — files it creates/edits,
