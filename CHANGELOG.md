@@ -8,6 +8,17 @@ Every change pushed or merged to `main` carries its version number in the commit
 subject (`vX.Y.Z: …`), stamped automatically by the `commit-msg` hook — see
 [CONTRIBUTING.md](CONTRIBUTING.md).
 
+## [0.1.65] — 2026-06-22
+- **Make the lead actually coordinate its team.** New **Teams → Agent
+  instructions** section: a persistent per-agent system-prompt directive with a
+  one-click **Coordinator preset**. Apply it to your lead and it delegates
+  implementation to `coder` and research to `researcher` (via the inter-agent
+  skill), then synthesizes their results — instead of doing everything itself.
+  Verified live: the lead delegated to both teammates and reported who did what.
+  The directive survives rebuilds (stored as a per-agent sidecar). “Save &
+  rebuild” applies it. (The lead *could* delegate before — it has the
+  inter-agent skill — but nothing *instructed* it to; this fixes that.)
+
 ## [0.1.64] — 2026-06-22
 - **Paste images & files into chat.** Paste a screenshot or a copied file
   straight into the message box and it’s attached (alongside the 📎 button),

@@ -173,6 +173,10 @@ const METHODS: Record<string, (...a: any[]) => Promise<unknown>> = {
   // dashboard: switch runtime (rebuild required to apply)
   setAgentRuntime: (id: string, runtime: string) => client.setAgentRuntime(String(id), String(runtime)),
 
+  // per-agent persistent instructions (system-prompt addendum, e.g. coordinator role)
+  'agent:getInstructions': (idOrName: string) => client.agentInstructions(String(idOrName)),
+  'agent:setInstructions': (idOrName: string, instructions: string) => client.setAgentInstructions(String(idOrName), String(instructions ?? '')),
+
   // teams: create + start a new agent
   spawnAgent: (spec: Parameters<ManagerClient['spawnAgent']>[0]) => client.spawnAgent(spec),
 

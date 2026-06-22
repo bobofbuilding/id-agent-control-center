@@ -170,6 +170,23 @@ export class ManagerClient {
 
   // ---- Remote command surface ------------------------------------------
 
+  /** Read an agent's persistent system-prompt addendum ("instructions"). Empty
+   *  on managers without the endpoint. */
+  async agentInstructions(idOrName: string, signal?: AbortSignal): Promise<string> {
+    try {
+      const r = await this.get<{ instructions?: string }>(`/agents/${encodeURIComponent(idOrName)}/instructions`, signal);
+      return r.instructions ?? '';
+    } catch {
+      return '';
+    }
+  }
+  /** Set an agent's persistent instructions (system-prompt addendum). Takes effect
+   *  on the agent's next rebuild. Returns whether a rebuild is needed. */
+  async setAgentInstructions(idOrName: string, instructions: string, signal?: AbortSignal): Promise<{ ok: boolean; needsRebuild?: boolean }> {
+    const r = await this.post<{ agent?: string; needsRebuild?: boolean }>(`/agents/${encodeURIComponent(idOrName)}/instructions`, { instructions }, signal);
+    return { ok: !!r.agent, needsRebuild: r.needsRebuild };
+  }
+
   /** Live agent activity steps (tool/file), since a seq cursor. `team` scopes the
    *  filter so same-named agents in other teams don't bleed in. Returns empty on
    *  managers that don't have the /activity endpoint (graceful degradation). */

@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { call, agentsLeadFirst, type FleetStore } from '../store.ts';
+import { call, agentsLeadFirst, resolveCoordinator, type FleetStore } from '../store.ts';
 import { usePrompt } from '../components/prompt.tsx';
 import { offerableRuntimes } from '../../../../idctl/src/settings/runtimeCatalog.ts';
 
@@ -41,6 +41,19 @@ function describeRelay(d: string[] | null): string {
   return d.join(', ');
 }
 
+/** Ready-made "act as the team coordinator" directive (delegate to teammates). */
+const COORDINATOR_PRESET = `## Team coordination (you are the lead)
+
+You are this team's COORDINATOR. You have specialist teammates — by default **coder** (implementation, code, file changes, running commands) and **researcher** (research, analysis, documentation, investigation).
+
+For any NON-TRIVIAL request — anything beyond a quick factual answer, and ESPECIALLY anything involving implementation or research — you MUST delegate the specialist parts to the right teammate rather than doing all of it yourself:
+
+1. Decompose the request into the specialist pieces it needs.
+2. Delegate each piece using the **inter-agent** skill (\`/talk-to\` for a synchronous reply you need now; \`/news-to\` with \`"trigger":true\` for async handoffs): implementation/code → **coder**, research/analysis/docs → **researcher**.
+3. Wait for their replies and synthesize them into one answer, stating who did what.
+
+Do the work yourself only for trivial one-liners, or when delegation would clearly be slower with no benefit (and say so in one line). Leveraging your team is your primary job as the lead.`;
+
 export function Teams({ store }: { store: FleetStore }) {
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<string>('');
@@ -54,6 +67,35 @@ export function Teams({ store }: { store: FleetStore }) {
   const [relayBusy, setRelayBusy] = useState(false);
   const [relayMsg, setRelayMsg] = useState<string>(''); // inline feedback next to Save
   const otherTeams = store.teams.map((t) => t.name).filter((n) => n !== activeTeam);
+
+  // Per-agent instructions (system-prompt addendum) — e.g. make the lead coordinate.
+  const coordName = resolveCoordinator(store.agents, store.coordinator) ?? store.agents[0]?.name ?? '';
+  const [instrAgent, setInstrAgent] = useState('');
+  const [instrText, setInstrText] = useState('');
+  const [instrSaved, setInstrSaved] = useState('');
+  const [instrBusy, setInstrBusy] = useState(false);
+  const [instrMsg, setInstrMsg] = useState('');
+  const instrTarget = instrAgent && store.agents.some((a) => a.name === instrAgent) ? instrAgent : coordName;
+  async function loadInstr(agent: string) {
+    if (!agent) { setInstrText(''); setInstrSaved(''); return; }
+    const t = await call<string>('agent:getInstructions', agent).catch(() => '');
+    setInstrText(t); setInstrSaved(t);
+  }
+  useEffect(() => { void loadInstr(instrTarget); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [instrTarget, store.team]);
+  async function saveInstr() {
+    if (!instrTarget) return;
+    setInstrBusy(true); setInstrMsg('saving…');
+    try {
+      const r = await call<{ ok: boolean; needsRebuild?: boolean }>('agent:setInstructions', instrTarget, instrText);
+      setInstrSaved(instrText);
+      setInstrMsg(r.needsRebuild ? `saved ✓ — rebuilding ${instrTarget}…` : 'saved ✓');
+      // Rebuild so the new instructions land in the agent's system prompt now.
+      await call('rebuildAgent', instrTarget).catch(() => {});
+      setInstrMsg(instrText.trim() ? `saved ✓ — ${instrTarget} rebuilt; it now follows these instructions` : `cleared ✓ — ${instrTarget} rebuilt`);
+    } catch (e) {
+      setInstrMsg(`save failed: ${e instanceof Error ? e.message : String(e)}`);
+    } finally { setInstrBusy(false); }
+  }
 
   async function loadRelay() {
     try {
@@ -423,6 +465,31 @@ export function Teams({ store }: { store: FleetStore }) {
             );
           })
         )}
+      </section>
+
+      <section className="card">
+        <h3>Agent instructions — coordination &amp; behavior</h3>
+        <p className="muted small" style={{ marginTop: -4 }}>
+          A persistent directive added to an agent’s system prompt. Use <b>Coordinator preset</b> on your <b>lead</b> so it delegates implementation/research to its teammates (coder, researcher) instead of doing everything itself, then synthesizes the results. Survives rebuilds; takes effect after the rebuild this triggers.
+        </p>
+        <div className="row-actions" style={{ gap: 8, alignItems: 'center', marginBottom: 6 }}>
+          <span className="muted small">agent</span>
+          <select className="cell-select" value={instrTarget} disabled={instrBusy} onChange={(e) => setInstrAgent(e.target.value)}>
+            {store.agents.map((a) => <option key={a.id} value={a.name}>{a.name}</option>)}
+          </select>
+          <button className="btn small" disabled={instrBusy} onClick={() => setInstrText(COORDINATOR_PRESET)}>Coordinator preset</button>
+          {instrText.trim() ? <button className="btn small" disabled={instrBusy} onClick={() => setInstrText('')}>Clear</button> : null}
+          <span className="grow" />
+          {instrMsg ? <span className={`small ${/failed/.test(instrMsg) ? 'status-error' : 'ok-text'}`}>{instrMsg}</span> : null}
+          <button className="btn primary small" disabled={instrBusy || instrText === instrSaved} onClick={() => void saveInstr()}>{instrBusy ? '…' : 'Save & rebuild'}</button>
+        </div>
+        <textarea
+          style={{ width: '100%', minHeight: 120, fontFamily: 'var(--mono, ui-monospace, monospace)', fontSize: 12 }}
+          placeholder={`Custom instructions for ${instrTarget || 'this agent'} — or click “Coordinator preset”. Leave empty for none.`}
+          value={instrText}
+          disabled={instrBusy}
+          onChange={(e) => setInstrText(e.target.value)}
+        />
       </section>
 
       <section className="card">
