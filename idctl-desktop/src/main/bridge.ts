@@ -118,6 +118,10 @@ const METHODS: Record<string, (...a: any[]) => Promise<unknown>> = {
     return groups.filter((g) => g.agents.length > 0);
   },
   events: (since: number) => client.events(Number(since) || 0, { wait: 20, limit: 100 }),
+  // Live agent activity (tool/file steps) for the chat "what they're doing" feed.
+  // Team-scoped so a same-named agent in another team can't bleed in.
+  'activity:get': (agent: string, since: number, team?: string) =>
+    client.activity(String(agent), Number(since) || 0, team ? String(team) : client.team),
   inboxPending: () => client.inboxPending(),
 
   // tasks

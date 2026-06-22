@@ -16,6 +16,7 @@
 import type {
   Agent,
   EventsResponse,
+  ActivityResponse,
   InboxItem,
   NewsItem,
   ProbeResult,
@@ -168,6 +169,19 @@ export class ManagerClient {
   }
 
   // ---- Remote command surface ------------------------------------------
+
+  /** Live agent activity steps (tool/file), since a seq cursor. `team` scopes the
+   *  filter so same-named agents in other teams don't bleed in. Returns empty on
+   *  managers that don't have the /activity endpoint (graceful degradation). */
+  async activity(agent: string, since = 0, team?: string, signal?: AbortSignal): Promise<ActivityResponse> {
+    try {
+      const p = new URLSearchParams({ agent: String(agent), since: String(since) });
+      if (team) p.set('team', String(team));
+      return await this.get<ActivityResponse>(`/activity?${p.toString()}`, signal);
+    } catch {
+      return { items: [], next_seq: since };
+    }
+  }
 
   /** Raw POST /remote. Returns the envelope; caller inspects `result`. */
   async remote<T = unknown>(command: string, agent?: string, signal?: AbortSignal): Promise<RemoteEnvelope<T>> {

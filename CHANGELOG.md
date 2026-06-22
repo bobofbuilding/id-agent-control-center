@@ -8,6 +8,15 @@ Every change pushed or merged to `main` carries its version number in the commit
 subject (`vX.Y.Z: …`), stamped automatically by the `commit-msg` hook — see
 [CONTRIBUTING.md](CONTRIBUTING.md).
 
+## [0.1.60] — 2026-06-22
+- **Live agent activity streamed into chat.** While an agent works on your
+  message, the chat now shows what it’s actually doing — files it creates/edits,
+  commands it runs, searches, web fetches, and work it delegates to other
+  agents — as an inline “working · live” feed (Claude-app style), with an
+  elapsed timer. A compact record of the steps is kept with the finished reply.
+  (Agents stream their tool/file steps to the manager; needs the local manager +
+  a one-time agent rebuild to light up — claude-code agents today.)
+
 ## [0.1.59] — 2026-06-22
 - **Unread badges on Chat & Inbox.** The Chat nav item now shows a count when an
   agent reply lands in a thread you haven’t viewed; opening the thread (or the

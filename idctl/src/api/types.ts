@@ -73,6 +73,22 @@ export interface EventsResponse {
   earliest_available_seq?: number | null;
 }
 
+/** One live "what the agent is doing" step (tool call / file edit), streamed
+ *  by agents to the manager's in-memory activity ring. */
+export interface ActivityStep {
+  seq: number;
+  at: number;
+  agent: string;
+  team: string;
+  kind: string;      // file | read | run | search | web | delegate | plan | tool | error
+  tool?: string;
+  summary: string;
+}
+export interface ActivityResponse {
+  items: ActivityStep[];
+  next_seq: number;
+}
+
 export interface Task {
   name?: string;
   uuid?: string;

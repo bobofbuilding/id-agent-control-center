@@ -1,7 +1,7 @@
 import { useMemo, useRef, useState, useEffect } from 'react';
 import { call, resolveCoordinator, agentsLeadFirst, type FleetStore } from '../store.ts';
 import type { ProjectEntry } from '../../../../idctl/src/settings/schema.ts';
-import type { ManagerEvent } from '../../../../idctl/src/api/types.ts';
+import type { ManagerEvent, ActivityStep } from '../../../../idctl/src/api/types.ts';
 
 type PickedFile = { path: string; name: string; size: number; isImage: boolean };
 type SavedFile = { name: string; path: string; size: number; isImage: boolean };
@@ -116,6 +116,13 @@ function traceLines(events: ManagerEvent[], sinceSeq: number, sinceTs: number, b
   }
   return out.slice(-8);
 }
+// Icon per activity kind for the inline "what the agent is doing" stream.
+const KIND_ICON: Record<string, string> = {
+  file: '📝', read: '📖', run: '▶', search: '🔍', web: '🌐', delegate: '🤝', plan: '🧩', error: '⚠', tool: '🔧',
+};
+function actIcon(kind: string): string { return KIND_ICON[kind] || '🔧'; }
+function actLine(a: ActivityStep): string { return `${actIcon(a.kind)} ${a.summary}`; }
+
 function newSessionId(): string { return `c_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 7)}`; }
 function fmtAge(ts: number): string {
   const s = Math.max(0, Math.floor((Date.now() - ts) / 1000));
@@ -155,7 +162,9 @@ export function Chat({ store }: { store: FleetStore }) {
   const [attachments, setAttachments] = useState<PickedFile[]>([]);
   const [canImage, setCanImage] = useState(false); // an image-capable provider is configured
   // Live "behind the scenes" feed for the in-flight dispatch (elapsed + fleet activity).
-  const [running, setRunning] = useState<{ sid: string; replyId: number; startedAt: number; sinceSeq: number } | null>(null);
+  const [running, setRunning] = useState<{ sid: string; replyId: number; startedAt: number; sinceSeq: number; target: string } | null>(null);
+  const [activitySteps, setActivitySteps] = useState<ActivityStep[]>([]); // the agent's live tool/file steps
+  const activitySinceRef = useRef(0); // activity ring cursor for this dispatch
   const [, setTick] = useState(0); // 1 Hz re-render so the elapsed timer ticks
   const idRef = useRef(1);
   const endRef = useRef<HTMLDivElement>(null);
@@ -163,6 +172,8 @@ export function Chat({ store }: { store: FleetStore }) {
   const sessionRef = useRef<Session | null>(null); // mirror of the active session (to persist a gated empty chat)
   const deletedRef = useRef<Set<string>>(new Set()); // sessions deleted this run — drop their late writes
   const liveTraceRef = useRef<TraceLine[]>([]); // latest derived trace (read at completion to persist)
+  const activityStepsRef = useRef<ActivityStep[]>([]); // mirror of activitySteps (read at completion)
+  useEffect(() => { activityStepsRef.current = activitySteps; }, [activitySteps]);
   const aliveRef = useRef(true); // false once unmounted (Chat view not on screen) → late replies count as unread
   useEffect(() => { aliveRef.current = true; return () => { aliveRef.current = false; }; }, []);
 
@@ -190,6 +201,25 @@ export function Chat({ store }: { store: FleetStore }) {
     if (!running) return;
     const t = setInterval(() => setTick((n) => n + 1), 1000);
     return () => clearInterval(t);
+  }, [running]);
+  // While a dispatch runs, poll the target agent's live tool/file activity and
+  // stream it inline (Claude-app style). Cursor was floored at dispatch start.
+  useEffect(() => {
+    if (!running) return;
+    let alive = true;
+    const poll = async () => {
+      const since = activitySinceRef.current;
+      const r = await call<{ items: ActivityStep[]; next_seq: number }>('activity:get', running.target, Math.max(0, since), team).catch(() => null);
+      if (!alive || !r) return;
+      if (since < 0) { activitySinceRef.current = r.next_seq ?? 0; return; } // first poll floors the cursor — skip any pre-dispatch backlog
+      if (Array.isArray(r.items) && r.items.length) {
+        activitySinceRef.current = r.items[r.items.length - 1].seq;
+        setActivitySteps((prev) => [...prev, ...r.items].slice(-60));
+      }
+    };
+    void poll();
+    const t = setInterval(() => void poll(), 1200);
+    return () => { alive = false; clearInterval(t); };
   }, [running]);
 
   const activeKey = `idctl.chat.session.${team}`;
@@ -403,13 +433,27 @@ export function Chat({ store }: { store: FleetStore }) {
       setInput('');
       setAttachments([]);
       // Start the live "behind the scenes" feed: snapshot the event cursor so we
-      // only surface activity caused by this dispatch (and any work it farms out).
+      // only surface activity caused by this dispatch (and any work it farms out),
+      // and floor the activity ring at the target agent's current tip.
       const sinceSeq = store.events.reduce((mx, e) => Math.max(mx, e?.seq ?? 0), 0);
       liveTraceRef.current = [];
-      setRunning({ sid, replyId, startedAt: Date.now(), sinceSeq });
+      activityStepsRef.current = [];
+      setActivitySteps([]);
+      activitySinceRef.current = -1; // -1 = floor the cursor on the first poll (no blocking pre-dispatch call)
+      setRunning({ sid, replyId, startedAt: Date.now(), sinceSeq, target });
       try {
         const reply = await call<string>('dispatch', `/ask ${target} ${qArg(message)}`);
-        const trace = liveTraceRef.current.slice(-6).map((t) => t.line);
+        // Final catch-up poll so the persisted trace includes steps from the last
+        // ~1.2s window the interval may have missed.
+        if (activitySinceRef.current >= 0) {
+          const r = await call<{ items: ActivityStep[]; next_seq: number }>('activity:get', target, activitySinceRef.current, team).catch(() => null);
+          if (r?.items?.length) activityStepsRef.current = [...activityStepsRef.current, ...r.items].slice(-60);
+        }
+        // Persist a compact record of what the agent did: its tool/file steps
+        // plus any work it farmed out to other agents.
+        const acts = activityStepsRef.current.map(actLine);
+        const delegs = liveTraceRef.current.filter((t) => / → |delegated|replied/.test(t.line)).slice(-4).map((t) => t.line);
+        const trace = [...acts, ...delegs].slice(-14);
         await resolveMsg(sid, replyId, { text: reply, pending: false, trace: trace.length ? trace : undefined });
         // Plan request → also save the reply to Work › Plans (skip empty replies
         // and one-line refusals; a real plan always has some substance).
@@ -494,11 +538,13 @@ export function Chat({ store }: { store: FleetStore }) {
               <div key={m.id} className={`msg ${m.role}`}>
                 {m.role !== 'system' ? <div className="msg-who">{m.role === 'you' ? 'you' : m.who}</div> : null}
                 <div className="msg-body">{m.pending && !m.image ? <span className="spin">▌ {m.text || (live ? `${m.who} working… ${elapsed}s` : 'thinking…')}</span> : m.text}</div>
-                {/* Live behind-the-scenes feed while this reply is running. */}
-                {live && liveTrace.length ? (
+                {/* Live "what the agent is doing" feed while this reply is running:
+                    its own tool/file steps, plus any work farmed out to others. */}
+                {live && (activitySteps.length || liveTrace.length) ? (
                   <div className="chat-trace">
-                    <div className="chat-trace-head muted small">behind the scenes · live</div>
-                    {liveTrace.map((t) => <div key={t.seq} className={`chat-trace-row trace-${t.cls}`}>{t.line}</div>)}
+                    <div className="chat-trace-head muted small">working · live</div>
+                    {activitySteps.map((a) => <div key={`a${a.seq}`} className={`chat-trace-row act-${a.kind === 'error' ? 'err' : 'accent'}`}>{actIcon(a.kind)} {a.summary}</div>)}
+                    {liveTrace.map((t) => <div key={`e${t.seq}`} className={`chat-trace-row trace-${t.cls}`}>{t.line}</div>)}
                   </div>
                 ) : null}
                 {/* Captured trace, persisted with a finished reply. */}

@@ -301,6 +301,9 @@ button.chip.incompat:hover { border-color: var(--line); }
 .chat-trace-row { font-size: 12px; line-height: 1.5; color: var(--text-2, var(--muted)); white-space: pre-wrap; }
 .chat-trace-row.trace-ok { color: var(--ok, #4caf7d); }
 .chat-trace-row.trace-err { color: var(--danger, #e5534b); }
+/* The agent's own tool/file steps read brighter than the muted delegation lines. */
+.chat-trace-row.act-accent { color: var(--text); }
+.chat-trace-row.act-err { color: var(--danger, #e5534b); }
 /* Auto-decompose preview: proposed sub-tasks before they're created + dispatched. */
 .decomp-list { display: flex; flex-direction: column; gap: 6px; }
 .decomp-row { display: flex; align-items: center; gap: 10px; padding: 8px 10px; background: var(--bg-2); border: 1px solid var(--line); border-radius: 8px; }
