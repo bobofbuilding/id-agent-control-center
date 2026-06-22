@@ -37,6 +37,8 @@ export interface ChatMessage {
 export interface ChatSession {
   id: string;
   title: string;
+  /** true once the user has manually edited the title — stops auto-titling from clobbering it. */
+  named?: boolean;
   team: string;
   target: string;
   projectId?: string;

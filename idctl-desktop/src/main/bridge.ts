@@ -107,6 +107,15 @@ const METHODS: Record<string, (...a: any[]) => Promise<unknown>> = {
   health: () => client.health(),
   agents: () => client.agents(),
   teams: () => client.teams(),
+  // Agents across ALL teams, grouped — for the Health roster.
+  'agents:allTeams': async () => {
+    const teams = await client.teams().catch(() => []);
+    const names = teams.length ? teams.map((t) => t.name) : [cfg.team ?? 'default'];
+    const groups = await Promise.all(
+      names.map(async (name) => ({ team: name, agents: await client.withTeam(name).agents().catch(() => []) })),
+    );
+    return groups.filter((g) => g.agents.length > 0);
+  },
   events: (since: number) => client.events(Number(since) || 0, { wait: 20, limit: 100 }),
   inboxPending: () => client.inboxPending(),
 

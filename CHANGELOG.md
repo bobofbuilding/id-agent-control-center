@@ -8,6 +8,20 @@ Every change pushed or merged to `main` carries its version number in the commit
 subject (`vX.Y.Z: …`), stamped automatically by the `commit-msg` hook — see
 [CONTRIBUTING.md](CONTRIBUTING.md).
 
+## [0.1.52] — 2026-06-22
+- **Tasks page is now tabbed: Tasks · Schedule · Loops.** The Schedule page is
+  folded in as a tab (no more separate nav item; heartbeats + supervision live
+  there). **New Loops tab** — build a recurring *objective* for an agent
+  (objective + cadence) that the manager runs on a schedule (24/7, even when the
+  app is closed), with a tracker (status, last run, Run-now, pause/resume).
+- **Health page now lists the whole fleet, grouped by team**, with running
+  agents at the top of each group and the active team first (e.g. "41 agents ·
+  41 running"). Probe stays scoped to the active team.
+- **Chat sessions are auto-named** (a default that the first message refines)
+  and the name is editable any time — renaming locks it.
+- **Editing a project now opens in place** — the form expands at the card you're
+  editing instead of jumping to the top of the page.
+
 ## [0.1.51] — 2026-06-22
 - Update checks now also fire **when you focus the app window** (debounced to
   once per 5 min), so a release cut while the app is open surfaces the

@@ -17,6 +17,7 @@ interface Msg {
 interface Session {
   id: string;
   title: string;
+  named?: boolean; // user has manually renamed → don't auto-title over it
   team: string;
   target: string;
   projectId?: string;
@@ -83,7 +84,10 @@ export function Chat({ store }: { store: FleetStore }) {
 
   const activeKey = `idctl.chat.session.${team}`;
   function blankSession(): Session {
-    return { id: newSessionId(), title: '', team, target: defaultTarget, projectId: '', createdAt: Date.now(), updatedAt: Date.now(),
+    // Auto-named so it's never "untitled"; the first message refines it and the
+    // user can rename anytime (which locks it via `named`).
+    const stamp = new Date().toLocaleString(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
+    return { id: newSessionId(), title: `New chat · ${stamp}`, named: false, team, target: defaultTarget, projectId: '', createdAt: Date.now(), updatedAt: Date.now(),
       messages: [{ id: 0, role: 'system', who: '', text: 'New chat. Pick an agent, optionally focus a project, attach files, or generate an image — then Send.' }] };
   }
   function adoptSession(s: Session) {
@@ -179,10 +183,10 @@ export function Chat({ store }: { store: FleetStore }) {
   }
   function setTarget(name: string) { patch((s) => ({ ...s, target: name })); }
   function setFocus(pid: string) { patch((s) => ({ ...s, projectId: pid })); }
-  function rename(title: string) { patch((s) => ({ ...s, title })); }
+  function rename(title: string) { patch((s) => ({ ...s, title, named: true })); }
   function autoTitle(text: string) {
-    // Check emptiness against live state inside the updater (no stale clobber).
-    patch((s) => (s.title.trim() ? s : { ...s, title: clip(text.replace(/\s+/g, ' '), 48) }));
+    // Refine the auto name from the first message — unless the user has renamed it.
+    patch((s) => (s.named ? s : { ...s, title: clip(text.replace(/\s+/g, ' '), 48) }));
   }
 
   async function addAttachments() {

@@ -273,6 +273,55 @@ export function Projects({ store }: { store: FleetStore }) {
     }
   }
 
+  /** The new/edit form body — rendered at the top for a new project, or inline
+   *  inside the card being edited so editing happens where you are. */
+  function projectForm() {
+    return (
+      <>
+        <h3>{editing === 'new' ? 'New project' : 'Edit project'}</h3>
+        <div className="kv" style={{ gridTemplateColumns: '110px 1fr', gap: '8px 12px' }}>
+          <span>name *</span>
+          <b><input style={{ width: 320 }} placeholder="e.g. SkillMesh mainnet" value={form.name} onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))} /></b>
+          <span>folder</span>
+          <b style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}>
+            <input style={{ flex: 1, minWidth: 220 }} className="mono" placeholder="/path/to/project — enables git tracking + README import" value={form.path} onChange={(e) => setForm((f) => ({ ...f, path: e.target.value }))} />
+            <button className="btn small" onClick={() => void browse()}>Browse…</button>
+            {form.path.trim() ? <button className="btn small" onClick={() => void readReadme()}>Read README</button> : null}
+          </b>
+          <span>status</span>
+          <b>
+            <select className="cell-select" value={form.status} onChange={(e) => setForm((f) => ({ ...f, status: e.target.value as ProjectStatus }))}>
+              {STATUSES.map((s) => <option key={s} value={s}>{s}</option>)}
+            </select>
+          </b>
+          <span>description</span>
+          <b><textarea style={{ width: '100%', minHeight: 44 }} placeholder="one-line summary / goal" value={form.description} onChange={(e) => setForm((f) => ({ ...f, description: e.target.value }))} /></b>
+          <span>team</span>
+          <b>
+            <select className="cell-select" value={form.team} onChange={(e) => setForm((f) => ({ ...f, team: e.target.value }))}>
+              <option value="">(none)</option>
+              {store.teams.map((t) => <option key={t.id} value={t.name}>{t.name}</option>)}
+            </select>
+          </b>
+          <span>tags</span>
+          <b><input style={{ width: '100%' }} placeholder="comma-separated" value={form.tags} onChange={(e) => setForm((f) => ({ ...f, tags: e.target.value }))} /></b>
+          <span>links</span>
+          <b><textarea style={{ width: '100%', minHeight: 40 }} placeholder="one URL per line (repo, dashboard, docs…)" value={form.links} onChange={(e) => setForm((f) => ({ ...f, links: e.target.value }))} /></b>
+          <span>notes</span>
+          <b><textarea style={{ width: '100%', minHeight: 60 }} placeholder="freeform notes" value={form.notes} onChange={(e) => setForm((f) => ({ ...f, notes: e.target.value }))} /></b>
+        </div>
+        <div className="row-actions" style={{ marginTop: 10 }}>
+          {lead && (form.links.trim() || form.name.trim()) ? (
+            <button className="btn" disabled={busy} title={`Have ${lead} write a cleaner description + tags`} onClick={() => void refineWithLead()}>✨ Refine with lead</button>
+          ) : null}
+          <span className="grow" />
+          <button className="btn" disabled={busy} onClick={() => setEditing(null)}>Cancel</button>
+          <button className="btn primary" disabled={busy || !form.name.trim()} onClick={() => void save()}>Save</button>
+        </div>
+      </>
+    );
+  }
+
   return (
     <div className="view">
       <header className="view-head">
@@ -324,55 +373,16 @@ export function Projects({ store }: { store: FleetStore }) {
         {note ? <span className="muted small grow" style={{ textAlign: 'right' }}>{note}</span> : null}
       </div>
 
-      {editing !== null ? (
-        <section className="card">
-          <h3>{editing === 'new' ? 'New project' : 'Edit project'}</h3>
-          <div className="kv" style={{ gridTemplateColumns: '110px 1fr', gap: '8px 12px' }}>
-            <span>name *</span>
-            <b><input style={{ width: 320 }} placeholder="e.g. SkillMesh mainnet" value={form.name} onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))} /></b>
-            <span>folder</span>
-            <b style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}>
-              <input style={{ flex: 1, minWidth: 220 }} className="mono" placeholder="/path/to/project — enables git tracking + README import" value={form.path} onChange={(e) => setForm((f) => ({ ...f, path: e.target.value }))} />
-              <button className="btn small" onClick={() => void browse()}>Browse…</button>
-              {form.path.trim() ? <button className="btn small" onClick={() => void readReadme()}>Read README</button> : null}
-            </b>
-            <span>status</span>
-            <b>
-              <select className="cell-select" value={form.status} onChange={(e) => setForm((f) => ({ ...f, status: e.target.value as ProjectStatus }))}>
-                {STATUSES.map((s) => <option key={s} value={s}>{s}</option>)}
-              </select>
-            </b>
-            <span>description</span>
-            <b><textarea style={{ width: '100%', minHeight: 44 }} placeholder="one-line summary / goal" value={form.description} onChange={(e) => setForm((f) => ({ ...f, description: e.target.value }))} /></b>
-            <span>team</span>
-            <b>
-              <select className="cell-select" value={form.team} onChange={(e) => setForm((f) => ({ ...f, team: e.target.value }))}>
-                <option value="">(none)</option>
-                {store.teams.map((t) => <option key={t.id} value={t.name}>{t.name}</option>)}
-              </select>
-            </b>
-            <span>tags</span>
-            <b><input style={{ width: '100%' }} placeholder="comma-separated" value={form.tags} onChange={(e) => setForm((f) => ({ ...f, tags: e.target.value }))} /></b>
-            <span>links</span>
-            <b><textarea style={{ width: '100%', minHeight: 40 }} placeholder="one URL per line (repo, dashboard, docs…)" value={form.links} onChange={(e) => setForm((f) => ({ ...f, links: e.target.value }))} /></b>
-            <span>notes</span>
-            <b><textarea style={{ width: '100%', minHeight: 60 }} placeholder="freeform notes" value={form.notes} onChange={(e) => setForm((f) => ({ ...f, notes: e.target.value }))} /></b>
-          </div>
-          <div className="row-actions" style={{ marginTop: 10 }}>
-            {lead && (form.links.trim() || form.name.trim()) ? (
-              <button className="btn" disabled={busy} title={`Have ${lead} write a cleaner description + tags`} onClick={() => void refineWithLead()}>✨ Refine with lead</button>
-            ) : null}
-            <span className="grow" />
-            <button className="btn" disabled={busy} onClick={() => setEditing(null)}>Cancel</button>
-            <button className="btn primary" disabled={busy || !form.name.trim()} onClick={() => void save()}>Save</button>
-          </div>
-        </section>
-      ) : null}
+      {editing === 'new' ? <section className="card">{projectForm()}</section> : null}
 
       <div className="skill-catalog">
         {shown.map((p) => {
           const g = gitMap[p.id];
           const out = gitOut[p.id];
+          if (editing === p.id) {
+            // Edit in place — the form replaces this card's body so you stay put.
+            return <div className="skill-card editing" key={p.id}>{projectForm()}</div>;
+          }
           return (
             <div className="skill-card" key={p.id}>
               <div className="skill-card-head">

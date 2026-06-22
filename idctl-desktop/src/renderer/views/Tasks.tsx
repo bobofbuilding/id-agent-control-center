@@ -2,6 +2,15 @@ import { useEffect, useState } from 'react';
 import { call, type FleetStore } from '../store.ts';
 import { usePrompt } from '../components/prompt.tsx';
 import type { Task } from '../../../../idctl/src/api/types.ts';
+import { Schedule } from './Schedule.tsx';
+import { Loops } from './Loops.tsx';
+
+type Tab = 'tasks' | 'schedule' | 'loops';
+const TABS: { id: Tab; label: string }[] = [
+  { id: 'tasks', label: 'Tasks' },
+  { id: 'schedule', label: 'Schedule' },
+  { id: 'loops', label: 'Loops' },
+];
 
 /** Stable reference the manager accepts for a task: #shortid, name, then fallbacks. */
 function ref(t: Task): string {
@@ -10,7 +19,6 @@ function ref(t: Task): string {
 function isDone(t: Task): boolean {
   return /done|complete/i.test(t.status);
 }
-/** Routine = the noisy heartbeat-cycle bookkeeping tasks agents auto-create. */
 function isRoutine(t: Task): boolean {
   return /heartbeat/i.test(t.title) || /heartbeat/i.test(t.name ?? '');
 }
@@ -31,7 +39,32 @@ function ago(ts?: number): string {
   return `${Math.round(d / 30)}mo`;
 }
 
-export function Tasks({ store }: { store: FleetStore }) {
+/** Tabbed wrapper: Tasks + Schedule + Loops in one page. */
+export function Tasks({ store, initialTab }: { store: FleetStore; initialTab?: Tab }) {
+  const [tab, setTab] = useState<Tab>(() => {
+    try {
+      const t = (initialTab || localStorage.getItem('idctl.tasks.tab') || 'tasks') as Tab;
+      return TABS.some((x) => x.id === t) ? t : 'tasks'; // ignore stale/garbage values
+    } catch { return 'tasks'; }
+  });
+  function pick(t: Tab) { setTab(t); try { localStorage.setItem('idctl.tasks.tab', t); } catch { /* ignore */ } }
+
+  return (
+    <div className="view">
+      <header className="view-head"><h1>Tasks</h1></header>
+      <div className="tabs">
+        {TABS.map((t) => (
+          <button key={t.id} className={`tab${tab === t.id ? ' active' : ''}`} onClick={() => pick(t.id)}>{t.label}</button>
+        ))}
+      </div>
+      {tab === 'tasks' ? <TasksPanel store={store} /> : null}
+      {tab === 'schedule' ? <Schedule store={store} /> : null}
+      {tab === 'loops' ? <Loops store={store} /> : null}
+    </div>
+  );
+}
+
+function TasksPanel({ store }: { store: FleetStore }) {
   const [tasks, setTasks] = useState<Task[]>([]);
   const [busy, setBusy] = useState(false);
   const [note, setNote] = useState('');
@@ -52,9 +85,9 @@ export function Tasks({ store }: { store: FleetStore }) {
   }
   useEffect(() => {
     reload();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [store.team, store.lastUpdated]);
 
-  /** Run a manager /task command, surface failures inline, then refresh. */
   async function run(cmd: string, label: string) {
     setBusy(true);
     setNote(`${label}…`);
@@ -107,23 +140,22 @@ export function Tasks({ store }: { store: FleetStore }) {
   });
 
   return (
-    <div className="view">
-      <header className="view-head">
-        <h1>Tasks <span className="muted small">· {openCount} open · {doneCount} done</span></h1>
-        <div className="row-actions">
-          {doneCount > 0 ? (
-            confirmClear ? (
-              <>
-                <button className="btn icon-danger" disabled={busy} onClick={() => void clearDone()}>Clear {doneCount} done?</button>
-                <button className="btn" disabled={busy} onClick={() => setConfirmClear(false)}>Cancel</button>
-              </>
-            ) : (
-              <button className="btn" disabled={busy} onClick={() => setConfirmClear(true)}>Clear completed</button>
-            )
-          ) : null}
-          <button className="btn primary" disabled={busy} onClick={() => void newTask()}>+ New task</button>
-        </div>
-      </header>
+    <>
+      <div className="row-actions" style={{ marginBottom: 8, alignItems: 'center' }}>
+        <span className="muted small">{openCount} open · {doneCount} done</span>
+        <span className="grow" />
+        {doneCount > 0 ? (
+          confirmClear ? (
+            <>
+              <button className="btn icon-danger" disabled={busy} onClick={() => void clearDone()}>Clear {doneCount} done?</button>
+              <button className="btn" disabled={busy} onClick={() => setConfirmClear(false)}>Cancel</button>
+            </>
+          ) : (
+            <button className="btn" disabled={busy} onClick={() => setConfirmClear(true)}>Clear completed</button>
+          )
+        ) : null}
+        <button className="btn primary" disabled={busy} onClick={() => void newTask()}>+ New task</button>
+      </div>
 
       <section className="card grow">
         <div className="row-actions" style={{ flexWrap: 'wrap', gap: 8, marginBottom: 10 }}>
@@ -143,13 +175,7 @@ export function Tasks({ store }: { store: FleetStore }) {
 
         <table className="grid">
           <thead>
-            <tr>
-              <th>Task</th>
-              <th>Status</th>
-              <th>Owner</th>
-              <th>Age</th>
-              <th></th>
-            </tr>
+            <tr><th>Task</th><th>Status</th><th>Owner</th><th>Age</th><th></th></tr>
           </thead>
           <tbody>
             {filtered.map((t) => (
@@ -190,17 +216,11 @@ export function Tasks({ store }: { store: FleetStore }) {
               </tr>
             ))}
             {filtered.length === 0 ? (
-              <tr>
-                <td colSpan={5} className="muted center pad">
-                  {tasks.length === 0
-                    ? 'No tasks. Create one with “+ New task”.'
-                    : 'No tasks match the current filter.'}
-                </td>
-              </tr>
+              <tr><td colSpan={5} className="muted center pad">{tasks.length === 0 ? 'No tasks. Create one with “+ New task”.' : 'No tasks match the current filter.'}</td></tr>
             ) : null}
           </tbody>
         </table>
       </section>
-    </div>
+    </>
   );
 }

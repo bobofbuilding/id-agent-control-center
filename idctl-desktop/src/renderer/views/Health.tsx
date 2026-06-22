@@ -1,6 +1,9 @@
 import { useCallback, useEffect, useState } from 'react';
 import { call, type FleetStore } from '../store.ts';
-import type { ProbeResult } from '../../../../idctl/src/api/types.ts';
+import type { ProbeResult, Agent } from '../../../../idctl/src/api/types.ts';
+
+type TeamGroup = { team: string; agents: Agent[] };
+const isUp = (a: Agent) => /running|online|ready|healthy/i.test(`${a.status ?? ''} ${a.health ?? ''}`);
 import type { UsageReport, UsageWindow } from '../../../../idctl/src/api/client.ts';
 
 /** Compact number: 1234 → "1.2k", 2_500_000 → "2.5M". */
@@ -58,6 +61,13 @@ export function Health({ store }: { store: FleetStore }) {
   }, []);
   useEffect(() => { void loadUsage(); }, [loadUsage, store.lastUpdated]);
 
+  // Whole-fleet roster, grouped by team (all teams, not just the active one).
+  const [roster, setRoster] = useState<TeamGroup[]>([]);
+  const loadRoster = useCallback(async () => {
+    try { setRoster(await call<TeamGroup[]>('agents:allTeams')); } catch { /* keep last */ }
+  }, []);
+  useEffect(() => { void loadRoster(); }, [loadRoster, store.lastUpdated]);
+
   async function probe(which: 'all' | string) {
     setProbing(which);
     setResult(null);
@@ -76,6 +86,13 @@ export function Health({ store }: { store: FleetStore }) {
   const gaugeVal = usage ? (usage.recent?.tps ?? usage.day.avgTps ?? 0) : 0;
   const gaugeMax = usage ? niceMax(Math.max(gaugeVal, usage.day.avgTps, usage.week.avgTps)) : 100;
   const localAgents = usage?.day.agents ?? [];
+
+  // Active team first, then alphabetical; within a team, running agents on top.
+  const sortedRoster = [...roster]
+    .sort((x, y) => (x.team === store.team ? -1 : y.team === store.team ? 1 : x.team.localeCompare(y.team)))
+    .map((g) => ({ team: g.team, agents: [...g.agents].sort((a, b) => (isUp(b) ? 1 : 0) - (isUp(a) ? 1 : 0) || a.name.localeCompare(b.name)) }));
+  const totalAgents = roster.reduce((n, g) => n + g.agents.length, 0);
+  const upAgents = roster.reduce((n, g) => n + g.agents.filter(isUp).length, 0);
 
   return (
     <div className="view">
@@ -131,32 +148,38 @@ export function Health({ store }: { store: FleetStore }) {
 
       <div className="cols">
         <section className="card grow">
-          <table className="grid">
-            <thead>
-              <tr>
-                <th>Agent</th>
-                <th>Status</th>
-                <th>Runtime</th>
-                <th></th>
-              </tr>
-            </thead>
-            <tbody>
-              {store.agents.map((a) => (
-                <tr key={a.id}>
-                  <td className="b">{a.name}</td>
-                  <td>
-                    <span className={`dot ${/running|online/i.test(a.status) ? 'ok' : 'err'}`} /> {a.status}
-                  </td>
-                  <td className="muted">{a.runtime ?? a.type}</td>
-                  <td className="row-actions">
-                    <button className="btn" disabled={!!probing} onClick={() => void probe(a.name)}>
-                      {probing === a.name ? '…' : 'Probe'}
-                    </button>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+          <div className="row-actions" style={{ alignItems: 'baseline' }}>
+            <h3 className="grow">Fleet · {totalAgents} agents · <span className="ok-text">{upAgents} running</span></h3>
+            <button className="btn small" onClick={() => void loadRoster()}>Refresh</button>
+          </div>
+          {sortedRoster.length === 0 ? (
+            <p className="muted small">No agents found across teams.</p>
+          ) : sortedRoster.map((g) => (
+            <div className="roster-group" key={g.team}>
+              <div className="roster-team">
+                <span className="b">{g.team}</span>
+                {g.team === store.team ? <span className="chip on" style={{ marginLeft: 6 }}>active</span> : null}
+                <span className="muted small" style={{ marginLeft: 6 }}>{g.agents.filter(isUp).length}/{g.agents.length} up</span>
+              </div>
+              <table className="grid">
+                <tbody>
+                  {g.agents.map((a) => (
+                    <tr key={a.id}>
+                      <td className="b">{a.name}</td>
+                      <td><span className={`dot ${isUp(a) ? 'ok' : 'err'}`} /> {a.status}</td>
+                      <td className="muted">{a.runtime ?? a.type}</td>
+                      <td className="muted small">{a.model ?? ''}</td>
+                      <td className="row-actions">
+                        {g.team === store.team ? (
+                          <button className="btn small" disabled={!!probing} onClick={() => void probe(a.name)}>{probing === a.name ? '…' : 'Probe'}</button>
+                        ) : null}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          ))}
         </section>
         <aside className="card feed">
           <h3>Probe result</h3>

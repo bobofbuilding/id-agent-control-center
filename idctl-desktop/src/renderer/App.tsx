@@ -8,7 +8,6 @@ import { Inbox } from './views/Inbox.tsx';
 import { Tasks } from './views/Tasks.tsx';
 import { Health } from './views/Health.tsx';
 import { Identity } from './views/Identity.tsx';
-import { Schedule } from './views/Schedule.tsx';
 import { Modules } from './views/Modules.tsx';
 import { Projects } from './views/Projects.tsx';
 import { Settings } from './views/Settings.tsx';
@@ -23,7 +22,6 @@ const NAV: { id: ViewId; label: string; icon: string }[] = [
   { id: 'projects', label: 'Projects', icon: '◆' },
   { id: 'health', label: 'Health', icon: '✚' },
   { id: 'identity', label: 'Identity & Keys', icon: '⬡' },
-  { id: 'schedule', label: 'Schedule', icon: '◷' },
   { id: 'teams', label: 'Teams', icon: '⛌' },
   { id: 'modules', label: 'Capabilities', icon: '◫' },
   { id: 'settings', label: 'Settings', icon: '⚙' },
@@ -43,7 +41,8 @@ export function App() {
   const store = useFleet();
   const [view, setView] = useState<ViewId>(() => {
     const v = new URLSearchParams(window.location.search).get('view') as ViewId | null;
-    return v && NAV.some((n) => n.id === v) ? v : 'dashboard';
+    // 'schedule' is a Tasks tab now (not in NAV) but still a valid deep-link target.
+    return v && (NAV.some((n) => n.id === v) || v === 'schedule') ? v : 'dashboard';
   });
   const [version, setVersion] = useState<string>('');
   const [update, setUpdate] = useState<UpdateStatus | null>(null);
@@ -127,7 +126,7 @@ function Router({ view, store }: { view: ViewId; store: ReturnType<typeof useFle
     case 'identity':
       return <Identity store={store} />;
     case 'schedule':
-      return <Schedule store={store} />;
+      return <Tasks store={store} initialTab="schedule" />;
     case 'modules':
       return <Modules store={store} />;
     case 'projects':
