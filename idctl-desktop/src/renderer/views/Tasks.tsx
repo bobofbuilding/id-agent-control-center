@@ -51,7 +51,7 @@ export function Tasks({ store, initialTab }: { store: FleetStore; initialTab?: T
 
   return (
     <div className="view">
-      <header className="view-head"><h1>Tasks</h1></header>
+      <header className="view-head"><h1>Work</h1></header>
       <div className="tabs">
         {TABS.map((t) => (
           <button key={t.id} className={`tab${tab === t.id ? ' active' : ''}`} onClick={() => pick(t.id)}>{t.label}</button>

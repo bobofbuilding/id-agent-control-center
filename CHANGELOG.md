@@ -8,6 +8,11 @@ Every change pushed or merged to `main` carries its version number in the commit
 subject (`vX.Y.Z: …`), stamped automatically by the `commit-msg` hook — see
 [CONTRIBUTING.md](CONTRIBUTING.md).
 
+## [0.1.53] — 2026-06-22
+- Renamed the **Tasks** nav item + page heading to **Work** — it now covers
+  Tasks, Schedule, and Loops under one inclusive title. (The first tab is still
+  "Tasks".)
+
 ## [0.1.52] — 2026-06-22
 - **Tasks page is now tabbed: Tasks · Schedule · Loops.** The Schedule page is
   folded in as a tab (no more separate nav item; heartbeats + supervision live
