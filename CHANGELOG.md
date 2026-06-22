@@ -8,6 +8,15 @@ Every change pushed or merged to `main` carries its version number in the commit
 subject (`vX.Y.Z: …`), stamped automatically by the `commit-msg` hook — see
 [CONTRIBUTING.md](CONTRIBUTING.md).
 
+## [0.1.68] — 2026-06-22
+- **Coordinator preset no longer leaves stale “doing” tasks.** When the lead
+  delegated synchronously it was auto-attaching a tracked task that never closed
+  (a sync reply doesn’t mark its own task done), so the board filled with
+  perpetual “doing” rows. The Coordinator preset now tells the lead to skip the
+  tracked task for synchronous delegations (it gets the reply inline; the live
+  activity feed already shows the hand-off) and to reserve — and close —
+  tracked tasks only for async hand-offs.
+
 ## [0.1.67] — 2026-06-22
 - **Settings re-checks for updates on open.** The Self-update card now kicks a
   fresh check whenever you open Settings, so it never shows a stale “latest”

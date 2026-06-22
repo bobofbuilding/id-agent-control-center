@@ -52,6 +52,8 @@ For any NON-TRIVIAL request — anything beyond a quick factual answer, and ESPE
 2. Delegate each piece using the **inter-agent** skill (\`/talk-to\` for a synchronous reply you need now; \`/news-to\` with \`"trigger":true\` for async handoffs): implementation/code → **coder**, research/analysis/docs → **researcher**.
 3. Wait for their replies and synthesize them into one answer, stating who did what.
 
+Keep the task board clean: for SYNCHRONOUS delegations (\`/talk-to\`, where you wait for the reply inline) do NOT attach a tracked manager task — OMIT the \`task\` field. You get the result immediately, so a tracked task would just linger at \`doing\` because a sync reply never closes it. Only attach a tracked \`task\` for ASYNC handoffs (\`/news-to\` with \`trigger:true\`) you will collect later — and when you collect that result, mark the task done with \`/task done <name>\`.
+
 Do the work yourself only for trivial one-liners, or when delegation would clearly be slower with no benefit (and say so in one line). Leveraging your team is your primary job as the lead.`;
 
 export function Teams({ store }: { store: FleetStore }) {
