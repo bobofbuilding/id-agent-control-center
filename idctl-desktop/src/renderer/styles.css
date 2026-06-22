@@ -24,6 +24,15 @@ body {
 }
 .app { display: flex; flex-direction: column; height: 100%; }
 
+/* Text-selection policy: chrome (nav/buttons/labels) stays unselectable for a
+   native feel, but anything you read or type is selectable + copyable — chat
+   in/out, the live trace, plan content, and every form field. */
+input, textarea { -webkit-user-select: text; user-select: text; }
+.messages, .msg-body, .msg-who, .msg-files,
+.chat-trace, .chat-trace-row, .chat-focus, .attach-row,
+.plan-content { -webkit-user-select: text; user-select: text; }
+.msg-body { cursor: text; }
+
 /* Title bar (draggable, room for native traffic lights) */
 .titlebar {
   height: 38px; flex: 0 0 38px;

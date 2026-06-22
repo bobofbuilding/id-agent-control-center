@@ -3,7 +3,7 @@
  * id-agents manager, and loads the React renderer.
  */
 
-import { app, BrowserWindow, ipcMain, shell } from 'electron';
+import { app, BrowserWindow, ipcMain, shell, Menu, MenuItem } from 'electron';
 import { join } from 'node:path';
 import { call } from './bridge.ts';
 import { startUpdater, stopUpdater, checkForUpdate, getStatus, applyStagedAndRelaunch } from './updater.ts';
@@ -35,6 +35,7 @@ function createWindow() {
       preload: join(__dirname, '../preload/preload.cjs'),
       contextIsolation: true,
       nodeIntegration: false,
+      spellcheck: true, // squiggles + suggestions in the chat composer and other text fields
     },
   });
 
@@ -42,6 +43,30 @@ function createWindow() {
   win.webContents.setWindowOpenHandler(({ url }) => {
     void shell.openExternal(url);
     return { action: 'deny' };
+  });
+
+  // Right-click menu: spelling corrections for a misspelled word, plus the
+  // standard edit actions — so highlighted chat text (output included) can be
+  // copied and the composer's flagged words can be fixed.
+  win.webContents.on('context-menu', (_e, params) => {
+    const wc = win?.webContents;
+    if (!wc) return;
+    const menu = new Menu();
+    if (params.misspelledWord) {
+      const suggestions = params.dictionarySuggestions.slice(0, 5);
+      for (const s of suggestions) menu.append(new MenuItem({ label: s, click: () => wc.replaceMisspelling(s) }));
+      if (suggestions.length === 0) menu.append(new MenuItem({ label: 'No suggestions', enabled: false }));
+      menu.append(new MenuItem({ type: 'separator' }));
+      menu.append(new MenuItem({ label: 'Add to Dictionary', click: () => wc.session.addWordToSpellCheckerDictionary(params.misspelledWord) }));
+      menu.append(new MenuItem({ type: 'separator' }));
+    }
+    const editable = params.isEditable;
+    const hasSelection = params.selectionText.trim().length > 0;
+    if (editable) menu.append(new MenuItem({ role: 'cut', enabled: params.editFlags.canCut }));
+    if (editable || hasSelection) menu.append(new MenuItem({ role: 'copy', enabled: params.editFlags.canCopy }));
+    if (editable) menu.append(new MenuItem({ role: 'paste', enabled: params.editFlags.canPaste }));
+    if (editable || hasSelection) menu.append(new MenuItem({ role: 'selectAll' }));
+    if (menu.items.length > 0) menu.popup({ window: win ?? undefined });
   });
 
   const initialView = process.env.IDCTL_VIEW;

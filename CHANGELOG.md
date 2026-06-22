@@ -8,6 +8,14 @@ Every change pushed or merged to `main` carries its version number in the commit
 subject (`vX.Y.Z: …`), stamped automatically by the `commit-msg` hook — see
 [CONTRIBUTING.md](CONTRIBUTING.md).
 
+## [0.1.58] — 2026-06-22
+- **Select & copy chat text + spellcheck.** Chat messages — both what you type
+  and the agent’s replies (plus the live trace and generated-image captions) —
+  are now selectable, so you can highlight and copy them. The composer is
+  spellchecked, and a right-click menu offers spelling suggestions / Add to
+  Dictionary plus Cut/Copy/Paste/Select All. App chrome (nav, buttons) stays
+  unselectable for the native feel.
+
 ## [0.1.57] — 2026-06-22
 - **Ask for a plan in Chat → it auto-saves to Plans.** When a chat message
   clearly asks for a plan (“draft a plan for…”, “/plan …”), the agent’s reply is

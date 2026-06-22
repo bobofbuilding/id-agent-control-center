@@ -517,6 +517,8 @@ export function Chat({ store }: { store: FleetStore }) {
               value={input}
               placeholder={focused ? `message ${target} about ${focused.name}…` : `message ${target}…`}
               disabled={busy}
+              spellCheck
+              autoCorrect="on"
               onChange={(e) => setInput(e.target.value)}
               onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); void send(); } }}
             />
