@@ -8,6 +8,16 @@ Every change pushed or merged to `main` carries its version number in the commit
 subject (`vX.Y.Z: …`), stamped automatically by the `commit-msg` hook — see
 [CONTRIBUTING.md](CONTRIBUTING.md).
 
+## [0.1.55] — 2026-06-22
+- **Unified composer — one Send, no 🎨 button.** The composer now auto-decides
+  between chat and image generation from your prompt. A clear image request
+  ("generate an image of…", "draw a logo…", or a leading `/image …`) generates
+  an image; everything else goes to the agent. The decision is a **free, local**
+  heuristic (no metered API), it defaults to chat so it never spends on image
+  generation by accident, and chat continues to run on your **subscription /
+  local** agent runtime. (Image generation itself still uses OpenRouter — the
+  only image-capable provider configured.)
+
 ## [0.1.54] — 2026-06-22
 - **Image generation: no more model picker.** The model is now auto-selected
   from your prompt (a higher-quality model when the prompt asks for it —

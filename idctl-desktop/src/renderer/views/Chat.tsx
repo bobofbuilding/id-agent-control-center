@@ -38,6 +38,19 @@ function fmtBytes(n: number): string {
   return `${(n / (1024 * 1024)).toFixed(1)} MB`;
 }
 function clip(s: string, n: number): string { return s.length > n ? s.slice(0, n) + '…' : s; }
+
+// Free, local image-vs-chat routing for the unified composer. Conservative —
+// defaults to chat unless the prompt clearly asks for a generated image (so we
+// never spend on image generation by accident). `/image …` forces it.
+const IMG_CMD = /^\/(image|img|draw|art)\s+/i;
+const IMG_NOUNS = '(image|picture|pic|photo|photograph|logo|icon|illustration|artwork|art|drawing|painting|poster|banner|graphic|portrait|scene|wallpaper|avatar|mockup|render|sketch)';
+function isImageRequest(text: string): boolean {
+  if (IMG_CMD.test(text)) return true;
+  const verbNoun = new RegExp(`\\b(draw|sketch|paint|render|generate|create|make|design|produce|show me|give me)\\b[^.?!\\n]{0,40}\\b${IMG_NOUNS}\\b`, 'i');
+  const nounOf = new RegExp(`\\b(an?|the)\\s+${IMG_NOUNS}\\s+of\\b`, 'i');
+  return verbNoun.test(text) || nounOf.test(text) || /\b(image|picture|photo) of\b/i.test(text);
+}
+function stripImageCmd(text: string): string { return text.replace(IMG_CMD, '').trim(); }
 function newSessionId(): string { return `c_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 7)}`; }
 function fmtAge(ts: number): string {
   const s = Math.max(0, Math.floor((Date.now() - ts) / 1000));
@@ -231,6 +244,12 @@ export function Chat({ store }: { store: FleetStore }) {
   async function send() {
     const text = input.trim();
     if ((!text && attachments.length === 0) || busy || !session) return;
+    // Unified composer: a clear image request (with no file attachments) generates
+    // an image; everything else goes to the agent. Decision is free + local.
+    if (text && !attachments.length && canImage && isImageRequest(text)) {
+      void genImage(stripImageCmd(text));
+      return;
+    }
     const sid = session.id;
     setBusy(true);
     try {
@@ -264,8 +283,8 @@ export function Chat({ store }: { store: FleetStore }) {
     }
   }
 
-  async function genImage() {
-    const prompt = input.trim();
+  async function genImage(promptArg?: string) {
+    const prompt = (promptArg ?? input).trim();
     if (!prompt || busy || !session) return;
     const sid = session.id;
     setBusy(true);
@@ -347,7 +366,6 @@ export function Chat({ store }: { store: FleetStore }) {
 
           <div className="composer">
             <button className="btn attach-btn" title={destDir ? 'Attach files' : 'Focus a project or pick an agent with a workspace to attach files'} disabled={busy || !destDir} onClick={() => void addAttachments()}>📎</button>
-            <button className="btn attach-btn" title={canImage ? 'Generate an image from the box (model auto-picked from your prompt)' : 'Add an OpenRouter key in Settings → Inference to generate images'} disabled={busy || !canImage || !input.trim()} onClick={() => void genImage()}>🎨</button>
             <input
               className="composer-input"
               value={input}
@@ -359,7 +377,7 @@ export function Chat({ store }: { store: FleetStore }) {
             <button className="btn primary" disabled={busy || (!input.trim() && attachments.length === 0)} onClick={() => void send()}>{busy ? '…' : 'Send'}</button>
           </div>
           {canImage ? (
-            <div className="muted small" style={{ marginTop: 6 }}>🎨 type a prompt and hit the button — the image model is auto-picked from your prompt (billed to OpenRouter)</div>
+            <div className="muted small" style={{ marginTop: 6 }}>Send auto-detects image requests (e.g. “generate an image of…”, “/image …”) → 🎨 via OpenRouter; everything else goes to {target}.</div>
           ) : null}
         </section>
 
