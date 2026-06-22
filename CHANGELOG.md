@@ -8,6 +8,18 @@ Every change pushed or merged to `main` carries its version number in the commit
 subject (`vX.Y.Z: …`), stamped automatically by the `commit-msg` hook — see
 [CONTRIBUTING.md](CONTRIBUTING.md).
 
+## [0.1.50] — 2026-06-22
+- **Chat is now saved and resumable.** Every conversation is a persisted session
+  (one JSON file under `~/.config/idctl/chats/`), so threads survive navigation
+  and restarts. A **session switcher** + **＋ New** in the header let you jump
+  back to any past chat; each remembers its own title, agent, and focused
+  project. Rename inline, delete with the ✕. Auto-saves as you go.
+- **Generate images in chat.** A 🎨 button turns the composer text into an image
+  via your OpenRouter provider (model picker — default `gemini-2.5-flash-image`),
+  renders it inline, and **caches it** under `chats/images/` so it persists with
+  the thread. Cost is shown per image. Images load as data URLs (CSP-safe); the
+  reader is locked to the cache directory.
+
 ## [0.1.49] — 2026-06-21
 - **Chat: focus on a project.** A new "focus" dropdown scopes the conversation
   to a tracked project — its name, folder path, and repo are sent to the agent

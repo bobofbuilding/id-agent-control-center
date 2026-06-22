@@ -270,6 +270,10 @@ button.chip.incompat:hover { border-color: var(--line); }
 .msg.you .msg-body { background: var(--accent); color: #04121c; }
 .msg.system .msg-body { background: transparent; color: var(--muted); font-style: italic; padding-left: 0; }
 .spin { color: var(--warn); }
+.chat-bar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin: 0 0 8px; }
+.chat-title { flex: 0 1 260px; min-width: 140px; background: var(--bg); border: 1px solid var(--line); color: var(--text); border-radius: 8px; padding: 6px 10px; font: inherit; outline: none; }
+.chat-title:focus { border-color: var(--accent); }
+.chat-img { max-width: min(420px, 100%); max-height: 420px; border-radius: 10px; border: 1px solid var(--line); margin-top: 8px; display: block; }
 .chat-focus { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin: -4px 0 8px; padding: 6px 10px; background: var(--bg-2); border: 1px solid var(--line); border-radius: 8px; }
 .chat-focus .mono { font-family: var(--mono, ui-monospace, monospace); opacity: .8; word-break: break-all; }
 .msg-files { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
