@@ -25,7 +25,9 @@ await build({
   platform: 'node',
   format: 'cjs',
   target: 'node20',
-  external: ['electron'],
+  // Native input binding (Computer Use mouse/keyboard) stays external — it's a
+  // .node addon required at runtime from the shipped node_modules, not bundled.
+  external: ['electron', '@nut-tree-fork/libnut-darwin', 'bindings'],
 });
 
 await build({

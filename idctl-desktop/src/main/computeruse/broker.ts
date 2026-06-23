@@ -1,15 +1,15 @@
 /**
- * Computer Use BROKER — the single host-side controller (Phase 0).
+ * Computer Use BROKER — the single host-side controller (Phase 1).
  *
  * A loopback-only (127.0.0.1) HTTP server that is the ONLY thing which ever
- * touches the screen. The agent-facing MCP server is a dumb proxy that forwards
- * each tool call here over a bearer token; this broker is the one chokepoint
- * where ARM/DISARM (and, in later phases, the bless-list, one-driver lock, panic,
- * and audit) are ENFORCED — an agent can only REQUEST, only the broker ACTS.
+ * touches the screen + input. The agent-facing MCP server is a dumb proxy that
+ * forwards each tool call here over a bearer token; this broker is the one
+ * chokepoint where every control is ENFORCED — armed, the caller is blessed,
+ * Accessibility is granted, coords are clamped, and every action is audited.
+ * An agent can only REQUEST, only the broker ACTS.
  *
- * Phase 0 scope: screenshot (read-only, armed-gated) + a live JPEG frame pump to
- * the app's Computer Use pane. Input actions (click/type/…) return a structured
- * `blocked` so the model knows they aren't wired yet (Phase 1 adds them here).
+ * Phase 1 scope: screenshot + mouse/keyboard/scroll input (gated by armed +
+ * bless-list + Accessibility), an append-only audit, and a live JPEG frame pump.
  */
 import http from 'node:http';
 import { randomBytes } from 'node:crypto';
@@ -18,6 +18,9 @@ import { join } from 'node:path';
 import { homedir } from 'node:os';
 import { app } from 'electron';
 import { capturePrimary, primaryDisplayInfo, type Frame } from './capture.ts';
+import { accessibilityGranted } from './permissions.ts';
+import * as driver from './driver.mac.ts';
+import { audit, recentAudit, type AuditEntry } from './audit.ts';
 
 const PORT_RANGE = [4180, 4181, 4182, 4183, 4184, 4185];
 const PUMP_MS = 450;          // ~2.2 fps live pane (cheap, smooth enough to supervise)
@@ -46,8 +49,83 @@ interface BrokerState {
   lastAgent: string;          // most recent caller (for the pane label)
   actions: number;            // lifetime action count
   captureFailing: boolean;    // last pump capture returned null while armed (permission/relaunch hint)
+  blessed: Set<string>;       // agent names allowed to act this armed session (synced at arm)
+  team: string;               // most recent caller's team (for the audit→Chat mirror)
+  lastShot: { w: number; h: number; bounds: { x: number; y: number; width: number; height: number } } | null; // for click coord mapping
+  supervised: boolean;        // HOLD every input action for the user's approval (default on)
+  paused: boolean;            // block input without disarming (user is taking over)
+  pending: Map<string, { resolve: (allow: boolean) => void; timer: ReturnType<typeof setTimeout>; entry: PendingAction }>;
+  onPending: ((evt: { kind: 'add' | 'remove'; pending: PendingAction[] }) => void) | null;
 }
-const S: BrokerState = { server: null, port: 0, token: '', armed: false, watching: false, onFrame: null, pump: null, lastSig: 0, lastAgent: '', actions: 0, captureFailing: false };
+export interface PendingAction { id: string; agent: string; action: string; preview: string; ts: number; expiresAt: number }
+const S: BrokerState = { server: null, port: 0, token: '', armed: false, watching: false, onFrame: null, pump: null, lastSig: 0, lastAgent: '', actions: 0, captureFailing: false, blessed: new Set(), team: '', lastShot: null, supervised: true, paused: false, pending: new Map(), onPending: null };
+
+const CONFIRM_TIMEOUT_MS = 60 * 1000; // auto-decline a held action if the user doesn't answer
+
+let panicHotkeyOk = false; // did the global PANIC hotkey register? (the on-screen button is the fallback)
+export function setPanicHotkey(ok: boolean): void { panicHotkeyOk = ok; }
+
+/** Human-readable, secret-free preview of an action (for the approval prompt + audit). */
+function previewAction(type: string, body: Record<string, unknown>): string {
+  const num = (k: string) => Math.round(Number(body[k]) || 0);
+  switch (type) {
+    case 'mouse_move': return `move to ${num('x')},${num('y')}`;
+    case 'left_click': return `left-click at ${num('x')},${num('y')}`;
+    case 'right_click': return `right-click at ${num('x')},${num('y')}`;
+    case 'middle_click': return `middle-click at ${num('x')},${num('y')}`;
+    case 'double_click': return `double-click at ${num('x')},${num('y')}`;
+    case 'left_click_drag': return `drag ${num('fromX')},${num('fromY')} → ${num('toX')},${num('toY')}`;
+    case 'type': return `type ${String(body.text ?? '').length} characters`;
+    case 'key': return `press ${driver.describeChordRedacted(String(body.keys ?? body.key ?? ''))}`;
+    case 'scroll': return `scroll ${String(body.direction ?? 'down')} ${Math.max(1, Math.min(20, Number(body.amount) || 3))}`;
+    default: return type;
+  }
+}
+
+function pendingList(): PendingAction[] { return [...S.pending.values()].map((p) => p.entry); }
+function notifyPending(kind: 'add' | 'remove'): void { try { S.onPending?.({ kind, pending: pendingList() }); } catch { /* */ } }
+
+/** Hold an action awaiting the user's approve/deny (or auto-decline after a timeout). */
+function requestApproval(agent: string, action: string, preview: string): Promise<boolean> {
+  return new Promise((resolve) => {
+    const id = randomBytes(8).toString('hex');
+    const expiresAt = Date.now() + CONFIRM_TIMEOUT_MS;
+    const timer = setTimeout(() => { if (S.pending.delete(id)) { notifyPending('remove'); resolve(false); } }, CONFIRM_TIMEOUT_MS);
+    S.pending.set(id, { resolve, timer, entry: { id, agent, action, preview, ts: Date.now(), expiresAt } });
+    notifyPending('add');
+  });
+}
+
+/** User answered an approval prompt. */
+export function confirmAction(id: string, allow: boolean): { ok: boolean } {
+  const p = S.pending.get(id);
+  if (!p) return { ok: false };
+  clearTimeout(p.timer);
+  S.pending.delete(id);
+  notifyPending('remove');
+  p.resolve(!!allow);
+  return { ok: true };
+}
+/** Resolve every held action with `allow` (used by disarm/panic to flush). */
+function flushPending(allow: boolean): void {
+  for (const [, p] of S.pending) { clearTimeout(p.timer); p.resolve(allow); }
+  S.pending.clear();
+  notifyPending('remove');
+}
+export function pendingActions(): PendingAction[] { return pendingList(); }
+export function setSupervised(on: boolean): { ok: boolean; supervised: boolean } { S.supervised = !!on; return { ok: true, supervised: S.supervised }; }
+export function setPaused(on: boolean): { ok: boolean; paused: boolean } { S.paused = !!on; if (S.paused) flushPending(false); return { ok: true, paused: S.paused }; }
+
+const INPUT_VERBS = new Set(['mouse_move', 'left_click', 'right_click', 'middle_click', 'double_click', 'left_click_drag', 'type', 'key', 'scroll']);
+
+/** Map a point in the agent's screenshot-PIXEL space to GLOBAL desktop POINTS for libnut. */
+function mapPoint(x: number, y: number): { gx: number; gy: number; ok: boolean } {
+  let w: number, h: number, bounds: { x: number; y: number; width: number; height: number };
+  if (S.lastShot) { w = S.lastShot.w; h = S.lastShot.h; bounds = S.lastShot.bounds; }
+  else { const d = primaryDisplayInfo(); bounds = d.bounds; w = bounds.width * d.scaleFactor; h = bounds.height * d.scaleFactor; }
+  if (!Number.isFinite(x) || !Number.isFinite(y) || x < 0 || y < 0 || x > w || y > h) return { gx: 0, gy: 0, ok: false };
+  return { gx: bounds.x + (x / w) * bounds.width, gy: bounds.y + (y / h) * bounds.height, ok: true };
+}
 
 const TOKEN_RE = /^[0-9a-f]{48}$/; // randomBytes(24).toString('hex')
 function loadOrMakeToken(): { token: string } {
@@ -96,31 +174,96 @@ function readBody(req: http.IncomingMessage): Promise<string> {
   });
 }
 
-/** Phase 0 action handler. Only screenshot mutates nothing; input is not yet wired. */
-async function handleAction(body: { type?: string; agent?: string }): Promise<{ status: number; json: Record<string, unknown> }> {
+function blk(reason: string, message: string): { status: number; json: Record<string, unknown> } {
+  return { status: 200, json: { ok: false, blocked: true, reason, message } };
+}
+function rec(agent: string, action: string, detail: string, decision: 'executed' | 'blocked', reason?: string): void {
+  audit({ ts: Date.now(), agent: agent || '(unknown)', action, detail, decision, reason }, S.team);
+}
+
+/** Phase 1 action handler: screenshot + gated mouse/keyboard input, all audited. */
+async function handleAction(body: Record<string, unknown>): Promise<{ status: number; json: Record<string, unknown> }> {
   const type = String(body?.type || '');
-  if (body?.agent) S.lastAgent = String(body.agent).slice(0, 64);
+  const agent = body?.agent ? String(body.agent).slice(0, 64) : '';
+  if (agent) S.lastAgent = agent;
+  if (body?.team) S.team = String(body.team).slice(0, 64);
+
   if (type === 'status' || type === 'ping') {
-    return { status: 200, json: { ok: true, armed: S.armed, phase: 0 } };
+    return { status: 200, json: { ok: true, armed: S.armed, phase: 1, capability: driver.driverCapability().ok } };
   }
+
+  // Every screenshot + input requires: armed, AND the caller is blessed for this session.
+  if (!S.armed) return blk('disarmed', 'Computer Use is off — open ID Agents Control Center → Computer Use and press Arm.');
+  if (!S.blessed.has(agent)) return blk('agent_not_blessed', `"${agent || 'this agent'}" isn't blessed for Computer Use. Bless it in the app, then it must be re-armed.`);
+
   if (type === 'screenshot') {
-    if (!S.armed) return { status: 200, json: { ok: false, blocked: true, reason: 'disarmed', message: 'Computer Use is off — open ID Agents Control Center → Computer Use and press Arm.' } };
     const f = await capturePrimary({ format: 'png' });
-    if (!f) return { status: 200, json: { ok: false, blocked: true, reason: 'screen_recording_permission', message: 'Screen Recording permission is not granted to ID Agents Control Center.' } };
+    if (!f) return blk('screen_recording_permission', 'Screen Recording permission is not granted to ID Agents Control Center.');
+    S.lastShot = { w: f.width, h: f.height, bounds: f.display.bounds };
     S.actions++;
     return { status: 200, json: { ok: true, image: f.buf.toString('base64'), mimeType: 'image/png', width: f.width, height: f.height, display: f.display } };
   }
-  // Input verbs exist in the schema so the model can discover them, but Phase 0
-  // doesn't execute them — return a clear, non-fatal block.
-  if (['mouse_move', 'left_click', 'right_click', 'double_click', 'type', 'key', 'scroll', 'left_click_drag'].includes(type)) {
-    return { status: 200, json: { ok: false, blocked: true, reason: 'input_not_enabled', message: 'Input control ships in a later update; this build is screenshot + live-view only.' } };
+
+  if (INPUT_VERBS.has(type)) {
+    // Input additionally requires Accessibility + a working native driver.
+    if (!driver.driverCapability().ok) { rec(agent, type, '', 'blocked', 'driver_unavailable'); return blk('driver_unavailable', 'The native input module is unavailable in this build.'); }
+    if (!accessibilityGranted()) { rec(agent, type, '', 'blocked', 'accessibility_permission'); return blk('accessibility_permission', 'Accessibility permission is not granted to ID Agents Control Center — input is blocked. Grant it in System Settings → Privacy & Security → Accessibility, then relaunch.'); }
+    // Require a screenshot first: it anchors the coordinate frame AND keeps input
+    // tied to something the agent (and the watching user) actually saw.
+    if (!S.lastShot) { rec(agent, type, '', 'blocked', 'no_screenshot'); return blk('no_screenshot', 'Call computer_screenshot first — coordinates are relative to the latest screenshot.'); }
+    // You can pause the agent (block input) without disarming.
+    if (S.paused) { rec(agent, type, previewAction(type, body), 'blocked', 'paused'); return blk('paused', 'You paused Computer Use — resume it in the app to continue.'); }
+    // Supervised mode (default): HOLD every action for the user's one-click approval.
+    if (S.supervised) {
+      const approved = await requestApproval(agent, type, previewAction(type, body));
+      if (!approved) { rec(agent, type, previewAction(type, body), 'blocked', 'declined'); return blk('declined', 'You declined this action in the app.'); }
+      // Re-validate AFTER approval: disarm/panic/pause could have fired between the
+      // user clicking Allow and now — a just-approved action must NOT run post-stop.
+      if (!S.armed || S.paused || !S.blessed.has(agent)) { rec(agent, type, previewAction(type, body), 'blocked', 'stopped'); return blk('stopped', 'Computer Use was stopped before this action ran.'); }
+    }
+    const n = (k: string): number => { const v = Number((body as Record<string, unknown>)[k]); return Number.isFinite(v) ? v : NaN; };
+    let ok = false; let detail = '';
+    if (type === 'mouse_move') {
+      const p = mapPoint(n('x'), n('y')); if (!p.ok) { rec(agent, type, `${n('x')},${n('y')}`, 'blocked', 'out_of_bounds'); return blk('out_of_bounds', 'Coordinates are outside the captured screen.'); }
+      ok = driver.moveMouse(p.gx, p.gy); detail = `→ ${Math.round(n('x'))},${Math.round(n('y'))}`;
+    } else if (type === 'left_click' || type === 'right_click' || type === 'middle_click' || type === 'double_click') {
+      const p = mapPoint(n('x'), n('y')); if (!p.ok) { rec(agent, type, `${n('x')},${n('y')}`, 'blocked', 'out_of_bounds'); return blk('out_of_bounds', 'Coordinates are outside the captured screen.'); }
+      const button = type === 'right_click' ? 'right' : type === 'middle_click' ? 'middle' : 'left';
+      ok = driver.click(p.gx, p.gy, button, type === 'double_click'); detail = `${button}${type === 'double_click' ? '×2' : ''} @ ${Math.round(n('x'))},${Math.round(n('y'))}`;
+    } else if (type === 'left_click_drag') {
+      const a = mapPoint(n('fromX'), n('fromY')); const b = mapPoint(n('toX'), n('toY'));
+      if (!a.ok || !b.ok) { rec(agent, type, 'drag', 'blocked', 'out_of_bounds'); return blk('out_of_bounds', 'Drag coordinates are outside the captured screen.'); }
+      ok = driver.drag(a.gx, a.gy, b.gx, b.gy); detail = `drag ${Math.round(n('fromX'))},${Math.round(n('fromY'))} → ${Math.round(n('toX'))},${Math.round(n('toY'))}`;
+    } else if (type === 'type') {
+      const text = String((body as Record<string, unknown>).text ?? '');
+      if (text.length > 1000) { rec(agent, type, `typed ${text.length} chars`, 'blocked', 'text_too_long'); return blk('text_too_long', 'Text is too long for one type action (max 1000 chars) — split it up.'); }
+      ok = driver.typeText(text); detail = `typed ${text.length} char${text.length === 1 ? '' : 's'}`; // never log the literal text
+    } else if (type === 'key') {
+      const keys = String((body as Record<string, unknown>).keys ?? (body as Record<string, unknown>).key ?? '');
+      ok = driver.key(keys); detail = driver.describeChordRedacted(keys); // redacted: never log raw key text (could be a secret)
+    } else if (type === 'scroll') {
+      const dir = String((body as Record<string, unknown>).direction ?? 'down');
+      const amt = Math.max(1, Math.min(20, Number((body as Record<string, unknown>).amount) || 3));
+      const dx = dir === 'left' ? -amt : dir === 'right' ? amt : 0;
+      const dy = dir === 'up' ? amt : dir === 'down' ? -amt : 0;
+      if (Number.isFinite(n('x')) && Number.isFinite(n('y'))) { const p = mapPoint(n('x'), n('y')); if (p.ok) driver.moveMouse(p.gx, p.gy); }
+      ok = driver.scroll(dx, dy); detail = `scroll ${dir} ${amt}`;
+    }
+    S.actions++;
+    rec(agent, type, detail, ok ? 'executed' : 'blocked', ok ? undefined : 'driver_failed');
+    if (!ok) return blk('driver_failed', `The ${type} action could not be performed.`);
+    return { status: 200, json: { ok: true, action: type, detail } };
   }
-  return { status: 200, json: { ok: false, blocked: true, reason: 'unknown_action', message: `unknown action "${type}"` } };
+
+  return blk('unknown_action', `unknown action "${type}"`);
 }
 
-export async function startBroker(onFrame: BrokerState['onFrame']): Promise<void> {
-  if (S.server) { S.onFrame = onFrame; return; }
+export function auditTail(n?: number): AuditEntry[] { return recentAudit(n); }
+
+export async function startBroker(onFrame: BrokerState['onFrame'], onPending?: BrokerState['onPending']): Promise<void> {
+  if (S.server) { S.onFrame = onFrame; if (onPending) S.onPending = onPending; return; }
   S.onFrame = onFrame;
+  if (onPending) S.onPending = onPending;
   S.token = loadOrMakeToken().token;
   stageServerFile();
   const server = http.createServer(async (req, res) => {
@@ -178,17 +321,31 @@ function reconcilePump(): void {
   else if (!want && S.pump) { clearInterval(S.pump); S.pump = null; }
 }
 
-export function armBroker(): { ok: boolean; port: number } {
+export function armBroker(blessed?: string[]): { ok: boolean; port: number; blessed: string[] } {
+  // The blessed set is captured AT ARM from the agents that currently have the
+  // computer-use tool attached — so disarming + re-arming is the way to refresh it.
+  if (Array.isArray(blessed)) S.blessed = new Set(blessed.map((s) => String(s).slice(0, 64)).filter(Boolean)); // match handleAction's 64-char truncation of the caller id
   S.armed = true;
   reconcilePump();
-  return { ok: true, port: S.port };
+  return { ok: true, port: S.port, blessed: [...S.blessed] };
 }
 
 export function disarmBroker(): { ok: boolean } {
   S.armed = false;
   S.captureFailing = false;
+  S.blessed = new Set();
+  S.lastShot = null;
+  S.paused = false;
+  flushPending(false);                              // decline anything held for approval
+  try { driver.releaseAll(); } catch { /* */ }      // backstop: never leave a button held after disarm
   reconcilePump();
   return { ok: true };
+}
+
+/** PANIC — the nuclear stop: decline everything held, release buttons, fully disarm. */
+export function panicBroker(): { ok: boolean } {
+  rec('(operator)', 'panic', 'stopped Computer Use', 'executed');
+  return disarmBroker();
 }
 
 /** The renderer calls this when the Computer Use view mounts (true) / unmounts (false). */
@@ -198,8 +355,8 @@ export function setWatching(on: boolean): { ok: boolean } {
   return { ok: true };
 }
 
-export function brokerStatus(): { armed: boolean; watching: boolean; port: number; url: string; lastAgent: string; actions: number; serverStaged: boolean; captureFailing: boolean } {
-  return { armed: S.armed, watching: S.watching, port: S.port, url: S.port ? `http://127.0.0.1:${S.port}` : '', lastAgent: S.lastAgent, actions: S.actions, serverStaged: existsSync(brokerServerPath()), captureFailing: S.captureFailing };
+export function brokerStatus() {
+  return { armed: S.armed, watching: S.watching, port: S.port, url: S.port ? `http://127.0.0.1:${S.port}` : '', lastAgent: S.lastAgent, actions: S.actions, serverStaged: existsSync(brokerServerPath()), captureFailing: S.captureFailing, blessed: [...S.blessed], driverOk: driver.driverCapability().ok, accessibility: accessibilityGranted(), supervised: S.supervised, paused: S.paused, pending: pendingList(), panicHotkey: panicHotkeyOk };
 }
 
 export function stopBroker(): void {

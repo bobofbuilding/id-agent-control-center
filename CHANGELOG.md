@@ -8,6 +8,25 @@ Every change pushed or merged to `main` carries its version number in the commit
 subject (`vX.Y.Z: …`), stamped automatically by the `commit-msg` hook — see
 [CONTRIBUTING.md](CONTRIBUTING.md).
 
+## [0.1.72] — 2026-06-23
+- **Computer Use can now DRIVE your Mac — safely.** A blessed Claude/codex agent can
+  move the mouse, click, type, scroll, and drag on your primary display (not just
+  see it), all through the in-app broker. This is the input release, and it ships
+  with its full safety net on by default:
+  - **Approve every action (supervised mode, default on):** the agent is *held* on
+    each click/keystroke until you press **Allow** (or **Deny**) in the app. Turn it
+    off only when you trust a task.
+  - **PANIC** — a red button **and** a global hotkey (**⌘⌥⇧P**) that instantly stops
+    everything from anywhere, even if the app isn't focused.
+  - **Pause** blocks the agent without disarming; **Disarm** ends the session and
+    releases any held mouse button.
+  - Input also requires **Accessibility** permission (one-click Open Settings +
+    Relaunch), and the agent must **screenshot first** so every action is anchored
+    to something you can see.
+  - Every action is in the **activity log** (and Chat); **keystrokes are recorded as
+    a length only** — never the literal text — so secrets you type never hit disk.
+  - Hardened across two adversarial review rounds before release.
+
 ## [0.1.71] — 2026-06-23
 - **New: Computer Use (watch your Mac live + let an agent see your screen).** A new
   **Computer Use** tab streams your primary display live inside the app, and you can

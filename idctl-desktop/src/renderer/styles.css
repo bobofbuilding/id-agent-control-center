@@ -429,3 +429,24 @@ select:focus, input:focus { border-color: var(--accent); }
 .cu-blessed-row { display: flex; align-items: center; justify-content: space-between; padding: 6px 8px; background: var(--panel-2, rgba(255,255,255,.03)); border: 1px solid var(--border); border-radius: 8px; }
 .cu-msg { margin-top: 8px; color: var(--accent-text, #8ab4ff); }
 .cu-safety ul { margin: 6px 0 0; padding-left: 18px; line-height: 1.6; }
+
+/* ── Computer Use · Phase 1 (input + audit) ──────────────────────────── */
+.cu-driving { position: absolute; left: 8px; right: 8px; bottom: 8px; text-align: center; font-size: 12px; font-weight: 600; padding: 5px 10px; border-radius: 8px; background: rgba(31,122,51,.85); color: #fff; border: 1px solid #2a9d45; }
+.cu-audit-list { margin-top: 8px; max-height: 260px; overflow-y: auto; display: flex; flex-direction: column; gap: 2px; }
+.cu-audit-row { display: grid; grid-template-columns: 18px auto 1fr auto; gap: 8px; align-items: baseline; padding: 3px 4px; border-radius: 6px; font-size: 12px; }
+.cu-audit-row:hover { background: rgba(255,255,255,.03); }
+.cu-audit-row.blocked { color: #e0a23a; }
+.cu-audit-ico { text-align: center; }
+.cu-audit-act { font-weight: 600; }
+.cu-audit-detail { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cu-audit-agent { justify-self: end; }
+
+/* ── Computer Use · Phase 2 (panic + supervised approvals) ───────────── */
+.cu-panic { background: #b42318; border-color: #d2432f; color: #fff; font-weight: 700; }
+.cu-panic:hover { background: #d2432f; }
+.cu-panic-flash { margin: 8px 2px; padding: 8px 12px; border-radius: 8px; background: #b42318; color: #fff; font-weight: 700; text-align: center; }
+.cu-approvals { margin: 8px 2px 4px; display: flex; flex-direction: column; gap: 6px; }
+.cu-approval { display: flex; align-items: center; gap: 8px; padding: 9px 12px; border-radius: 10px; background: rgba(224,162,58,.12); border: 1px solid #6b5a2a; }
+.cu-approval-text { font-size: 13px; }
+.cu-mode-row { display: flex; align-items: flex-start; gap: 8px; margin: 4px 0 10px; cursor: pointer; line-height: 1.4; }
+.cu-mode-row input { margin-top: 3px; }

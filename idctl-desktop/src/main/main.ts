@@ -3,7 +3,7 @@
  * id-agents manager, and loads the React renderer.
  */
 
-import { app, BrowserWindow, ipcMain, shell, Menu, MenuItem } from 'electron';
+import { app, BrowserWindow, ipcMain, shell, Menu, MenuItem, globalShortcut } from 'electron';
 import { join } from 'node:path';
 import { call } from './bridge.ts';
 import { startUpdater, stopUpdater, checkForUpdate, getStatus, applyStagedAndRelaunch } from './updater.ts';
@@ -17,8 +17,9 @@ import { listPlans, getPlan, savePlan, removePlan, type Plan } from './planstore
 import { generateImage, readImage, imageModels, getImageServer, detectImageServer } from './images.ts';
 import { loadSettings, setUpdateSettings, setImageServer } from '../../../idctl/src/settings/store.ts';
 import type { ImageServerConfig } from '../../../idctl/src/settings/schema.ts';
-import { startBroker, armBroker, disarmBroker, setWatching, brokerStatus, stopBroker } from './computeruse/broker.ts';
+import { startBroker, armBroker, disarmBroker, setWatching, brokerStatus, auditTail, panicBroker, setSupervised, setPaused, confirmAction, pendingActions, setPanicHotkey, stopBroker } from './computeruse/broker.ts';
 import { getPermissions, openPermissionSettings, relaunchApp } from './computeruse/permissions.ts';
+import { driverCapability, getMousePos } from './computeruse/driver.mac.ts';
 
 // Bundled as CommonJS → __dirname is the output dir (out/main/).
 declare const __dirname: string;
@@ -229,11 +230,23 @@ async function appCall(method: string, args: unknown[]): Promise<unknown> {
     case 'cu:status':
       return brokerStatus();
     case 'cu:arm':
-      return armBroker();
+      return armBroker(args[0] as string[] | undefined);
     case 'cu:disarm':
       return disarmBroker();
     case 'cu:watch':
       return setWatching(Boolean(args[0]));
+    case 'cu:audit':
+      return auditTail(args[0] as number | undefined);
+    case 'cu:panic':
+      return panicBroker();
+    case 'cu:setSupervised':
+      return setSupervised(Boolean(args[0]));
+    case 'cu:pause':
+      return setPaused(Boolean(args[0]));
+    case 'cu:confirm':
+      return confirmAction(args[0] as string, Boolean(args[1]));
+    case 'cu:pending':
+      return pendingActions();
     case 'cu:permissions':
       return getPermissions();
     case 'cu:openPermission':
@@ -270,16 +283,27 @@ if (cuSelftest) {
   app.whenReady().then(async () => {
     await startBroker(() => {});
     setWatching(true);
-    armBroker();
+    armBroker(['selftest']);
+    setSupervised(false); // headless: no UI to approve, so test the raw input path
     const st = brokerStatus();
     try {
       const { readFileSync } = await import('node:fs');
       const { homedir } = await import('node:os');
       const { join: pjoin } = await import('node:path');
       const sess = JSON.parse(readFileSync(pjoin(homedir(), '.config/idctl/computeruse/session.json'), 'utf8'));
-      const res = await fetch(`${sess.url}/action`, { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${sess.token}` }, body: JSON.stringify({ type: 'screenshot', agent: 'selftest' }) });
-      const j = await res.json() as { ok?: boolean; image?: string; width?: number; height?: number; reason?: string };
-      console.log('CU_SELFTEST ' + JSON.stringify({ port: st.port, ok: j.ok, hasImage: !!j.image, imageBytes: j.image ? Buffer.from(j.image, 'base64').length : 0, width: j.width, height: j.height, reason: j.reason }));
+      const post = (b: Record<string, unknown>) => fetch(`${sess.url}/action`, { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${sess.token}` }, body: JSON.stringify({ agent: 'selftest', ...b }) }).then((r) => r.json());
+      const shot = await post({ type: 'screenshot' }) as { ok?: boolean; image?: string; width?: number; height?: number; reason?: string };
+      // Then exercise the INPUT path (mouse_move). If Accessibility is granted it
+      // executes (real move); otherwise it's correctly blocked — both prove the gate.
+      const mv = await post({ type: 'mouse_move', x: Math.round((shot.width || 100) / 2), y: Math.round((shot.height || 100) / 2) }) as { ok?: boolean; detail?: string; reason?: string };
+      // Supervised round-trip: re-enable supervised, fire an action (held), approve it, confirm it executes.
+      setSupervised(true);
+      const held = post({ type: 'left_click', x: 10, y: 10 }) as Promise<{ ok?: boolean; reason?: string }>;
+      await new Promise((r) => setTimeout(r, 500));
+      const pend = pendingActions();
+      if (pend.length) confirmAction(pend[0].id, true);
+      const heldRes = await held;
+      console.log('CU_SELFTEST ' + JSON.stringify({ port: st.port, shotOk: shot.ok, imageBytes: shot.image ? Buffer.from(shot.image, 'base64').length : 0, width: shot.width, height: shot.height, driverOk: st.driverOk, accessibility: st.accessibility, moveOk: mv.ok, moveDetail: mv.detail, moveReason: mv.reason, supervisedHeld: pend.length, supervisedApprovedOk: heldRes.ok }));
     } catch (e) {
       console.log('CU_SELFTEST_ERR ' + (e instanceof Error ? e.message : String(e)));
     }
@@ -287,8 +311,16 @@ if (cuSelftest) {
   });
 }
 
+// Read-only driver probe (safe in packaged builds): report whether the native
+// input addon loads + the current mouse position, then quit. No synthetic input.
+const driverProbe = process.env.IDCTL_CU_DRIVERPROBE;
 const selftest = process.env.IDCTL_UPDATE_SELFTEST;
-if (cuSelftest) { /* handled above */ } else if (selftest) {
+if (cuSelftest) { /* handled above */ } else if (driverProbe) {
+  app.whenReady().then(() => {
+    console.log('CU_DRIVER ' + JSON.stringify({ cap: driverCapability(), mouse: getMousePos() }));
+    app.exit(0);
+  });
+} else if (selftest) {
   app.whenReady().then(async () => {
     const st = await checkForUpdate();
     console.log('SELFTEST_STATUS ' + JSON.stringify(st));
@@ -303,8 +335,20 @@ if (cuSelftest) { /* handled above */ } else if (selftest) {
   app.whenReady().then(() => {
     createWindow();
     if (win) startUpdater(win);
-    // Computer Use broker: loopback controller + live frame pump → the renderer.
-    void startBroker((frame) => { try { win?.webContents.send('computeruse:frame', frame); } catch { /* window gone */ } });
+    // Computer Use broker: loopback controller + live frame pump + approval prompts → the renderer.
+    void startBroker(
+      (frame) => { try { win?.webContents.send('computeruse:frame', frame); } catch { /* window gone */ } },
+      (evt) => { try { win?.webContents.send('computeruse:pending', evt); } catch { /* window gone */ } },
+    );
+    // Global PANIC hotkey: instant stop from anywhere, even when the app isn't focused.
+    try {
+      const ok = globalShortcut.register('CommandOrControl+Alt+Shift+P', () => {
+        panicBroker();
+        try { win?.webContents.send('computeruse:panic', { ts: Date.now() }); } catch { /* */ }
+      });
+      setPanicHotkey(ok);
+      if (!ok) console.warn('[cu] PANIC hotkey not registered (already taken); use the on-screen button');
+    } catch { /* the on-screen PANIC button is the fallback */ }
     app.on('activate', () => {
       if (BrowserWindow.getAllWindows().length === 0) createWindow();
     });
@@ -313,6 +357,7 @@ if (cuSelftest) { /* handled above */ } else if (selftest) {
 
 app.on('will-quit', stopUpdater);
 app.on('will-quit', stopBroker);
+app.on('will-quit', () => { try { globalShortcut.unregisterAll(); } catch { /* */ } });
 
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') app.quit();

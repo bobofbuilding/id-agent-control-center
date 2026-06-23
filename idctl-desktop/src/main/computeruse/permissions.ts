@@ -33,6 +33,12 @@ export function getPermissions(): CuPermissions {
   return { screenRecording, accessibility, platform: 'darwin' };
 }
 
+/** Is Accessibility (synthetic input) granted to this app? (false = don't prompt.) */
+export function accessibilityGranted(): boolean {
+  if (process.platform !== 'darwin') return false;
+  try { return systemPreferences.isTrustedAccessibilityClient(false); } catch { return false; }
+}
+
 /** Open the exact System Settings pane for a permission. */
 export async function openPermissionSettings(which: 'screen' | 'accessibility'): Promise<void> {
   const url = which === 'screen'

@@ -1,7 +1,7 @@
 {
   "name": "idagents-control-center",
   "productName": "ID Agents Control Center",
-  "version": "0.1.71",
+  "version": "0.1.72",
   "description": "Desktop control center for id-agents — live fleet dashboard, manager chat, teams, keys.",
   "private": true,
   "main": "out/main/main.cjs",
@@ -23,7 +23,14 @@
       "output": "release"
     },
     "files": [
-      "out/**/*"
+      "out/**/*",
+      "node_modules/@nut-tree-fork/libnut-darwin/**/*",
+      "node_modules/bindings/**/*",
+      "node_modules/file-uri-to-path/**/*"
+    ],
+    "asarUnpack": [
+      "**/*.node",
+      "node_modules/@nut-tree-fork/**"
     ],
     "extraResources": [
       {
@@ -52,6 +59,7 @@
     "typescript": "^5.6.3"
   },
   "dependencies": {
+    "@nut-tree-fork/libnut-darwin": "^2.7.5",
     "@tauri-apps/api": "^2.11.1",
     "@tauri-apps/plugin-http": "^2.5.9"
   }

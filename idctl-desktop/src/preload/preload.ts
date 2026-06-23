@@ -14,6 +14,10 @@ export interface IdAgentsApi {
   onOllamaPull(cb: (progress: unknown) => void): () => void;
   /** Subscribe to live Computer Use frames from the broker. Returns an unsubscribe fn. */
   onComputerFrame(cb: (frame: unknown) => void): () => void;
+  /** Subscribe to Computer Use approval prompts (supervised mode). Returns an unsubscribe fn. */
+  onComputerPending(cb: (evt: unknown) => void): () => void;
+  /** Subscribe to a PANIC (global hotkey) so the view can reflect it. Returns an unsubscribe fn. */
+  onComputerPanic(cb: (evt: unknown) => void): () => void;
 }
 
 const api: IdAgentsApi = {
@@ -32,6 +36,16 @@ const api: IdAgentsApi = {
     const listener = (_e: unknown, frame: unknown) => cb(frame);
     ipcRenderer.on('computeruse:frame', listener);
     return () => ipcRenderer.removeListener('computeruse:frame', listener);
+  },
+  onComputerPending: (cb) => {
+    const listener = (_e: unknown, evt: unknown) => cb(evt);
+    ipcRenderer.on('computeruse:pending', listener);
+    return () => ipcRenderer.removeListener('computeruse:pending', listener);
+  },
+  onComputerPanic: (cb) => {
+    const listener = (_e: unknown, evt: unknown) => cb(evt);
+    ipcRenderer.on('computeruse:panic', listener);
+    return () => ipcRenderer.removeListener('computeruse:panic', listener);
   },
 };
 
