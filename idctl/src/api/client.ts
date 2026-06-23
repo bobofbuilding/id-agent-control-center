@@ -34,9 +34,13 @@ export class NetworkError extends Error {
   }
 }
 export class ManagerError extends Error {
-  constructor(message: string) {
+  /** HTTP status that produced this error (when known). 404 = route missing on
+   *  a stock/older manager; used by requireRoute() to give an actionable message. */
+  readonly status?: number;
+  constructor(message: string, status?: number) {
     super(message);
     this.name = 'ManagerError';
+    this.status = status;
   }
 }
 
@@ -87,7 +91,7 @@ export class ManagerClient {
     }
     if (!res.ok) {
       if (res.status >= 500) throw new NetworkError(`GET ${path} → ${res.status}`);
-      throw new ManagerError(`GET ${path} → ${res.status} ${res.statusText}`);
+      throw new ManagerError(`GET ${path} → ${res.status} ${res.statusText}`, res.status);
     }
     return (await res.json()) as T;
   }
@@ -108,7 +112,7 @@ export class ManagerClient {
         /* body not json */
       }
       if (res.status >= 500) throw new NetworkError(`DELETE ${path} → ${res.status}${detail}`);
-      throw new ManagerError(`DELETE ${path} → ${res.status} ${res.statusText}${detail}`);
+      throw new ManagerError(`DELETE ${path} → ${res.status} ${res.statusText}${detail}`, res.status);
     }
     return (await res.json()) as T;
   }
@@ -134,9 +138,32 @@ export class ManagerClient {
         /* body not json */
       }
       if (res.status >= 500) throw new NetworkError(`POST ${path} → ${res.status}${detail}`);
-      throw new ManagerError(`POST ${path} → ${res.status} ${res.statusText}${detail}`);
+      throw new ManagerError(`POST ${path} → ${res.status} ${res.statusText}${detail}`, res.status);
     }
     return (await res.json()) as T;
+  }
+
+  /**
+   * Wrap a write whose manager route a stock/older id-agents may not expose.
+   * A 404 (route missing) is rethrown as a clear, actionable ManagerError naming
+   * the feature — instead of a raw "POST /x → 404 Not Found". Validation errors
+   * (other 4xx), NetworkError, and success all pass through unchanged. This keeps
+   * the control center honest: features that need a patched/newer manager say so.
+   */
+  private async requireRoute<T>(feature: string, op: () => Promise<T>): Promise<T> {
+    try {
+      return await op();
+    } catch (err) {
+      if (err instanceof ManagerError && err.status === 404) {
+        throw new ManagerError(
+          `"${feature}" isn't available on the id-agents manager at ${this.cfg.managerUrl}. ` +
+          `The endpoint returned 404 — this control-center feature needs a manager that ` +
+          `includes it (a stock/older id-agents won't). Update the manager you're pointed at.`,
+          404,
+        );
+      }
+      throw err;
+    }
   }
 
   // ---- Health / liveness ------------------------------------------------
@@ -183,7 +210,8 @@ export class ManagerClient {
   /** Set an agent's persistent instructions (system-prompt addendum). Takes effect
    *  on the agent's next rebuild. Returns whether a rebuild is needed. */
   async setAgentInstructions(idOrName: string, instructions: string, signal?: AbortSignal): Promise<{ ok: boolean; needsRebuild?: boolean }> {
-    const r = await this.post<{ agent?: string; needsRebuild?: boolean }>(`/agents/${encodeURIComponent(idOrName)}/instructions`, { instructions }, signal);
+    const r = await this.requireRoute('Set agent instructions', () =>
+      this.post<{ agent?: string; needsRebuild?: boolean }>(`/agents/${encodeURIComponent(idOrName)}/instructions`, { instructions }, signal));
     return { ok: !!r.agent, needsRebuild: r.needsRebuild };
   }
 
@@ -312,7 +340,8 @@ export class ManagerClient {
    * non-local agents or unknown runtimes.
    */
   async setAgentRuntime(agentId: string, runtime: string, signal?: AbortSignal): Promise<{ runtime?: string; needsRebuild?: boolean; message?: string }> {
-    return this.post(`/agents/${encodeURIComponent(agentId)}/runtime`, { runtime }, signal);
+    return this.requireRoute('Switch agent runtime', () =>
+      this.post(`/agents/${encodeURIComponent(agentId)}/runtime`, { runtime }, signal));
   }
 
   /** Restart an agent so a pending model/runtime change takes effect. */
@@ -353,12 +382,14 @@ export class ManagerClient {
 
   /** Read a team's relay policy. `delegates_to`: team names ("*"=all) or null=permissive. */
   async teamConfig(name: string, signal?: AbortSignal): Promise<{ name: string; delegates_to: string[] | null }> {
-    return this.get(`/teams/${encodeURIComponent(name)}/config`, signal);
+    return this.requireRoute('Read team relay policy', () =>
+      this.get(`/teams/${encodeURIComponent(name)}/config`, signal));
   }
 
   /** Set a team's relay allow-list. Pass string[] (or ["*"]), or null for permissive. */
   async setTeamDelegates(name: string, delegates: string[] | null, signal?: AbortSignal): Promise<{ name: string; delegates_to: string[] | null }> {
-    return this.post(`/teams/${encodeURIComponent(name)}/delegates`, { delegates }, signal);
+    return this.requireRoute('Set team relay allow-list', () =>
+      this.post(`/teams/${encodeURIComponent(name)}/delegates`, { delegates }, signal));
   }
 
   /**
@@ -366,7 +397,8 @@ export class ManagerClient {
    * null removes the override (inherit team). string[] (or ["*"]) restricts.
    */
   async setAgentDelegates(agentId: string, delegates: string[] | null, signal?: AbortSignal): Promise<{ agent: string; delegates_to: string[] | null }> {
-    return this.post(`/agents/${encodeURIComponent(agentId)}/delegates`, { delegates }, signal);
+    return this.requireRoute('Set agent relay override', () =>
+      this.post(`/agents/${encodeURIComponent(agentId)}/delegates`, { delegates }, signal));
   }
 
   // ---- Scheduling / checkins -------------------------------------------
@@ -447,7 +479,8 @@ export class ManagerClient {
 
   /** Install a library skill onto an agent (persists to metadata + live deploy). */
   async installSkill(skill: string, agent: string, signal?: AbortSignal): Promise<InstallSkillResult> {
-    return this.post('/library/skills/install', { skill, agent }, signal);
+    return this.requireRoute('Install a library skill', () =>
+      this.post('/library/skills/install', { skill, agent }, signal));
   }
 
   /**
@@ -456,22 +489,26 @@ export class ManagerClient {
    * validation failure or name conflict (409 already_exists).
    */
   async createSkill(input: CreateSkillInput, signal?: AbortSignal): Promise<LibrarySkillEntry> {
-    return this.post('/library/skills/create', input, signal);
+    return this.requireRoute('Create a library skill', () =>
+      this.post('/library/skills/create', input, signal));
   }
 
   /** Delete a library skill folder. Admin-gated; throws ManagerError on failure. */
   async deleteSkill(name: string, signal?: AbortSignal): Promise<{ removed: string }> {
-    return this.del(`/library/skills/${encodeURIComponent(name)}`, signal);
+    return this.requireRoute('Delete a library skill', () =>
+      this.del(`/library/skills/${encodeURIComponent(name)}`, signal));
   }
 
   /** Uninstall a skill from an agent (inverse of installSkill). */
   async uninstallSkill(skill: string, agent: string, signal?: AbortSignal): Promise<{ uninstalled: string; agent: string; skills: string[] }> {
-    return this.post('/library/skills/uninstall', { skill, agent }, signal);
+    return this.requireRoute('Uninstall a skill', () =>
+      this.post('/library/skills/uninstall', { skill, agent }, signal));
   }
 
   /** Attach external MCP servers to an agent. Takes effect on next rebuild. */
   async setAgentMcp(agentId: string, servers: McpServerSpec[], signal?: AbortSignal): Promise<SetMcpResult> {
-    return this.post(`/agents/${encodeURIComponent(agentId)}/mcp`, { servers }, signal);
+    return this.requireRoute('Attach MCP servers', () =>
+      this.post(`/agents/${encodeURIComponent(agentId)}/mcp`, { servers }, signal));
   }
 
   // ---- News feed --------------------------------------------------------
@@ -574,6 +611,7 @@ export interface CheckIn {
   iterationCount?: number;
   maxIterations?: number | null;
   nextFireAt?: number | null;      // ms epoch
+  nextDueAt?: number;              // ms epoch — when this check-in is next due (alias of nextFireAt on some managers)
   lastFireAt?: number | null;      // ms epoch
   owner?: string | null;           // the dispatcher (who delegated), resolved name
   closedReason?: string | null;

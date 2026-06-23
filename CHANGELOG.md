@@ -8,6 +8,18 @@ Every change pushed or merged to `main` carries its version number in the commit
 subject (`vX.Y.Z: …`), stamped automatically by the `commit-msg` hook — see
 [CONTRIBUTING.md](CONTRIBUTING.md).
 
+## [0.1.78] — 2026-06-23
+- **Honest about manager compatibility.** Some panels (skills install/create/
+  uninstall, plugins, MCP attach, per‑agent instructions, runtime switch, cross‑team
+  relay delegates) call manager endpoints that a stock or older upstream id-agents
+  may not expose. When such an action hits a 404, the app now shows a clear
+  *“… requires a newer id-agents manager”* message instead of a raw
+  `POST /… → 404`, and the rest of the app keeps working. No functional change
+  against a manager that already has those routes.
+- **README:** added a **Manager compatibility** section documenting which features
+  need which manager routes, and marked the Identity & Keys panel as running on a
+  simulated key provider today (real OWS / Safe‑4337 signing is the planned swap).
+
 ## [0.1.77] — 2026-06-23
 - **Desktop team creation now uses a full Create team modal.** Operators can pick
   the default template, a library team template, or a deployable server config,

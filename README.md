@@ -41,6 +41,17 @@ the same one you see between a server and its admin client:
 In short: install and run a team with **id-agents**, then open
 **id-agent-control-center** to watch and steer it.
 
+> **Manager compatibility.** The control center talks to the manager purely over
+> HTTP and never modifies it — but some panels call manager endpoints that a
+> **stock or older upstream id-agents may not expose yet**: skills
+> install/create/uninstall, plugins, MCP attach, per‑agent instructions, runtime
+> switch, cross‑team relay delegates, and local‑model usage/activity. Against a
+> manager without those routes, the affected actions report *"requires a newer
+> id-agents manager"* and the rest of the app keeps working — the live dashboard,
+> manager chat, teams, tasks, health, schedule, and identity panels run against
+> any current manager. Point it at a manager that includes those routes to use
+> the full feature set.
+
 ### What the control center adds on top of the raw manager
 
 The manager exposes the capability; the control center makes it *operable* —
@@ -56,7 +67,8 @@ headless platform doesn't ship a UI for:
   delegate to via `/ask <team>/<agent>`), with per‑agent overrides.
 - **Capabilities** — attach **MCP servers** (from a curated catalog, with a live
   connection **Test**), install **skills**, and view **plugins**, assignable to
-  one or many agents/teams at once.
+  one or many agents/teams at once. *(Needs a manager exposing the library/MCP
+  endpoints — see Manager compatibility above.)*
 - **Inference backends** — connect Ollama, LM Studio, any OpenAI‑compatible
   server, Anthropic, or OpenAI; **discover their models live**; validate runtime ↔
   model pairings and switch a running agent's runtime/model from the dashboard.
@@ -66,7 +78,8 @@ headless platform doesn't ship a UI for:
   manager is blocked on; create/claim/assign/complete tasks; probe agent health;
   manage heartbeats and recurring calendar check‑ins; and per‑agent ENS / ID Chain
   / OWS wallet, Safe smart account, and scoped (optionally non‑expiring) ERC‑4337
-  session keys.
+  session keys. *(Identity & Keys runs on a simulated key provider today — the
+  real OWS / Safe‑4337 signing backend is the planned swap.)*
 - **Self‑update** — the desktop app can check a release manifest, stage an update,
   and relaunch into the new version.
 
@@ -77,7 +90,8 @@ headless platform doesn't ship a UI for:
 You need a reachable **id-agents manager** first (see the
 [id-agents](https://github.com/idchain-world/id-agents) README to run one). By
 default the control center connects to `http://127.0.0.1:4100`; point it elsewhere
-with `MANAGER_URL`.
+with `MANAGER_URL`. Some panels need a manager that exposes their routes — see
+**[Manager compatibility](#how-this-relates-to-id-agents-the-difference)** above.
 
 ### Desktop GUI
 
