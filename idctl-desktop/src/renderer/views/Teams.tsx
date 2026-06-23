@@ -1,15 +1,18 @@
 import { useEffect, useMemo, useState } from 'react';
 import { call, agentsLeadFirst, resolveCoordinator, type FleetStore } from '../store.ts';
-import { usePrompt } from '../components/prompt.tsx';
 import { offerableRuntimes } from '../../../../idctl/src/settings/runtimeCatalog.ts';
 import type { AgentAccount } from '../../../../idctl/src/keys/types.ts';
-import type { LibrarySkillEntry, McpServerSpec } from '../../../../idctl/src/api/client.ts';
+import type { ConfigEntry, DeployPreflight, LibrarySkillEntry, McpServerSpec, TeamTemplate } from '../../../../idctl/src/api/client.ts';
 import type { OnboardPlan, OnboardResult, StepState } from '../../../../idctl/src/api/onboard.ts';
 import { MCP_CATALOG, buildFromCatalog } from '../../../../idctl/src/settings/mcpCatalog.ts';
 
 type ProviderRow = { kind: string; enabled?: boolean; keySource?: string; lastSync?: { status?: string } };
 
 type RelayMode = 'permissive' | 'all' | 'select' | 'none';
+type TeamSource =
+  | { kind: 'default'; name: 'default' }
+  | { kind: 'template'; name: string }
+  | { kind: 'config'; name: string };
 
 const HB_INTERVALS = [
   { label: '5 min', s: 300 },
@@ -86,7 +89,7 @@ Do the work yourself only for trivial one-liners, or when delegation would clear
 export function Teams({ store }: { store: FleetStore }) {
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<string>('');
-  const prompt = usePrompt();
+  const [createOpen, setCreateOpen] = useState(false);
 
   // Cross-team relay policy (delegates_to) for the active team.
   const activeTeam = store.team ?? 'default';
@@ -298,32 +301,26 @@ export function Teams({ store }: { store: FleetStore }) {
     await loadHier();
   }
 
-  async function newTeam() {
-    const name = await prompt({ title: 'New team name (created from the default template):', placeholder: 'lowercase, e.g. research', okLabel: 'Create team' });
-    if (!name) return;
-    const clean = name.trim().toLowerCase().replace(/\s+/g, '-');
-    if (!clean) return;
-    setBusy(true);
-    setMsg(`creating ${clean}…`);
-    try {
-      await call('deployTeam', clean);
-      await store.setTeam(clean);
-      setMsg(`created ${clean} ✓`);
-    } catch (err) {
-      setMsg(`failed: ${err instanceof Error ? err.message : String(err)}`);
-    } finally {
-      setBusy(false);
-    }
-  }
-
   return (
     <div className="view modules">
       <header className="view-head">
         <h1>Teams</h1>
-        <button className="btn primary" disabled={busy} onClick={() => void newTeam()}>
+        <button className="btn primary" disabled={busy} onClick={() => setCreateOpen(true)}>
           + New team
         </button>
       </header>
+      {createOpen ? (
+        <CreateTeamModal
+          existingTeams={store.teams.map((t) => t.name)}
+          onClose={() => setCreateOpen(false)}
+          onBusy={setBusy}
+          onMessage={setMsg}
+          onCreated={async (name) => {
+            await store.setTeam(name);
+            store.refresh();
+          }}
+        />
+      ) : null}
       <section className="card">
         <table className="grid">
           <thead>
@@ -637,6 +634,204 @@ export function Teams({ store }: { store: FleetStore }) {
   );
 }
 
+function CreateTeamModal({
+  existingTeams,
+  onClose,
+  onBusy,
+  onMessage,
+  onCreated,
+}: {
+  existingTeams: string[];
+  onClose: () => void;
+  onBusy: (busy: boolean) => void;
+  onMessage: (msg: string) => void;
+  onCreated: (name: string) => Promise<void>;
+}) {
+  const [templates, setTemplates] = useState<TeamTemplate[]>([]);
+  const [configs, setConfigs] = useState<ConfigEntry[]>([]);
+  const [source, setSource] = useState<TeamSource>({ kind: 'default', name: 'default' });
+  const [name, setName] = useState('');
+  const [loadingSources, setLoadingSources] = useState(true);
+  const [preflight, setPreflight] = useState<DeployPreflight | null>(null);
+  const [preflightStatus, setPreflightStatus] = useState('');
+  const [running, setRunning] = useState(false);
+  const [error, setError] = useState('');
+
+  const clean = cleanTeamName(name);
+  const collides = Boolean(clean && existingTeams.includes(clean));
+  const canCreate = Boolean(clean) && !running;
+
+  useEffect(() => {
+    let alive = true;
+    setLoadingSources(true);
+    Promise.all([
+      call<TeamTemplate[]>('libraryTeams').catch(() => [] as TeamTemplate[]),
+      call<ConfigEntry[]>('configs').catch(() => [] as ConfigEntry[]),
+    ]).then(([teamTemplates, serverConfigs]) => {
+      if (!alive) return;
+      setTemplates(teamTemplates);
+      setConfigs(serverConfigs.filter((cfg) => cfg.name !== 'default'));
+    }).finally(() => {
+      if (alive) setLoadingSources(false);
+    });
+    return () => {
+      alive = false;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!clean) {
+      setPreflight(null);
+      setPreflightStatus('');
+      return;
+    }
+    let alive = true;
+    const timer = setTimeout(() => {
+      setPreflightStatus('checking preflight...');
+      setPreflight(null);
+      call<DeployPreflight | undefined>('team:preflight', clean)
+        .then((pf) => {
+          if (!alive) return;
+          setPreflight(pf ?? null);
+          setPreflightStatus(pf ? '' : 'preflight unavailable');
+        })
+        .catch(() => {
+          if (!alive) return;
+          setPreflight(null);
+          setPreflightStatus('preflight unavailable');
+        });
+    }, 350);
+    return () => {
+      alive = false;
+      clearTimeout(timer);
+    };
+  }, [clean, source.kind, source.name]);
+
+  function pickSource(next: TeamSource) {
+    setSource(next);
+    setError('');
+    if (next.kind === 'config') setName(next.name);
+  }
+
+  async function create() {
+    if (!clean) {
+      setError('Team name is required.');
+      return;
+    }
+    setRunning(true);
+    onBusy(true);
+    setError('');
+    onMessage(source.kind === 'template' ? `installing ${source.name} as ${clean}...` : `creating ${clean}...`);
+    try {
+      if (source.kind === 'template') {
+        await call('team:install', source.name, clean);
+        onMessage(`deploying ${clean} from ${source.name}...`);
+      } else {
+        onMessage(source.kind === 'config' ? `deploying ${clean} from server config...` : `deploying ${clean} from default template...`);
+      }
+      await call('deployTeam', clean);
+      await onCreated(clean);
+      onMessage(`created ${clean} ✓`);
+      onClose();
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      setError(msg);
+      onMessage(`failed: ${msg}`);
+    } finally {
+      setRunning(false);
+      onBusy(false);
+    }
+  }
+
+  const selectedTemplate = source.kind === 'template' ? templates.find((t) => t.name === source.name) : undefined;
+  const selectedConfig = source.kind === 'config' ? configs.find((c) => c.name === source.name) : undefined;
+
+  return (
+    <div className="modal-overlay" onMouseDown={() => (running ? undefined : onClose())}>
+      <div className="modal onboard-modal create-team-modal" onMouseDown={(e) => e.stopPropagation()}>
+        <div className="modal-title">Create team</div>
+        <div className="create-team-layout">
+          <div>
+            <div className="muted small" style={{ marginBottom: 6 }}>source</div>
+            <div className="source-list">
+              <button className={`source-option${source.kind === 'default' ? ' active' : ''}`} disabled={running} onClick={() => pickSource({ kind: 'default', name: 'default' })}>
+                <b>Default template</b>
+                <span>Fresh team from the manager default config.</span>
+              </button>
+              {templates.map((t) => (
+                <button key={t.name} className={`source-option${source.kind === 'template' && source.name === t.name ? ' active' : ''}`} disabled={running} onClick={() => pickSource({ kind: 'template', name: t.name })}>
+                  <b>{t.name}</b>
+                  <span>{describeTemplate(t)}</span>
+                </button>
+              ))}
+              {configs.map((c) => (
+                <button key={c.name} className={`source-option${source.kind === 'config' && source.name === c.name ? ' active' : ''}`} disabled={running} onClick={() => pickSource({ kind: 'config', name: c.name })}>
+                  <b>{c.name}</b>
+                  <span>{describeConfig(c)}</span>
+                </button>
+              ))}
+              {!loadingSources && templates.length === 0 ? <p className="muted small">No library team templates available; default creation is available.</p> : null}
+              {loadingSources ? <p className="muted small">Loading templates...</p> : null}
+            </div>
+          </div>
+          <div>
+            <label className="create-field">
+              <span>team name</span>
+              <input
+                autoFocus
+                placeholder="lowercase, e.g. research"
+                value={name}
+                disabled={running}
+                onChange={(e) => {
+                  setName(e.target.value);
+                  setError('');
+                }}
+                onBlur={() => setName(cleanTeamName(name))}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' && canCreate) void create();
+                  else if (e.key === 'Escape' && !running) onClose();
+                }}
+              />
+            </label>
+            {name && name !== clean ? <p className="muted small">Will create as <span className="mono">{clean}</span>.</p> : null}
+            {collides ? <p className="warn-text small">A team named <span className="mono">{clean}</span> already exists; deploy may recreate or overwrite it.</p> : null}
+            {source.kind === 'template' && selectedTemplate ? <p className="muted small">Template: {describeTemplate(selectedTemplate)}</p> : null}
+            {source.kind === 'config' && selectedConfig ? <p className="muted small">Server config: {describeConfig(selectedConfig)}</p> : null}
+            <div className="preflight-box">
+              <div className="row-actions" style={{ justifyContent: 'space-between', marginBottom: 8 }}>
+                <b>Preflight</b>
+                {preflightStatus ? <span className="muted small">{preflightStatus}</span> : null}
+              </div>
+              {preflight?.agents?.length ? (
+                <div className="preflight-agents">
+                  {preflight.agents.map((agent) => (
+                    <div key={agent.name} className="preflight-agent">
+                      <span className="b">{agent.name}</span>
+                      <span className="muted small">{agent.runtime || 'default runtime'}{agent.model ? ` · ${agent.model}` : ''}</span>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <p className="muted small">
+                  {clean ? 'Preview will appear when the manager supports deploy dry-run.' : 'Enter a team name to preview created agents.'}
+                </p>
+              )}
+              {preflight?.configPath ? <p className="muted small mono">{preflight.configPath}</p> : null}
+            </div>
+            {error ? <p className="status-error small">{error}</p> : null}
+          </div>
+        </div>
+        <div className="row-actions" style={{ marginTop: 14 }}>
+          <button className="btn" disabled={running} onClick={onClose}>Cancel</button>
+          <button className="btn primary" disabled={!canCreate} onClick={() => void create()}>
+            {running ? 'Creating...' : 'Create team'}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function OnboardWizard({
   team,
   providers,
@@ -832,6 +1027,24 @@ function OnboardWizard({
 
 function cleanAgentName(name: string): string {
   return name.trim().toLowerCase().replace(/\s+/g, '-');
+}
+
+function cleanTeamName(name: string): string {
+  return name.trim().toLowerCase().replace(/\s+/g, '-');
+}
+
+function countAgents(agents?: number | unknown[]): number | undefined {
+  return typeof agents === 'number' ? agents : Array.isArray(agents) ? agents.length : undefined;
+}
+
+function describeTemplate(template: TeamTemplate): string {
+  const count = countAgents(template.agents);
+  return template.description ?? `library template${count != null ? ` · ${count} agents` : ''}`;
+}
+
+function describeConfig(config: ConfigEntry): string {
+  const count = countAgents(config.agents);
+  return `${config.description ?? 'server config'}${count != null ? ` · ${count} agents` : ''}`;
 }
 
 function splitList(value: string): string[] | undefined {

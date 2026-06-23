@@ -8,6 +8,12 @@ Every change pushed or merged to `main` carries its version number in the commit
 subject (`vX.Y.Z: …`), stamped automatically by the `commit-msg` hook — see
 [CONTRIBUTING.md](CONTRIBUTING.md).
 
+## [0.1.77] — 2026-06-23
+- **Desktop team creation now uses a full Create team modal.** Operators can pick
+  the default template, a library team template, or a deployable server config,
+  validate the slugged team name, preview deploy preflight details when
+  supported, and see install/deploy progress while the new team starts.
+
 ## [0.1.76] — 2026-06-23
 - **Desktop Teams now has a real agent onboarding wizard.** The new flow reuses
   shared onboarding logic for preflight, spawn, MCP attach, rebuild, and health

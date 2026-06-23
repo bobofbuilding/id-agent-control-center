@@ -190,7 +190,9 @@ const METHODS: Record<string, (...a: any[]) => Promise<unknown>> = {
 
   // teams / library
   libraryTeams: () => client.libraryTeams(),
+  'team:install': (template: string, to: string) => client.installTeam(String(template), String(to)),
   configs: () => client.configs(),
+  'team:preflight': (name: string) => client.deployPreflight(String(name)),
   deployTeam: (name: string) => client.deployTeam(String(name)),
 
   // team relay (cross-team delegation allow-list) + per-agent override
