@@ -8,6 +8,20 @@ Every change pushed or merged to `main` carries its version number in the commit
 subject (`vX.Y.Z: …`), stamped automatically by the `commit-msg` hook — see
 [CONTRIBUTING.md](CONTRIBUTING.md).
 
+## [0.1.71] — 2026-06-23
+- **New: Computer Use (watch your Mac live + let an agent see your screen).** A new
+  **Computer Use** tab streams your primary display live inside the app, and you can
+  **bless** a Claude/codex agent to let it take screenshots of your Mac (so it can
+  see what you see while helping). This first release is **watch + screenshot only**
+  — mouse/keyboard control, live take-over, and a panic kill-switch are coming next.
+  - **Safety is built in.** Disarmed by default (the agent can’t even screenshot
+    until you press **Arm**); only agents you explicitly bless can reach it; the
+    capture runs through a loopback-only, token-authed in-app controller that
+    rejects cross-origin/rebinding probes; the live capture only runs while the tab
+    is open; and on-screen text is treated as **data, never instructions**.
+  - Screen Recording permission is detected with one-click **Open Settings** +
+    **Relaunch** helpers. No native modules, so nothing extra to install.
+
 ## [0.1.70] — 2026-06-22
 - **Chat replies survive long tasks, navigating away, and restarts.** Dispatches
   are now resumable: the in-flight query is persisted on the chat, and the chat

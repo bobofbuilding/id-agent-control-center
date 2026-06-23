@@ -188,12 +188,15 @@ export class ManagerClient {
   }
 
   /** Live agent activity steps (tool/file), since a seq cursor. `team` scopes the
-   *  filter so same-named agents in other teams don't bleed in. Returns empty on
-   *  managers that don't have the /activity endpoint (graceful degradation). */
-  async activity(agent: string, since = 0, team?: string, signal?: AbortSignal): Promise<ActivityResponse> {
+   *  filter so same-named agents in other teams don't bleed in. `queryId` narrows
+   *  to a single dispatch (older managers ignore it → they fall back to agent+team,
+   *  which is the pre-queryId behavior). Returns empty on managers that don't have
+   *  the /activity endpoint (graceful degradation). */
+  async activity(agent: string, since = 0, team?: string, queryId?: string, signal?: AbortSignal): Promise<ActivityResponse> {
     try {
       const p = new URLSearchParams({ agent: String(agent), since: String(since) });
       if (team) p.set('team', String(team));
+      if (queryId) p.set('queryId', String(queryId));
       return await this.get<ActivityResponse>(`/activity?${p.toString()}`, signal);
     } catch {
       return { items: [], next_seq: since };

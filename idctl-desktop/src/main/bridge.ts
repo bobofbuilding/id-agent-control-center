@@ -96,6 +96,7 @@ function listProvidersEnriched(): (ProviderProfile & { keySource: 'config' | 'en
   return loadSettings().providers.map((p) => ({ ...p, keySource: keySourceOf(p), needsKey: kindNeedsKey(p.kind) }));
 }
 import type { McpServerSpec, CreateSkillInput } from '../../../idctl/src/api/client.ts';
+import { brokerServerPath } from './computeruse/broker.ts';
 
 // idctl-desktop is the operator's local control center talking to 127.0.0.1,
 // so it is a legitimate admin client (admin-gated routes: skill install, MCP attach).
@@ -119,9 +120,11 @@ const METHODS: Record<string, (...a: any[]) => Promise<unknown>> = {
   },
   events: (since: number) => client.events(Number(since) || 0, { wait: 20, limit: 100 }),
   // Live agent activity (tool/file steps) for the chat "what they're doing" feed.
-  // Team-scoped so a same-named agent in another team can't bleed in.
-  'activity:get': (agent: string, since: number, team?: string) =>
-    client.activity(String(agent), Number(since) || 0, team ? String(team) : client.team),
+  // Team-scoped so a same-named agent in another team can't bleed in; an optional
+  // queryId narrows to a single dispatch (exact attribution when two dispatches
+  // hit the same agent concurrently).
+  'activity:get': (agent: string, since: number, team?: string, queryId?: string) =>
+    client.activity(String(agent), Number(since) || 0, team ? String(team) : client.team, queryId ? String(queryId) : undefined),
   inboxPending: () => client.inboxPending(),
 
   // tasks
@@ -236,6 +239,37 @@ const METHODS: Record<string, (...a: any[]) => Promise<unknown>> = {
   usage: () => client.usage(),
   setAgentMcp: (agentId: string, servers: McpServerSpec[]) => client.setAgentMcp(String(agentId), servers ?? []),
   rebuildAgent: (agent: string) => client.remote(`/agent ${agent} rebuild`),
+
+  // Computer Use: attach/detach the bundled computer-use MCP server to an agent
+  // (a "bless" — lets that agent drive the Mac through the broker). Merges with
+  // the agent's existing MCP servers (never clobbers them) and dedupes by name.
+  'cu:attach': async (agentId: string, agentName: string) => {
+    // NEVER swallow the fetch into [] — a transient failure would make `cur` empty
+    // and the wholesale-replace POST would WIPE the agent's other MCP servers. Let
+    // it throw, and fail closed if the agent isn't found, so we only ever merge
+    // onto a known-good current list.
+    const agents = await client.agents();
+    const a = agents.find((x) => x.id === agentId || x.name === agentId || x.name === agentName);
+    if (!a) throw new Error(`agent not found: ${agentName || agentId}`);
+    const cur = (((a.metadata as any)?.mcpServers) ?? []) as McpServerSpec[];
+    const spec: McpServerSpec = { name: 'computer-use', command: 'node', args: [brokerServerPath()], env: { ID_CU_AGENT: String(a.name) } };
+    const next = [...cur.filter((s) => s.name !== 'computer-use'), spec];
+    return client.setAgentMcp(a.id, next);
+  },
+  'cu:detach': async (agentId: string, agentName?: string) => {
+    const agents = await client.agents();
+    const a = agents.find((x) => x.id === agentId || x.name === agentId || x.name === agentName);
+    if (!a) throw new Error(`agent not found: ${agentName || agentId}`);
+    const cur = (((a.metadata as any)?.mcpServers) ?? []) as McpServerSpec[];
+    return client.setAgentMcp(a.id, cur.filter((s) => s.name !== 'computer-use'));
+  },
+  // Agents that currently have computer-use attached (for the view's "blessed" list).
+  'cu:attached': async () => {
+    const agents = await client.agents().catch(() => [] as Awaited<ReturnType<typeof client.agents>>);
+    return agents
+      .filter((a) => (((a.metadata as any)?.mcpServers ?? []) as { name: string }[]).some((s) => s.name === 'computer-use'))
+      .map((a) => ({ id: a.id, name: a.name }));
+  },
 
   // MCP server registry (local settings catalog)
   'mcp:list': async () => loadSettings().mcpServers ?? [],

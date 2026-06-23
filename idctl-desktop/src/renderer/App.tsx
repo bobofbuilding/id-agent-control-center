@@ -10,9 +10,10 @@ import { Health } from './views/Health.tsx';
 import { Identity } from './views/Identity.tsx';
 import { Modules } from './views/Modules.tsx';
 import { Projects } from './views/Projects.tsx';
+import { ComputerUse } from './views/ComputerUse.tsx';
 import { Settings } from './views/Settings.tsx';
 
-type ViewId = 'dashboard' | 'chat' | 'inbox' | 'tasks' | 'projects' | 'health' | 'identity' | 'schedule' | 'teams' | 'modules' | 'settings';
+type ViewId = 'dashboard' | 'chat' | 'inbox' | 'tasks' | 'projects' | 'health' | 'identity' | 'schedule' | 'teams' | 'modules' | 'computer' | 'settings';
 
 const NAV: { id: ViewId; label: string; icon: string }[] = [
   { id: 'dashboard', label: 'Dashboard', icon: '▦' },
@@ -24,6 +25,7 @@ const NAV: { id: ViewId; label: string; icon: string }[] = [
   { id: 'identity', label: 'Identity & Keys', icon: '⬡' },
   { id: 'teams', label: 'Teams', icon: '⛌' },
   { id: 'modules', label: 'Capabilities', icon: '◫' },
+  { id: 'computer', label: 'Computer Use', icon: '🖥' },
   { id: 'settings', label: 'Settings', icon: '⚙' },
 ];
 
@@ -132,6 +134,8 @@ function Router({ view, store }: { view: ViewId; store: ReturnType<typeof useFle
       return <Tasks store={store} initialTab="schedule" />;
     case 'modules':
       return <Modules store={store} />;
+    case 'computer':
+      return <ComputerUse store={store} />;
     case 'projects':
       return <Projects store={store} />;
     case 'settings':

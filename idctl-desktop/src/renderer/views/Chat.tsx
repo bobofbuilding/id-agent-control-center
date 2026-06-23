@@ -164,7 +164,7 @@ export function Chat({ store }: { store: FleetStore }) {
   const [attachments, setAttachments] = useState<PickedFile[]>([]);
   const [canImage, setCanImage] = useState(false); // an image-capable provider is configured
   // Live "behind the scenes" feed for the in-flight dispatch (elapsed + fleet activity).
-  const [running, setRunning] = useState<{ sid: string; replyId: number; startedAt: number; sinceSeq: number; target: string } | null>(null);
+  const [running, setRunning] = useState<{ sid: string; replyId: number; startedAt: number; sinceSeq: number; target: string; queryId: string } | null>(null);
   const [activitySteps, setActivitySteps] = useState<ActivityStep[]>([]); // the agent's live tool/file steps
   const activitySinceRef = useRef(0); // activity ring cursor for this dispatch
   const [, setTick] = useState(0); // 1 Hz re-render so the elapsed timer ticks
@@ -211,7 +211,7 @@ export function Chat({ store }: { store: FleetStore }) {
     const alreadyDelivered = !!(reply && ((reply.text && reply.text.trim()) || reply.image));
     if (inf?.queryId && session && !alreadyDelivered) {
       const sinceSeq = store.events.reduce((mx, e) => Math.max(mx, e?.seq ?? 0), 0);
-      setRunning({ sid: session.id, replyId: inf.replyId, startedAt: inf.startedAt, target: inf.target, sinceSeq });
+      setRunning({ sid: session.id, replyId: inf.replyId, startedAt: inf.startedAt, target: inf.target, queryId: inf.queryId, sinceSeq });
       activitySinceRef.current = -1;
       setActivitySteps([]);
       setSession((cur) => (cur && cur.id === session.id && cur.inflight?.queryId === inf.queryId
@@ -235,7 +235,7 @@ export function Chat({ store }: { store: FleetStore }) {
     let alive = true;
     const poll = async () => {
       const since = activitySinceRef.current;
-      const r = await call<{ items: ActivityStep[]; next_seq: number }>('activity:get', running.target, Math.max(0, since), team).catch(() => null);
+      const r = await call<{ items: ActivityStep[]; next_seq: number }>('activity:get', running.target, Math.max(0, since), team, running.queryId).catch(() => null);
       if (!alive || !r) return;
       if (since < 0) { activitySinceRef.current = r.next_seq ?? 0; return; } // first poll floors the cursor — skip any pre-dispatch backlog
       if (Array.isArray(r.items) && r.items.length) {
@@ -442,10 +442,12 @@ export function Chat({ store }: { store: FleetStore }) {
 
   /** Compact "what the agent did" trace: THIS dispatch's own polled activity steps
    *  (per-dispatch buffer, floored at start — not the viewed session's shared feed)
-   *  plus delegations seen on the manager event log since it started. NOTE: the
-   *  activity/event streams carry agent+time but no queryId, so if TWO dispatches
-   *  hit the same agent concurrently their steps can't be told apart — the trace is
-   *  a best-effort annotation, never load-bearing (the reply itself is queryId-keyed). */
+   *  plus delegations seen on the manager event log since it started. The activity
+   *  steps are now queryId-filtered (`activity:get` passes inf.queryId), so even two
+   *  concurrent dispatches to the same agent get exact per-dispatch attribution.
+   *  The manager EVENT log (delegation lines) still carries agent+time but no
+   *  queryId, so those remain a best-effort, time-windowed annotation — never
+   *  load-bearing (the reply itself is queryId-keyed). */
   function buildTrace(steps: ActivityStep[], startedAt: number): string[] {
     const acts = steps.map(actLine);
     const delegs = traceLines(storeEventsRef.current, 0, startedAt - 1500, agentNameById)
@@ -496,7 +498,7 @@ export function Chat({ store }: { store: FleetStore }) {
     let actCursor = -1; // -1 → floor on first poll (skip pre-dispatch backlog)
     const actSteps: ActivityStep[] = [];
     const pollActivity = async () => {
-      const r = await call<{ items: ActivityStep[]; next_seq: number }>('activity:get', inf.target, Math.max(0, actCursor), team).catch(() => null);
+      const r = await call<{ items: ActivityStep[]; next_seq: number }>('activity:get', inf.target, Math.max(0, actCursor), team, inf.queryId).catch(() => null);
       if (!r) return;
       if (actCursor < 0) { actCursor = r.next_seq ?? 0; return; }
       if (Array.isArray(r.items) && r.items.length) {

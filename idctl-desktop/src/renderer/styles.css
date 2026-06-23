@@ -402,3 +402,30 @@ select, input {
 select:focus, input:focus { border-color: var(--accent); }
 .kv b select { padding: 3px 6px; }
 
+
+/* ── Computer Use ─────────────────────────────────────────────────────── */
+.cu-intro { margin: 2px 2px 12px; line-height: 1.5; }
+.cu-armpill { font-size: 12px; font-weight: 600; padding: 3px 9px; border-radius: 999px; border: 1px solid var(--border); color: var(--muted); }
+.cu-armpill.on { color: #fff; background: #1f7a33; border-color: #2a9d45; }
+.cu-cols { display: grid; grid-template-columns: 1fr 340px; gap: 14px; align-items: start; }
+.cu-stage { display: flex; flex-direction: column; gap: 8px; }
+.cu-screen { position: relative; background: #05070a; border: 1px solid var(--border); border-radius: 10px; overflow: hidden; aspect-ratio: 16 / 10; display: flex; align-items: center; justify-content: center; }
+.cu-frame { width: 100%; height: 100%; object-fit: contain; display: block; }
+.cu-placeholder { text-align: center; padding: 24px; }
+.cu-ph-title { font-size: 15px; margin-bottom: 6px; }
+.cu-stale { position: absolute; top: 8px; right: 8px; font-size: 11px; padding: 2px 8px; border-radius: 999px; background: rgba(0,0,0,.6); color: #ffcf6b; border: 1px solid #6b5a2a; }
+.cu-screen-meta { padding-left: 2px; }
+.cu-side { display: flex; flex-direction: column; gap: 14px; }
+.cu-perm { display: flex; gap: 10px; padding: 8px 0; border-top: 1px solid var(--border); }
+.cu-perm:first-of-type { border-top: none; }
+.cu-perm-dot { width: 10px; height: 10px; border-radius: 50%; margin-top: 5px; flex: 0 0 auto; background: var(--muted); }
+.cu-perm.ok .cu-perm-dot { background: #2a9d45; }
+.cu-perm.bad .cu-perm-dot { background: #d2432f; }
+.cu-perm-body { flex: 1; }
+.cu-perm-actions { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
+.cu-bless-add { display: flex; gap: 6px; margin-top: 8px; }
+.cu-bless-add .cell-select { flex: 1; }
+.cu-blessed { margin-top: 10px; display: flex; flex-direction: column; gap: 6px; }
+.cu-blessed-row { display: flex; align-items: center; justify-content: space-between; padding: 6px 8px; background: var(--panel-2, rgba(255,255,255,.03)); border: 1px solid var(--border); border-radius: 8px; }
+.cu-msg { margin-top: 8px; color: var(--accent-text, #8ab4ff); }
+.cu-safety ul { margin: 6px 0 0; padding-left: 18px; line-height: 1.6; }

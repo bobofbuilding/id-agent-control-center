@@ -12,6 +12,8 @@ export interface IdAgentsApi {
   onUpdateStatus(cb: (status: unknown) => void): () => void;
   /** Subscribe to Ollama model-pull progress. Returns an unsubscribe fn. */
   onOllamaPull(cb: (progress: unknown) => void): () => void;
+  /** Subscribe to live Computer Use frames from the broker. Returns an unsubscribe fn. */
+  onComputerFrame(cb: (frame: unknown) => void): () => void;
 }
 
 const api: IdAgentsApi = {
@@ -25,6 +27,11 @@ const api: IdAgentsApi = {
     const listener = (_e: unknown, progress: unknown) => cb(progress);
     ipcRenderer.on('ollama:pull-progress', listener);
     return () => ipcRenderer.removeListener('ollama:pull-progress', listener);
+  },
+  onComputerFrame: (cb) => {
+    const listener = (_e: unknown, frame: unknown) => cb(frame);
+    ipcRenderer.on('computeruse:frame', listener);
+    return () => ipcRenderer.removeListener('computeruse:frame', listener);
   },
 };
 

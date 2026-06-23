@@ -83,6 +83,9 @@ export interface ActivityStep {
   kind: string;      // file | read | run | search | web | delegate | plan | tool | error
   tool?: string;
   summary: string;
+  /** Originating dispatch id, when the agent reported one. Lets a caller
+   *  attribute steps to an exact query (e.g. two dispatches to one agent). */
+  queryId?: string;
 }
 export interface ActivityResponse {
   items: ActivityStep[];

@@ -17,6 +17,8 @@ import { listPlans, getPlan, savePlan, removePlan, type Plan } from './planstore
 import { generateImage, readImage, imageModels, getImageServer, detectImageServer } from './images.ts';
 import { loadSettings, setUpdateSettings, setImageServer } from '../../../idctl/src/settings/store.ts';
 import type { ImageServerConfig } from '../../../idctl/src/settings/schema.ts';
+import { startBroker, armBroker, disarmBroker, setWatching, brokerStatus, stopBroker } from './computeruse/broker.ts';
+import { getPermissions, openPermissionSettings, relaunchApp } from './computeruse/permissions.ts';
 
 // Bundled as CommonJS → __dirname is the output dir (out/main/).
 declare const __dirname: string;
@@ -223,6 +225,22 @@ async function appCall(method: string, args: unknown[]): Promise<unknown> {
       return detectImageServer();
     case 'app:runInTerminal':
       return runInTerminal(args[0] as string);
+    // Computer Use (broker + macOS permissions live in the Electron main process)
+    case 'cu:status':
+      return brokerStatus();
+    case 'cu:arm':
+      return armBroker();
+    case 'cu:disarm':
+      return disarmBroker();
+    case 'cu:watch':
+      return setWatching(Boolean(args[0]));
+    case 'cu:permissions':
+      return getPermissions();
+    case 'cu:openPermission':
+      return openPermissionSettings(args[0] as 'screen' | 'accessibility');
+    case 'cu:relaunch':
+      relaunchApp();
+      return { ok: true };
     default:
       return call(method, args);
   }
@@ -241,8 +259,36 @@ ipcMain.handle('idagents:call', async (_e, method: string, args: unknown[]) => {
 //   check → run a manifest check, print status, quit.
 //   apply → check, then swap the staged bundle in place (IDCTL_UPDATE_NOOPEN
 //           skips the relaunch) so the swap can be verified.
+// Headless self-test of the Computer Use broker (no real window interaction):
+// arm the broker, hit its loopback /action screenshot endpoint with the token,
+// print whether a real frame came back, then quit. Verifies capture + auth + arm.
+// Dev-only (never in the packaged app) so the shipped build can't be coaxed into
+// serving screenshots headlessly via an env var.
+const cuSelftest = !app.isPackaged && process.env.IDCTL_CU_SELFTEST;
+if (cuSelftest) {
+  setTimeout(() => { console.log('CU_SELFTEST_TIMEOUT'); app.exit(1); }, 15000).unref?.();
+  app.whenReady().then(async () => {
+    await startBroker(() => {});
+    setWatching(true);
+    armBroker();
+    const st = brokerStatus();
+    try {
+      const { readFileSync } = await import('node:fs');
+      const { homedir } = await import('node:os');
+      const { join: pjoin } = await import('node:path');
+      const sess = JSON.parse(readFileSync(pjoin(homedir(), '.config/idctl/computeruse/session.json'), 'utf8'));
+      const res = await fetch(`${sess.url}/action`, { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${sess.token}` }, body: JSON.stringify({ type: 'screenshot', agent: 'selftest' }) });
+      const j = await res.json() as { ok?: boolean; image?: string; width?: number; height?: number; reason?: string };
+      console.log('CU_SELFTEST ' + JSON.stringify({ port: st.port, ok: j.ok, hasImage: !!j.image, imageBytes: j.image ? Buffer.from(j.image, 'base64').length : 0, width: j.width, height: j.height, reason: j.reason }));
+    } catch (e) {
+      console.log('CU_SELFTEST_ERR ' + (e instanceof Error ? e.message : String(e)));
+    }
+    app.quit();
+  });
+}
+
 const selftest = process.env.IDCTL_UPDATE_SELFTEST;
-if (selftest) {
+if (cuSelftest) { /* handled above */ } else if (selftest) {
   app.whenReady().then(async () => {
     const st = await checkForUpdate();
     console.log('SELFTEST_STATUS ' + JSON.stringify(st));
@@ -257,6 +303,8 @@ if (selftest) {
   app.whenReady().then(() => {
     createWindow();
     if (win) startUpdater(win);
+    // Computer Use broker: loopback controller + live frame pump → the renderer.
+    void startBroker((frame) => { try { win?.webContents.send('computeruse:frame', frame); } catch { /* window gone */ } });
     app.on('activate', () => {
       if (BrowserWindow.getAllWindows().length === 0) createWindow();
     });
@@ -264,6 +312,7 @@ if (selftest) {
 }
 
 app.on('will-quit', stopUpdater);
+app.on('will-quit', stopBroker);
 
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') app.quit();
