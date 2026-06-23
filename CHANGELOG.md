@@ -31,6 +31,13 @@ subject (`vX.Y.Z: …`), stamped automatically by the `commit-msg` hook — see
     rebuild calls are team‑scoped so wiring a brand‑new team works even when it isn’t
     the active one.
 
+## [0.1.90] — 2026-06-23
+- **Lead hierarchy is now an actionable cross‑team coordinator table.** Instead of a
+  static list (which rendered a broken `team/` entry for any team whose coordinator
+  was unset), each team now shows a **coordinator picker** (choose the lead from that
+  team’s agents) and a **make‑primary** button — set or change any team’s coordinator
+  and promote one to the primary cross‑team lead, right from HR Manager → Structure.
+
 ## [0.1.89] — 2026-06-23
 - **HR Manager refactored into four focused tabs + a live team graph.** The page is
   now organized around the things you actually do — **Structure / Build / Manage /

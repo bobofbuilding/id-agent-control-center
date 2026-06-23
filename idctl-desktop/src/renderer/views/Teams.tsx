@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { Fragment, useEffect, useMemo, useRef, useState } from 'react';
 import { call, agentsLeadFirst, resolveCoordinator, type FleetStore } from '../store.ts';
 import { offerableRuntimes } from '../../../../idctl/src/settings/runtimeCatalog.ts';
 import type { ConfigEntry, DeployPreflight, DesignedTeam, LibrarySkillEntry, McpServerSpec, TeamTemplate } from '../../../../idctl/src/api/client.ts';
@@ -333,6 +333,19 @@ export function Teams({ store }: { store: FleetStore }) {
     await call('coordinator:setPrimary', store.team ?? 'default', agent);
     await loadHier();
   }
+  /** Set (or change) a team's coordinator — the lead the rest of the team reports to. */
+  async function setTeamCoordinator(team: string, agent: string) {
+    if (!agent) return;
+    await call('coordinator:set', team, agent).catch(() => {});
+    await loadHier();
+    store.refresh();
+  }
+  /** Promote a specific team's coordinator to the primary cross-team lead. */
+  async function makePrimaryFor(team: string, agent: string) {
+    if (!agent) return;
+    await call('coordinator:setPrimary', team, agent).catch(() => {});
+    await loadHier();
+  }
 
   return (
     <div className="view modules">
@@ -638,36 +651,43 @@ export function Teams({ store }: { store: FleetStore }) {
 
       {tab === 'structure' ? (
       <section className="card">
-        <h3>Lead hierarchy</h3>
+        <h3>Lead hierarchy &amp; coordinators</h3>
         <p className="muted small" style={{ marginTop: -4 }}>
-          The primary coordinator across teams — it delegates to each team's lead, which delegates to its workers.
+          Each team has a <b>coordinator</b> (its lead); one is the <b>primary</b> across teams — it delegates to each
+          team's coordinator, which delegates to its workers. Pick a coordinator for any team, or promote one to primary.
         </p>
-        <div className="hierarchy">
-          {hier.primary ? (
-            <>
-              <div className="hier-node primary">
-                ⭑ {hier.primary.team}/{hier.primary.agent} <span className="muted">— primary lead</span>
-              </div>
-              {Object.entries(hier.coordinators)
-                .filter(([t, ag]) => !(t === hier.primary!.team && ag === hier.primary!.agent))
-                .map(([t, ag]) => (
-                  <div className="hier-node child" key={t}>
-                    └ {t}/{ag} <span className="muted">— reports to primary</span>
-                  </div>
-                ))}
-            </>
-          ) : (
-            <div className="muted">
-              No primary lead set. With several team leads, designate one as the top of the hierarchy — it delegates
-              across teams to the per-team coordinators (via <code>/ask &lt;team&gt;/&lt;agent&gt;</code>).
-            </div>
-          )}
+        <div className="kv" style={{ gridTemplateColumns: 'minmax(120px,1fr) 220px 120px', gap: '6px 12px', alignItems: 'center' }}>
+          <span className="muted small">team</span>
+          <span className="muted small">coordinator</span>
+          <span className="muted small">primary lead</span>
+          {store.teams.map((t) => {
+            const ags = graphGroups.find((g) => g.team === t.name)?.agents ?? [];
+            const coord = hier.coordinators[t.name] || (hier.primary?.team === t.name ? hier.primary.agent : '');
+            const isPrimary = !!hier.primary && hier.primary.team === t.name;
+            return (
+              <Fragment key={t.id}>
+                <span className="b">{isPrimary ? '⭑ ' : ''}{t.name} <span className="muted small">· {ags.length}</span></span>
+                <select className="cell-select" disabled={busy || ags.length === 0} value={ags.some((a) => a.name === coord) ? coord : ''}
+                  onChange={(e) => void setTeamCoordinator(t.name, e.target.value)}>
+                  <option value="">{ags.length ? 'no coordinator — choose…' : 'no agents'}</option>
+                  {ags.map((a) => <option key={a.id} value={a.name}>{a.name}</option>)}
+                </select>
+                {isPrimary ? (
+                  <span className="ok-text small">⭑ primary</span>
+                ) : (
+                  <button className="btn small" disabled={busy || !coord}
+                    title={coord ? `Make ${t.name}/${coord} the primary cross-team lead` : 'Set a coordinator first'}
+                    onClick={() => void makePrimaryFor(t.name, coord)}>make primary</button>
+                )}
+              </Fragment>
+            );
+          })}
         </div>
-        <div className="row-actions" style={{ marginTop: 10 }}>
-          <button className="btn" disabled={busy} onClick={() => void makePrimary()}>
-            Make “{activeTeam}” coordinator the primary lead
-          </button>
-        </div>
+        {!hier.primary ? (
+          <p className="muted small" style={{ marginTop: 8 }}>
+            No primary lead yet — promote one team's coordinator to delegate across teams (via <code>/ask &lt;team&gt;/&lt;agent&gt;</code>).
+          </p>
+        ) : null}
       </section>
       ) : null}
 
