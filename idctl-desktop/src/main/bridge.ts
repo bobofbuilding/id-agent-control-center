@@ -206,6 +206,8 @@ const METHODS: Record<string, (...a: any[]) => Promise<unknown>> = {
 
   // teams: create + start a new agent
   spawnAgent: (spec: Parameters<ManagerClient['spawnAgent']>[0]) => client.spawnAgent(spec),
+  'identity:register': (agent: string) => client.remote(`/register ${String(agent)}`),
+  'wallet:provision': (agent: string) => client.remote(`/agent ${String(agent)} wallet provision`),
 
   // dashboard: per-runtime model catalog (synced providers + codex cache + curated)
   'runtime:models': async () => runtimeCatalogWithCodex(),

@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { call, agentsLeadFirst, resolveCoordinator, type FleetStore } from '../store.ts';
 import { usePrompt } from '../components/prompt.tsx';
 import { offerableRuntimes } from '../../../../idctl/src/settings/runtimeCatalog.ts';
+import type { AgentAccount } from '../../../../idctl/src/keys/types.ts';
 
 type ProviderRow = { kind: string; enabled?: boolean; keySource?: string; lastSync?: { status?: string } };
 import type { LibrarySkillEntry } from '../../../../idctl/src/api/client.ts';
@@ -39,6 +40,17 @@ function describeRelay(d: string[] | null): string {
   if (d.includes('*')) return 'all teams';
   if (d.length === 0) return 'blocked — no teams';
   return d.join(', ');
+}
+
+function shortAddr(a?: string | null): string {
+  return a ? `${a.slice(0, 6)}…${a.slice(-4)}` : '—';
+}
+
+function identityValue(a: { idchain_domain?: string | null; ows_wallet?: string | null; metadata?: unknown }, key: 'idchain_domain' | 'ows_wallet' | 'skillmesh_address'): string {
+  const meta = a.metadata as { idchain_domain?: unknown; ows_wallet?: unknown; skillmesh_address?: unknown } | undefined;
+  const direct = key === 'idchain_domain' ? a.idchain_domain : key === 'ows_wallet' ? a.ows_wallet : undefined;
+  const value = direct ?? meta?.[key];
+  return typeof value === 'string' ? value.trim() : '';
 }
 
 /** Ready-made "act as the team coordinator" directive (delegate to teammates). */
@@ -208,6 +220,18 @@ export function Teams({ store }: { store: FleetStore }) {
   // cross-team delegation independently of its team's policy).
   const [agentEditing, setAgentEditing] = useState<string | null>(null);
   const [agentSel, setAgentSel] = useState<string[]>([]);
+  const [accounts, setAccounts] = useState<Record<string, AgentAccount>>({});
+
+  async function loadAccounts() {
+    const names = store.agents.map((a) => a.name);
+    if (names.length === 0) {
+      setAccounts({});
+      return;
+    }
+    const list = await call<AgentAccount[]>('keys:list', names).catch(() => []);
+    setAccounts(Object.fromEntries(list.map((a) => [a.agent, a])));
+  }
+  useEffect(() => { void loadAccounts(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [store.lastUpdated, activeTeam]);
 
   async function applyAgent(id: string, delegates: string[] | null, label: string) {
     setBusy(true);
@@ -234,6 +258,20 @@ export function Teams({ store }: { store: FleetStore }) {
   }
   function toggleAgentTeam(name: string) {
     setAgentSel((s) => (s.includes(name) ? s.filter((x) => x !== name) : [...s, name]));
+  }
+  async function identityAction(agent: string, action: 'register' | 'provision') {
+    setBusy(true);
+    setMsg(`${action === 'register' ? 'registering identity' : 'provisioning wallet'} for ${agent}…`);
+    try {
+      await call(action === 'register' ? 'identity:register' : 'wallet:provision', agent);
+      await loadAccounts();
+      store.refresh();
+      setMsg(`${agent} ${action === 'register' ? 'identity registered' : 'wallet provisioned'} ✓`);
+    } catch (err) {
+      setMsg(`failed: ${err instanceof Error ? err.message : String(err)}`);
+    } finally {
+      setBusy(false);
+    }
   }
 
   // Lead hierarchy (#10): the primary coordinator across teams.
@@ -436,8 +474,11 @@ export function Teams({ store }: { store: FleetStore }) {
             const m = agentEditing === a.id ? 'select' : modeOf(Array.isArray(pol) ? (pol as string[]) : null);
             const label =
               m === 'permissive' ? 'inherits team' : m === 'all' ? 'any team' : m === 'none' ? 'blocked' : Array.isArray(pol) ? pol.join(', ') : '';
+            const domain = identityValue(a, 'idchain_domain');
+            const wallet = identityValue(a, 'ows_wallet');
+            const acct = accounts[a.name];
             return (
-              <div key={a.id} className="kv" style={{ gridTemplateColumns: '130px 1fr', gap: '4px 12px', marginBottom: 4 }}>
+              <div key={a.id} className="kv" style={{ gridTemplateColumns: '130px 1fr', gap: '4px 12px', marginBottom: 10 }}>
                 <span className="b">{a.name}</span>
                 <span>
                   <select className="cell-select" disabled={busy} value={m} onChange={(e) => pickAgentMode(a, e.target.value as RelayMode)}>
@@ -467,6 +508,38 @@ export function Teams({ store }: { store: FleetStore }) {
                       <button className="btn" onClick={() => setAgentEditing(null)}>Cancel</button>
                     </div>
                   ) : null}
+                </span>
+                <span>identity</span>
+                <span>
+                  <div className="kv" style={{ gridTemplateColumns: '120px 1fr', gap: '3px 10px' }}>
+                    <span>ENS / ID-chain</span>
+                    <b className={domain ? 'mono' : 'muted'}>{domain || '—'}</b>
+                    <span>OWS wallet</span>
+                    <b className={wallet ? 'mono' : 'muted'}>{wallet ? shortAddr(wallet) : 'not provisioned'}</b>
+                    <span>Safe account</span>
+                    <b>
+                      {acct ? (
+                        <>
+                          <span className="mono">{shortAddr(acct.smartAccount)}</span>{' '}
+                          <span className={acct.deployed ? 'ok-text small' : 'warn-text small'}>
+                            {acct.deployed ? '● deployed' : '○ counterfactual'}
+                          </span>
+                        </>
+                      ) : (
+                        <span className="muted">—</span>
+                      )}
+                    </b>
+                  </div>
+                  <div className="row-actions" style={{ marginTop: 6, justifyContent: 'flex-start', alignItems: 'center', flexWrap: 'wrap' }}>
+                    <button className="btn small" disabled={busy} onClick={() => void identityAction(a.name, 'register')}>
+                      Register identity
+                    </button>
+                    {!wallet ? (
+                      <button className="btn small" disabled={busy} onClick={() => void identityAction(a.name, 'provision')}>
+                        Provision wallet
+                      </button>
+                    ) : null}
+                  </div>
                 </span>
               </div>
             );

@@ -8,6 +8,11 @@ Every change pushed or merged to `main` carries its version number in the commit
 subject (`vX.Y.Z: …`), stamped automatically by the `commit-msg` hook — see
 [CONTRIBUTING.md](CONTRIBUTING.md).
 
+## [0.1.75] — 2026-06-23
+- **Teams now shows each agent’s onchain identity inline.** Per-agent rows display
+  the ID-chain domain, OWS wallet, and Safe account status, with one-click
+  identity registration and wallet provisioning from the Teams page.
+
 ## [0.1.74] — 2026-06-23
 - **Critical fix: blessing an agent for Computer Use no longer breaks it.** The
   Computer Use tool was registered under the name `computer-use`, which **Claude Code
