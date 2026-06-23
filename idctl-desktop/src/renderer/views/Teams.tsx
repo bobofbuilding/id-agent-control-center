@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { call, agentsLeadFirst, resolveCoordinator, type FleetStore } from '../store.ts';
 import { offerableRuntimes } from '../../../../idctl/src/settings/runtimeCatalog.ts';
 import type { ConfigEntry, DeployPreflight, LibrarySkillEntry, McpServerSpec, TeamTemplate } from '../../../../idctl/src/api/client.ts';
-import type { OnboardPlan, OnboardResult, StepState } from '../../../../idctl/src/api/onboard.ts';
+import type { OnboardPlan, OnboardResult } from '../../../../idctl/src/api/onboard.ts';
 import { MCP_CATALOG, buildFromCatalog } from '../../../../idctl/src/settings/mcpCatalog.ts';
 import { parseTeamSpec, slugName, isReservedName } from '../../../../idctl/src/api/teamSpec.ts';
 
@@ -21,14 +21,6 @@ const HB_INTERVALS = [
   { label: '6 hours', s: 21600 },
   { label: '24 hours', s: 86400 },
 ];
-const ONBOARD_STEP_LABELS: Record<string, string> = {
-  preflight: 'Validate name + team',
-  spawn: 'Spawn agent',
-  mcp: 'Attach MCP servers',
-  rebuild: 'Rebuild to apply MCP',
-  probe: 'Health probe',
-};
-
 function runtimeLabel(r: string): string {
   return r.replace('claude-code-', 'claude-').replace('claude-agent-sdk', 'claude-sdk').replace('-cli', '');
 }
@@ -171,13 +163,10 @@ export function Teams({ store }: { store: FleetStore }) {
     }
   }
 
-  // Add-agent form (populate a team — esp. a new empty one).
-  const [na, setNa] = useState({ name: '', runtime: 'claude-code-cli', model: '', role: '', expertise: '', heartbeat: false, hbInterval: 3600, wallet: false });
-  const [naSkills, setNaSkills] = useState<string[]>([]);
+  // Catalogs for the Onboard modal (runtimes/models, library skills, providers).
   const [modelCatalog, setModelCatalog] = useState<Record<string, string[]>>({});
   const [skillCatalog, setSkillCatalog] = useState<string[]>([]);
   const [providers, setProviders] = useState<ProviderRow[]>([]);
-  const [adding, setAdding] = useState(false);
   const [onboardOpen, setOnboardOpen] = useState(false);
 
   useEffect(() => {
@@ -186,39 +175,6 @@ export function Teams({ store }: { store: FleetStore }) {
     call<ProviderRow[]>('providers:list').then(setProviders).catch(() => setProviders([]));
   }, [store.lastUpdated]);
 
-  const naModels = modelCatalog[na.runtime] ?? [];
-  function toggleNaSkill(name: string) {
-    setNaSkills((s) => (s.includes(name) ? s.filter((x) => x !== name) : [...s, name]));
-  }
-  async function addAgent() {
-    const name = na.name.trim().toLowerCase().replace(/\s+/g, '-');
-    if (!name) {
-      setMsg('agent needs a name');
-      return;
-    }
-    setAdding(true);
-    setMsg(`creating agent ${name} in ${activeTeam}…`);
-    try {
-      await call('spawnAgent', {
-        name,
-        runtime: na.runtime,
-        model: na.model || undefined,
-        skills: naSkills,
-        heartbeatSeconds: na.heartbeat ? na.hbInterval : undefined,
-        role: na.role.trim() || undefined,
-        expertise: na.expertise.split(',').map((x) => x.trim()).filter(Boolean),
-        wallet: na.wallet,
-      });
-      setMsg(`created agent ${name} ✓${na.wallet ? ' (wallet provisioning…)' : ''}`);
-      setNa((p) => ({ ...p, name: '', role: '', expertise: '' }));
-      setNaSkills([]);
-      store.refresh();
-    } catch (err) {
-      setMsg(`failed: ${err instanceof Error ? err.message : String(err)}`);
-    } finally {
-      setAdding(false);
-    }
-  }
 
   // Per-agent relay overrides (an individual agent can be granted/denied
   // cross-team delegation independently of its team's policy).
@@ -366,77 +322,15 @@ export function Teams({ store }: { store: FleetStore }) {
       </section>
 
       <section className="card">
-        <div className="row-actions" style={{ justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
-          <h3 style={{ margin: 0 }}>Add agent — {activeTeam}</h3>
-          <button className="btn primary" disabled={adding} onClick={() => setOnboardOpen(true)}>
-            Onboard agent
-          </button>
-        </div>
-        <p className="muted small" style={{ marginTop: -4 }}>
-          Create and start a new agent in <b>{activeTeam}</b>. Only a name is required; everything else has sensible defaults.
-        </p>
-        <div className="kv" style={{ gridTemplateColumns: '110px 1fr', gap: '8px 12px' }}>
-          <span>name</span>
-          <b>
-            <input style={{ width: 220 }} placeholder="lowercase, e.g. analyst" value={na.name} disabled={adding} onChange={(e) => setNa((p) => ({ ...p, name: e.target.value }))} />
-          </b>
-          <span>runtime · model</span>
-          <b>
-            <select
-              className="cell-select"
-              disabled={adding}
-              value={na.runtime}
-              onChange={(e) => setNa((p) => ({ ...p, runtime: e.target.value, model: '' }))}
-            >
-              {offerableRuntimes(providers).map((r) => (
-                <option key={r} value={r}>{runtimeLabel(r)}</option>
-              ))}
-            </select>{' '}
-            <select className="cell-select" disabled={adding} value={na.model} onChange={(e) => setNa((p) => ({ ...p, model: e.target.value }))}>
-              <option value="">(default)</option>
-              {naModels.map((m) => (
-                <option key={m} value={m}>{m}</option>
-              ))}
-            </select>
-          </b>
-          <span>role · expertise</span>
-          <b>
-            <input style={{ width: 160 }} placeholder="role, e.g. auditor" value={na.role} disabled={adding} onChange={(e) => setNa((p) => ({ ...p, role: e.target.value }))} />{' '}
-            <input style={{ width: 240 }} placeholder="expertise (comma-separated)" value={na.expertise} disabled={adding} onChange={(e) => setNa((p) => ({ ...p, expertise: e.target.value }))} />
-          </b>
-          <span>skills</span>
-          <b>
-            {skillCatalog.length === 0 ? (
-              <span className="muted small">no library skills</span>
-            ) : (
-              <span className="chips">
-                {skillCatalog.map((s) => {
-                  const on = naSkills.includes(s);
-                  return (
-                    <button key={s} className={`chip${on ? ' on' : ''}`} disabled={adding} onClick={() => toggleNaSkill(s)}>
-                      {on ? '✓ ' : ''}{s}
-                    </button>
-                  );
-                })}
-              </span>
-            )}
-          </b>
-          <span>heartbeat</span>
-          <b>
-            <input type="checkbox" checked={na.heartbeat} disabled={adding} onChange={(e) => setNa((p) => ({ ...p, heartbeat: e.target.checked }))} />{' '}
-            <select className="cell-select" disabled={adding || !na.heartbeat} value={na.hbInterval} onChange={(e) => setNa((p) => ({ ...p, hbInterval: Number(e.target.value) }))}>
-              {HB_INTERVALS.map((iv) => (
-                <option key={iv.s} value={iv.s}>{iv.label}</option>
-              ))}
-            </select>
-            <span className="muted small" style={{ marginLeft: 10 }}>
-              <input type="checkbox" checked={na.wallet} disabled={adding} onChange={(e) => setNa((p) => ({ ...p, wallet: e.target.checked }))} /> provision OWS wallet
-            </span>
-          </b>
-        </div>
-        <div className="row-actions" style={{ marginTop: 12 }}>
-          <button className="btn primary" disabled={adding || !na.name.trim()} onClick={() => void addAgent()}>
-            Add agent
+        <div className="row-actions" style={{ justifyContent: 'space-between', alignItems: 'center' }}>
+          <div>
+            <h3 style={{ margin: 0 }}>Add agents</h3>
+            <p className="muted small" style={{ margin: '4px 0 0' }}>
+              Create one or more agents in a single pass — pick a team, set each agent's runtime &amp; model, add skills/MCP/heartbeat, and onboard them together.
+            </p>
+          </div>
+          <button className="btn primary" onClick={() => setOnboardOpen(true)}>
+            Onboard agents
           </button>
         </div>
       </section>
@@ -444,11 +338,12 @@ export function Teams({ store }: { store: FleetStore }) {
       {onboardOpen ? (
         <OnboardWizard
           team={activeTeam}
+          existingTeams={store.teams.map((t) => t.name)}
           providers={providers}
           modelCatalog={modelCatalog}
           skillCatalog={skillCatalog}
           onClose={() => setOnboardOpen(false)}
-          onDone={() => store.refresh()}
+          onDone={(createdTeam) => { if (createdTeam) void store.setTeam(createdTeam); store.refresh(); }}
         />
       ) : null}
 
@@ -1009,6 +904,7 @@ function CreateTeamModal({
 
 function OnboardWizard({
   team,
+  existingTeams,
   providers,
   modelCatalog,
   skillCatalog,
@@ -1016,192 +912,222 @@ function OnboardWizard({
   onDone,
 }: {
   team: string;
+  existingTeams: string[];
   providers: ProviderRow[];
   modelCatalog: Record<string, string[]>;
   skillCatalog: string[];
   onClose: () => void;
-  onDone: () => void;
+  onDone: (createdTeam?: string) => void;
 }) {
   const runtimes = useMemo(() => offerableRuntimes(providers), [providers]);
   const initialRuntime = runtimes[0] ?? 'claude-code-cli';
-  const [form, setForm] = useState({
-    name: '',
-    runtime: initialRuntime,
-    model: '',
-    role: '',
-    expertise: '',
-    mcp: '',
-    wallet: false,
-    probeAfter: true,
-  });
+  type Row = { name: string; runtime: string; model: string; role: string };
+  const blankRow = (): Row => ({ name: '', runtime: initialRuntime, model: '', role: '' });
+
+  // Which team to create into — an existing one, or a brand-new team.
+  const teamOptions = useMemo(() => {
+    const set = [...existingTeams];
+    if (team && !set.includes(team)) set.unshift(team);
+    return set;
+  }, [existingTeams, team]);
+  const [teamSel, setTeamSel] = useState(team || teamOptions[0] || 'default');
+  const [newTeam, setNewTeam] = useState('');
+  const usingNewTeam = teamSel === '__new__';
+  const targetTeam = usingNewTeam ? cleanTeamName(newTeam) : teamSel;
+
+  // One or more agents, each with its own runtime + model.
+  const [rows, setRows] = useState<Row[]>([blankRow()]);
+  // Options applied to every agent in the batch.
   const [skills, setSkills] = useState<string[]>([]);
-  const [steps, setSteps] = useState<StepState[]>(checklistSteps());
-  const [result, setResult] = useState<OnboardResult | null>(null);
+  const [mcp, setMcp] = useState('');
+  const [wallet, setWallet] = useState(false);
+  const [heartbeat, setHeartbeat] = useState(false);
+  const [hbInterval, setHbInterval] = useState(3600);
+  const [probeAfter, setProbeAfter] = useState(true);
+  const [results, setResults] = useState<Array<{ name: string; team: string; result?: OnboardResult; error?: string; running?: boolean }>>([]);
   const [running, setRunning] = useState(false);
   const [error, setError] = useState('');
 
-  useEffect(() => {
-    setForm((p) => (p.runtime === initialRuntime ? p : { ...p, runtime: initialRuntime, model: '' }));
-  }, [initialRuntime]);
-
-  const models = modelCatalog[form.runtime] ?? [];
   const mcpChoices = MCP_CATALOG.filter((entry) => !(entry.inputs ?? []).some((input) => input.required && !input.default));
-  const failedKeys = result?.steps.filter((s) => s.status === 'failed').map((s) => s.key) ?? [];
-  const canRetry = failedKeys.length > 0 && Boolean(result?.agentId);
+  const named = rows.map((r) => ({ ...r, slug: slugName(r.name) })).filter((r) => r.slug);
+  const reserved = [...new Set(named.filter((r) => isReservedName(r.slug)).map((r) => r.slug))];
+  const dupes = [...new Set(named.map((r) => r.slug).filter((s, i, a) => a.indexOf(s) !== i))];
+  const canRun = !running && Boolean(targetTeam) && named.length > 0 && reserved.length === 0 && dupes.length === 0;
 
+  function updateRow(i: number, patch: Partial<Row>) {
+    setRows((rs) => rs.map((r, j) => (j === i ? { ...r, ...patch } : r)));
+  }
+  function addRow() { setRows((rs) => [...rs, blankRow()]); }
+  function removeRow(i: number) { setRows((rs) => (rs.length <= 1 ? rs : rs.filter((_, j) => j !== i))); }
   function toggleSkill(name: string) {
     setSkills((s) => (s.includes(name) ? s.filter((x) => x !== name) : [...s, name]));
   }
 
-  function buildPlan(retryKeys?: string[]): OnboardPlan {
-    const name = cleanAgentName(form.name);
-    const retry = retryKeys && result?.agentId ? { agentId: result.agentId, stepKeys: retryKeys } : undefined;
+  function planFor(r: Row): OnboardPlan {
     return {
-      name,
-      team,
-      runtime: form.runtime || undefined,
-      model: form.model || undefined,
-      role: form.role.trim() || undefined,
-      expertise: splitList(form.expertise),
+      name: slugName(r.name),
+      team: targetTeam,
+      runtime: r.runtime || undefined,
+      model: r.model || undefined,
+      role: r.role.trim() || undefined,
       skills,
-      wallet: form.wallet,
-      mcpServers: mcpFromChoice(form.mcp),
-      probeAfter: form.probeAfter,
-      retry,
+      wallet,
+      heartbeatSeconds: heartbeat ? hbInterval : undefined,
+      mcpServers: mcpFromChoice(mcp),
+      probeAfter,
     };
   }
 
-  async function run(retryKeys?: string[]) {
-    const plan = buildPlan(retryKeys);
-    if (!plan.name) {
-      setError('Agent name is required.');
-      return;
-    }
+  async function run() {
+    if (!targetTeam) { setError('Choose or name a team.'); return; }
+    if (reserved.length) { setError(`Reserved agent name(s): ${reserved.join(', ')} — rename.`); return; }
+    if (dupes.length) { setError(`Duplicate agent name(s): ${dupes.join(', ')}.`); return; }
+    const batch = named.map((r) => ({ name: r.slug, runtime: r.runtime, model: r.model, role: r.role }));
+    if (!batch.length) { setError('Add at least one named agent.'); return; }
     setRunning(true);
     setError('');
-    setResult(null);
-    setSteps(checklistSteps(retryKeys, true));
-    try {
-      const res = await call<OnboardResult>('onboard:run', plan);
-      setResult(res);
-      setSteps(mergeSteps(res.steps));
-      onDone();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
-    } finally {
-      setRunning(false);
+    setResults(batch.map((b) => ({ name: b.name, team: targetTeam })));
+    let anyOk = false;
+    // Sequential — the manager serializes local-model spawns anyway, and it keeps
+    // the per-agent status readable as each one lands.
+    for (let i = 0; i < batch.length; i++) {
+      setResults((rs) => rs.map((x, j) => (j === i ? { ...x, running: true } : x)));
+      try {
+        const res = await call<OnboardResult>('onboard:run', planFor(batch[i]));
+        if (res.ok) anyOk = true;
+        setResults((rs) => rs.map((x, j) => (j === i ? { ...x, running: false, result: res } : x)));
+      } catch (err) {
+        setResults((rs) => rs.map((x, j) => (j === i ? { ...x, running: false, error: err instanceof Error ? err.message : String(err) } : x)));
+      }
     }
+    setRunning(false);
+    if (anyOk) onDone(targetTeam);
   }
 
   return (
     <div className="modal-overlay" onMouseDown={() => (running ? undefined : onClose())}>
       <div className="modal onboard-modal" onMouseDown={(e) => e.stopPropagation()}>
-        <div className="modal-title">Onboard agent — {team}</div>
-        <div className="onboard-grid">
-          <label>
-            <span>name</span>
-            <input
-              autoFocus
-              placeholder="lowercase, e.g. analyst"
-              value={form.name}
-              disabled={running}
-              onChange={(e) => setForm((p) => ({ ...p, name: e.target.value }))}
-            />
-          </label>
-          <label>
-            <span>runtime</span>
-            <select className="cell-select" disabled={running} value={form.runtime} onChange={(e) => setForm((p) => ({ ...p, runtime: e.target.value, model: '' }))}>
-              {runtimes.map((r) => (
-                <option key={r} value={r}>{runtimeLabel(r)}</option>
-              ))}
+        <div className="modal-title">Onboard agents</div>
+
+        <div className="kv" style={{ gridTemplateColumns: '110px 1fr', gap: '8px 12px', alignItems: 'center' }}>
+          <span>team</span>
+          <span>
+            <select className="cell-select" disabled={running} value={teamSel} onChange={(e) => setTeamSel(e.target.value)}>
+              {teamOptions.map((t) => <option key={t} value={t}>{t}</option>)}
+              <option value="__new__">＋ new team…</option>
             </select>
-          </label>
-          <label>
-            <span>model</span>
-            <select className="cell-select" disabled={running} value={form.model} onChange={(e) => setForm((p) => ({ ...p, model: e.target.value }))}>
-              <option value="">(default)</option>
-              {models.map((m) => (
-                <option key={m} value={m}>{m}</option>
+            {usingNewTeam ? (
+              <input
+                style={{ marginLeft: 8, width: 200 }}
+                placeholder="new team name"
+                value={newTeam}
+                disabled={running}
+                onChange={(e) => setNewTeam(e.target.value)}
+                onBlur={() => setNewTeam(cleanTeamName(newTeam))}
+              />
+            ) : null}
+            {usingNewTeam && newTeam && targetTeam !== newTeam ? (
+              <span className="muted small" style={{ marginLeft: 8 }}>→ <span className="mono">{targetTeam}</span></span>
+            ) : null}
+          </span>
+        </div>
+
+        <div className="row-actions" style={{ justifyContent: 'space-between', alignItems: 'center', margin: '14px 0 6px' }}>
+          <span className="muted small">agents — each can use its own runtime &amp; model</span>
+          <button className="btn small" disabled={running} onClick={addRow}>＋ add agent</button>
+        </div>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+          {rows.map((r, i) => {
+            const rowReserved = isReservedName(slugName(r.name));
+            return (
+              <div key={i} className="kv" style={{ gridTemplateColumns: '1.1fr 1fr 1fr 1.1fr 24px', gap: 6, alignItems: 'center' }}>
+                <input
+                  className="mono"
+                  style={{ fontSize: 12, ...(rowReserved ? { borderColor: 'var(--danger, #e5484d)' } : {}) }}
+                  placeholder="name (lowercase)"
+                  value={r.name}
+                  disabled={running}
+                  title={rowReserved ? 'reserved word — rename' : undefined}
+                  onChange={(e) => updateRow(i, { name: e.target.value })}
+                  onBlur={(e) => updateRow(i, { name: slugName(e.target.value) })}
+                />
+                <select className="cell-select" style={{ fontSize: 12 }} disabled={running} value={r.runtime} onChange={(e) => updateRow(i, { runtime: e.target.value, model: '' })}>
+                  {runtimes.map((rt) => <option key={rt} value={rt}>{runtimeLabel(rt)}</option>)}
+                </select>
+                <select className="cell-select" style={{ fontSize: 12 }} disabled={running} value={r.model} onChange={(e) => updateRow(i, { model: e.target.value })}>
+                  <option value="">(default model)</option>
+                  {(modelCatalog[r.runtime] ?? []).map((m) => <option key={m} value={m}>{m}</option>)}
+                </select>
+                <input style={{ fontSize: 12 }} placeholder="role (optional)" value={r.role} disabled={running} onChange={(e) => updateRow(i, { role: e.target.value })} />
+                <button className="uv-x" title="Remove" disabled={running || rows.length <= 1} onClick={() => removeRow(i)}>✕</button>
+              </div>
+            );
+          })}
+        </div>
+
+        <div className="muted small" style={{ margin: '14px 0 4px' }}>applied to every agent</div>
+        <div className="kv" style={{ gridTemplateColumns: '110px 1fr', gap: '8px 12px', alignItems: 'start' }}>
+          <span>skills</span>
+          <span className="chips">
+            {skillCatalog.length === 0 ? <span className="muted small">no library skills</span> :
+              skillCatalog.map((s) => (
+                <button key={s} className={`chip${skills.includes(s) ? ' on' : ''}`} disabled={running} onClick={() => toggleSkill(s)}>
+                  {skills.includes(s) ? '✓ ' : ''}{s}
+                </button>
               ))}
+          </span>
+          <span>MCP</span>
+          <select className="cell-select" disabled={running} value={mcp} onChange={(e) => setMcp(e.target.value)} style={{ maxWidth: 280 }}>
+            <option value="">none</option>
+            {mcpChoices.map((entry) => <option key={entry.id} value={entry.id}>{entry.name}</option>)}
+          </select>
+          <span>heartbeat</span>
+          <span>
+            <input type="checkbox" checked={heartbeat} disabled={running} onChange={(e) => setHeartbeat(e.target.checked)} />{' '}
+            <select className="cell-select" disabled={running || !heartbeat} value={hbInterval} onChange={(e) => setHbInterval(Number(e.target.value))}>
+              {HB_INTERVALS.map((iv) => <option key={iv.s} value={iv.s}>{iv.label}</option>)}
             </select>
-          </label>
-          <label>
-            <span>role</span>
-            <input placeholder="auditor, builder, researcher" value={form.role} disabled={running} onChange={(e) => setForm((p) => ({ ...p, role: e.target.value }))} />
-          </label>
-          <label className="wide">
-            <span>expertise</span>
-            <input placeholder="comma-separated" value={form.expertise} disabled={running} onChange={(e) => setForm((p) => ({ ...p, expertise: e.target.value }))} />
-          </label>
-          <label className="wide">
-            <span>skills</span>
-            <span className="chips">
-              {skillCatalog.length === 0 ? (
-                <span className="muted small">no library skills</span>
-              ) : (
-                skillCatalog.map((s) => {
-                  const on = skills.includes(s);
-                  return (
-                    <button key={s} className={`chip${on ? ' on' : ''}`} disabled={running} onClick={() => toggleSkill(s)}>
-                      {on ? '✓ ' : ''}{s}
-                    </button>
-                  );
-                })
-              )}
+            <span className="muted small" style={{ marginLeft: 12 }}>
+              <input type="checkbox" checked={wallet} disabled={running} onChange={(e) => setWallet(e.target.checked)} /> provision OWS wallet
             </span>
-          </label>
-          <label>
-            <span>MCP</span>
-            <select className="cell-select" disabled={running} value={form.mcp} onChange={(e) => setForm((p) => ({ ...p, mcp: e.target.value }))}>
-              <option value="">none</option>
-              {mcpChoices.map((entry) => (
-                <option key={entry.id} value={entry.id}>{entry.name}</option>
-              ))}
-            </select>
-          </label>
-          <label className="checkline">
-            <input type="checkbox" checked={form.wallet} disabled={running} onChange={(e) => setForm((p) => ({ ...p, wallet: e.target.checked }))} />
-            <span>provision OWS wallet</span>
-          </label>
-          <label className="checkline">
-            <input type="checkbox" checked={form.probeAfter} disabled={running} onChange={(e) => setForm((p) => ({ ...p, probeAfter: e.target.checked }))} />
-            <span>probe after onboarding</span>
-          </label>
+            <span className="muted small" style={{ marginLeft: 12 }}>
+              <input type="checkbox" checked={probeAfter} disabled={running} onChange={(e) => setProbeAfter(e.target.checked)} /> probe after
+            </span>
+          </span>
         </div>
-        <div className="onboard-checklist">
-          {steps.map((step) => (
-            <div key={step.key} className="onboard-step">
-              <span className={`step-dot ${step.status}`}>{statusMark(step.status)}</span>
-              <span className="step-label">{step.label}</span>
-              {step.detail ? <span className="muted small">{step.detail}</span> : null}
-              {step.error ? <span className="status-error small">{step.error}</span> : null}
-            </div>
-          ))}
-        </div>
+
+        {reserved.length ? <p className="status-error small">Reserved name(s): <span className="mono">{reserved.join(', ')}</span> — rename.</p> : null}
+        {dupes.length ? <p className="status-error small">Duplicate name(s): <span className="mono">{dupes.join(', ')}</span>.</p> : null}
         {error ? <p className="status-error small">{error}</p> : null}
-        {result ? (
-          <p className={result.ok ? 'ok-text small' : 'warn-text small'}>
-            {result.ok ? `Onboarded ${result.name}.` : 'Onboarding finished with failed steps.'}
-          </p>
+        {results.length ? (
+          <div className="onboard-checklist" style={{ marginTop: 12 }}>
+            {results.map((r) => {
+              const failed = Boolean(r.error) || Boolean(r.result?.steps.some((s) => s.status === 'failed'));
+              const mark = r.running ? '…' : r.error ? '✗' : r.result?.ok ? '✓' : failed ? '!' : '·';
+              const detail = r.error ? r.error
+                : r.result ? (r.result.ok ? `onboarded into ${r.team}` : (r.result.steps.filter((s) => s.status === 'failed').map((s) => `${s.label}: ${s.error || 'failed'}`).join('; ') || 'finished with issues'))
+                : (r.running ? 'running…' : 'queued');
+              const cls = r.error || failed ? 'failed' : r.result?.ok ? 'ok' : r.running ? 'running' : 'pending';
+              return (
+                <div key={r.name} className="onboard-step" style={{ gridTemplateColumns: '26px minmax(140px, 1fr) minmax(0, 2fr)' }}>
+                  <span className={`step-dot ${cls}`}>{mark}</span>
+                  <span className="step-label mono">{r.name}</span>
+                  <span className={`small ${r.error || failed ? 'status-error' : 'muted'}`}>{detail}</span>
+                </div>
+              );
+            })}
+          </div>
         ) : null}
+
         <div className="row-actions" style={{ marginTop: 14 }}>
           <button className="btn" disabled={running} onClick={onClose}>Close</button>
-          {canRetry ? (
-            <button className="btn" disabled={running} onClick={() => void run(failedKeys)}>
-              Retry failed steps
-            </button>
-          ) : null}
-          <button className="btn primary" disabled={running || !form.name.trim()} onClick={() => void run()}>
-            {running ? 'Running…' : 'Run onboarding'}
+          <button className="btn primary" disabled={!canRun} onClick={() => void run()}>
+            {running ? 'Onboarding…' : `Onboard ${named.length} agent${named.length === 1 ? '' : 's'}`}
           </button>
         </div>
       </div>
     </div>
   );
-}
-
-function cleanAgentName(name: string): string {
-  return name.trim().toLowerCase().replace(/\s+/g, '-');
 }
 
 function cleanTeamName(name: string): string {
@@ -1222,11 +1148,6 @@ function describeConfig(config: ConfigEntry): string {
   return `${config.description ?? 'server config'}${count != null ? ` · ${count} agents` : ''}`;
 }
 
-function splitList(value: string): string[] | undefined {
-  const items = value.split(',').map((item) => item.trim()).filter(Boolean);
-  return items.length ? items : undefined;
-}
-
 function mcpFromChoice(id: string): McpServerSpec[] | undefined {
   if (!id) return undefined;
   const entry = MCP_CATALOG.find((item) => item.id === id);
@@ -1236,34 +1157,3 @@ function mcpFromChoice(id: string): McpServerSpec[] | undefined {
   return [server];
 }
 
-function checklistSteps(retryKeys?: string[], markRunning = false): StepState[] {
-  const selected = retryKeys ? new Set(['preflight', 'spawn', ...retryKeys]) : null;
-  let markedRunning = false;
-  return Object.entries(ONBOARD_STEP_LABELS).map(([key, label]) => ({
-    key,
-    label,
-    status: selected && !selected.has(key) ? 'skipped' : markStatus(),
-    detail: selected && !selected.has(key) ? 'not selected for retry' : undefined,
-  }));
-
-  function markStatus(): StepState['status'] {
-    if (markRunning && !markedRunning) {
-      markedRunning = true;
-      return 'running';
-    }
-    return 'pending';
-  }
-}
-
-function mergeSteps(steps: StepState[]): StepState[] {
-  const byKey = new Map(steps.map((step) => [step.key, step]));
-  return checklistSteps().map((step) => byKey.get(step.key) ?? step);
-}
-
-function statusMark(status: StepState['status']): string {
-  if (status === 'running') return '…';
-  if (status === 'ok') return '✓';
-  if (status === 'failed') return '✕';
-  if (status === 'skipped') return '-';
-  return '○';
-}

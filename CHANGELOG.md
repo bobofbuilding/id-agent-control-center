@@ -8,6 +8,18 @@ Every change pushed or merged to `main` carries its version number in the commit
 subject (`vX.Y.Z: …`), stamped automatically by the `commit-msg` hook — see
 [CONTRIBUTING.md](CONTRIBUTING.md).
 
+## [0.1.87] — 2026-06-23
+- **Add Agent is now one streamlined “Onboard agents” flow.** The inline add‑agent
+  form on the Teams page is gone; the **Onboard agents** button opens a single modal
+  that does everything:
+  - **Assign to a team** — pick an existing team or **＋ new team…** (created on the
+    first spawn). After onboarding, the app switches to that team.
+  - **Create multiple agents at once** — add as many agent rows as you want and
+    onboard the whole batch in one pass, with a per‑agent ✓/✗ result list.
+  - **Per‑agent runtime + model** — every agent picks its own inference runtime and
+    model; shared skills / MCP / heartbeat / wallet / probe apply to the batch.
+  - Reserved command words and duplicate names are caught before any spawn.
+
 ## [0.1.86] — 2026-06-23
 - **Each chat is now its own conversation — no more cross‑chat “creep.”** Every
   message a chat sends now carries that chat’s id as a conversation key, so the

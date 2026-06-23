@@ -20,6 +20,8 @@ export interface OnboardPlan {
   expertise?: string[];
   skills?: string[];
   wallet?: boolean;
+  /** Interval heartbeat in seconds (omit/0 = no heartbeat). */
+  heartbeatSeconds?: number;
   mcpServers?: McpServerSpec[];
   probeAfter?: boolean;
   /**
@@ -108,6 +110,7 @@ export async function runOnboarding(
         role: emptyToUndefined(plan.role),
         expertise: nonEmpty(plan.expertise),
         skills: nonEmpty(plan.skills),
+        heartbeatSeconds: plan.heartbeatSeconds && plan.heartbeatSeconds > 0 ? plan.heartbeatSeconds : undefined,
         wallet: plan.wallet,
       });
       agentId = res.id;
