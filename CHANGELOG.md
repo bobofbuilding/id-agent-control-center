@@ -8,6 +8,20 @@ Every change pushed or merged to `main` carries its version number in the commit
 subject (`vX.Y.Z: …`), stamped automatically by the `commit-msg` hook — see
 [CONTRIBUTING.md](CONTRIBUTING.md).
 
+## [0.1.85] — 2026-06-23
+- **Imported agents now keep their full description, not just the one‑line role.**
+  The spec parser now captures each agent’s complete description (the `Role:` line
+  **plus** the richer sentences under it), and that text is sent as the agent’s
+  **persona** — it becomes the agent’s actual operating instructions, not just a
+  peer‑discovery blurb. (Previously the importer sent neither role nor description as
+  the persona, so imported agents started with no real mandate.)
+  - The Import modal now shows an **editable description box** per agent (in addition
+    to the one‑line role), pre‑filled from the spec; “✦ Ask AI to parse” returns a
+    description too.
+  - Inline markdown (`**bold**`, `` `code` ``) is cleaned out of the persona text, and
+    the role/description length caps are now applied uniformly across the paste, AI,
+    and manual‑edit paths. *(Requires a manager that accepts `roleBody` on spawn.)*
+
 ## [0.1.84] — 2026-06-23
 - **Import a team from a pasted spec.** New **“↥ Import from spec”** button on the
   Teams page: paste a free‑form team description (e.g. a “Recommended Agent Creations

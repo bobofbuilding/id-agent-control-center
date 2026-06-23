@@ -366,12 +366,17 @@ export class ManagerClient {
    * enables an interval heartbeat; wallet provisions an OWS wallet post-create.
    */
   async spawnAgent(
-    spec: { name: string; runtime?: string; model?: string; skills?: string[]; heartbeatSeconds?: number; role?: string; expertise?: string[]; wallet?: boolean },
+    spec: { name: string; runtime?: string; model?: string; skills?: string[]; heartbeatSeconds?: number; role?: string; description?: string; expertise?: string[]; wallet?: boolean },
     signal?: AbortSignal,
   ): Promise<{ id: string; name: string; runtime?: string; port?: number }> {
     const catalog: Record<string, unknown> = {};
     if (spec.role?.trim()) catalog.role = spec.role.trim();
+    if (spec.description?.trim()) catalog.description = spec.description.trim();
     if (spec.expertise?.length) catalog.expertise = spec.expertise;
+    // The rich description becomes the agent's persona (manager writes
+    // PROTOCOL_DEFAULTS + roleBody into its personality file). Fall back to the
+    // short role so an agent still gets a one-line mandate when that's all we have.
+    const roleBody = (spec.description?.trim() || spec.role?.trim()) || undefined;
     const body: Record<string, unknown> = {
       name: spec.name,
       start: true,
@@ -379,6 +384,7 @@ export class ManagerClient {
       ...(spec.model && { model: spec.model }),
       ...(spec.skills?.length && { skills: spec.skills }),
       ...(spec.heartbeatSeconds && { heartbeat: spec.heartbeatSeconds }),
+      ...(roleBody && { roleBody }),
       ...(Object.keys(catalog).length && { metadata: { catalog } }),
     };
     const res = await this.post<{ id: string; name: string; runtime?: string; port?: number }>('/agents/spawn', body, signal);
@@ -397,7 +403,7 @@ export class ManagerClient {
    */
   async importTeam(
     team: string,
-    agents: Array<{ name: string; role?: string }>,
+    agents: Array<{ name: string; role?: string; description?: string }>,
     opts: { runtime?: string; model?: string; signal?: AbortSignal; onProgress?: (done: number, total: number, name: string) => void } = {},
   ): Promise<{ created: string[]; failed: Array<{ name: string; error: string }> }> {
     const teamClient = this.withTeam(team);
@@ -407,7 +413,7 @@ export class ManagerClient {
       const a = agents[i];
       opts.onProgress?.(i, agents.length, a.name);
       try {
-        await teamClient.spawnAgent({ name: a.name, runtime: opts.runtime, model: opts.model, role: a.role }, opts.signal);
+        await teamClient.spawnAgent({ name: a.name, runtime: opts.runtime, model: opts.model, role: a.role, description: a.description }, opts.signal);
         created.push(a.name);
       } catch (e) {
         failed.push({ name: a.name, error: e instanceof Error ? e.message : String(e) });
@@ -425,7 +431,8 @@ export class ManagerClient {
   async parseTeamSpecAI(spec: string, opts: { onTick?: (status: string) => void; signal?: AbortSignal } = {}): Promise<ParsedTeamSpec> {
     const prompt =
       'Convert this team description into JSON ONLY — no prose, no markdown fences: ' +
-      '{"team": "<slug or null>", "agents": [{"name": "<lowercase-hyphen-slug>", "role": "<one short line>"}]}. ' +
+      '{"team": "<slug or null>", "agents": [{"name": "<lowercase-hyphen-slug>", "role": "<one short line>", "description": "<full role and responsibilities, 1-4 sentences>"}]}. ' +
+      'The role is a one-line summary; the description is the agent’s complete mandate. ' +
       'Extract every agent the spec proposes; invent nothing.\n\nSPEC:\n' + spec;
     const queryId = await this.talk(prompt, 'idctl', opts.signal);
     const deadline = Date.now() + 5 * 60 * 1000;
@@ -443,14 +450,16 @@ export class ManagerClient {
     try { obj = JSON.parse(reply.slice(start, end + 1)); }
     catch { throw new ManagerError('AI parse: reply was not valid JSON'); }
     const seen = new Set<string>();
-    const agents: Array<{ name: string; role: string }> = [];
+    const agents: Array<{ name: string; role: string; description: string }> = [];
     if (Array.isArray(obj.agents)) {
       for (const a of obj.agents) {
         const o = (a && typeof a === 'object') ? a as Record<string, unknown> : {};
         const name = slugName(String(o.name ?? ''));
         if (!name || seen.has(name)) continue;
         seen.add(name);
-        agents.push({ name, role: String(o.role ?? '').replace(/\s+/g, ' ').trim().slice(0, 280) });
+        const role = String(o.role ?? '').replace(/\s+/g, ' ').trim().slice(0, 200);
+        const description = String(o.description ?? '').replace(/\s+/g, ' ').trim().slice(0, 2000) || role;
+        agents.push({ name, role, description });
       }
     }
     const team = typeof obj.team === 'string' && obj.team.trim() ? slugName(obj.team) : null;

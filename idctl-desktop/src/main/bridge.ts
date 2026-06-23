@@ -196,7 +196,7 @@ const METHODS: Record<string, (...a: any[]) => Promise<unknown>> = {
   deployTeam: (name: string) => client.deployTeam(String(name)),
   'team:delete': (name: string) => client.deleteTeam(String(name)),
   // Import a team from a pasted spec: spawn each parsed agent into a new team.
-  'team:import': (team: string, agents: Array<{ name: string; role?: string }>, opts: { runtime?: string; model?: string }) =>
+  'team:import': (team: string, agents: Array<{ name: string; role?: string; description?: string }>, opts: { runtime?: string; model?: string }) =>
     client.importTeam(String(team), agents ?? [], opts ?? {}),
   // AI-assisted parse of a free-form spec → { team, agents } (dispatches to the lead).
   'team:parseSpecAI': (spec: string) => client.parseTeamSpecAI(String(spec)),

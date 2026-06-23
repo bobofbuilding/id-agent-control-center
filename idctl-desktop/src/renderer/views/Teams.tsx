@@ -646,7 +646,7 @@ function ImportTeamModal({
 }) {
   const [spec, setSpec] = useState('');
   const [team, setTeam] = useState('');
-  const [agents, setAgents] = useState<{ name: string; role: string }[]>([]);
+  const [agents, setAgents] = useState<{ name: string; role: string; description: string }[]>([]);
   // Once the user hand-edits/removes/AI-parses the agent list, the live spec parse
   // stops overwriting it — so manual curation isn't silently discarded mid-edit.
   const [agentsDirty, setAgentsDirty] = useState(false);
@@ -686,7 +686,7 @@ function ImportTeamModal({
     setAiParsing(true); setError('');
     onMessage('asking an agent to parse the spec…');
     try {
-      const r = await call<{ team: string | null; agents: { name: string; role: string }[] }>('team:parseSpecAI', spec);
+      const r = await call<{ team: string | null; agents: { name: string; role: string; description: string }[] }>('team:parseSpecAI', spec);
       if (r?.agents?.length) { setAgents(r.agents); setAgentsDirty(true); }
       if (r?.team) setTeam((prev) => prev || r.team || '');
       onMessage(`AI parsed ${r?.agents?.length ?? 0} agent(s)`);
@@ -695,7 +695,7 @@ function ImportTeamModal({
     } finally { setAiParsing(false); }
   }
 
-  function updateAgent(i: number, field: 'name' | 'role', val: string) {
+  function updateAgent(i: number, field: 'name' | 'role' | 'description', val: string) {
     setAgentsDirty(true);
     setAgents((prev) => prev.map((a, j) => (j === i ? { ...a, [field]: val } : a)));
   }
@@ -709,7 +709,7 @@ function ImportTeamModal({
     setRunning(true); onBusy(true); setError('');
     onMessage(`importing ${agents.length} agent(s) into ${cleanTeam}…`);
     try {
-      const payload = agents.map((a) => ({ name: a.name, role: a.role || undefined }));
+      const payload = agents.map((a) => ({ name: a.name, role: a.role || undefined, description: a.description || undefined }));
       const r = await call<{ created: string[]; failed: { name: string; error: string }[] }>('team:import', cleanTeam, payload, { runtime, model: model || undefined });
       const c = r?.created?.length ?? 0;
       const f = r?.failed ?? [];
@@ -772,15 +772,25 @@ function ImportTeamModal({
                 {models.map((m) => <option key={m} value={m}>{m}</option>)}
               </select>
             </div>
-            <div className="muted small" style={{ margin: '10px 0 4px' }}>agents to create (editable)</div>
-            <div style={{ maxHeight: 200, overflowY: 'auto' }}>
+            <div className="muted small" style={{ margin: '10px 0 4px' }}>agents to create (editable) — role is a one-line summary, description becomes the agent’s instructions</div>
+            <div style={{ maxHeight: 280, overflowY: 'auto' }}>
               {agents.length === 0 ? (
                 <p className="muted small">Paste a spec above — or click “Ask AI to parse” for messy formats.</p>
               ) : agents.map((a, i) => (
-                <div key={i} className="kv" style={{ gridTemplateColumns: '150px 1fr 24px', gap: '4px 6px', marginBottom: 4, alignItems: 'center' }}>
-                  <input className="mono" style={{ fontSize: 12, ...(isReservedName(a.name) ? { borderColor: 'var(--danger, #e5484d)' } : {}) }} value={a.name} disabled={locked} title={isReservedName(a.name) ? 'reserved word — rename' : undefined} onChange={(e) => updateAgent(i, 'name', e.target.value)} onBlur={(e) => updateAgent(i, 'name', slugName(e.target.value))} />
-                  <input style={{ fontSize: 12 }} value={a.role} disabled={locked} placeholder="role" onChange={(e) => updateAgent(i, 'role', e.target.value)} />
-                  <button className="uv-x" title="Remove" disabled={locked} onClick={() => removeAgent(i)}>✕</button>
+                <div key={i} style={{ marginBottom: 8, padding: '6px 6px 8px', border: '1px solid var(--border, #2a2a2a)', borderRadius: 6 }}>
+                  <div className="kv" style={{ gridTemplateColumns: '150px 1fr 24px', gap: '4px 6px', alignItems: 'center' }}>
+                    <input className="mono" style={{ fontSize: 12, ...(isReservedName(a.name) ? { borderColor: 'var(--danger, #e5484d)' } : {}) }} value={a.name} disabled={locked} title={isReservedName(a.name) ? 'reserved word — rename' : undefined} onChange={(e) => updateAgent(i, 'name', e.target.value)} onBlur={(e) => updateAgent(i, 'name', slugName(e.target.value))} />
+                    <input style={{ fontSize: 12 }} value={a.role} disabled={locked} maxLength={200} placeholder="role (one line)" onChange={(e) => updateAgent(i, 'role', e.target.value)} />
+                    <button className="uv-x" title="Remove" disabled={locked} onClick={() => removeAgent(i)}>✕</button>
+                  </div>
+                  <textarea
+                    style={{ width: '100%', marginTop: 4, fontSize: 11, minHeight: 46, fontFamily: 'inherit', resize: 'vertical' }}
+                    value={a.description}
+                    disabled={locked}
+                    maxLength={2000}
+                    placeholder="description / persona — becomes this agent’s operating instructions"
+                    onChange={(e) => updateAgent(i, 'description', e.target.value)}
+                  />
                 </div>
               ))}
             </div>

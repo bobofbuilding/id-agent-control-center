@@ -13,6 +13,10 @@ export interface SpecAgent {
   name: string;
   /** One-line role / responsibility, used to seed the agent's catalog role. */
   role: string;
+  /** Full multi-line description (the Role: line plus any following prose),
+   *  used as the agent's persona (roleBody) and catalog description. Falls back
+   *  to `role` when the spec only gave a single line. */
+  description: string;
 }
 export interface ParsedTeamSpec {
   /** Team name parsed from the spec (e.g. "For `brain`"), or null if none found. */
@@ -89,13 +93,30 @@ export function parseTeamSpec(text: string): ParsedTeamSpec {
     const name = slugName(current.name);
     if (name && !seen.has(name)) {
       seen.add(name);
-      // Prefer a "Role: …" line; else the first non-empty continuation line.
-      const roleLine = current.roleLines.find((l) => /^\s*role\s*:/i.test(l));
-      const raw = roleLine
-        ? roleLine.replace(/^\s*role\s*:/i, '')
-        : (current.roleLines.find((l) => l.trim()) ?? '');
-      const role = raw.replace(/\s+/g, ' ').trim().slice(0, 280);
-      agents.push({ name, role });
+      // Clean continuation lines: trim, drop blanks and bare list markers.
+      const lines = current.roleLines
+        .map((l) => l.trim())
+        .filter((l) => l && !/^[-*+]\s*$/.test(l));
+      // Clean prose: strip a leading separator (dash / en–em dash / colon) left
+      // over from an inline header like "**router** — routes tasks", drop inline
+      // markdown markers (**bold**, `code`) so they don't leak into the persona,
+      // and collapse whitespace.
+      const clean = (s: string) =>
+        s
+          .replace(/^[\s:–—-]+/, '')
+          .replace(/\*\*(.+?)\*\*/g, '$1')
+          .replace(/`([^`]+)`/g, '$1')
+          .replace(/\s+/g, ' ')
+          .trim();
+      // Short role: the "Role: …" line (label stripped) if present, else line 1.
+      const roleLine = lines.find((l) => /^role\s*:/i.test(l));
+      const roleRaw = roleLine ? roleLine.replace(/^role\s*:/i, '') : (lines[0] ?? '');
+      const role = clean(roleRaw).slice(0, 200);
+      // Rich description: every continuation line joined into a paragraph, with the
+      // leading "Role:" label stripped so it reads naturally. Falls back to `role`.
+      const description =
+        clean(lines.map((l) => l.replace(/^role\s*:\s*/i, '')).join(' ')).slice(0, 2000) || role;
+      agents.push({ name, role, description });
     }
     current = null;
   };
