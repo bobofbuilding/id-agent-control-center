@@ -132,6 +132,10 @@ const METHODS: Record<string, (...a: any[]) => Promise<unknown>> = {
   'activity:get': (agent: string, since: number, team?: string, queryId?: string) =>
     client.activity(String(agent), Number(since) || 0, team ? String(team) : client.team, queryId ? String(queryId) : undefined),
   inboxPending: () => client.inboxPending(),
+  // Reply to a manager-inbox item (delivers the reply + clears it from pending).
+  'inbox:respond': (queryId: string, message: string) => client.inboxRespond(String(queryId), String(message)),
+  // Dismiss a manager-inbox item without a real answer (clears it from pending).
+  'inbox:dismiss': (queryId: string) => client.inboxRespond(String(queryId), '(dismissed via control center)'),
 
   // tasks
   tasks: () => client.tasks(),
@@ -199,12 +203,14 @@ const METHODS: Record<string, (...a: any[]) => Promise<unknown>> = {
   // Import a team from a pasted spec: spawn each parsed agent into a new team.
   'team:import': (team: string, agents: Array<{ name: string; role?: string; description?: string }>, opts: { runtime?: string; model?: string }) =>
     client.importTeam(String(team), agents ?? [], opts ?? {}),
-  // AI-assisted parse of a free-form spec → { team, agents } (dispatches to the lead).
-  'team:parseSpecAI': (spec: string) => client.parseTeamSpecAI(String(spec)),
+  // AI-assisted parse of a free-form spec → { team, agents }. Dispatches to the
+  // team's designated coordinator (★) when set, else any running agent.
+  'team:parseSpecAI': (spec: string) =>
+    client.parseTeamSpecAI(String(spec), { agent: getCoordinator(client.team ?? 'default') ?? undefined }),
   // AI-assisted FULL team design → { team, agents[] } with per-agent runtime/model/skills/lead.
   // The renderer passes its available runtimes/models/skills so the model picks valid choices.
   'team:designAI': (spec: string, ctx?: { runtimes?: string[]; models?: Record<string, string[]>; skills?: string[] }) =>
-    client.designTeamAI(String(spec), ctx ?? {}),
+    client.designTeamAI(String(spec), { ...(ctx ?? {}), agent: getCoordinator(client.team ?? 'default') ?? undefined }),
 
   // team relay (cross-team delegation allow-list) + per-agent override
   teamConfig: (name: string) => client.teamConfig(String(name)),

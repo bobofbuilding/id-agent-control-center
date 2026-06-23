@@ -31,6 +31,17 @@ subject (`vX.Y.Z: …`), stamped automatically by the `commit-msg` hook — see
     rebuild calls are team‑scoped so wiring a brand‑new team works even when it isn’t
     the active one.
 
+## [0.1.88] — 2026-06-23
+- **The Inbox is interactive — reply to or dismiss what’s waiting.** Each item now
+  has an inline reply box (⌘/Ctrl+Enter to send) and a **Dismiss** button; both
+  clear the item from the manager’s pending queue. Previously the Inbox was
+  read‑only, so anything parked there was stuck.
+- **AI Team Builder / “Ask AI to parse” no longer clog your Inbox.** They were
+  sending the design/parse prompt to the manager’s human inbox (awaiting *you*),
+  so they never auto‑answered. They now dispatch to a team **agent** via `/ask` and
+  read its reply directly — nothing lands in your Inbox. If no agent is running,
+  you get a clear “onboard an agent first” message instead of a silent park.
+
 ## [0.1.87] — 2026-06-23
 - **Add Agent is now one streamlined “Onboard agents” flow.** The inline add‑agent
   form on the Teams page is gone; the **Onboard agents** button opens a single modal

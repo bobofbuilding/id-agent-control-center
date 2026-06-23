@@ -45,6 +45,48 @@ export interface DesignedTeam {
   agents: DesignedAgent[];
 }
 
+/**
+ * Sanitize a raw, AI-produced team object into a trustworthy {@link DesignedTeam}:
+ * slug names + dedupe, clamp role/description length, DROP any runtime/model/skill
+ * the caller didn't offer (the model can hallucinate), and guarantee exactly one
+ * lead (default to the first agent if none was flagged). Pure + side-effect free so
+ * it is unit-testable without a live manager — {@link ManagerClient.designTeamAI}
+ * calls it on the model's reply.
+ */
+export function sanitizeDesignedTeam(
+  obj: { team?: unknown; agents?: unknown },
+  opts: { runtimes?: string[]; models?: Record<string, string[]>; skills?: string[] } = {},
+): DesignedTeam {
+  const runtimeSet = new Set((opts.runtimes ?? []).filter(Boolean));
+  const skillSet = new Set((opts.skills ?? []).filter(Boolean));
+  const seen = new Set<string>();
+  const agents: DesignedAgent[] = [];
+  let leadAssigned = false;
+  if (Array.isArray(obj.agents)) {
+    for (const a of obj.agents) {
+      const o = (a && typeof a === 'object') ? a as Record<string, unknown> : {};
+      const name = slugName(String(o.name ?? ''));
+      if (!name || seen.has(name)) continue;
+      seen.add(name);
+      const role = String(o.role ?? '').replace(/\s+/g, ' ').trim().slice(0, 200);
+      const description = String(o.description ?? '').replace(/\s+/g, ' ').trim().slice(0, 2000) || role;
+      const runtime = runtimeSet.has(String(o.runtime ?? '')) ? String(o.runtime) : undefined;
+      const modelList = runtime ? (opts.models?.[runtime] ?? []) : [];
+      const model = modelList.includes(String(o.model ?? '')) ? String(o.model) : undefined;
+      const agentSkills = Array.isArray(o.skills)
+        ? [...new Set((o.skills as unknown[]).map((s) => String(s)).filter((s) => skillSet.has(s)))]
+        : undefined;
+      const lead = !leadAssigned && o.lead === true;
+      if (lead) leadAssigned = true;
+      agents.push({ name, role, description, runtime, model, skills: agentSkills, lead });
+    }
+  }
+  // Guarantee exactly one lead — default to the first agent if the AI named none.
+  if (!leadAssigned && agents.length) agents[0].lead = true;
+  const team = typeof obj.team === 'string' && obj.team.trim() ? slugName(obj.team) : null;
+  return { team, agents };
+}
+
 export class NetworkError extends Error {
   constructor(message: string) {
     super(message);
@@ -445,26 +487,40 @@ export class ManagerClient {
   }
 
   /**
-   * AI-assisted parse: dispatch the raw spec to the current team's lead and ask for
-   * a strict JSON {team, agents:[{name,role}]} plan — for messy free-form input the
-   * deterministic parser can't handle. Names are re-slugged client-side. Needs a
-   * running agent; throws on failure so the caller can fall back to the parser.
+   * Resolve an agent to handle a meta-task (AI team design / spec parse). These are
+   * one-shot LLM calls that don't need to belong to the target team — any running
+   * agent works. Prefer a lead/coordinator-named one; fall back to any running agent
+   * in the current team. Returns undefined when there's none to ask.
    */
-  async parseTeamSpecAI(spec: string, opts: { onTick?: (status: string) => void; signal?: AbortSignal } = {}): Promise<ParsedTeamSpec> {
+  private async resolveHelperAgent(preferred?: string): Promise<string | undefined> {
+    const agents = await this.agents().catch(() => []);
+    // Liveness check mirrors the Health view's isUp() (status OR health).
+    const running = agents.filter((a) => /running|online|ready|healthy/i.test(`${a.status ?? ''} ${a.health ?? ''}`) || !a.status);
+    const pool = running.length ? running : agents;
+    if (preferred) { const p = pool.find((a) => a.name === preferred); if (p) return p.name; }
+    // A lead/coordinator-shaped name (also matches team-lead, eng-manager, …).
+    const lead = pool.find((a) => /(^|[-_])(lead|coordinator|manager|orchestrator)([-_]|$)/i.test(a.name));
+    return (lead ?? pool[0])?.name;
+  }
+
+  /**
+   * AI-assisted parse: dispatch the raw spec to a team agent and ask for a strict
+   * JSON {team, agents:[…]} plan — for messy free-form input the deterministic parser
+   * can't handle. Dispatches via /ask (an AGENT), NOT /talk (which parks the prompt
+   * in the human manager inbox). Names are re-slugged client-side; throws on failure
+   * so the caller can fall back to the parser.
+   */
+  async parseTeamSpecAI(spec: string, opts: { onTick?: (status: string) => void; signal?: AbortSignal; agent?: string } = {}): Promise<ParsedTeamSpec> {
     const prompt =
       'Convert this team description into JSON ONLY — no prose, no markdown fences: ' +
       '{"team": "<slug or null>", "agents": [{"name": "<lowercase-hyphen-slug>", "role": "<one short line>", "description": "<full role and responsibilities, 1-4 sentences>"}]}. ' +
       'The role is a one-line summary; the description is the agent’s complete mandate. ' +
       'Extract every agent the spec proposes; invent nothing.\n\nSPEC:\n' + spec;
-    const queryId = await this.talk(prompt, 'idctl', opts.signal);
-    const deadline = Date.now() + 5 * 60 * 1000;
-    let reply = '';
-    while (Date.now() < deadline) {
-      const q = await this.query(queryId, this.cfg.waitSeconds, opts.signal);
-      opts.onTick?.(q.status);
-      if (q.status === 'delivered') { reply = extractText(q.result) ?? ''; break; }
-      if (q.status === 'failed' || q.status === 'expired' || q.status === 'cancelled') throw new ManagerError(q.error || `spec parse ${q.status}`);
-    }
+    const agent = await this.resolveHelperAgent(opts.agent);
+    if (!agent) throw new ManagerError('No running agent is available to parse the spec. Onboard an agent first, or use the deterministic parse and edit the rows by hand.');
+    // /ask dispatches to an AGENT and polls for its reply (NOT /talk, which parks
+    // the prompt in the human manager inbox awaiting a person).
+    const reply = await this.dispatch(`/ask ${agent} ${qArg(prompt)}`, { onTick: opts.onTick, signal: opts.signal });
     const start = reply.indexOf('{');
     const end = reply.lastIndexOf('}');
     if (start < 0 || end <= start) throw new ManagerError('AI parse: no JSON object in the reply');
@@ -503,6 +559,7 @@ export class ManagerClient {
       skills?: string[];
       onTick?: (status: string) => void;
       signal?: AbortSignal;
+      agent?: string;
     } = {},
   ): Promise<DesignedTeam> {
     const runtimes = (opts.runtimes ?? []).filter(Boolean);
@@ -523,49 +580,18 @@ export class ManagerClient {
       (modelLines || '  (none)') + '\n' +
       'Choose skills ONLY from this library (or none): ' + (skills.join(', ') || '(none)') + '. ' +
       'Mark exactly one agent as the lead (the coordinator).\n\nDESCRIPTION:\n' + spec;
-    const queryId = await this.talk(prompt, 'idctl', opts.signal);
-    const deadline = Date.now() + 5 * 60 * 1000;
-    let reply = '';
-    while (Date.now() < deadline) {
-      const q = await this.query(queryId, this.cfg.waitSeconds, opts.signal);
-      opts.onTick?.(q.status);
-      if (q.status === 'delivered') { reply = extractText(q.result) ?? ''; break; }
-      if (q.status === 'failed' || q.status === 'expired' || q.status === 'cancelled') throw new ManagerError(q.error || `team design ${q.status}`);
-    }
+    const agent = await this.resolveHelperAgent(opts.agent);
+    if (!agent) throw new ManagerError('No running agent is available to design the team. Onboard at least one agent first, or fill the team in by hand.');
+    // /ask dispatches to an AGENT and polls for its reply (NOT /talk, which parks
+    // the prompt in the human manager inbox awaiting a person).
+    const reply = await this.dispatch(`/ask ${agent} ${qArg(prompt)}`, { onTick: opts.onTick, signal: opts.signal });
     const start = reply.indexOf('{');
     const end = reply.lastIndexOf('}');
     if (start < 0 || end <= start) throw new ManagerError('AI design: no JSON object in the reply');
     let obj: { team?: unknown; agents?: unknown };
     try { obj = JSON.parse(reply.slice(start, end + 1)); }
     catch { throw new ManagerError('AI design: reply was not valid JSON'); }
-    const runtimeSet = new Set(runtimes);
-    const skillSet = new Set(skills);
-    const seen = new Set<string>();
-    const agents: DesignedAgent[] = [];
-    let leadAssigned = false;
-    if (Array.isArray(obj.agents)) {
-      for (const a of obj.agents) {
-        const o = (a && typeof a === 'object') ? a as Record<string, unknown> : {};
-        const name = slugName(String(o.name ?? ''));
-        if (!name || seen.has(name)) continue;
-        seen.add(name);
-        const role = String(o.role ?? '').replace(/\s+/g, ' ').trim().slice(0, 200);
-        const description = String(o.description ?? '').replace(/\s+/g, ' ').trim().slice(0, 2000) || role;
-        const runtime = runtimeSet.has(String(o.runtime ?? '')) ? String(o.runtime) : undefined;
-        const modelList = runtime ? (opts.models?.[runtime] ?? []) : [];
-        const model = modelList.includes(String(o.model ?? '')) ? String(o.model) : undefined;
-        const agentSkills = Array.isArray(o.skills)
-          ? [...new Set((o.skills as unknown[]).map((s) => String(s)).filter((s) => skillSet.has(s)))]
-          : undefined;
-        const lead = !leadAssigned && o.lead === true;
-        if (lead) leadAssigned = true;
-        agents.push({ name, role, description, runtime, model, skills: agentSkills, lead });
-      }
-    }
-    // Guarantee exactly one lead — default to the first agent if the AI named none.
-    if (!leadAssigned && agents.length) agents[0].lead = true;
-    const team = typeof obj.team === 'string' && obj.team.trim() ? slugName(obj.team) : null;
-    return { team, agents };
+    return sanitizeDesignedTeam(obj, { runtimes, models: opts.models, skills });
   }
 
   // ---- Team relay (cross-team delegation allow-list) --------------------
