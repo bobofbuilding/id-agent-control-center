@@ -232,9 +232,14 @@ export class ManagerClient {
     }
   }
 
-  /** Raw POST /remote. Returns the envelope; caller inspects `result`. */
-  async remote<T = unknown>(command: string, agent?: string, signal?: AbortSignal): Promise<RemoteEnvelope<T>> {
-    const env = await this.post<RemoteEnvelope<T>>('/remote', agent ? { agent, command } : { command }, signal);
+  /** Raw POST /remote. Returns the envelope; caller inspects `result`.
+   *  `sessionId` (optional) is forwarded to the agent as the conversation id so a
+   *  multi-turn chat resumes only its own context (no cross-chat creep). */
+  async remote<T = unknown>(command: string, agent?: string, signal?: AbortSignal, sessionId?: string): Promise<RemoteEnvelope<T>> {
+    const body: Record<string, unknown> = { command };
+    if (agent) body.agent = agent;
+    if (sessionId) body.session_id = sessionId;
+    const env = await this.post<RemoteEnvelope<T>>('/remote', body, signal);
     if (!env.ok) throw new ManagerError(env.error ?? 'manager rejected command');
     return env;
   }

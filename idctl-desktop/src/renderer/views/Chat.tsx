@@ -432,12 +432,13 @@ export function Chat({ store }: { store: FleetStore }) {
   const TRANSIENT = /fetch failed|failed to fetch|ECONNREFUSED|ECONNRESET|socket hang up|network|ENOTFOUND|EAI_AGAIN|terminated|other side closed|\b50[234]\b|agent failed|not running|unavailable|\bstarting\b|rebuild/i;
   /** Start a dispatch (POST /remote) with auto-retry for TRANSIENT failures.
    *  Returns a queryId to poll (or an inline reply for manager-local commands). */
-  async function startDispatchWithRetry(cmd: string, replyId: number): Promise<{ queryId?: string; inline?: string }> {
+  async function startDispatchWithRetry(cmd: string, replyId: number, convId: string): Promise<{ queryId?: string; inline?: string }> {
     const MAX = 3;
     let lastErr = '';
     for (let attempt = 1; attempt <= MAX; attempt++) {
       try {
-        return await call<{ queryId?: string; inline?: string }>('dispatch:start', cmd);
+        // convId (this chat's session id) isolates the agent conversation per chat.
+        return await call<{ queryId?: string; inline?: string }>('dispatch:start', cmd, convId);
       } catch (e) {
         lastErr = e instanceof Error ? e.message : String(e);
         if (attempt < MAX && TRANSIENT.test(lastErr)) {
@@ -569,7 +570,7 @@ export function Chat({ store }: { store: FleetStore }) {
   async function beginDispatch(sid: string, replyId: number, target: string, message: string, planCtx: { planRequest: boolean; planText: string }) {
     let start: { queryId?: string; inline?: string };
     try {
-      start = await startDispatchWithRetry(`/ask ${target} ${qArg(message)}`, replyId);
+      start = await startDispatchWithRetry(`/ask ${target} ${qArg(message)}`, replyId, sid);
     } catch (err) {
       const raw = err instanceof Error ? err.message : String(err);
       const friendly = TRANSIENT.test(raw)

@@ -8,6 +8,15 @@ Every change pushed or merged to `main` carries its version number in the commit
 subject (`vX.Y.Z: …`), stamped automatically by the `commit-msg` hook — see
 [CONTRIBUTING.md](CONTRIBUTING.md).
 
+## [0.1.86] — 2026-06-23
+- **Each chat is now its own conversation — no more cross‑chat “creep.”** Every
+  message a chat sends now carries that chat’s id as a conversation key, so the
+  agent resumes only *that* chat’s thread instead of whatever it last worked on.
+  Previously all chats to the same agent shared one rolling context, so a reply in
+  one chat could continue an unrelated task from another. *(Requires a manager +
+  agents that thread the conversation id and resume per chat; without them the id
+  is simply ignored and behavior is unchanged.)*
+
 ## [0.1.85] — 2026-06-23
 - **Imported agents now keep their full description, not just the one‑line role.**
   The spec parser now captures each agent’s complete description (the `Role:` line

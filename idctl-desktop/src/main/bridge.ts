@@ -143,8 +143,9 @@ const METHODS: Record<string, (...a: any[]) => Promise<unknown>> = {
   // Resumable dispatch: START returns a queryId (or an inline reply for
   // manager-local commands); POLL checks that query. The renderer owns the loop
   // so an in-flight reply survives navigation, long tasks, and app restarts.
-  'dispatch:start': async (command: string) => {
-    const env = await client.remote<{ queryId?: string; status?: string; result?: string; message?: string }>(String(command));
+  'dispatch:start': async (command: string, sessionId?: string) => {
+    // sessionId = the desktop chat id → agent conversation key (isolates each chat).
+    const env = await client.remote<{ queryId?: string; status?: string; result?: string; message?: string }>(String(command), undefined, undefined, sessionId ? String(sessionId) : undefined);
     const r = env.result as any;
     const queryId = r?.queryId;
     if (queryId) return { queryId: String(queryId) };
