@@ -27,9 +27,11 @@ export type RuntimeCapability = 'mcp' | 'plugins' | 'skills';
  * Which runtimes can actually USE each capability.
  *
  * MCP — hard runtime feature: the Claude runtimes embed the SDK/CLI MCP client,
- * and codex received `-c mcp_servers.*` config injection (2026-06). ollama has no
- * tool-calling loop yet (docs/LOCAL_MODEL_TOOL_CALLING_PLAN.md); cursor-cli and
- * the remote runtime don't consume our McpServerSpec either.
+ * codex received `-c mcp_servers.*` config injection (2026-06), and ollama now
+ * ships the agentic tool-calling loop (id-agents OllamaHarness.runWithTools +
+ * McpToolHub) so local models with tool support can call MCP tools. A non-tool
+ * ollama model degrades gracefully to plain text. cursor-cli and the remote
+ * runtime still don't consume our McpServerSpec.
  *
  * skills — the manager deploys SKILL.md files to a runtime-aware dir for every
  * LOCAL runtime (`.claude/skills`, `.agents/skills` for codex/ollama,
@@ -39,14 +41,14 @@ export type RuntimeCapability = 'mcp' | 'plugins' | 'skills';
  * plugins — Claude Code plugin bundles; only the Claude-family runtimes load them.
  */
 const RUNTIME_CAPABILITIES: Record<RuntimeCapability, string[]> = {
-  mcp: ['claude-agent-sdk', 'claude-code-cli', 'claude-code-local', 'codex'],
+  mcp: ['claude-agent-sdk', 'claude-code-cli', 'claude-code-local', 'codex', 'ollama'],
   skills: ['claude-agent-sdk', 'claude-code-cli', 'claude-code-local', 'codex', 'cursor-cli', 'ollama'],
   plugins: ['claude-agent-sdk', 'claude-code-cli', 'claude-code-local'],
 };
 
 /** Short, user-facing reason a runtime can't use a capability (for tooltips). */
 const CAPABILITY_DENY_REASON: Record<RuntimeCapability, string> = {
-  mcp: 'This runtime has no MCP client. Claude and Codex runtimes can use MCP servers; local models gain MCP once the tool-calling loop ships.',
+  mcp: 'This runtime has no MCP client. Claude, Codex, and Ollama (local models with tool support) can use MCP servers — this runtime cannot.',
   skills: 'Skills deploy into a local agent workspace — a remote-endpoint runtime has none.',
   plugins: 'Plugins load only on the Claude-family runtimes (Claude Code plugin bundles).',
 };

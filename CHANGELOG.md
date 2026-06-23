@@ -8,6 +8,15 @@ Every change pushed or merged to `main` carries its version number in the commit
 subject (`vX.Y.Z: …`), stamped automatically by the `commit-msg` hook — see
 [CONTRIBUTING.md](CONTRIBUTING.md).
 
+## [0.1.83] — 2026-06-23
+- **Local models (Ollama) can now use MCP servers.** Previously MCP attach was
+  Claude/Codex‑only — local models had no way to call MCP tools. The manager now
+  runs an agentic tool‑calling loop for Ollama (connect attached MCP servers →
+  expose their tools → call/observe/continue), so a tool‑capable local model (qwen3,
+  qwen2.5, llama3.1+, etc.) can actually use them. The control center now offers
+  **Attach MCP** for Ollama agents; a model without tool support degrades gracefully
+  to plain text. *(Requires a manager that includes the Ollama tool loop.)*
+
 ## [0.1.82] — 2026-06-23
 - **Reassign an agent to another team.** Each agent in Teams now has a *“reassign
   to…”* picker — pick a team and the agent moves there (the manager rebuilds it
