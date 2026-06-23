@@ -358,6 +358,21 @@ button.chip.incompat:hover { border-color: var(--line); }
 }
 .modal-title { font-size: 13px; font-weight: 600; margin-bottom: 12px; }
 .modal .composer-input { width: 100%; }
+.onboard-modal { width: 760px; max-height: 86vh; overflow: auto; }
+.onboard-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px 14px; }
+.onboard-grid label { display: flex; flex-direction: column; gap: 5px; color: var(--muted); font-size: 12px; }
+.onboard-grid label.wide { grid-column: 1 / -1; }
+.onboard-grid label.checkline { flex-direction: row; align-items: center; color: var(--text); padding-top: 22px; }
+.onboard-grid input:not([type="checkbox"]), .onboard-grid select { width: 100%; }
+.onboard-checklist { margin-top: 16px; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
+.onboard-step { display: grid; grid-template-columns: 26px minmax(150px, 1fr) minmax(0, 1.2fr); gap: 8px; align-items: center; padding: 8px 10px; border-top: 1px solid var(--line); }
+.onboard-step:first-child { border-top: 0; }
+.step-dot { display: inline-flex; align-items: center; justify-content: center; width: 18px; height: 18px; border-radius: 50%; border: 1px solid var(--line); color: var(--muted); font-size: 11px; }
+.step-dot.running { color: var(--warn); border-color: var(--warn); }
+.step-dot.ok { color: var(--ok); border-color: var(--ok); }
+.step-dot.failed { color: var(--err); border-color: var(--err); }
+.step-dot.skipped { color: var(--muted); }
+.step-label { font-weight: 600; }
 
 /* Status bar */
 .statusbar {

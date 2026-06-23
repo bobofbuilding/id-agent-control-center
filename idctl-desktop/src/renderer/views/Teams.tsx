@@ -1,11 +1,13 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { call, agentsLeadFirst, resolveCoordinator, type FleetStore } from '../store.ts';
 import { usePrompt } from '../components/prompt.tsx';
 import { offerableRuntimes } from '../../../../idctl/src/settings/runtimeCatalog.ts';
 import type { AgentAccount } from '../../../../idctl/src/keys/types.ts';
+import type { LibrarySkillEntry, McpServerSpec } from '../../../../idctl/src/api/client.ts';
+import type { OnboardPlan, OnboardResult, StepState } from '../../../../idctl/src/api/onboard.ts';
+import { MCP_CATALOG, buildFromCatalog } from '../../../../idctl/src/settings/mcpCatalog.ts';
 
 type ProviderRow = { kind: string; enabled?: boolean; keySource?: string; lastSync?: { status?: string } };
-import type { LibrarySkillEntry } from '../../../../idctl/src/api/client.ts';
 
 type RelayMode = 'permissive' | 'all' | 'select' | 'none';
 
@@ -16,6 +18,14 @@ const HB_INTERVALS = [
   { label: '6 hours', s: 21600 },
   { label: '24 hours', s: 86400 },
 ];
+const ONBOARD_STEP_LABELS: Record<string, string> = {
+  preflight: 'Validate name + team',
+  spawn: 'Spawn agent',
+  mcp: 'Attach MCP servers',
+  rebuild: 'Rebuild to apply MCP',
+  probe: 'Health probe',
+};
+
 function runtimeLabel(r: string): string {
   return r.replace('claude-code-', 'claude-').replace('claude-agent-sdk', 'claude-sdk').replace('-cli', '');
 }
@@ -175,6 +185,7 @@ export function Teams({ store }: { store: FleetStore }) {
   const [skillCatalog, setSkillCatalog] = useState<string[]>([]);
   const [providers, setProviders] = useState<ProviderRow[]>([]);
   const [adding, setAdding] = useState(false);
+  const [onboardOpen, setOnboardOpen] = useState(false);
 
   useEffect(() => {
     call<Record<string, string[]>>('runtime:models').then(setModelCatalog).catch(() => setModelCatalog({}));
@@ -343,7 +354,12 @@ export function Teams({ store }: { store: FleetStore }) {
       </section>
 
       <section className="card">
-        <h3>Add agent — {activeTeam}</h3>
+        <div className="row-actions" style={{ justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
+          <h3 style={{ margin: 0 }}>Add agent — {activeTeam}</h3>
+          <button className="btn primary" disabled={adding} onClick={() => setOnboardOpen(true)}>
+            Onboard agent
+          </button>
+        </div>
         <p className="muted small" style={{ marginTop: -4 }}>
           Create and start a new agent in <b>{activeTeam}</b>. Only a name is required; everything else has sensible defaults.
         </p>
@@ -412,6 +428,17 @@ export function Teams({ store }: { store: FleetStore }) {
           </button>
         </div>
       </section>
+
+      {onboardOpen ? (
+        <OnboardWizard
+          team={activeTeam}
+          providers={providers}
+          modelCatalog={modelCatalog}
+          skillCatalog={skillCatalog}
+          onClose={() => setOnboardOpen(false)}
+          onDone={() => store.refresh()}
+        />
+      ) : null}
 
       <section className="card">
         <h3>Cross-team relay — {activeTeam}</h3>
@@ -608,4 +635,247 @@ export function Teams({ store }: { store: FleetStore }) {
       {msg ? <p className="muted">{msg}</p> : null}
     </div>
   );
+}
+
+function OnboardWizard({
+  team,
+  providers,
+  modelCatalog,
+  skillCatalog,
+  onClose,
+  onDone,
+}: {
+  team: string;
+  providers: ProviderRow[];
+  modelCatalog: Record<string, string[]>;
+  skillCatalog: string[];
+  onClose: () => void;
+  onDone: () => void;
+}) {
+  const runtimes = useMemo(() => offerableRuntimes(providers), [providers]);
+  const initialRuntime = runtimes[0] ?? 'claude-code-cli';
+  const [form, setForm] = useState({
+    name: '',
+    runtime: initialRuntime,
+    model: '',
+    role: '',
+    expertise: '',
+    mcp: '',
+    wallet: false,
+    probeAfter: true,
+  });
+  const [skills, setSkills] = useState<string[]>([]);
+  const [steps, setSteps] = useState<StepState[]>(checklistSteps());
+  const [result, setResult] = useState<OnboardResult | null>(null);
+  const [running, setRunning] = useState(false);
+  const [error, setError] = useState('');
+
+  useEffect(() => {
+    setForm((p) => (p.runtime === initialRuntime ? p : { ...p, runtime: initialRuntime, model: '' }));
+  }, [initialRuntime]);
+
+  const models = modelCatalog[form.runtime] ?? [];
+  const mcpChoices = MCP_CATALOG.filter((entry) => !(entry.inputs ?? []).some((input) => input.required && !input.default));
+  const failedKeys = result?.steps.filter((s) => s.status === 'failed').map((s) => s.key) ?? [];
+  const canRetry = failedKeys.length > 0 && Boolean(result?.agentId);
+
+  function toggleSkill(name: string) {
+    setSkills((s) => (s.includes(name) ? s.filter((x) => x !== name) : [...s, name]));
+  }
+
+  function buildPlan(retryKeys?: string[]): OnboardPlan {
+    const name = cleanAgentName(form.name);
+    const retry = retryKeys && result?.agentId ? { agentId: result.agentId, stepKeys: retryKeys } : undefined;
+    return {
+      name,
+      team,
+      runtime: form.runtime || undefined,
+      model: form.model || undefined,
+      role: form.role.trim() || undefined,
+      expertise: splitList(form.expertise),
+      skills,
+      wallet: form.wallet,
+      mcpServers: mcpFromChoice(form.mcp),
+      probeAfter: form.probeAfter,
+      retry,
+    };
+  }
+
+  async function run(retryKeys?: string[]) {
+    const plan = buildPlan(retryKeys);
+    if (!plan.name) {
+      setError('Agent name is required.');
+      return;
+    }
+    setRunning(true);
+    setError('');
+    setResult(null);
+    setSteps(checklistSteps(retryKeys, true));
+    try {
+      const res = await call<OnboardResult>('onboard:run', plan);
+      setResult(res);
+      setSteps(mergeSteps(res.steps));
+      onDone();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setRunning(false);
+    }
+  }
+
+  return (
+    <div className="modal-overlay" onMouseDown={() => (running ? undefined : onClose())}>
+      <div className="modal onboard-modal" onMouseDown={(e) => e.stopPropagation()}>
+        <div className="modal-title">Onboard agent — {team}</div>
+        <div className="onboard-grid">
+          <label>
+            <span>name</span>
+            <input
+              autoFocus
+              placeholder="lowercase, e.g. analyst"
+              value={form.name}
+              disabled={running}
+              onChange={(e) => setForm((p) => ({ ...p, name: e.target.value }))}
+            />
+          </label>
+          <label>
+            <span>runtime</span>
+            <select className="cell-select" disabled={running} value={form.runtime} onChange={(e) => setForm((p) => ({ ...p, runtime: e.target.value, model: '' }))}>
+              {runtimes.map((r) => (
+                <option key={r} value={r}>{runtimeLabel(r)}</option>
+              ))}
+            </select>
+          </label>
+          <label>
+            <span>model</span>
+            <select className="cell-select" disabled={running} value={form.model} onChange={(e) => setForm((p) => ({ ...p, model: e.target.value }))}>
+              <option value="">(default)</option>
+              {models.map((m) => (
+                <option key={m} value={m}>{m}</option>
+              ))}
+            </select>
+          </label>
+          <label>
+            <span>role</span>
+            <input placeholder="auditor, builder, researcher" value={form.role} disabled={running} onChange={(e) => setForm((p) => ({ ...p, role: e.target.value }))} />
+          </label>
+          <label className="wide">
+            <span>expertise</span>
+            <input placeholder="comma-separated" value={form.expertise} disabled={running} onChange={(e) => setForm((p) => ({ ...p, expertise: e.target.value }))} />
+          </label>
+          <label className="wide">
+            <span>skills</span>
+            <span className="chips">
+              {skillCatalog.length === 0 ? (
+                <span className="muted small">no library skills</span>
+              ) : (
+                skillCatalog.map((s) => {
+                  const on = skills.includes(s);
+                  return (
+                    <button key={s} className={`chip${on ? ' on' : ''}`} disabled={running} onClick={() => toggleSkill(s)}>
+                      {on ? '✓ ' : ''}{s}
+                    </button>
+                  );
+                })
+              )}
+            </span>
+          </label>
+          <label>
+            <span>MCP</span>
+            <select className="cell-select" disabled={running} value={form.mcp} onChange={(e) => setForm((p) => ({ ...p, mcp: e.target.value }))}>
+              <option value="">none</option>
+              {mcpChoices.map((entry) => (
+                <option key={entry.id} value={entry.id}>{entry.name}</option>
+              ))}
+            </select>
+          </label>
+          <label className="checkline">
+            <input type="checkbox" checked={form.wallet} disabled={running} onChange={(e) => setForm((p) => ({ ...p, wallet: e.target.checked }))} />
+            <span>provision OWS wallet</span>
+          </label>
+          <label className="checkline">
+            <input type="checkbox" checked={form.probeAfter} disabled={running} onChange={(e) => setForm((p) => ({ ...p, probeAfter: e.target.checked }))} />
+            <span>probe after onboarding</span>
+          </label>
+        </div>
+        <div className="onboard-checklist">
+          {steps.map((step) => (
+            <div key={step.key} className="onboard-step">
+              <span className={`step-dot ${step.status}`}>{statusMark(step.status)}</span>
+              <span className="step-label">{step.label}</span>
+              {step.detail ? <span className="muted small">{step.detail}</span> : null}
+              {step.error ? <span className="status-error small">{step.error}</span> : null}
+            </div>
+          ))}
+        </div>
+        {error ? <p className="status-error small">{error}</p> : null}
+        {result ? (
+          <p className={result.ok ? 'ok-text small' : 'warn-text small'}>
+            {result.ok ? `Onboarded ${result.name}.` : 'Onboarding finished with failed steps.'}
+          </p>
+        ) : null}
+        <div className="row-actions" style={{ marginTop: 14 }}>
+          <button className="btn" disabled={running} onClick={onClose}>Close</button>
+          {canRetry ? (
+            <button className="btn" disabled={running} onClick={() => void run(failedKeys)}>
+              Retry failed steps
+            </button>
+          ) : null}
+          <button className="btn primary" disabled={running || !form.name.trim()} onClick={() => void run()}>
+            {running ? 'Running…' : 'Run onboarding'}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function cleanAgentName(name: string): string {
+  return name.trim().toLowerCase().replace(/\s+/g, '-');
+}
+
+function splitList(value: string): string[] | undefined {
+  const items = value.split(',').map((item) => item.trim()).filter(Boolean);
+  return items.length ? items : undefined;
+}
+
+function mcpFromChoice(id: string): McpServerSpec[] | undefined {
+  if (!id) return undefined;
+  const entry = MCP_CATALOG.find((item) => item.id === id);
+  if (!entry || entry.inputs?.some((input) => input.required && !input.default)) return undefined;
+  const profile = buildFromCatalog(entry, entry.id, {});
+  const { enabled: _enabled, ...server } = profile;
+  return [server];
+}
+
+function checklistSteps(retryKeys?: string[], markRunning = false): StepState[] {
+  const selected = retryKeys ? new Set(['preflight', 'spawn', ...retryKeys]) : null;
+  let markedRunning = false;
+  return Object.entries(ONBOARD_STEP_LABELS).map(([key, label]) => ({
+    key,
+    label,
+    status: selected && !selected.has(key) ? 'skipped' : markStatus(),
+    detail: selected && !selected.has(key) ? 'not selected for retry' : undefined,
+  }));
+
+  function markStatus(): StepState['status'] {
+    if (markRunning && !markedRunning) {
+      markedRunning = true;
+      return 'running';
+    }
+    return 'pending';
+  }
+}
+
+function mergeSteps(steps: StepState[]): StepState[] {
+  const byKey = new Map(steps.map((step) => [step.key, step]));
+  return checklistSteps().map((step) => byKey.get(step.key) ?? step);
+}
+
+function statusMark(status: StepState['status']): string {
+  if (status === 'running') return '…';
+  if (status === 'ok') return '✓';
+  if (status === 'failed') return '✕';
+  if (status === 'skipped') return '-';
+  return '○';
 }

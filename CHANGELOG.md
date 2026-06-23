@@ -8,6 +8,11 @@ Every change pushed or merged to `main` carries its version number in the commit
 subject (`vX.Y.Z: …`), stamped automatically by the `commit-msg` hook — see
 [CONTRIBUTING.md](CONTRIBUTING.md).
 
+## [0.1.76] — 2026-06-23
+- **Desktop Teams now has a real agent onboarding wizard.** The new flow reuses
+  shared onboarding logic for preflight, spawn, MCP attach, rebuild, and health
+  probe steps, with a checklist and retry support for failed post-spawn steps.
+
 ## [0.1.75] — 2026-06-23
 - **Teams now shows each agent’s onchain identity inline.** Per-agent rows display
   the ID-chain domain, OWS wallet, and Safe account status, with one-click

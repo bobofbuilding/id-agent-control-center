@@ -6,6 +6,7 @@
  */
 
 import { ManagerClient } from '../../../idctl/src/api/client.ts';
+import { runOnboarding, type OnboardPlan } from '../../../idctl/src/api/onboard.ts';
 import { loadConfig, type Config } from '../../../idctl/src/config.ts';
 import { getKeyProvider } from '../../../idctl/src/keys/mockProvider.ts';
 import { SCOPE_PRESETS, TTL_PRESETS } from '../../../idctl/src/keys/types.ts';
@@ -208,6 +209,7 @@ const METHODS: Record<string, (...a: any[]) => Promise<unknown>> = {
   spawnAgent: (spec: Parameters<ManagerClient['spawnAgent']>[0]) => client.spawnAgent(spec),
   'identity:register': (agent: string) => client.remote(`/register ${String(agent)}`),
   'wallet:provision': (agent: string) => client.remote(`/agent ${String(agent)} wallet provision`),
+  'onboard:run': (plan: OnboardPlan) => runOnboarding(client, plan),
 
   // dashboard: per-runtime model catalog (synced providers + codex cache + curated)
   'runtime:models': async () => runtimeCatalogWithCodex(),
