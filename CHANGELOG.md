@@ -8,6 +8,22 @@ Every change pushed or merged to `main` carries its version number in the commit
 subject (`vX.Y.Z: …`), stamped automatically by the `commit-msg` hook — see
 [CONTRIBUTING.md](CONTRIBUTING.md).
 
+## [0.1.84] — 2026-06-23
+- **Import a team from a pasted spec.** New **“↥ Import from spec”** button on the
+  Teams page: paste a free‑form team description (e.g. a “Recommended Agent Creations
+  For \`brain\`” list) and it auto‑detects the team name and each agent, then spawns
+  them into a new team in one click — the team is created on the first spawn.
+  - **Deterministic parser** extracts the team + agents (name + role) live as you
+    paste; for messy formats, **“✦ Ask AI to parse”** dispatches the prose to your
+    team’s lead for strict JSON and falls back to the deterministic parse on failure.
+  - Every detected agent shows in an **editable, reviewable list** (rename, fix role,
+    remove) with **runtime + model pickers** applied to the whole import.
+  - Guards from an adversarial review: prose bullets are no longer mistaken for agents,
+    reserved command words (`status`, `team`, `verify`, …) are caught **before** any
+    spawn, the team name is no longer pulled from stray “…for …” prose, a partial
+    import leaves only the failures queued so re‑clicking Create retries just those,
+    and the app only switches to the new team when an agent actually landed there.
+
 ## [0.1.83] — 2026-06-23
 - **Local models (Ollama) can now use MCP servers.** Previously MCP attach was
   Claude/Codex‑only — local models had no way to call MCP tools. The manager now

@@ -4,6 +4,7 @@ import { offerableRuntimes } from '../../../../idctl/src/settings/runtimeCatalog
 import type { ConfigEntry, DeployPreflight, LibrarySkillEntry, McpServerSpec, TeamTemplate } from '../../../../idctl/src/api/client.ts';
 import type { OnboardPlan, OnboardResult, StepState } from '../../../../idctl/src/api/onboard.ts';
 import { MCP_CATALOG, buildFromCatalog } from '../../../../idctl/src/settings/mcpCatalog.ts';
+import { parseTeamSpec, slugName, isReservedName } from '../../../../idctl/src/api/teamSpec.ts';
 
 type ProviderRow = { kind: string; enabled?: boolean; keySource?: string; lastSync?: { status?: string } };
 
@@ -78,6 +79,7 @@ export function Teams({ store }: { store: FleetStore }) {
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<string>('');
   const [createOpen, setCreateOpen] = useState(false);
+  const [importOpen, setImportOpen] = useState(false);
 
   // Cross-team relay policy (delegates_to) for the active team.
   const activeTeam = store.team ?? 'default';
@@ -297,10 +299,26 @@ export function Teams({ store }: { store: FleetStore }) {
     <div className="view modules">
       <header className="view-head">
         <h1>Teams</h1>
-        <button className="btn primary" disabled={busy} onClick={() => setCreateOpen(true)}>
-          + New team
-        </button>
+        <div className="row-actions">
+          <button className="btn" disabled={busy} onClick={() => setImportOpen(true)} title="Paste a team spec and auto-create the agents">
+            ↥ Import from spec
+          </button>
+          <button className="btn primary" disabled={busy} onClick={() => setCreateOpen(true)}>
+            + New team
+          </button>
+        </div>
       </header>
+      {importOpen ? (
+        <ImportTeamModal
+          existingTeams={store.teams.map((t) => t.name)}
+          providers={providers}
+          modelCatalog={modelCatalog}
+          onClose={() => setImportOpen(false)}
+          onBusy={setBusy}
+          onMessage={setMsg}
+          onCreated={async (name) => { await store.setTeam(name); store.refresh(); }}
+        />
+      ) : null}
       {createOpen ? (
         <CreateTeamModal
           existingTeams={store.teams.map((t) => t.name)}
@@ -605,6 +623,178 @@ export function Teams({ store }: { store: FleetStore }) {
       </section>
 
       {msg ? <p className="muted">{msg}</p> : null}
+    </div>
+  );
+}
+
+function ImportTeamModal({
+  existingTeams,
+  providers,
+  modelCatalog,
+  onClose,
+  onBusy,
+  onMessage,
+  onCreated,
+}: {
+  existingTeams: string[];
+  providers: ProviderRow[];
+  modelCatalog: Record<string, string[]>;
+  onClose: () => void;
+  onBusy: (b: boolean) => void;
+  onMessage: (m: string) => void;
+  onCreated: (name: string) => Promise<void>;
+}) {
+  const [spec, setSpec] = useState('');
+  const [team, setTeam] = useState('');
+  const [agents, setAgents] = useState<{ name: string; role: string }[]>([]);
+  // Once the user hand-edits/removes/AI-parses the agent list, the live spec parse
+  // stops overwriting it — so manual curation isn't silently discarded mid-edit.
+  const [agentsDirty, setAgentsDirty] = useState(false);
+  const [runtime, setRuntime] = useState('claude-code-cli');
+  const [model, setModel] = useState('');
+  const [running, setRunning] = useState(false);
+  const [aiParsing, setAiParsing] = useState(false);
+  const [error, setError] = useState('');
+  const runtimes = useMemo(() => offerableRuntimes(providers), [providers]);
+  const models = modelCatalog[runtime] ?? [];
+  const parsed = useMemo(() => parseTeamSpec(spec), [spec]);
+  const cleanTeam = cleanTeamName(team);
+  const collides = Boolean(cleanTeam && existingTeams.includes(cleanTeam));
+  // Pre-flight the manager's reserved-word list so a collision is caught before
+  // any team/agent is created, not per-agent at spawn time.
+  const reservedAgents = useMemo(() => agents.filter((a) => isReservedName(a.name)).map((a) => a.name), [agents]);
+  const reservedTeam = isReservedName(cleanTeam);
+  // Spec produced agents but no team name — the "pasted a changelog/instructions"
+  // signature; nudge the user to review before this becomes a one-click spawn.
+  const noSpecTeam = spec.trim().length > 0 && !parsed.team;
+  const locked = running || aiParsing;
+  const canCreate =
+    Boolean(cleanTeam) && agents.length > 0 && !locked && reservedAgents.length === 0 && !reservedTeam;
+
+  // Live deterministic parse as the user pastes/edits the spec; prefill the team
+  // name once (don't clobber a manual edit), and don't overwrite a hand-curated
+  // agent list. Clearing the spec resets so a fresh paste re-parses cleanly.
+  useEffect(() => {
+    if (!spec.trim()) { setAgents([]); setAgentsDirty(false); return; }
+    if (!agentsDirty) setAgents(parsed.agents);
+    if (parsed.team) setTeam((prev) => prev || parsed.team || '');
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [spec]);
+
+  async function aiParse() {
+    if (!spec.trim()) return;
+    setAiParsing(true); setError('');
+    onMessage('asking an agent to parse the spec…');
+    try {
+      const r = await call<{ team: string | null; agents: { name: string; role: string }[] }>('team:parseSpecAI', spec);
+      if (r?.agents?.length) { setAgents(r.agents); setAgentsDirty(true); }
+      if (r?.team) setTeam((prev) => prev || r.team || '');
+      onMessage(`AI parsed ${r?.agents?.length ?? 0} agent(s)`);
+    } catch (e) {
+      setError(`AI parse failed: ${e instanceof Error ? e.message : String(e)} — keeping the deterministic parse.`);
+    } finally { setAiParsing(false); }
+  }
+
+  function updateAgent(i: number, field: 'name' | 'role', val: string) {
+    setAgentsDirty(true);
+    setAgents((prev) => prev.map((a, j) => (j === i ? { ...a, [field]: val } : a)));
+  }
+  function removeAgent(i: number) { setAgentsDirty(true); setAgents((prev) => prev.filter((_, j) => j !== i)); }
+
+  async function create() {
+    if (!cleanTeam) { setError('Team name is required.'); return; }
+    if (!agents.length) { setError('No agents to create.'); return; }
+    if (reservedTeam) { setError(`“${cleanTeam}” is a reserved word — choose another team name.`); return; }
+    if (reservedAgents.length) { setError(`Reserved agent name(s): ${reservedAgents.join(', ')} — rename before creating.`); return; }
+    setRunning(true); onBusy(true); setError('');
+    onMessage(`importing ${agents.length} agent(s) into ${cleanTeam}…`);
+    try {
+      const payload = agents.map((a) => ({ name: a.name, role: a.role || undefined }));
+      const r = await call<{ created: string[]; failed: { name: string; error: string }[] }>('team:import', cleanTeam, payload, { runtime, model: model || undefined });
+      const c = r?.created?.length ?? 0;
+      const f = r?.failed ?? [];
+      onMessage(f.length ? `imported ${c}/${agents.length} into ${cleanTeam}; ${f.length} failed` : `imported ${c} agent(s) into ${cleanTeam} ✓`);
+      // Only switch the app to the team if something actually landed there (or the
+      // team already existed) — don't pin the UI to a phantom team when every spawn failed.
+      if (c > 0 || collides) await onCreated(cleanTeam);
+      if (!f.length) { onClose(); return; }
+      // Partial failure: keep only the agents that still need creating, so re-clicking
+      // Create retries just the failures (the succeeded ones already exist → would 409).
+      const failedNames = new Set(f.map((x) => x.name));
+      setAgentsDirty(true);
+      setAgents((prev) => prev.filter((a) => failedNames.has(a.name)));
+      setError(`${f.length} failed: ${f.map((x) => `${x.name} (${x.error})`).join('; ')}`);
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      setError(msg); onMessage(`failed: ${msg}`);
+    } finally { setRunning(false); onBusy(false); }
+  }
+
+  return (
+    <div className="modal-overlay" onMouseDown={() => (running ? undefined : onClose())}>
+      <div className="modal onboard-modal create-team-modal" onMouseDown={(e) => e.stopPropagation()}>
+        <div className="modal-title">Import team from spec</div>
+        <div className="create-team-layout">
+          <div>
+            <div className="muted small" style={{ marginBottom: 6 }}>paste a team spec</div>
+            <textarea
+              autoFocus
+              style={{ width: '100%', minHeight: 230, fontFamily: 'var(--mono, monospace)', fontSize: 12 }}
+              placeholder={'e.g.\n**Recommended Agent Creations For `brain`**\n1. **security-router**\n   Role: first-pass classifier…'}
+              value={spec}
+              disabled={locked}
+              onChange={(e) => { setSpec(e.target.value); setError(''); }}
+            />
+            <div className="row-actions" style={{ marginTop: 6, justifyContent: 'space-between' }}>
+              <button className="btn small" disabled={!spec.trim() || running || aiParsing} onClick={() => void aiParse()}>
+                {aiParsing ? 'Asking AI…' : '✦ Ask AI to parse'}
+              </button>
+              <span className="muted small">{agents.length} agent{agents.length === 1 ? '' : 's'} detected</span>
+            </div>
+          </div>
+          <div>
+            <label className="create-field">
+              <span>team name</span>
+              <input placeholder="lowercase, e.g. brain" value={team} disabled={locked} onChange={(e) => { setTeam(e.target.value); setError(''); }} onBlur={() => setTeam(cleanTeamName(team))} />
+            </label>
+            {team && team !== cleanTeam ? <p className="muted small">Will create as <span className="mono">{cleanTeam}</span>.</p> : null}
+            {reservedTeam ? <p className="status-error small"><span className="mono">{cleanTeam}</span> is a reserved word — choose another team name.</p> : null}
+            {collides ? <p className="warn-text small">Team <span className="mono">{cleanTeam}</span> exists — these agents will be added to it.</p> : null}
+            {noSpecTeam ? <p className="warn-text small">No team name detected in the spec — double-check the agents below before creating.</p> : null}
+            <div className="kv" style={{ gridTemplateColumns: '90px 1fr', gap: '8px 10px', marginTop: 8 }}>
+              <span>runtime</span>
+              <select className="cell-select" disabled={locked} value={runtime} onChange={(e) => { setRuntime(e.target.value); setModel(''); }}>
+                {runtimes.map((r) => <option key={r} value={r}>{runtimeLabel(r)}</option>)}
+              </select>
+              <span>model</span>
+              <select className="cell-select" disabled={locked} value={model} onChange={(e) => setModel(e.target.value)}>
+                <option value="">default</option>
+                {models.map((m) => <option key={m} value={m}>{m}</option>)}
+              </select>
+            </div>
+            <div className="muted small" style={{ margin: '10px 0 4px' }}>agents to create (editable)</div>
+            <div style={{ maxHeight: 200, overflowY: 'auto' }}>
+              {agents.length === 0 ? (
+                <p className="muted small">Paste a spec above — or click “Ask AI to parse” for messy formats.</p>
+              ) : agents.map((a, i) => (
+                <div key={i} className="kv" style={{ gridTemplateColumns: '150px 1fr 24px', gap: '4px 6px', marginBottom: 4, alignItems: 'center' }}>
+                  <input className="mono" style={{ fontSize: 12, ...(isReservedName(a.name) ? { borderColor: 'var(--danger, #e5484d)' } : {}) }} value={a.name} disabled={locked} title={isReservedName(a.name) ? 'reserved word — rename' : undefined} onChange={(e) => updateAgent(i, 'name', e.target.value)} onBlur={(e) => updateAgent(i, 'name', slugName(e.target.value))} />
+                  <input style={{ fontSize: 12 }} value={a.role} disabled={locked} placeholder="role" onChange={(e) => updateAgent(i, 'role', e.target.value)} />
+                  <button className="uv-x" title="Remove" disabled={locked} onClick={() => removeAgent(i)}>✕</button>
+                </div>
+              ))}
+            </div>
+            {reservedAgents.length ? <p className="status-error small">Reserved name{reservedAgents.length === 1 ? '' : 's'}: <span className="mono">{reservedAgents.join(', ')}</span> — rename before creating.</p> : null}
+            {error ? <p className="status-error small">{error}</p> : null}
+          </div>
+        </div>
+        <div className="row-actions" style={{ marginTop: 14 }}>
+          <button className="btn" disabled={running} onClick={onClose}>Cancel</button>
+          <button className="btn primary" disabled={!canCreate} onClick={() => void create()}>
+            {running ? 'Importing…' : `Create team + ${agents.length} agent${agents.length === 1 ? '' : 's'}`}
+          </button>
+        </div>
+      </div>
     </div>
   );
 }

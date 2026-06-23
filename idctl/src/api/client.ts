@@ -26,6 +26,7 @@ import type {
   Team,
 } from './types.ts';
 import type { Config } from '../config.ts';
+import { slugName, type ParsedTeamSpec } from './teamSpec.ts';
 
 export class NetworkError extends Error {
   constructor(message: string) {
@@ -386,6 +387,74 @@ export class ManagerClient {
       await this.remote(`/agent ${spec.name} wallet provision`, undefined, signal).catch(() => {});
     }
     return res;
+  }
+
+  /**
+   * Bulk-create a team from a parsed spec: spawn each agent into `team` (created on
+   * the first spawn — the manager's getTeam → getOrCreateTeamId). Sequential and
+   * best-effort — one agent's failure is recorded and the rest still spawn. The
+   * caller picks runtime + model (applied to all). Reports progress per agent.
+   */
+  async importTeam(
+    team: string,
+    agents: Array<{ name: string; role?: string }>,
+    opts: { runtime?: string; model?: string; signal?: AbortSignal; onProgress?: (done: number, total: number, name: string) => void } = {},
+  ): Promise<{ created: string[]; failed: Array<{ name: string; error: string }> }> {
+    const teamClient = this.withTeam(team);
+    const created: string[] = [];
+    const failed: Array<{ name: string; error: string }> = [];
+    for (let i = 0; i < agents.length; i++) {
+      const a = agents[i];
+      opts.onProgress?.(i, agents.length, a.name);
+      try {
+        await teamClient.spawnAgent({ name: a.name, runtime: opts.runtime, model: opts.model, role: a.role }, opts.signal);
+        created.push(a.name);
+      } catch (e) {
+        failed.push({ name: a.name, error: e instanceof Error ? e.message : String(e) });
+      }
+    }
+    return { created, failed };
+  }
+
+  /**
+   * AI-assisted parse: dispatch the raw spec to the current team's lead and ask for
+   * a strict JSON {team, agents:[{name,role}]} plan — for messy free-form input the
+   * deterministic parser can't handle. Names are re-slugged client-side. Needs a
+   * running agent; throws on failure so the caller can fall back to the parser.
+   */
+  async parseTeamSpecAI(spec: string, opts: { onTick?: (status: string) => void; signal?: AbortSignal } = {}): Promise<ParsedTeamSpec> {
+    const prompt =
+      'Convert this team description into JSON ONLY — no prose, no markdown fences: ' +
+      '{"team": "<slug or null>", "agents": [{"name": "<lowercase-hyphen-slug>", "role": "<one short line>"}]}. ' +
+      'Extract every agent the spec proposes; invent nothing.\n\nSPEC:\n' + spec;
+    const queryId = await this.talk(prompt, 'idctl', opts.signal);
+    const deadline = Date.now() + 5 * 60 * 1000;
+    let reply = '';
+    while (Date.now() < deadline) {
+      const q = await this.query(queryId, this.cfg.waitSeconds, opts.signal);
+      opts.onTick?.(q.status);
+      if (q.status === 'delivered') { reply = extractText(q.result) ?? ''; break; }
+      if (q.status === 'failed' || q.status === 'expired' || q.status === 'cancelled') throw new ManagerError(q.error || `spec parse ${q.status}`);
+    }
+    const start = reply.indexOf('{');
+    const end = reply.lastIndexOf('}');
+    if (start < 0 || end <= start) throw new ManagerError('AI parse: no JSON object in the reply');
+    let obj: { team?: unknown; agents?: unknown };
+    try { obj = JSON.parse(reply.slice(start, end + 1)); }
+    catch { throw new ManagerError('AI parse: reply was not valid JSON'); }
+    const seen = new Set<string>();
+    const agents: Array<{ name: string; role: string }> = [];
+    if (Array.isArray(obj.agents)) {
+      for (const a of obj.agents) {
+        const o = (a && typeof a === 'object') ? a as Record<string, unknown> : {};
+        const name = slugName(String(o.name ?? ''));
+        if (!name || seen.has(name)) continue;
+        seen.add(name);
+        agents.push({ name, role: String(o.role ?? '').replace(/\s+/g, ' ').trim().slice(0, 280) });
+      }
+    }
+    const team = typeof obj.team === 'string' && obj.team.trim() ? slugName(obj.team) : null;
+    return { team, agents };
   }
 
   // ---- Team relay (cross-team delegation allow-list) --------------------
