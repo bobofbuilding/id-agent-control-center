@@ -31,6 +31,15 @@ subject (`vX.Y.Z: …`), stamped automatically by the `commit-msg` hook — see
     rebuild calls are team‑scoped so wiring a brand‑new team works even when it isn’t
     the active one.
 
+## [0.1.91] — 2026-06-23
+- **Start, stop, probe, and rebuild whole teams.** In HR Manager → Structure, click
+  a team (in the graph or **Manage** in the team list) to open its panel, then act on
+  **every agent at once**: **▶ Start all**, **■ Stop all**, **◇ Probe**, **↻ Rebuild
+  all**. Start/stop/rebuild fan out per agent (best‑effort — a failure is reported and
+  the rest still run); Probe health‑checks the team in one call. Stop and Rebuild ask
+  for a one‑click confirm since they interrupt running agents; results show
+  `done/total ✓` with any failures named.
+
 ## [0.1.90] — 2026-06-23
 - **Lead hierarchy is now an actionable cross‑team coordinator table.** Instead of a
   static list (which rendered a broken `team/` entry for any team whose coordinator

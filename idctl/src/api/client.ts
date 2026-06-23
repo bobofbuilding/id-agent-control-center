@@ -487,6 +487,34 @@ export class ManagerClient {
   }
 
   /**
+   * Apply a lifecycle op to EVERY agent in `team`. start/stop/rebuild fan out as
+   * `/agent <name> <op>` per agent — best-effort: an agent that errors is recorded
+   * and the rest still run. (Use probeTeam() for a team-wide health probe.)
+   */
+  async teamLifecycle(
+    team: string,
+    op: 'start' | 'stop' | 'rebuild',
+    opts: { signal?: AbortSignal; onProgress?: (done: number, total: number, name: string) => void } = {},
+  ): Promise<{ op: string; total: number; done: string[]; failed: Array<{ name: string; error: string }> }> {
+    const tc = this.withTeam(team);
+    const agents = await tc.agents(opts.signal);
+    const done: string[] = [];
+    const failed: Array<{ name: string; error: string }> = [];
+    for (let i = 0; i < agents.length; i++) {
+      const a = agents[i];
+      opts.onProgress?.(i, agents.length, a.name);
+      try { await tc.remote(`/agent ${a.name} ${op}`, undefined, opts.signal); done.push(a.name); }
+      catch (e) { failed.push({ name: a.name, error: e instanceof Error ? e.message : String(e) }); }
+    }
+    return { op, total: agents.length, done, failed };
+  }
+
+  /** Health-probe a whole team in one call (`/agents probe`, team-scoped). */
+  async probeTeam(team: string, signal?: AbortSignal): Promise<ProbeResult> {
+    return this.withTeam(team).probeAll(signal);
+  }
+
+  /**
    * Resolve an agent to handle a meta-task (AI team design / spec parse). These are
    * one-shot LLM calls that don't need to belong to the target team — any running
    * agent works. Prefer a lead/coordinator-named one; fall back to any running agent

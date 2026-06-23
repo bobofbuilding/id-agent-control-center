@@ -347,6 +347,28 @@ export function Teams({ store }: { store: FleetStore }) {
     await loadHier();
   }
 
+  // Whole-team lifecycle (start / stop / probe / rebuild every agent in a team).
+  const [teamOpBusy, setTeamOpBusy] = useState(false);
+  const [teamOpMsg, setTeamOpMsg] = useState('');
+  const [pendingTeamOp, setPendingTeamOp] = useState<string | null>(null); // 2-step confirm for stop/rebuild
+  async function runTeamOp(team: string, op: 'start' | 'stop' | 'probe' | 'rebuild') {
+    setPendingTeamOp(null); setTeamOpBusy(true); setTeamOpMsg(`${op} ${team}…`);
+    try {
+      if (op === 'probe') {
+        const p = await call<{ team: string; probed: number; passed: number; failed: number }>('team:probe', team);
+        setTeamOpMsg(`probe ${team}: ${p.passed}/${p.probed} healthy${p.failed ? ` · ${p.failed} failed` : ''}`);
+      } else {
+        const r = await call<{ total: number; done: string[]; failed: { name: string; error: string }[] }>('team:lifecycle', team, op);
+        setTeamOpMsg(r.failed.length
+          ? `${op} ${team}: ${r.done.length}/${r.total} ✓ · ${r.failed.length} failed (${r.failed.map((f) => f.name).join(', ')})`
+          : `${op} ${team}: ${r.done.length}/${r.total} agents ✓`);
+      }
+      store.refresh();
+    } catch (e) {
+      setTeamOpMsg(`${op} failed: ${e instanceof Error ? e.message : String(e)}`);
+    } finally { setTeamOpBusy(false); }
+  }
+
   return (
     <div className="view modules">
       <header className="view-head">
@@ -447,6 +469,22 @@ export function Teams({ store }: { store: FleetStore }) {
                   <button className="btn small" onClick={() => setTab('route')}>⇄ Relay</button>
                 </span>
               </div>
+              <div className="row-actions" style={{ gap: 6, marginTop: 8, flexWrap: 'wrap', alignItems: 'center' }}>
+                <span className="muted small">whole team:</span>
+                <button className="btn small" disabled={teamOpBusy} title={`Start every agent in ${activeTeam}`} onClick={() => void runTeamOp(activeTeam, 'start')}>▶ Start all</button>
+                <button className={`btn small${pendingTeamOp === 'stop' ? ' danger' : ''}`} disabled={teamOpBusy}
+                  title={`Stop every agent in ${activeTeam}`}
+                  onClick={() => (pendingTeamOp === 'stop' ? void runTeamOp(activeTeam, 'stop') : setPendingTeamOp('stop'))}>
+                  {pendingTeamOp === 'stop' ? '⚠ confirm — stop all' : '■ Stop all'}
+                </button>
+                <button className="btn small" disabled={teamOpBusy} title={`Health-probe ${activeTeam}`} onClick={() => void runTeamOp(activeTeam, 'probe')}>◇ Probe</button>
+                <button className={`btn small${pendingTeamOp === 'rebuild' ? ' danger' : ''}`} disabled={teamOpBusy}
+                  title={`Rebuild (restart) every agent in ${activeTeam}`}
+                  onClick={() => (pendingTeamOp === 'rebuild' ? void runTeamOp(activeTeam, 'rebuild') : setPendingTeamOp('rebuild'))}>
+                  {pendingTeamOp === 'rebuild' ? '⚠ confirm — rebuild all' : '↻ Rebuild all'}
+                </button>
+                {teamOpBusy ? <span className="muted small">working…</span> : teamOpMsg ? <span className={`small ${/fail/.test(teamOpMsg) ? 'status-error' : 'ok-text'}`}>{teamOpMsg}</span> : null}
+              </div>
               <p className="muted small" style={{ marginTop: 6 }}>Click an agent in the graph to edit its goals &amp; instructions. The team’s goals live on its lead (the ⭑ coordinator).</p>
             </div>
           ) : (
@@ -477,7 +515,11 @@ export function Teams({ store }: { store: FleetStore }) {
                     </button>
                   ) : (
                     <span className="muted">active</span>
-                  )}
+                  )}{' '}
+                  <button className="btn" disabled={busy} title={`Open ${t.name}'s team actions (start/stop/probe/rebuild)`}
+                    onClick={() => { setSelectedKey(`team:${t.name}`); if (t.name !== store.team) void store.setTeam(t.name); }}>
+                    Manage
+                  </button>
                   {t.name !== 'default' && Number(t.agentCount) === 0 ? (
                     <button className="btn" disabled={busy} style={{ marginLeft: 6, color: 'var(--danger, #e5534b)' }} title={`Delete the empty "${t.name}" team`} onClick={() => void removeTeam(t.name)}>
                       Delete

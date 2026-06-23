@@ -207,6 +207,10 @@ const METHODS: Record<string, (...a: any[]) => Promise<unknown>> = {
   // Import a team from a pasted spec: spawn each parsed agent into a new team.
   'team:import': (team: string, agents: Array<{ name: string; role?: string; description?: string }>, opts: { runtime?: string; model?: string }) =>
     client.importTeam(String(team), agents ?? [], opts ?? {}),
+  // Whole-team lifecycle: start/stop/rebuild every agent (fan-out), or probe the team.
+  'team:lifecycle': (team: string, op: string) =>
+    client.teamLifecycle(String(team), op === 'stop' ? 'stop' : op === 'rebuild' ? 'rebuild' : 'start'),
+  'team:probe': (team: string) => client.probeTeam(String(team)),
   // AI-assisted parse of a free-form spec → { team, agents }. Dispatches to the
   // team's designated coordinator (★) when set, else any running agent.
   'team:parseSpecAI': (spec: string) =>
