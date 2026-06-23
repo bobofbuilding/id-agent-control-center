@@ -31,6 +31,23 @@ subject (`vX.Y.Z: …`), stamped automatically by the `commit-msg` hook — see
     rebuild calls are team‑scoped so wiring a brand‑new team works even when it isn’t
     the active one.
 
+## [0.1.89] — 2026-06-23
+- **HR Manager refactored into four focused tabs + a live team graph.** The page is
+  now organized around the things you actually do — **Structure / Build / Manage /
+  Route** — instead of one long scroll.
+  - **Structure:** a **live, interactive hierarchy graph** — one column per team, the
+    lead on top (⭑ = primary cross‑team coordinator) and its workers below, with
+    status dots and runtimes. **Click any agent or team** to open an inline panel:
+    edit its **goals & instructions** (Coordinator preset, **✦ AI draft**, Save &
+    rebuild), **reassign team**, **rebuild**, or jump to its routing. Selecting an
+    agent in another team focuses that team automatically.
+  - **Build:** the AI Team Builder + templates. **Manage:** the per‑agent
+    instructions editor (now with **✦ AI draft**). **Route:** cross‑team relay +
+    per‑agent overrides.
+  - **AI assistance at every level** — drafting goals/instructions anywhere via
+    **✦ AI draft** (dispatches to your team’s coordinator), plus the existing AI
+    Team Builder. *(AI‑assist needs a running agent; you’ll be told if none is up.)*
+
 ## [0.1.88] — 2026-06-23
 - **The Inbox is interactive — reply to or dismiss what’s waiting.** Each item now
   has an inline reply box (⌘/Ctrl+Enter to send) and a **Dismiss** button; both

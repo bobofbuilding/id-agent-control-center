@@ -504,6 +504,18 @@ export class ManagerClient {
   }
 
   /**
+   * AI-assist: ask an agent (the team's coordinator when set, else any running
+   * agent) to draft text from a short instruction — used to draft agent/team goals
+   * and instructions. Dispatches via /ask and returns the reply. Throws when no
+   * agent is available to help.
+   */
+  async draftWithAI(instruction: string, opts: { agent?: string; onTick?: (s: string) => void; signal?: AbortSignal } = {}): Promise<string> {
+    const agent = await this.resolveHelperAgent(opts.agent);
+    if (!agent) throw new ManagerError('No running agent is available to help draft this. Onboard an agent first.');
+    return this.dispatch(`/ask ${agent} ${qArg(instruction)}`, { onTick: opts.onTick, signal: opts.signal });
+  }
+
+  /**
    * AI-assisted parse: dispatch the raw spec to a team agent and ask for a strict
    * JSON {team, agents:[…]} plan — for messy free-form input the deterministic parser
    * can't handle. Dispatches via /ask (an AGENT), NOT /talk (which parks the prompt

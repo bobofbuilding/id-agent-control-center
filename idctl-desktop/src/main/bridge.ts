@@ -132,6 +132,10 @@ const METHODS: Record<string, (...a: any[]) => Promise<unknown>> = {
   'activity:get': (agent: string, since: number, team?: string, queryId?: string) =>
     client.activity(String(agent), Number(since) || 0, team ? String(team) : client.team, queryId ? String(queryId) : undefined),
   inboxPending: () => client.inboxPending(),
+  // AI-assist: ask an agent to draft text (agent/team goals + instructions). Uses
+  // the team's ★ coordinator when set, else any running agent.
+  'ai:draft': (instruction: string, agent?: string) =>
+    client.draftWithAI(String(instruction), { agent: agent ? String(agent) : (getCoordinator(client.team ?? 'default') ?? undefined) }),
   // Reply to a manager-inbox item (delivers the reply + clears it from pending).
   'inbox:respond': (queryId: string, message: string) => client.inboxRespond(String(queryId), String(message)),
   // Dismiss a manager-inbox item without a real answer (clears it from pending).
