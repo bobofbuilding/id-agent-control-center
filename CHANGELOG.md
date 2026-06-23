@@ -8,6 +8,19 @@ Every change pushed or merged to `main` carries its version number in the commit
 subject (`vX.Y.Z: …`), stamped automatically by the `commit-msg` hook — see
 [CONTRIBUTING.md](CONTRIBUTING.md).
 
+## [0.1.74] — 2026-06-23
+- **Critical fix: blessing an agent for Computer Use no longer breaks it.** The
+  Computer Use tool was registered under the name `computer-use`, which **Claude Code
+  reserves** — so once you blessed a Claude agent, *every* request to it failed with
+  “failed” / “Claude Code produced an empty result.” The tool is now `mac-control`,
+  and the app detects + cleans up the old broken name. **If an agent of yours is
+  currently failing, re-bless or remove it once in the Computer Use tab to fix it.**
+- **Computer Use: stronger per-agent security.** Each blessed agent now gets its
+  own private token (instead of one shared key), and the controller identifies the
+  caller by that token rather than a self-reported name — so one agent can’t act as
+  another, and removing an agent immediately revokes its access. Re-bless any agent
+  you’d previously granted Computer Use (one click) to issue its new token.
+
 ## [0.1.73] — 2026-06-23
 - **Computer Use: you don’t have to approve *everything* anymore.** A new risk
   classifier means you can turn **off** “Approve every action” and the agent runs

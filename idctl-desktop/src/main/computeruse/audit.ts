@@ -42,7 +42,7 @@ function mirrorToManager(e: AuditEntry, team: string): void {
     void fetch('http://127.0.0.1:4100/activity/record', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ agent: e.agent, team, kind: e.decision === 'blocked' ? 'error' : 'tool', tool: 'computer-use', summary: `${e.action}: ${e.detail}${e.decision === 'blocked' ? ` (blocked: ${e.reason})` : ''}` }),
+      body: JSON.stringify({ agent: e.agent, team, kind: e.decision === 'blocked' ? 'error' : 'tool', tool: 'mac-control', summary: `${e.action}: ${e.detail}${e.decision === 'blocked' ? ` (blocked: ${e.reason})` : ''}` }),
       signal: AbortSignal.timeout(2500),
     }).catch(() => {});
   } catch { /* never let auditing throw */ }

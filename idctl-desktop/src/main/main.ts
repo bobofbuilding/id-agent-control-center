@@ -17,7 +17,7 @@ import { listPlans, getPlan, savePlan, removePlan, type Plan } from './planstore
 import { generateImage, readImage, imageModels, getImageServer, detectImageServer } from './images.ts';
 import { loadSettings, setUpdateSettings, setImageServer } from '../../../idctl/src/settings/store.ts';
 import type { ImageServerConfig } from '../../../idctl/src/settings/schema.ts';
-import { startBroker, armBroker, disarmBroker, setWatching, brokerStatus, auditTail, panicBroker, setSupervised, setPaused, confirmAction, pendingActions, setPanicHotkey, stopBroker } from './computeruse/broker.ts';
+import { startBroker, armBroker, disarmBroker, setWatching, brokerStatus, auditTail, panicBroker, setSupervised, setPaused, confirmAction, pendingActions, setPanicHotkey, mintAgentToken, brokerUrl, stopBroker } from './computeruse/broker.ts';
 import { getPermissions, openPermissionSettings, relaunchApp } from './computeruse/permissions.ts';
 import { driverCapability, getMousePos } from './computeruse/driver.mac.ts';
 
@@ -287,11 +287,9 @@ if (cuSelftest) {
     setSupervised(false); // headless: no UI to approve, so test the raw input path
     const st = brokerStatus();
     try {
-      const { readFileSync } = await import('node:fs');
-      const { homedir } = await import('node:os');
-      const { join: pjoin } = await import('node:path');
-      const sess = JSON.parse(readFileSync(pjoin(homedir(), '.config/idctl/computeruse/session.json'), 'utf8'));
-      const post = (b: Record<string, unknown>) => fetch(`${sess.url}/action`, { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${sess.token}` }, body: JSON.stringify({ agent: 'selftest', ...b }) }).then((r) => r.json());
+      const tok = mintAgentToken('selftest'); // per-agent token (the broker now authenticates by token)
+      const url = brokerUrl();
+      const post = (b: Record<string, unknown>) => fetch(`${url}/action`, { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${tok}` }, body: JSON.stringify(b) }).then((r) => r.json());
       const shot = await post({ type: 'screenshot' }) as { ok?: boolean; image?: string; width?: number; height?: number; reason?: string };
       // Then exercise the INPUT path (mouse_move). If Accessibility is granted it
       // executes (real move); otherwise it's correctly blocked — both prove the gate.

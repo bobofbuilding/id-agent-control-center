@@ -96,7 +96,12 @@ function listProvidersEnriched(): (ProviderProfile & { keySource: 'config' | 'en
   return loadSettings().providers.map((p) => ({ ...p, keySource: keySourceOf(p), needsKey: kindNeedsKey(p.kind) }));
 }
 import type { McpServerSpec, CreateSkillInput } from '../../../idctl/src/api/client.ts';
-import { brokerServerPath } from './computeruse/broker.ts';
+import { brokerServerPath, mintAgentToken, revokeAgentToken, brokerUrl } from './computeruse/broker.ts';
+// The Computer Use MCP server name. NEVER "computer-use" — Claude Code reserves that
+// name and rejects the entire MCP config, breaking every dispatch. CU_MCP_ALIASES
+// includes the old broken name so existing attachments can be detected + cleaned up.
+const CU_MCP_NAME = 'mac-control';
+const CU_MCP_ALIASES = ['mac-control', 'computer-use'];
 
 // idctl-desktop is the operator's local control center talking to 127.0.0.1,
 // so it is a legitimate admin client (admin-gated routes: skill install, MCP attach).
@@ -252,22 +257,28 @@ const METHODS: Record<string, (...a: any[]) => Promise<unknown>> = {
     const a = agents.find((x) => x.id === agentId || x.name === agentId || x.name === agentName);
     if (!a) throw new Error(`agent not found: ${agentName || agentId}`);
     const cur = (((a.metadata as any)?.mcpServers) ?? []) as McpServerSpec[];
-    const spec: McpServerSpec = { name: 'computer-use', command: 'node', args: [brokerServerPath()], env: { ID_CU_AGENT: String(a.name) } };
-    const next = [...cur.filter((s) => s.name !== 'computer-use'), spec];
+    // Per-agent token + broker URL injected here, so the agent authenticates AS itself
+    // (the broker derives identity from the token, not a self-reported name). The
+    // server name MUST NOT be "computer-use" — Claude Code reserves that and rejects
+    // the WHOLE MCP config, breaking every dispatch to the agent.
+    const spec: McpServerSpec = { name: CU_MCP_NAME, command: 'node', args: [brokerServerPath()], env: { ID_CU_AGENT: String(a.name), ID_CU_TOKEN: mintAgentToken(a.name), ID_CU_URL: brokerUrl() } };
+    const next = [...cur.filter((s) => !CU_MCP_ALIASES.includes(s.name)), spec]; // also strips the old broken name
     return client.setAgentMcp(a.id, next);
   },
   'cu:detach': async (agentId: string, agentName?: string) => {
     const agents = await client.agents();
     const a = agents.find((x) => x.id === agentId || x.name === agentId || x.name === agentName);
     if (!a) throw new Error(`agent not found: ${agentName || agentId}`);
+    revokeAgentToken(a.name);
     const cur = (((a.metadata as any)?.mcpServers) ?? []) as McpServerSpec[];
-    return client.setAgentMcp(a.id, cur.filter((s) => s.name !== 'computer-use'));
+    return client.setAgentMcp(a.id, cur.filter((s) => !CU_MCP_ALIASES.includes(s.name)));
   },
-  // Agents that currently have computer-use attached (for the view's "blessed" list).
+  // Agents that have computer-use attached (for the view's "blessed" list) — detects
+  // the old reserved name too, so a previously-broken agent shows up to be removed/re-blessed.
   'cu:attached': async () => {
     const agents = await client.agents().catch(() => [] as Awaited<ReturnType<typeof client.agents>>);
     return agents
-      .filter((a) => (((a.metadata as any)?.mcpServers ?? []) as { name: string }[]).some((s) => s.name === 'computer-use'))
+      .filter((a) => (((a.metadata as any)?.mcpServers ?? []) as { name: string }[]).some((s) => CU_MCP_ALIASES.includes(s.name)))
       .map((a) => ({ id: a.id, name: a.name }));
   },
 

@@ -172,8 +172,41 @@ function stageServerFile(): void {
 
 function writeSession(): void {
   const payload = JSON.stringify({ url: `http://127.0.0.1:${S.port}`, token: S.token, port: S.port, pid: process.pid, updatedAt: Date.now() });
-  try { writeFileSync(sessionFile(), payload, { mode: 0o600 }); } catch { /* */ }
+  try { writeFileSync(sessionFile(), payload, { mode: 0o600 }); chmodSync(sessionFile(), 0o600); } catch { /* mode option only applies on create → force-tighten a pre-existing file */ }
 }
+
+// Per-agent tokens: each blessed agent gets its OWN bearer token, so the broker
+// derives the caller's identity from the TOKEN (authoritative) rather than trusting
+// a self-reported name behind a shared secret. Persisted (0600) so the token baked
+// into an agent's .mcp.json env stays valid across app restarts.
+const agentTokens = new Map<string, string>(); // token → agent name
+function agentTokensFile(): string { return join(cuDir(), 'agent-tokens.json'); }
+function loadAgentTokens(): void {
+  try {
+    const j = JSON.parse(readFileSync(agentTokensFile(), 'utf8'));
+    if (j && typeof j === 'object') for (const [tok, a] of Object.entries(j)) { if (TOKEN_RE.test(tok) && typeof a === 'string') agentTokens.set(tok, a); }
+  } catch { /* none yet */ }
+}
+function saveAgentTokens(): void {
+  try { writeFileSync(agentTokensFile(), JSON.stringify(Object.fromEntries(agentTokens)), { mode: 0o600 }); chmodSync(agentTokensFile(), 0o600); } catch { /* force-tighten even if the file pre-existed at a looser mode */ }
+}
+/** Mint (or reuse) a per-agent token — called at bless; injected into the agent's MCP env. */
+export function mintAgentToken(agent: string): string {
+  const name = String(agent).slice(0, 64);
+  for (const [tok, a] of agentTokens) if (a === name) return tok; // reuse: the agent's .mcp.json already carries it
+  const tok = randomBytes(24).toString('hex');
+  agentTokens.set(tok, name);
+  saveAgentTokens();
+  return tok;
+}
+/** Revoke an agent's token (called at unbless). */
+export function revokeAgentToken(agent: string): void {
+  const name = String(agent).slice(0, 64);
+  let changed = false;
+  for (const [tok, a] of [...agentTokens]) if (a === name) { agentTokens.delete(tok); changed = true; }
+  if (changed) saveAgentTokens();
+}
+export function brokerUrl(): string { return `http://127.0.0.1:${S.port || 4180}`; }
 
 declare const __dirname: string;
 
@@ -293,6 +326,7 @@ export async function startBroker(onFrame: BrokerState['onFrame'], onPending?: B
   S.onFrame = onFrame;
   if (onPending) S.onPending = onPending;
   S.token = loadOrMakeToken().token;
+  loadAgentTokens();
   stageServerFile();
   const server = http.createServer(async (req, res) => {
     const send = (status: number, json: unknown) => { const s = JSON.stringify(json); res.writeHead(status, { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(s) }); res.end(s); };
@@ -307,9 +341,13 @@ export async function startBroker(onFrame: BrokerState['onFrame'], onPending?: B
     const auth = req.headers['authorization'] || '';
     const tok = typeof auth === 'string' && auth.startsWith('Bearer ') ? auth.slice(7) : '';
     if (req.method === 'POST' && req.url === '/action') {
-      if (tok !== S.token) return send(401, { ok: false, blocked: true, reason: 'bad_token' });
-      let parsed: { type?: string; agent?: string } = {};
+      // Identity is the TOKEN, not a self-reported name: derive the agent from the
+      // per-agent token (minted at bless). An unknown token → re-bless required.
+      const agent = agentTokens.get(tok);
+      if (!agent) return send(401, { ok: false, blocked: true, reason: 'stale_token', message: 'This agent isn’t authorized for Computer Use (or its access was upgraded) — re-bless it in the app’s Computer Use tab.' });
+      let parsed: Record<string, unknown> = {};
       try { parsed = JSON.parse(await readBody(req)); } catch { /* */ }
+      parsed.agent = agent; // authoritative — overrides any self-reported name in the body
       const r = await handleAction(parsed);
       return send(r.status, r.json);
     }
