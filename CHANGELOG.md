@@ -8,6 +8,14 @@ Every change pushed or merged to `main` carries its version number in the commit
 subject (`vX.Y.Z: …`), stamped automatically by the `commit-msg` hook — see
 [CONTRIBUTING.md](CONTRIBUTING.md).
 
+## [0.1.79] — 2026-06-23
+- **Agent identity lives on the Identity & Keys page now.** The per‑agent onchain
+  identity (ENS / ID‑chain domain, OWS wallet, and **Register identity** /
+  **Provision wallet** actions) moved off the Teams › Cross‑team relay panel and
+  onto **Identity & Keys**, alongside that agent's Safe account and session keys —
+  one place for an agent's identity. The Teams page keeps the per‑agent relay
+  overrides (it's no longer cluttered with identity rows).
+
 ## [0.1.78] — 2026-06-23
 - **Honest about manager compatibility.** Some panels (skills install/create/
   uninstall, plugins, MCP attach, per‑agent instructions, runtime switch, cross‑team

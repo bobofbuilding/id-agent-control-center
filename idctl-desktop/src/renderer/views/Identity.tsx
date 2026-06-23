@@ -12,6 +12,16 @@ function remaining(validUntil: number): string {
   const h = Math.round(ms / 3600_000);
   return h < 24 ? `${h}h left` : `${Math.round(h / 24)}d left`;
 }
+/** Read an agent's onchain identity value from its row or metadata. */
+function identityValue(
+  a: { idchain_domain?: string | null; ows_wallet?: string | null; metadata?: unknown },
+  key: 'idchain_domain' | 'ows_wallet',
+): string {
+  const meta = a.metadata as { idchain_domain?: unknown; ows_wallet?: unknown } | undefined;
+  const direct = key === 'idchain_domain' ? a.idchain_domain : a.ows_wallet;
+  const value = direct ?? meta?.[key];
+  return typeof value === 'string' ? value.trim() : '';
+}
 
 export function Identity({ store }: { store: FleetStore }) {
   const [caps, setCaps] = useState<KeyCapabilities | null>(null);
@@ -25,6 +35,9 @@ export function Identity({ store }: { store: FleetStore }) {
   const names = store.agents.map((a) => a.name);
   const selected = sel ?? names[0];
   const acct = selected ? accounts[selected] : undefined;
+  const selAgent = selected ? store.agents.find((a) => a.name === selected) : undefined;
+  const domain = selAgent ? identityValue(selAgent, 'idchain_domain') : '';
+  const wallet = selAgent ? identityValue(selAgent, 'ows_wallet') : '';
 
   async function reload() {
     if (names.length === 0) return;
@@ -43,6 +56,17 @@ export function Identity({ store }: { store: FleetStore }) {
     setBusy(true);
     try {
       await call(method, ...args);
+      await reload();
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function identityAction(agent: string, action: 'register' | 'provision') {
+    setBusy(true);
+    try {
+      await call(action === 'register' ? 'identity:register' : 'wallet:provision', agent);
+      store.refresh(); // pick up the new idchain_domain / ows_wallet on the agent row
       await reload();
     } finally {
       setBusy(false);
@@ -71,7 +95,25 @@ export function Identity({ store }: { store: FleetStore }) {
         <section className="card grow">
           {acct ? (
             <>
-              <h3>{selected} — Safe account</h3>
+              <h3>{selected} — onchain identity</h3>
+              <div className="kv">
+                <span>ENS / ID-chain</span>
+                <b className={domain ? 'mono' : 'muted'}>{domain || '—'}</b>
+                <span>OWS wallet</span>
+                <b className={wallet ? 'mono' : 'muted'}>{wallet ? shortAddr(wallet) : 'not provisioned'}</b>
+              </div>
+              <div className="row-actions" style={{ marginTop: 10 }}>
+                <button className="btn" disabled={busy} onClick={() => void identityAction(selected!, 'register')}>
+                  Register identity
+                </button>
+                {!wallet ? (
+                  <button className="btn" disabled={busy} onClick={() => void identityAction(selected!, 'provision')}>
+                    Provision wallet
+                  </button>
+                ) : null}
+              </div>
+
+              <h3 style={{ marginTop: 18 }}>{selected} — Safe account</h3>
               <div className="kv">
                 <span>status</span>
                 <b className={acct.deployed ? 'ok-text' : 'warn-text'}>
