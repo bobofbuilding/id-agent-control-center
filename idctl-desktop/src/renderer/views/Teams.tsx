@@ -235,6 +235,38 @@ export function Teams({ store }: { store: FleetStore }) {
       setBusy(false);
     }
   }
+  // Reassign a local agent to a different team (manager rebuilds it there).
+  async function moveAgentToTeam(agentId: string, agentName: string, toTeam: string) {
+    if (!toTeam || toTeam === activeTeam) return;
+    if (!window.confirm(`Move agent "${agentName}" from "${activeTeam}" to "${toTeam}"?\n\nIt will be rebuilt under the new team and leave ${activeTeam}.`)) return;
+    setBusy(true);
+    setMsg(`moving ${agentName} → ${toTeam}…`);
+    try {
+      const r = await call<{ rebuilt?: boolean; warning?: string }>('agent:move', agentId, toTeam);
+      store.refresh();
+      setMsg(r?.warning ? `moved ${agentName} → ${toTeam} (⚠ ${r.warning})` : `moved ${agentName} → ${toTeam} ✓`);
+    } catch (err) {
+      setMsg(`failed: ${err instanceof Error ? err.message : String(err)}`);
+    } finally {
+      setBusy(false);
+    }
+  }
+  // Delete an EMPTY team. The manager refuses `default` and any team with agents.
+  async function removeTeam(name: string) {
+    if (!window.confirm(`Delete team "${name}"?\n\nIt has no agents. This can't be undone.`)) return;
+    setBusy(true);
+    setMsg(`deleting team ${name}…`);
+    try {
+      await call('team:delete', name);
+      if (name === store.team) await store.setTeam('default');
+      store.refresh();
+      setMsg(`team ${name} deleted ✓`);
+    } catch (err) {
+      setMsg(`failed: ${err instanceof Error ? err.message : String(err)}`);
+    } finally {
+      setBusy(false);
+    }
+  }
   function pickAgentMode(a: { id: string; name: string; metadata?: unknown }, m: RelayMode) {
     if (m === 'select') {
       const cur = (a.metadata as { delegates_to?: unknown })?.delegates_to;
@@ -303,6 +335,11 @@ export function Teams({ store }: { store: FleetStore }) {
                   ) : (
                     <span className="muted">active</span>
                   )}
+                  {t.name !== 'default' && Number(t.agentCount) === 0 ? (
+                    <button className="btn" disabled={busy} style={{ marginLeft: 6, color: 'var(--danger, #e5534b)' }} title={`Delete the empty "${t.name}" team`} onClick={() => void removeTeam(t.name)}>
+                      Delete
+                    </button>
+                  ) : null}
                 </td>
               </tr>
             ))}
@@ -489,6 +526,19 @@ export function Teams({ store }: { store: FleetStore }) {
                       <button className="btn" onClick={() => setAgentEditing(null)}>Cancel</button>
                     </div>
                   ) : null}
+                </span>
+                <span>team</span>
+                <span>
+                  <select
+                    className="cell-select"
+                    disabled={busy || otherTeams.length === 0}
+                    value=""
+                    title={otherTeams.length === 0 ? 'No other teams to move to' : `Reassign ${a.name} to another team (rebuilds it there)`}
+                    onChange={(e) => { const to = e.target.value; e.currentTarget.value = ''; void moveAgentToTeam(a.id, a.name, to); }}
+                  >
+                    <option value="">{otherTeams.length === 0 ? 'no other teams' : 'reassign to…'}</option>
+                    {otherTeams.map((n) => <option key={n} value={n}>{n}</option>)}
+                  </select>
                 </span>
               </div>
             );

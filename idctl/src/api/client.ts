@@ -344,6 +344,16 @@ export class ManagerClient {
       this.post(`/agents/${encodeURIComponent(agentId)}/runtime`, { runtime }, signal));
   }
 
+  /**
+   * Reassign a local agent to a different team. Ports are global so no re-port is
+   * needed; the manager updates the agent's team_id and rebuilds it under the new
+   * team. Rejects on name collision in the target team (409) or same team (400).
+   */
+  async moveAgent(agentId: string, team: string, signal?: AbortSignal): Promise<{ ok: boolean; agent?: string; team?: string; rebuilt?: boolean; warning?: string; message?: string }> {
+    return this.requireRoute('Reassign an agent to another team', () =>
+      this.post(`/agents/${encodeURIComponent(agentId)}/team`, { team }, signal));
+  }
+
   /** Restart an agent so a pending model/runtime change takes effect. */
   async restartAgent(name: string, signal?: AbortSignal): Promise<void> {
     await this.remote(`/agent ${name} rebuild`, undefined, signal);
@@ -390,6 +400,13 @@ export class ManagerClient {
   async setTeamDelegates(name: string, delegates: string[] | null, signal?: AbortSignal): Promise<{ name: string; delegates_to: string[] | null }> {
     return this.requireRoute('Set team relay allow-list', () =>
       this.post(`/teams/${encodeURIComponent(name)}/delegates`, { delegates }, signal));
+  }
+
+  /** Delete an EMPTY team. The manager refuses the `default` team and any team that
+   *  still has agents (400 with a count); remove its agents first. */
+  async deleteTeam(name: string, signal?: AbortSignal): Promise<{ success: boolean; name: string; message: string }> {
+    return this.requireRoute('Delete a team', () =>
+      this.del(`/teams/${encodeURIComponent(name)}`, signal));
   }
 
   /**

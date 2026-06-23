@@ -3,8 +3,9 @@
  * id-agents manager, and loads the React renderer.
  */
 
-import { app, BrowserWindow, ipcMain, shell, Menu, MenuItem, globalShortcut } from 'electron';
+import { app, BrowserWindow, ipcMain, shell, Menu, MenuItem, globalShortcut, screen } from 'electron';
 import { join } from 'node:path';
+import { readFileSync, writeFileSync } from 'node:fs';
 import { call } from './bridge.ts';
 import { startUpdater, stopUpdater, checkForUpdate, getStatus, applyStagedAndRelaunch } from './updater.ts';
 import { subsStatus, subsSignin, subsSignout, subsInstall, type SubProvider } from './subscriptions.ts';
@@ -26,10 +27,40 @@ declare const __dirname: string;
 
 let win: BrowserWindow | null = null;
 
+// --- window state: reopen the app where/how the user left it ---
+interface WinState { x?: number; y?: number; width: number; height: number; maximized?: boolean }
+function winStatePath(): string { return join(app.getPath('userData'), 'window-state.json'); }
+function loadWinState(): WinState {
+  try {
+    const s = JSON.parse(readFileSync(winStatePath(), 'utf8')) as WinState;
+    if (typeof s.width === 'number' && typeof s.height === 'number') return s;
+  } catch { /* first run / corrupt → defaults */ }
+  return { width: 1180, height: 780 };
+}
+function saveWinState(w: BrowserWindow): void {
+  try {
+    if (w.isDestroyed()) return;
+    const b = w.getNormalBounds(); // un-maximized bounds, so the restore size is right
+    writeFileSync(winStatePath(), JSON.stringify({ x: b.x, y: b.y, width: b.width, height: b.height, maximized: w.isMaximized() }));
+  } catch { /* best-effort */ }
+}
+/** Only restore a saved position if a usable chunk of the titlebar lands on some
+ *  display — otherwise (display unplugged / resolution changed) center via defaults. */
+function isOnScreen(s: WinState): boolean {
+  if (typeof s.x !== 'number' || typeof s.y !== 'number') return false;
+  return screen.getAllDisplays().some((d) => {
+    const a = d.workArea;
+    return s.x! + Math.min(s.width, 200) > a.x && s.x! < a.x + a.width && s.y! + 30 > a.y && s.y! < a.y + a.height;
+  });
+}
+
 function createWindow() {
+  const st = loadWinState();
+  const placeAt = isOnScreen(st) && typeof st.x === 'number' && typeof st.y === 'number';
   win = new BrowserWindow({
-    width: 1180,
-    height: 780,
+    width: st.width,
+    height: st.height,
+    ...(placeAt ? { x: st.x, y: st.y } : {}),
     minWidth: 900,
     minHeight: 600,
     title: 'ID Agents Control Center',
@@ -42,6 +73,15 @@ function createWindow() {
       spellcheck: true, // squiggles + suggestions in the chat composer and other text fields
     },
   });
+
+  if (st.maximized) win.maximize();
+  // Persist geometry (debounced) so the next launch — including after a self-update
+  // relaunch — reopens at the same size/position/maximized state.
+  let saveT: ReturnType<typeof setTimeout> | null = null;
+  const scheduleSave = () => { if (saveT) clearTimeout(saveT); saveT = setTimeout(() => { if (win) saveWinState(win); }, 400); };
+  win.on('resize', scheduleSave);
+  win.on('move', scheduleSave);
+  win.on('close', () => { if (win) saveWinState(win); });
 
   // Open external links in the system browser, never in-app.
   win.webContents.setWindowOpenHandler(({ url }) => {

@@ -151,7 +151,6 @@ export function useFleet(): FleetStore {
   useEffect(() => {
     let alive = true;
     let since = 0;
-    let replayed = false;
     const myEpoch = epoch.current;
     const loop = async () => {
       while (alive && epoch.current === myEpoch) {
@@ -159,14 +158,15 @@ export function useFleet(): FleetStore {
           const resp = await call<{ events: ManagerEvent[]; next_seq: number }>('events', since);
           if (!alive) return;
           if (resp.events?.length) {
-            // Manager events carry no timestamp; stamp LIVE ones (everything after
-            // the initial historical replay) with arrival time so the activity
-            // feed can show "5s / 2m ago".
-            const batch = replayed ? resp.events.map((e) => (e.timestamp ? e : { ...e, timestamp: Date.now() })) : resp.events;
+            // Stamp each event with its REAL wall-clock time (`occurred_at`, epoch
+            // ms from the manager) so the activity feed shows correct ages — and
+            // they survive a reconnect/replay (e.g. after an app update + restart,
+            // when the whole backlog is re-fetched). Fall back to now() only if an
+            // event truly carries no time (older managers).
+            const batch = resp.events.map((e) => ({ ...e, timestamp: e.timestamp ?? e.occurred_at ?? Date.now() }));
             setEvents((prev) => [...prev, ...batch].slice(-EVENT_BUFFER));
           }
           since = resp.next_seq ?? since;
-          replayed = true;
         } catch {
           await new Promise((r) => setTimeout(r, 3000));
         }

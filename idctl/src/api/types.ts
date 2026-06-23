@@ -63,7 +63,11 @@ export interface ManagerEvent {
   actor?: string;
   subject?: string;
   data?: Record<string, unknown>;
+  /** Client-stamped arrival time (legacy). */
   timestamp?: number;
+  /** Wall-clock time the event actually occurred (epoch ms), from the manager.
+   *  Preferred over `timestamp` so ages stay correct across reconnects/replays. */
+  occurred_at?: number;
 }
 
 export interface EventsResponse {

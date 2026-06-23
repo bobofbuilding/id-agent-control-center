@@ -8,6 +8,22 @@ Every change pushed or merged to `main` carries its version number in the commit
 subject (`vX.Y.Z: …`), stamped automatically by the `commit-msg` hook — see
 [CONTRIBUTING.md](CONTRIBUTING.md).
 
+## [0.1.82] — 2026-06-23
+- **Reassign an agent to another team.** Each agent in Teams now has a *“reassign
+  to…”* picker — pick a team and the agent moves there (the manager rebuilds it
+  under the new team, carrying its wallet, subscriptions, check-ins, and history).
+  Refuses a name that already exists in the target team.
+- **Delete an empty team.** Teams with **zero agents** (except `default`) now show a
+  **Delete** button; the manager refuses to delete `default` or any team that still
+  has agents. Remove its agents first (or move them out), then delete.
+- **Activity log keeps correct times across restarts.** The live fleet feed was
+  stamping most of the re-fetched backlog with the current time after a restart, so
+  everything collapsed to the same age (e.g. “18s”). It now uses each event’s real
+  occurred-at time, so ages are accurate and survive an update + relaunch.
+- **Reopens where you left it.** The app now restores its window **position, size,
+  and maximized state**, and the **last page** you were on — including after a
+  self-update relaunch. (Falls back to centered if the saved spot is off-screen.)
+
 ## [0.1.81] — 2026-06-23
 - **Chat live activity recovers after a manager restart.** The inline "what the
   agent is doing" feed (tool/file steps) polls the manager's per-agent activity

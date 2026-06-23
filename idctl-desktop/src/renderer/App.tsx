@@ -42,10 +42,16 @@ interface UpdateStatus {
 export function App() {
   const store = useFleet();
   const [view, setView] = useState<ViewId>(() => {
-    const v = new URLSearchParams(window.location.search).get('view') as ViewId | null;
     // 'schedule' is a Tasks tab now (not in NAV) but still a valid deep-link target.
-    return v && (NAV.some((n) => n.id === v) || v === 'schedule') ? v : 'dashboard';
+    const valid = (id: string | null): id is ViewId => !!id && (NAV.some((n) => n.id === id) || id === 'schedule');
+    const v = new URLSearchParams(window.location.search).get('view');
+    if (valid(v)) return v;
+    // Otherwise reopen on the view the user last had — e.g. after a self-update relaunch.
+    let saved: string | null = null;
+    try { saved = localStorage.getItem('idctl.view'); } catch { /* no storage */ }
+    return valid(saved) ? saved : 'dashboard';
   });
+  useEffect(() => { try { localStorage.setItem('idctl.view', view); } catch { /* no storage */ } }, [view]);
   const [version, setVersion] = useState<string>('');
   const [update, setUpdate] = useState<UpdateStatus | null>(null);
   const [applying, setApplying] = useState(false);

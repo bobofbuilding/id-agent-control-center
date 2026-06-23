@@ -194,6 +194,7 @@ const METHODS: Record<string, (...a: any[]) => Promise<unknown>> = {
   configs: () => client.configs(),
   'team:preflight': (name: string) => client.deployPreflight(String(name)),
   deployTeam: (name: string) => client.deployTeam(String(name)),
+  'team:delete': (name: string) => client.deleteTeam(String(name)),
 
   // team relay (cross-team delegation allow-list) + per-agent override
   teamConfig: (name: string) => client.teamConfig(String(name)),
@@ -202,6 +203,8 @@ const METHODS: Record<string, (...a: any[]) => Promise<unknown>> = {
 
   // dashboard: switch runtime (rebuild required to apply)
   setAgentRuntime: (id: string, runtime: string) => client.setAgentRuntime(String(id), String(runtime)),
+  // reassign a local agent to another team (rebuilds it there)
+  'agent:move': (id: string, team: string) => client.moveAgent(String(id), String(team)),
 
   // per-agent persistent instructions (system-prompt addendum, e.g. coordinator role)
   'agent:getInstructions': (idOrName: string) => client.agentInstructions(String(idOrName)),
