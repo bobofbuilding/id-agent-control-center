@@ -8,6 +8,17 @@ Every change pushed or merged to `main` carries its version number in the commit
 subject (`vX.Y.Z: …`), stamped automatically by the `commit-msg` hook — see
 [CONTRIBUTING.md](CONTRIBUTING.md).
 
+## [0.1.73] — 2026-06-23
+- **Computer Use: you don’t have to approve *everything* anymore.** A new risk
+  classifier means you can turn **off** “Approve every action” and the agent runs
+  ordinary clicks/moves/typing on its own — but the app **still holds the risky
+  ones** for your OK: destructive keyboard shortcuts (Quit, Empty Trash) and
+  dangerous typed commands (`rm -rf`, `sudo`, `drop table`, `--force`, …). The
+  approval prompt now tells you *why* something was flagged. Supervised
+  (approve-everything) remains the default and recommended mode.
+- Stronger guidance to the agent: the type/key tools now explicitly say never to
+  type credentials and that dangerous commands will be held for you.
+
 ## [0.1.72] — 2026-06-23
 - **Computer Use can now DRIVE your Mac — safely.** A blessed Claude/codex agent can
   move the mouse, click, type, scroll, and drag on your primary display (not just

@@ -82,6 +82,30 @@ function previewAction(type: string, body: Record<string, unknown>): string {
   }
 }
 
+// Risk classifier: in AUTONOMOUS mode we auto-allow ordinary actions but still HOLD
+// these for approval. Mouse targets can't be classified without the accessibility
+// tree, so this focuses on the reliably-detectable destructive keyboard + typed
+// commands; supervised mode (the default) still holds everything regardless.
+// Recursive/forced rm, sudo, fs/disk wipes, mass deletes, fork-bombs, DB drops,
+// hard resets/force-pushes, shutdowns, kills, pipe-to-shell, etc. Linear [^\n]*
+// only (no nested quantifiers → no catastrophic backtracking on agent text).
+const SHELL_DANGER = /\brm\s+(-[a-z]*[rf]|--(recursive|force))|\bsudo\b|\bmkfs\b|\bdd\s+if=|:\(\)\s*\{|\bdrop\s+(table|database)\b|\bdelete\s+from\b|\btruncate\s+table\b|\bgit\s+(reset\s+--hard|push\b[^\n]*--force|clean\s+-[a-z]*f)|--force\b|\bshutdown\b|\breboot\b|\bhalt\b|\bpoweroff\b|\binit\s+0\b|\bkillall\b|\bpkill\b|\bdiskutil\s+(erase|reformat|partitiondisk|apfs\s+delete)|\bfind\b[^\n]*-delete\b|\b(curl|wget)\b[^\n]*\|\s*(sudo\s+)?(ba|z)?sh\b|>\s*\/dev\/(sda|disk|hd)|\bchmod\s+-R\b|\bchown\s+-R\b|\bformat\s+[a-z]:/i;
+function classifyRisk(type: string, body: Record<string, unknown>): { risky: boolean; reason?: string } {
+  if (type === 'key') {
+    // Match the driver's modifier + key normalization so aliases (super→cmd, del→delete) can't slip past.
+    const k = String(body.keys ?? body.key ?? '').toLowerCase().replace(/\s+/g, '');
+    const cmd = /(cmd|command|meta|super|⌘)/.test(k);
+    if (cmd && /(delete|backspace|\bdel\b|bksp)/.test(k)) return { risky: true, reason: 'move to Trash / delete' };
+    if (cmd && /\+q$/.test(k)) return { risky: true, reason: 'quit the app' };
+    return { risky: false };
+  }
+  if (type === 'type') {
+    if (SHELL_DANGER.test(String(body.text ?? ''))) return { risky: true, reason: 'looks like a destructive command' };
+    return { risky: false };
+  }
+  return { risky: false };
+}
+
 function pendingList(): PendingAction[] { return [...S.pending.values()].map((p) => p.entry); }
 function notifyPending(kind: 'add' | 'remove'): void { try { S.onPending?.({ kind, pending: pendingList() }); } catch { /* */ } }
 
@@ -213,13 +237,17 @@ async function handleAction(body: Record<string, unknown>): Promise<{ status: nu
     if (!S.lastShot) { rec(agent, type, '', 'blocked', 'no_screenshot'); return blk('no_screenshot', 'Call computer_screenshot first — coordinates are relative to the latest screenshot.'); }
     // You can pause the agent (block input) without disarming.
     if (S.paused) { rec(agent, type, previewAction(type, body), 'blocked', 'paused'); return blk('paused', 'You paused Computer Use — resume it in the app to continue.'); }
-    // Supervised mode (default): HOLD every action for the user's one-click approval.
-    if (S.supervised) {
-      const approved = await requestApproval(agent, type, previewAction(type, body));
-      if (!approved) { rec(agent, type, previewAction(type, body), 'blocked', 'declined'); return blk('declined', 'You declined this action in the app.'); }
+    // Decide whether to HOLD this action for approval: supervised holds EVERY action;
+    // autonomous holds only the ones the risk classifier flags (delete/quit/dangerous
+    // commands). Either way the user is the only one who can release a held action.
+    const risk = classifyRisk(type, body);
+    if (S.supervised || risk.risky) {
+      const label = previewAction(type, body) + (risk.risky ? ` — ⚠ ${risk.reason}` : '');
+      const approved = await requestApproval(agent, type, label);
+      if (!approved) { rec(agent, type, label, 'blocked', 'declined'); return blk('declined', 'You declined this action in the app.'); }
       // Re-validate AFTER approval: disarm/panic/pause could have fired between the
       // user clicking Allow and now — a just-approved action must NOT run post-stop.
-      if (!S.armed || S.paused || !S.blessed.has(agent)) { rec(agent, type, previewAction(type, body), 'blocked', 'stopped'); return blk('stopped', 'Computer Use was stopped before this action ran.'); }
+      if (!S.armed || S.paused || !S.blessed.has(agent)) { rec(agent, type, label, 'blocked', 'stopped'); return blk('stopped', 'Computer Use was stopped before this action ran.'); }
     }
     const n = (k: string): number => { const v = Number((body as Record<string, unknown>)[k]); return Number.isFinite(v) ? v : NaN; };
     let ok = false; let detail = '';

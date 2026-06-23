@@ -303,7 +303,16 @@ if (cuSelftest) {
       const pend = pendingActions();
       if (pend.length) confirmAction(pend[0].id, true);
       const heldRes = await held;
-      console.log('CU_SELFTEST ' + JSON.stringify({ port: st.port, shotOk: shot.ok, imageBytes: shot.image ? Buffer.from(shot.image, 'base64').length : 0, width: shot.width, height: shot.height, driverOk: st.driverOk, accessibility: st.accessibility, moveOk: mv.ok, moveDetail: mv.detail, moveReason: mv.reason, supervisedHeld: pend.length, supervisedApprovedOk: heldRes.ok }));
+      // Classifier: in AUTONOMOUS mode a normal move auto-executes, but a dangerous
+      // typed command is HELD. Deny the risky one (never executes).
+      setSupervised(false);
+      const normal = await post({ type: 'mouse_move', x: 20, y: 20 }) as { ok?: boolean };
+      const risky = post({ type: 'type', text: 'sudo rm -rf /tmp/x' }) as Promise<{ ok?: boolean; reason?: string }>;
+      await new Promise((r) => setTimeout(r, 400));
+      const riskyPend = pendingActions();
+      if (riskyPend.length) confirmAction(riskyPend[0].id, false);
+      const riskyRes = await risky;
+      console.log('CU_SELFTEST ' + JSON.stringify({ port: st.port, shotOk: shot.ok, imageBytes: shot.image ? Buffer.from(shot.image, 'base64').length : 0, width: shot.width, height: shot.height, driverOk: st.driverOk, accessibility: st.accessibility, moveOk: mv.ok, moveDetail: mv.detail, moveReason: mv.reason, supervisedHeld: pend.length, supervisedApprovedOk: heldRes.ok, autoNormalOk: normal.ok, autoRiskyHeld: riskyPend.length, autoRiskyDenied: riskyRes.reason === 'declined' }));
     } catch (e) {
       console.log('CU_SELFTEST_ERR ' + (e instanceof Error ? e.message : String(e)));
     }

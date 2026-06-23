@@ -292,7 +292,12 @@ export function ComputerUse({ store }: { store: FleetStore }) {
             <h3>Safety</h3>
             <label className="cu-mode-row">
               <input type="checkbox" checked={status?.supervised !== false} onChange={() => void toggleSupervised()} />
-              <span><b>Approve every action</b> <span className="muted small">— hold each click/keystroke for your OK (recommended)</span></span>
+              <span>
+                <b>Approve every action</b> <span className="muted small">(recommended)</span>
+                <div className="muted small">{status?.supervised !== false
+                  ? 'Every click & keystroke is held for your OK.'
+                  : 'Auto-allowing ordinary actions — but still asking before risky ones (quit, empty Trash, dangerous commands).'}</div>
+              </span>
             </label>
             <ul className="muted small">
               <li><b>Disarmed by default</b> — no screenshot or input until you Arm.</li>
