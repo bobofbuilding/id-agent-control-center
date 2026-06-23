@@ -306,6 +306,7 @@ button.chip.incompat:hover { border-color: var(--line); }
 .chat-trace.done > summary { cursor: pointer; list-style: revert; }
 .chat-trace-head { letter-spacing: .04em; text-transform: uppercase; margin-bottom: 3px; }
 .chat-trace-row { font-size: 12px; line-height: 1.5; color: var(--text-2, var(--muted)); white-space: pre-wrap; }
+.chat-trace-when { color: var(--muted); font-variant-numeric: tabular-nums; font-size: 11px; margin-right: 6px; opacity: .65; }
 .chat-trace-row.trace-ok { color: var(--ok, #4caf7d); }
 .chat-trace-row.trace-err { color: var(--danger, #e5534b); }
 /* The agent's own tool/file steps read brighter than the muted delegation lines. */

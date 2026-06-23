@@ -8,6 +8,19 @@ Every change pushed or merged to `main` carries its version number in the commit
 subject (`vX.Y.Z: …`), stamped automatically by the `commit-msg` hook — see
 [CONTRIBUTING.md](CONTRIBUTING.md).
 
+## [0.1.81] — 2026-06-23
+- **Chat live activity recovers after a manager restart.** The inline "what the
+  agent is doing" feed (tool/file steps) polls the manager's per-agent activity
+  ring. If the manager restarted mid-dispatch, its in-memory ring reset *below* the
+  chat's cursor, so the feed froze showing only "<agent> working… Ns" with no steps.
+  The poll now detects when the ring is behind its cursor and resyncs to the tail, so
+  the agent's ongoing actions stream again. (Pairs with the matching `/events` cursor
+  fix.)
+- **Each activity / behind-the-scenes step now shows its time.** Every live tool/file
+  step and delegation line — and the captured trace on a finished reply — is prefixed
+  with the clock time (HH:MM:SS) it happened, so you can see *when* each action ran,
+  not just the running elapsed counter.
+
 ## [0.1.80] — 2026-06-23
 - **Background updates now ping you system‑wide.** The app already checked for
   updates in the background (on launch, every few hours, and on window focus) and

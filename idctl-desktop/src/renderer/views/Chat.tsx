@@ -85,7 +85,7 @@ function sstr(x: unknown): string { return typeof x === 'string' ? x : ''; }
 function previewOf(d: Record<string, unknown>): string {
   return sstr(d.message_preview) || sstr(d.preview) || sstr(d.message) || sstr(d.text) || sstr(d.title) || sstr(d.note);
 }
-export interface TraceLine { seq: number; line: string; cls: 'accent' | 'ok' | 'err' }
+export interface TraceLine { seq: number; line: string; cls: 'accent' | 'ok' | 'err'; at: number }
 // `sinceTs` is a wall-clock floor (the dispatch start). The store stamps LIVE
 // events with arrival time but leaves the historical replay batch unstamped, so
 // requiring a timestamp >= sinceTs keeps an empty/low-seq buffer from flooding
@@ -114,7 +114,7 @@ function traceLines(events: ManagerEvent[], sinceSeq: number, sinceTs: number, b
     } else if (t.startsWith('agent:')) {
       line = [who, t.split(':')[1]].filter(Boolean).join(' ');
     } else continue; // skip noise (snapshots, heartbeat housekeeping, etc.)
-    if (line.trim()) out.push({ seq: e.seq, line: line.trim(), cls });
+    if (line.trim()) out.push({ seq: e.seq, line: line.trim(), cls, at: e.timestamp ?? 0 });
   }
   return out.slice(-8);
 }
@@ -123,7 +123,14 @@ const KIND_ICON: Record<string, string> = {
   file: '📝', read: '📖', run: '▶', search: '🔍', web: '🌐', delegate: '🤝', plan: '🧩', error: '⚠', tool: '🔧',
 };
 function actIcon(kind: string): string { return KIND_ICON[kind] || '🔧'; }
-function actLine(a: ActivityStep): string { return `${actIcon(a.kind)} ${a.summary}`; }
+function actLine(a: ActivityStep): string { return `${whenTime(a.at)} ${actIcon(a.kind)} ${a.summary}`.trim(); }
+/** Clock time (HH:MM:SS) for an activity/trace row — the "when" of each step. */
+function whenTime(at?: number): string {
+  if (!at) return '';
+  try {
+    return new Date(at).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+  } catch { return ''; }
+}
 
 function newSessionId(): string { return `c_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 7)}`; }
 function fmtAge(ts: number): string {
@@ -241,6 +248,12 @@ export function Chat({ store }: { store: FleetStore }) {
       if (Array.isArray(r.items) && r.items.length) {
         activitySinceRef.current = r.items[r.items.length - 1].seq;
         setActivitySteps((prev) => [...prev, ...r.items].slice(-60));
+      } else if (typeof r.next_seq === 'number' && r.next_seq < activitySinceRef.current) {
+        // The activity ring is BEHIND our cursor — the manager restarted and reset
+        // its in-memory ring below where we were polling, so since=N returns nothing
+        // forever and the live "what the agent is doing" feed freezes. Resync to the
+        // new tail so the agent's ongoing steps stream again.
+        activitySinceRef.current = r.next_seq;
       }
     };
     void poll();
@@ -451,7 +464,7 @@ export function Chat({ store }: { store: FleetStore }) {
   function buildTrace(steps: ActivityStep[], startedAt: number): string[] {
     const acts = steps.map(actLine);
     const delegs = traceLines(storeEventsRef.current, 0, startedAt - 1500, agentNameById)
-      .filter((t) => / → |delegated|replied/.test(t.line)).slice(-4).map((t) => t.line);
+      .filter((t) => / → |delegated|replied/.test(t.line)).slice(-4).map((t) => `${whenTime(t.at)} ${t.line}`.trim());
     return [...acts, ...delegs].slice(-14);
   }
 
@@ -797,8 +810,8 @@ export function Chat({ store }: { store: FleetStore }) {
                 {live && (activitySteps.length || liveTrace.length) ? (
                   <div className="chat-trace">
                     <div className="chat-trace-head muted small">working · live</div>
-                    {activitySteps.map((a) => <div key={`a${a.seq}`} className={`chat-trace-row act-${a.kind === 'error' ? 'err' : 'accent'}`}>{actIcon(a.kind)} {a.summary}</div>)}
-                    {liveTrace.map((t) => <div key={`e${t.seq}`} className={`chat-trace-row trace-${t.cls}`}>{t.line}</div>)}
+                    {activitySteps.map((a) => <div key={`a${a.seq}`} className={`chat-trace-row act-${a.kind === 'error' ? 'err' : 'accent'}`}><span className="chat-trace-when">{whenTime(a.at)}</span>{actIcon(a.kind)} {a.summary}</div>)}
+                    {liveTrace.map((t) => <div key={`e${t.seq}`} className={`chat-trace-row trace-${t.cls}`}><span className="chat-trace-when">{whenTime(t.at)}</span>{t.line}</div>)}
                   </div>
                 ) : null}
                 {/* Captured trace, persisted with a finished reply. */}
