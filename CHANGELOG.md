@@ -8,6 +8,29 @@ Every change pushed or merged to `main` carries its version number in the commit
 subject (`vX.Y.Z: …`), stamped automatically by the `commit-msg` hook — see
 [CONTRIBUTING.md](CONTRIBUTING.md).
 
+## [0.1.88] — 2026-06-23
+- **The Teams page is now the “HR Manager” page.** Same spot in the sidebar and the
+  same underlying team data — just renamed (nav label + page heading) to reflect that
+  it manages the agent workforce.
+- **One AI Team Builder replaces “Import from spec” + “Onboard agents.”** A single
+  flow now builds teams and agents end to end:
+  - **Describe in plain English or paste a spec** — a live deterministic parse drafts
+    the roster as you type; **✦ Build with AI** designs it from messy or high‑level
+    input.
+  - **AI designs the whole roster** — each agent comes back with a suggested runtime,
+    model, skills, and one ★ lead, grounded by the runtimes/models/skills actually
+    available (off‑list picks are dropped, nothing is invented).
+  - **Rich per‑agent review** — name · runtime · model · role, with an expandable row
+    for each agent’s persona and per‑agent skills; shared MCP / heartbeat / wallet /
+    probe apply to the batch.
+  - **Build in one pass** via `onboard:run`, which now carries each agent’s persona,
+    with a live per‑agent checklist. Targets a new or existing team.
+  - **Auto‑wiring** — after the agents land, the ★ lead is made the primary
+    coordinator and gets the delegate‑to‑teammates preset, and the team’s cross‑team
+    relay policy is applied (each shown as its own checklist row). The coordinator and
+    rebuild calls are team‑scoped so wiring a brand‑new team works even when it isn’t
+    the active one.
+
 ## [0.1.87] — 2026-06-23
 - **Add Agent is now one streamlined “Onboard agents” flow.** The inline add‑agent
   form on the Teams page is gone; the **Onboard agents** button opens a single modal

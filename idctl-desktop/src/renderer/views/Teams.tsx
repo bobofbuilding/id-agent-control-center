@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { call, agentsLeadFirst, resolveCoordinator, type FleetStore } from '../store.ts';
 import { offerableRuntimes } from '../../../../idctl/src/settings/runtimeCatalog.ts';
-import type { ConfigEntry, DeployPreflight, LibrarySkillEntry, McpServerSpec, TeamTemplate } from '../../../../idctl/src/api/client.ts';
+import type { ConfigEntry, DeployPreflight, DesignedTeam, LibrarySkillEntry, McpServerSpec, TeamTemplate } from '../../../../idctl/src/api/client.ts';
 import type { OnboardPlan, OnboardResult } from '../../../../idctl/src/api/onboard.ts';
 import { MCP_CATALOG, buildFromCatalog } from '../../../../idctl/src/settings/mcpCatalog.ts';
 import { parseTeamSpec, slugName, isReservedName } from '../../../../idctl/src/api/teamSpec.ts';
@@ -9,6 +9,8 @@ import { parseTeamSpec, slugName, isReservedName } from '../../../../idctl/src/a
 type ProviderRow = { kind: string; enabled?: boolean; keySource?: string; lastSync?: { status?: string } };
 
 type RelayMode = 'permissive' | 'all' | 'select' | 'none';
+/** Status of a post-build wiring step (coordinator/relay) in the Team Builder. */
+type PostStat = 'running' | 'ok' | 'failed';
 type TeamSource =
   | { kind: 'default'; name: 'default' }
   | { kind: 'template'; name: string }
@@ -71,7 +73,9 @@ export function Teams({ store }: { store: FleetStore }) {
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<string>('');
   const [createOpen, setCreateOpen] = useState(false);
-  const [importOpen, setImportOpen] = useState(false);
+  // The unified AI Team Builder. null = closed; a string = open with that target
+  // team preselected ('' opens in new-team mode).
+  const [builderTeam, setBuilderTeam] = useState<string | null>(null);
 
   // Cross-team relay policy (delegates_to) for the active team.
   const activeTeam = store.team ?? 'default';
@@ -167,7 +171,6 @@ export function Teams({ store }: { store: FleetStore }) {
   const [modelCatalog, setModelCatalog] = useState<Record<string, string[]>>({});
   const [skillCatalog, setSkillCatalog] = useState<string[]>([]);
   const [providers, setProviders] = useState<ProviderRow[]>([]);
-  const [onboardOpen, setOnboardOpen] = useState(false);
 
   useEffect(() => {
     call<Record<string, string[]>>('runtime:models').then(setModelCatalog).catch(() => setModelCatalog({}));
@@ -254,25 +257,27 @@ export function Teams({ store }: { store: FleetStore }) {
   return (
     <div className="view modules">
       <header className="view-head">
-        <h1>Teams</h1>
+        <h1>HR Manager</h1>
         <div className="row-actions">
-          <button className="btn" disabled={busy} onClick={() => setImportOpen(true)} title="Paste a team spec and auto-create the agents">
-            ↥ Import from spec
+          <button className="btn" disabled={busy} onClick={() => setCreateOpen(true)} title="Create a team from a library template or saved server config">
+            + From template
           </button>
-          <button className="btn primary" disabled={busy} onClick={() => setCreateOpen(true)}>
-            + New team
+          <button className="btn primary" disabled={busy} onClick={() => setBuilderTeam('')} title="Describe a team in plain English (or paste a spec) and let AI design + build the whole roster">
+            ✦ Build a team
           </button>
         </div>
       </header>
-      {importOpen ? (
-        <ImportTeamModal
+      {builderTeam !== null ? (
+        <TeamBuilder
+          team={builderTeam}
           existingTeams={store.teams.map((t) => t.name)}
           providers={providers}
           modelCatalog={modelCatalog}
-          onClose={() => setImportOpen(false)}
+          skillCatalog={skillCatalog}
+          onClose={() => setBuilderTeam(null)}
           onBusy={setBusy}
           onMessage={setMsg}
-          onCreated={async (name) => { await store.setTeam(name); store.refresh(); }}
+          onDone={(createdTeam) => { if (createdTeam) void store.setTeam(createdTeam); store.refresh(); }}
         />
       ) : null}
       {createOpen ? (
@@ -324,28 +329,16 @@ export function Teams({ store }: { store: FleetStore }) {
       <section className="card">
         <div className="row-actions" style={{ justifyContent: 'space-between', alignItems: 'center' }}>
           <div>
-            <h3 style={{ margin: 0 }}>Add agents</h3>
+            <h3 style={{ margin: 0 }}>Add agents to {activeTeam}</h3>
             <p className="muted small" style={{ margin: '4px 0 0' }}>
-              Create one or more agents in a single pass — pick a team, set each agent's runtime &amp; model, add skills/MCP/heartbeat, and onboard them together.
+              Describe the agents you need (or paste a spec) and let AI design the roster — per-agent runtime, model &amp; skills — then review and build them into <b>{activeTeam}</b> in one pass.
             </p>
           </div>
-          <button className="btn primary" onClick={() => setOnboardOpen(true)}>
-            Onboard agents
+          <button className="btn primary" onClick={() => setBuilderTeam(activeTeam)}>
+            ✦ Build / add agents
           </button>
         </div>
       </section>
-
-      {onboardOpen ? (
-        <OnboardWizard
-          team={activeTeam}
-          existingTeams={store.teams.map((t) => t.name)}
-          providers={providers}
-          modelCatalog={modelCatalog}
-          skillCatalog={skillCatalog}
-          onClose={() => setOnboardOpen(false)}
-          onDone={(createdTeam) => { if (createdTeam) void store.setTeam(createdTeam); store.refresh(); }}
-        />
-      ) : null}
 
       <section className="card">
         <h3>Cross-team relay — {activeTeam}</h3>
@@ -518,188 +511,6 @@ export function Teams({ store }: { store: FleetStore }) {
       </section>
 
       {msg ? <p className="muted">{msg}</p> : null}
-    </div>
-  );
-}
-
-function ImportTeamModal({
-  existingTeams,
-  providers,
-  modelCatalog,
-  onClose,
-  onBusy,
-  onMessage,
-  onCreated,
-}: {
-  existingTeams: string[];
-  providers: ProviderRow[];
-  modelCatalog: Record<string, string[]>;
-  onClose: () => void;
-  onBusy: (b: boolean) => void;
-  onMessage: (m: string) => void;
-  onCreated: (name: string) => Promise<void>;
-}) {
-  const [spec, setSpec] = useState('');
-  const [team, setTeam] = useState('');
-  const [agents, setAgents] = useState<{ name: string; role: string; description: string }[]>([]);
-  // Once the user hand-edits/removes/AI-parses the agent list, the live spec parse
-  // stops overwriting it — so manual curation isn't silently discarded mid-edit.
-  const [agentsDirty, setAgentsDirty] = useState(false);
-  const [runtime, setRuntime] = useState('claude-code-cli');
-  const [model, setModel] = useState('');
-  const [running, setRunning] = useState(false);
-  const [aiParsing, setAiParsing] = useState(false);
-  const [error, setError] = useState('');
-  const runtimes = useMemo(() => offerableRuntimes(providers), [providers]);
-  const models = modelCatalog[runtime] ?? [];
-  const parsed = useMemo(() => parseTeamSpec(spec), [spec]);
-  const cleanTeam = cleanTeamName(team);
-  const collides = Boolean(cleanTeam && existingTeams.includes(cleanTeam));
-  // Pre-flight the manager's reserved-word list so a collision is caught before
-  // any team/agent is created, not per-agent at spawn time.
-  const reservedAgents = useMemo(() => agents.filter((a) => isReservedName(a.name)).map((a) => a.name), [agents]);
-  const reservedTeam = isReservedName(cleanTeam);
-  // Spec produced agents but no team name — the "pasted a changelog/instructions"
-  // signature; nudge the user to review before this becomes a one-click spawn.
-  const noSpecTeam = spec.trim().length > 0 && !parsed.team;
-  const locked = running || aiParsing;
-  const canCreate =
-    Boolean(cleanTeam) && agents.length > 0 && !locked && reservedAgents.length === 0 && !reservedTeam;
-
-  // Live deterministic parse as the user pastes/edits the spec; prefill the team
-  // name once (don't clobber a manual edit), and don't overwrite a hand-curated
-  // agent list. Clearing the spec resets so a fresh paste re-parses cleanly.
-  useEffect(() => {
-    if (!spec.trim()) { setAgents([]); setAgentsDirty(false); return; }
-    if (!agentsDirty) setAgents(parsed.agents);
-    if (parsed.team) setTeam((prev) => prev || parsed.team || '');
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [spec]);
-
-  async function aiParse() {
-    if (!spec.trim()) return;
-    setAiParsing(true); setError('');
-    onMessage('asking an agent to parse the spec…');
-    try {
-      const r = await call<{ team: string | null; agents: { name: string; role: string; description: string }[] }>('team:parseSpecAI', spec);
-      if (r?.agents?.length) { setAgents(r.agents); setAgentsDirty(true); }
-      if (r?.team) setTeam((prev) => prev || r.team || '');
-      onMessage(`AI parsed ${r?.agents?.length ?? 0} agent(s)`);
-    } catch (e) {
-      setError(`AI parse failed: ${e instanceof Error ? e.message : String(e)} — keeping the deterministic parse.`);
-    } finally { setAiParsing(false); }
-  }
-
-  function updateAgent(i: number, field: 'name' | 'role' | 'description', val: string) {
-    setAgentsDirty(true);
-    setAgents((prev) => prev.map((a, j) => (j === i ? { ...a, [field]: val } : a)));
-  }
-  function removeAgent(i: number) { setAgentsDirty(true); setAgents((prev) => prev.filter((_, j) => j !== i)); }
-
-  async function create() {
-    if (!cleanTeam) { setError('Team name is required.'); return; }
-    if (!agents.length) { setError('No agents to create.'); return; }
-    if (reservedTeam) { setError(`“${cleanTeam}” is a reserved word — choose another team name.`); return; }
-    if (reservedAgents.length) { setError(`Reserved agent name(s): ${reservedAgents.join(', ')} — rename before creating.`); return; }
-    setRunning(true); onBusy(true); setError('');
-    onMessage(`importing ${agents.length} agent(s) into ${cleanTeam}…`);
-    try {
-      const payload = agents.map((a) => ({ name: a.name, role: a.role || undefined, description: a.description || undefined }));
-      const r = await call<{ created: string[]; failed: { name: string; error: string }[] }>('team:import', cleanTeam, payload, { runtime, model: model || undefined });
-      const c = r?.created?.length ?? 0;
-      const f = r?.failed ?? [];
-      onMessage(f.length ? `imported ${c}/${agents.length} into ${cleanTeam}; ${f.length} failed` : `imported ${c} agent(s) into ${cleanTeam} ✓`);
-      // Only switch the app to the team if something actually landed there (or the
-      // team already existed) — don't pin the UI to a phantom team when every spawn failed.
-      if (c > 0 || collides) await onCreated(cleanTeam);
-      if (!f.length) { onClose(); return; }
-      // Partial failure: keep only the agents that still need creating, so re-clicking
-      // Create retries just the failures (the succeeded ones already exist → would 409).
-      const failedNames = new Set(f.map((x) => x.name));
-      setAgentsDirty(true);
-      setAgents((prev) => prev.filter((a) => failedNames.has(a.name)));
-      setError(`${f.length} failed: ${f.map((x) => `${x.name} (${x.error})`).join('; ')}`);
-    } catch (e) {
-      const msg = e instanceof Error ? e.message : String(e);
-      setError(msg); onMessage(`failed: ${msg}`);
-    } finally { setRunning(false); onBusy(false); }
-  }
-
-  return (
-    <div className="modal-overlay" onMouseDown={() => (running ? undefined : onClose())}>
-      <div className="modal onboard-modal create-team-modal" onMouseDown={(e) => e.stopPropagation()}>
-        <div className="modal-title">Import team from spec</div>
-        <div className="create-team-layout">
-          <div>
-            <div className="muted small" style={{ marginBottom: 6 }}>paste a team spec</div>
-            <textarea
-              autoFocus
-              style={{ width: '100%', minHeight: 230, fontFamily: 'var(--mono, monospace)', fontSize: 12 }}
-              placeholder={'e.g.\n**Recommended Agent Creations For `brain`**\n1. **security-router**\n   Role: first-pass classifier…'}
-              value={spec}
-              disabled={locked}
-              onChange={(e) => { setSpec(e.target.value); setError(''); }}
-            />
-            <div className="row-actions" style={{ marginTop: 6, justifyContent: 'space-between' }}>
-              <button className="btn small" disabled={!spec.trim() || running || aiParsing} onClick={() => void aiParse()}>
-                {aiParsing ? 'Asking AI…' : '✦ Ask AI to parse'}
-              </button>
-              <span className="muted small">{agents.length} agent{agents.length === 1 ? '' : 's'} detected</span>
-            </div>
-          </div>
-          <div>
-            <label className="create-field">
-              <span>team name</span>
-              <input placeholder="lowercase, e.g. brain" value={team} disabled={locked} onChange={(e) => { setTeam(e.target.value); setError(''); }} onBlur={() => setTeam(cleanTeamName(team))} />
-            </label>
-            {team && team !== cleanTeam ? <p className="muted small">Will create as <span className="mono">{cleanTeam}</span>.</p> : null}
-            {reservedTeam ? <p className="status-error small"><span className="mono">{cleanTeam}</span> is a reserved word — choose another team name.</p> : null}
-            {collides ? <p className="warn-text small">Team <span className="mono">{cleanTeam}</span> exists — these agents will be added to it.</p> : null}
-            {noSpecTeam ? <p className="warn-text small">No team name detected in the spec — double-check the agents below before creating.</p> : null}
-            <div className="kv" style={{ gridTemplateColumns: '90px 1fr', gap: '8px 10px', marginTop: 8 }}>
-              <span>runtime</span>
-              <select className="cell-select" disabled={locked} value={runtime} onChange={(e) => { setRuntime(e.target.value); setModel(''); }}>
-                {runtimes.map((r) => <option key={r} value={r}>{runtimeLabel(r)}</option>)}
-              </select>
-              <span>model</span>
-              <select className="cell-select" disabled={locked} value={model} onChange={(e) => setModel(e.target.value)}>
-                <option value="">default</option>
-                {models.map((m) => <option key={m} value={m}>{m}</option>)}
-              </select>
-            </div>
-            <div className="muted small" style={{ margin: '10px 0 4px' }}>agents to create (editable) — role is a one-line summary, description becomes the agent’s instructions</div>
-            <div style={{ maxHeight: 280, overflowY: 'auto' }}>
-              {agents.length === 0 ? (
-                <p className="muted small">Paste a spec above — or click “Ask AI to parse” for messy formats.</p>
-              ) : agents.map((a, i) => (
-                <div key={i} style={{ marginBottom: 8, padding: '6px 6px 8px', border: '1px solid var(--border, #2a2a2a)', borderRadius: 6 }}>
-                  <div className="kv" style={{ gridTemplateColumns: '150px 1fr 24px', gap: '4px 6px', alignItems: 'center' }}>
-                    <input className="mono" style={{ fontSize: 12, ...(isReservedName(a.name) ? { borderColor: 'var(--danger, #e5484d)' } : {}) }} value={a.name} disabled={locked} title={isReservedName(a.name) ? 'reserved word — rename' : undefined} onChange={(e) => updateAgent(i, 'name', e.target.value)} onBlur={(e) => updateAgent(i, 'name', slugName(e.target.value))} />
-                    <input style={{ fontSize: 12 }} value={a.role} disabled={locked} maxLength={200} placeholder="role (one line)" onChange={(e) => updateAgent(i, 'role', e.target.value)} />
-                    <button className="uv-x" title="Remove" disabled={locked} onClick={() => removeAgent(i)}>✕</button>
-                  </div>
-                  <textarea
-                    style={{ width: '100%', marginTop: 4, fontSize: 11, minHeight: 46, fontFamily: 'inherit', resize: 'vertical' }}
-                    value={a.description}
-                    disabled={locked}
-                    maxLength={2000}
-                    placeholder="description / persona — becomes this agent’s operating instructions"
-                    onChange={(e) => updateAgent(i, 'description', e.target.value)}
-                  />
-                </div>
-              ))}
-            </div>
-            {reservedAgents.length ? <p className="status-error small">Reserved name{reservedAgents.length === 1 ? '' : 's'}: <span className="mono">{reservedAgents.join(', ')}</span> — rename before creating.</p> : null}
-            {error ? <p className="status-error small">{error}</p> : null}
-          </div>
-        </div>
-        <div className="row-actions" style={{ marginTop: 14 }}>
-          <button className="btn" disabled={running} onClick={onClose}>Cancel</button>
-          <button className="btn primary" disabled={!canCreate} onClick={() => void create()}>
-            {running ? 'Importing…' : `Create team + ${agents.length} agent${agents.length === 1 ? '' : 's'}`}
-          </button>
-        </div>
-      </div>
     </div>
   );
 }
@@ -902,13 +713,24 @@ function CreateTeamModal({
   );
 }
 
-function OnboardWizard({
+/**
+ * The unified AI Team Builder — one flow that replaces the old "Import from spec"
+ * and "Onboard agents" modals. Describe a team in plain English (or paste a spec),
+ * let AI (or a deterministic parse) draft the roster with a per-agent runtime,
+ * model and skills, review/edit it, then build every agent in one pass via
+ * `onboard:run` (which carries each agent's persona). After the agents land it can
+ * auto-wire coordination (make the ★ lead the primary coordinator + apply the
+ * delegate-to-teammates preset) and the new team's cross-team relay policy.
+ */
+function TeamBuilder({
   team,
   existingTeams,
   providers,
   modelCatalog,
   skillCatalog,
   onClose,
+  onBusy,
+  onMessage,
   onDone,
 }: {
   team: string;
@@ -917,51 +739,115 @@ function OnboardWizard({
   modelCatalog: Record<string, string[]>;
   skillCatalog: string[];
   onClose: () => void;
+  onBusy: (b: boolean) => void;
+  onMessage: (m: string) => void;
   onDone: (createdTeam?: string) => void;
 }) {
   const runtimes = useMemo(() => offerableRuntimes(providers), [providers]);
   const initialRuntime = runtimes[0] ?? 'claude-code-cli';
-  type Row = { name: string; runtime: string; model: string; role: string };
-  const blankRow = (): Row => ({ name: '', runtime: initialRuntime, model: '', role: '' });
+  type Row = { name: string; runtime: string; model: string; role: string; description: string; skills: string[]; lead: boolean; open: boolean };
+  const blankRow = (): Row => ({ name: '', runtime: initialRuntime, model: '', role: '', description: '', skills: [], lead: false, open: false });
+  // Map a parsed/AI-designed agent onto a builder row, sanitizing the AI's runtime/
+  // model/skill picks against what's actually available.
+  const toRow = (a: { name: string; role: string; description: string; runtime?: string; model?: string; skills?: string[]; lead?: boolean }): Row => {
+    const runtime = a.runtime && runtimes.includes(a.runtime) ? a.runtime : initialRuntime;
+    return {
+      name: a.name,
+      runtime,
+      model: a.model && (modelCatalog[runtime] ?? []).includes(a.model) ? a.model : '',
+      role: a.role,
+      description: a.description,
+      skills: (a.skills ?? []).filter((s) => skillCatalog.includes(s)),
+      lead: Boolean(a.lead),
+      open: false,
+    };
+  };
 
-  // Which team to create into — an existing one, or a brand-new team.
-  const teamOptions = useMemo(() => {
-    const set = [...existingTeams];
-    if (team && !set.includes(team)) set.unshift(team);
-    return set;
-  }, [existingTeams, team]);
-  const [teamSel, setTeamSel] = useState(team || teamOptions[0] || 'default');
-  const [newTeam, setNewTeam] = useState('');
+  // ---- target team (existing or new) ----
+  const teamOptions = useMemo(() => existingTeams.filter(Boolean), [existingTeams]);
+  const [teamSel, setTeamSel] = useState<string>(team && existingTeams.includes(team) ? team : '__new__');
+  const [newTeam, setNewTeam] = useState(team && !existingTeams.includes(team) ? cleanTeamName(team) : '');
+  const [teamTouched, setTeamTouched] = useState(false);
   const usingNewTeam = teamSel === '__new__';
   const targetTeam = usingNewTeam ? cleanTeamName(newTeam) : teamSel;
+  const teamExists = existingTeams.includes(targetTeam);
 
-  // One or more agents, each with its own runtime + model.
+  // ---- spec / AI design ----
+  const [spec, setSpec] = useState('');
   const [rows, setRows] = useState<Row[]>([blankRow()]);
-  // Options applied to every agent in the batch.
-  const [skills, setSkills] = useState<string[]>([]);
+  // Once the roster is hand-edited or AI-designed, stop letting the live spec parse
+  // overwrite it (so manual curation isn't silently discarded mid-edit).
+  const [rowsDirty, setRowsDirty] = useState(false);
+  const [aiBusy, setAiBusy] = useState(false);
+
+  // ---- options applied to every agent ----
   const [mcp, setMcp] = useState('');
-  const [wallet, setWallet] = useState(false);
   const [heartbeat, setHeartbeat] = useState(false);
   const [hbInterval, setHbInterval] = useState(3600);
+  const [wallet, setWallet] = useState(false);
   const [probeAfter, setProbeAfter] = useState(true);
-  const [results, setResults] = useState<Array<{ name: string; team: string; result?: OnboardResult; error?: string; running?: boolean }>>([]);
-  const [running, setRunning] = useState(false);
+
+  // ---- coordination + relay ----
+  const [coordinate, setCoordinate] = useState(true);
+  const [relayMode, setRelayMode] = useState<RelayMode>('permissive');
+  const [relaySel, setRelaySel] = useState<string[]>([]);
+  const relayTargets = existingTeams.filter((n) => n !== targetTeam);
+
+  // ---- build progress ----
+  const [building, setBuilding] = useState(false);
   const [error, setError] = useState('');
+  const [results, setResults] = useState<Array<{ name: string; team: string; result?: OnboardResult; error?: string; running?: boolean }>>([]);
+  const [post, setPost] = useState<{ coord?: PostStat; coordErr?: string; leadName?: string; relay?: PostStat; relayErr?: string }>({});
 
   const mcpChoices = MCP_CATALOG.filter((entry) => !(entry.inputs ?? []).some((input) => input.required && !input.default));
   const named = rows.map((r) => ({ ...r, slug: slugName(r.name) })).filter((r) => r.slug);
   const reserved = [...new Set(named.filter((r) => isReservedName(r.slug)).map((r) => r.slug))];
   const dupes = [...new Set(named.map((r) => r.slug).filter((s, i, a) => a.indexOf(s) !== i))];
-  const canRun = !running && Boolean(targetTeam) && named.length > 0 && reserved.length === 0 && dupes.length === 0;
+  const locked = building || aiBusy;
+  const canBuild = !locked && Boolean(targetTeam) && !isReservedName(targetTeam) && named.length > 0 && reserved.length === 0 && dupes.length === 0;
 
-  function updateRow(i: number, patch: Partial<Row>) {
-    setRows((rs) => rs.map((r, j) => (j === i ? { ...r, ...patch } : r)));
+  // Live deterministic parse as the user types a spec — until they hand-edit or AI runs.
+  useEffect(() => {
+    if (rowsDirty) return;
+    if (!spec.trim()) { setRows([blankRow()]); return; }
+    const parsed = parseTeamSpec(spec);
+    setRows(parsed.agents.length ? parsed.agents.map(toRow) : [blankRow()]);
+    // Only adopt the spec's team name when we're building a NEW team — never
+    // hijack an "add agents to <existing team>" session.
+    if (parsed.team && !teamTouched && teamSel === '__new__') setNewTeam((p) => p || parsed.team || '');
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [spec]);
+
+  async function aiDesign() {
+    if (!spec.trim()) return;
+    setAiBusy(true); setError('');
+    onMessage('asking AI to design the team…');
+    try {
+      const r = await call<DesignedTeam>('team:designAI', spec, { runtimes, models: modelCatalog, skills: skillCatalog });
+      if (r?.agents?.length) {
+        const mapped = r.agents.map(toRow);
+        if (!mapped.some((m) => m.lead)) mapped[0].lead = true;
+        setRows(mapped); setRowsDirty(true);
+      }
+      if (r?.team && !teamTouched && teamSel === '__new__') setNewTeam((p) => p || r.team || '');
+      onMessage(`AI designed ${r?.agents?.length ?? 0} agent(s)`);
+    } catch (e) {
+      setError(`AI design failed: ${e instanceof Error ? e.message : String(e)} — keeping the current roster.`);
+    } finally { setAiBusy(false); }
   }
-  function addRow() { setRows((rs) => [...rs, blankRow()]); }
-  function removeRow(i: number) { setRows((rs) => (rs.length <= 1 ? rs : rs.filter((_, j) => j !== i))); }
-  function toggleSkill(name: string) {
-    setSkills((s) => (s.includes(name) ? s.filter((x) => x !== name) : [...s, name]));
+
+  function updateRow(i: number, patch: Partial<Row>) { setRowsDirty(true); setRows((rs) => rs.map((r, j) => (j === i ? { ...r, ...patch } : r))); }
+  function addRow() { setRowsDirty(true); setRows((rs) => [...rs, blankRow()]); }
+  function removeRow(i: number) { setRowsDirty(true); setRows((rs) => (rs.length <= 1 ? rs : rs.filter((_, j) => j !== i))); }
+  function setLead(i: number) { setRowsDirty(true); setRows((rs) => rs.map((r, j) => ({ ...r, lead: j === i }))); }
+  function toggleRowSkill(i: number, name: string) {
+    setRowsDirty(true);
+    setRows((rs) => rs.map((r, j) => (j === i ? { ...r, skills: r.skills.includes(name) ? r.skills.filter((x) => x !== name) : [...r.skills, name] } : r)));
   }
+  function pickTeam(v: string) { setTeamTouched(true); setTeamSel(v); }
+
+  const relayPayload: string[] | null =
+    relayMode === 'all' ? ['*'] : relayMode === 'none' ? [] : relayMode === 'select' ? relaySel : null;
 
   function planFor(r: Row): OnboardPlan {
     return {
@@ -970,7 +856,8 @@ function OnboardWizard({
       runtime: r.runtime || undefined,
       model: r.model || undefined,
       role: r.role.trim() || undefined,
-      skills,
+      description: r.description.trim() || undefined,
+      skills: r.skills.length ? r.skills : undefined,
       wallet,
       heartbeatSeconds: heartbeat ? hbInterval : undefined,
       mcpServers: mcpFromChoice(mcp),
@@ -978,15 +865,16 @@ function OnboardWizard({
     };
   }
 
-  async function run() {
+  async function build() {
     if (!targetTeam) { setError('Choose or name a team.'); return; }
+    if (isReservedName(targetTeam)) { setError(`“${targetTeam}” is a reserved word — choose another team name.`); return; }
     if (reserved.length) { setError(`Reserved agent name(s): ${reserved.join(', ')} — rename.`); return; }
     if (dupes.length) { setError(`Duplicate agent name(s): ${dupes.join(', ')}.`); return; }
-    const batch = named.map((r) => ({ name: r.slug, runtime: r.runtime, model: r.model, role: r.role }));
+    const batch = named;
     if (!batch.length) { setError('Add at least one named agent.'); return; }
-    setRunning(true);
-    setError('');
-    setResults(batch.map((b) => ({ name: b.name, team: targetTeam })));
+    setBuilding(true); onBusy(true); setError(''); setPost({});
+    onMessage(`building ${batch.length} agent(s) into ${targetTeam}…`);
+    setResults(batch.map((r) => ({ name: r.slug, team: targetTeam })));
     let anyOk = false;
     // Sequential — the manager serializes local-model spawns anyway, and it keeps
     // the per-agent status readable as each one lands.
@@ -1000,113 +888,213 @@ function OnboardWizard({
         setResults((rs) => rs.map((x, j) => (j === i ? { ...x, running: false, error: err instanceof Error ? err.message : String(err) } : x)));
       }
     }
-    setRunning(false);
-    if (anyOk) onDone(targetTeam);
+    // Auto-coordination: promote the ★ lead to primary coordinator + apply the preset.
+    const leadRow = batch.find((r) => r.lead) ?? batch[0];
+    if (anyOk && coordinate && leadRow) {
+      const leadName = leadRow.slug;
+      setPost((p) => ({ ...p, coord: 'running', leadName }));
+      try {
+        await call('coordinator:setPrimary', targetTeam, leadName);
+        await call('agent:setInstructions', leadName, COORDINATOR_PRESET, targetTeam);
+        await call('rebuildAgent', leadName, targetTeam).catch(() => {});
+        setPost((p) => ({ ...p, coord: 'ok', leadName }));
+      } catch (e) { setPost((p) => ({ ...p, coord: 'failed', coordErr: e instanceof Error ? e.message : String(e) })); }
+    }
+    // Cross-team relay policy — only when the user changed it away from permissive.
+    if (anyOk && relayMode !== 'permissive') {
+      setPost((p) => ({ ...p, relay: 'running' }));
+      try {
+        await call('setTeamDelegates', targetTeam, relayPayload);
+        setPost((p) => ({ ...p, relay: 'ok' }));
+      } catch (e) { setPost((p) => ({ ...p, relay: 'failed', relayErr: e instanceof Error ? e.message : String(e) })); }
+    }
+    setBuilding(false); onBusy(false);
+    if (anyOk) { onMessage(`built into ${targetTeam} ✓`); onDone(targetTeam); }
+    else onMessage(`build failed — no agents created in ${targetTeam}`);
   }
 
+  const postMark = (s?: PostStat) => (s === 'ok' ? '✓' : s === 'failed' ? '✗' : '…');
+  const postCls = (s?: PostStat) => (s === 'ok' ? 'ok' : s === 'failed' ? 'failed' : 'running');
+
   return (
-    <div className="modal-overlay" onMouseDown={() => (running ? undefined : onClose())}>
-      <div className="modal onboard-modal" onMouseDown={(e) => e.stopPropagation()}>
-        <div className="modal-title">Onboard agents</div>
+    <div className="modal-overlay" onMouseDown={() => (locked ? undefined : onClose())}>
+      <div className="modal onboard-modal create-team-modal" onMouseDown={(e) => e.stopPropagation()}>
+        <div className="modal-title">Build a team</div>
+        <div className="create-team-layout">
+          {/* LEFT: describe + batch options + coordination/relay */}
+          <div>
+            <div className="muted small" style={{ marginBottom: 6 }}>describe the team you want — or paste a spec</div>
+            <textarea
+              autoFocus
+              style={{ width: '100%', minHeight: 150, fontFamily: 'var(--mono, monospace)', fontSize: 12 }}
+              placeholder={'e.g. A team to build and maintain our Next.js app — a lead coordinator, a coder for implementation, and a researcher for docs & investigation.'}
+              value={spec}
+              disabled={locked}
+              onChange={(e) => { setSpec(e.target.value); setError(''); }}
+            />
+            <div className="row-actions" style={{ marginTop: 6, justifyContent: 'space-between' }}>
+              <button className="btn small" disabled={!spec.trim() || locked} onClick={() => void aiDesign()}>
+                {aiBusy ? 'Designing…' : '✦ Build with AI'}
+              </button>
+              <span className="muted small">{named.length} agent{named.length === 1 ? '' : 's'}</span>
+            </div>
 
-        <div className="kv" style={{ gridTemplateColumns: '110px 1fr', gap: '8px 12px', alignItems: 'center' }}>
-          <span>team</span>
-          <span>
-            <select className="cell-select" disabled={running} value={teamSel} onChange={(e) => setTeamSel(e.target.value)}>
-              {teamOptions.map((t) => <option key={t} value={t}>{t}</option>)}
-              <option value="__new__">＋ new team…</option>
-            </select>
-            {usingNewTeam ? (
-              <input
-                style={{ marginLeft: 8, width: 200 }}
-                placeholder="new team name"
-                value={newTeam}
-                disabled={running}
-                onChange={(e) => setNewTeam(e.target.value)}
-                onBlur={() => setNewTeam(cleanTeamName(newTeam))}
-              />
-            ) : null}
-            {usingNewTeam && newTeam && targetTeam !== newTeam ? (
-              <span className="muted small" style={{ marginLeft: 8 }}>→ <span className="mono">{targetTeam}</span></span>
-            ) : null}
-          </span>
-        </div>
-
-        <div className="row-actions" style={{ justifyContent: 'space-between', alignItems: 'center', margin: '14px 0 6px' }}>
-          <span className="muted small">agents — each can use its own runtime &amp; model</span>
-          <button className="btn small" disabled={running} onClick={addRow}>＋ add agent</button>
-        </div>
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-          {rows.map((r, i) => {
-            const rowReserved = isReservedName(slugName(r.name));
-            return (
-              <div key={i} className="kv" style={{ gridTemplateColumns: '1.1fr 1fr 1fr 1.1fr 24px', gap: 6, alignItems: 'center' }}>
-                <input
-                  className="mono"
-                  style={{ fontSize: 12, ...(rowReserved ? { borderColor: 'var(--danger, #e5484d)' } : {}) }}
-                  placeholder="name (lowercase)"
-                  value={r.name}
-                  disabled={running}
-                  title={rowReserved ? 'reserved word — rename' : undefined}
-                  onChange={(e) => updateRow(i, { name: e.target.value })}
-                  onBlur={(e) => updateRow(i, { name: slugName(e.target.value) })}
-                />
-                <select className="cell-select" style={{ fontSize: 12 }} disabled={running} value={r.runtime} onChange={(e) => updateRow(i, { runtime: e.target.value, model: '' })}>
-                  {runtimes.map((rt) => <option key={rt} value={rt}>{runtimeLabel(rt)}</option>)}
+            <div className="muted small" style={{ margin: '14px 0 4px' }}>applied to every agent</div>
+            <div className="kv" style={{ gridTemplateColumns: '90px 1fr', gap: '8px 10px', alignItems: 'center' }}>
+              <span>MCP</span>
+              <select className="cell-select" disabled={locked} value={mcp} onChange={(e) => setMcp(e.target.value)} style={{ maxWidth: 260 }}>
+                <option value="">none</option>
+                {mcpChoices.map((entry) => <option key={entry.id} value={entry.id}>{entry.name}</option>)}
+              </select>
+              <span>heartbeat</span>
+              <span>
+                <input type="checkbox" checked={heartbeat} disabled={locked} onChange={(e) => setHeartbeat(e.target.checked)} />{' '}
+                <select className="cell-select" disabled={locked || !heartbeat} value={hbInterval} onChange={(e) => setHbInterval(Number(e.target.value))}>
+                  {HB_INTERVALS.map((iv) => <option key={iv.s} value={iv.s}>{iv.label}</option>)}
                 </select>
-                <select className="cell-select" style={{ fontSize: 12 }} disabled={running} value={r.model} onChange={(e) => updateRow(i, { model: e.target.value })}>
-                  <option value="">(default model)</option>
-                  {(modelCatalog[r.runtime] ?? []).map((m) => <option key={m} value={m}>{m}</option>)}
-                </select>
-                <input style={{ fontSize: 12 }} placeholder="role (optional)" value={r.role} disabled={running} onChange={(e) => updateRow(i, { role: e.target.value })} />
-                <button className="uv-x" title="Remove" disabled={running || rows.length <= 1} onClick={() => removeRow(i)}>✕</button>
-              </div>
-            );
-          })}
-        </div>
+              </span>
+              <span />
+              <span className="muted small">
+                <label><input type="checkbox" checked={wallet} disabled={locked} onChange={(e) => setWallet(e.target.checked)} /> OWS wallet</label>
+                <label style={{ marginLeft: 14 }}><input type="checkbox" checked={probeAfter} disabled={locked} onChange={(e) => setProbeAfter(e.target.checked)} /> probe after</label>
+              </span>
+            </div>
 
-        <div className="muted small" style={{ margin: '14px 0 4px' }}>applied to every agent</div>
-        <div className="kv" style={{ gridTemplateColumns: '110px 1fr', gap: '8px 12px', alignItems: 'start' }}>
-          <span>skills</span>
-          <span className="chips">
-            {skillCatalog.length === 0 ? <span className="muted small">no library skills</span> :
-              skillCatalog.map((s) => (
-                <button key={s} className={`chip${skills.includes(s) ? ' on' : ''}`} disabled={running} onClick={() => toggleSkill(s)}>
-                  {skills.includes(s) ? '✓ ' : ''}{s}
-                </button>
+            <div className="muted small" style={{ margin: '14px 0 4px' }}>coordination</div>
+            <label className="muted small" style={{ display: 'block' }}>
+              <input type="checkbox" checked={coordinate} disabled={locked} onChange={(e) => setCoordinate(e.target.checked)} />{' '}
+              Make the ★ lead the primary coordinator and apply the delegate-to-teammates preset
+            </label>
+
+            <div className="muted small" style={{ margin: '14px 0 4px' }}>cross-team relay for <span className="mono">{targetTeam || '…'}</span></div>
+            <div className="relay-modes">
+              {([
+                ['permissive', 'Any team'],
+                ['all', 'All (*)'],
+                ['select', 'Selected'],
+                ['none', 'None'],
+              ] as [RelayMode, string][]).map(([m, label]) => (
+                <label key={m} className={`relay-mode${relayMode === m ? ' active' : ''}`}>
+                  <input type="radio" name="builder-relay" checked={relayMode === m} disabled={locked} onChange={() => setRelayMode(m)} /> {label}
+                </label>
               ))}
-          </span>
-          <span>MCP</span>
-          <select className="cell-select" disabled={running} value={mcp} onChange={(e) => setMcp(e.target.value)} style={{ maxWidth: 280 }}>
-            <option value="">none</option>
-            {mcpChoices.map((entry) => <option key={entry.id} value={entry.id}>{entry.name}</option>)}
-          </select>
-          <span>heartbeat</span>
-          <span>
-            <input type="checkbox" checked={heartbeat} disabled={running} onChange={(e) => setHeartbeat(e.target.checked)} />{' '}
-            <select className="cell-select" disabled={running || !heartbeat} value={hbInterval} onChange={(e) => setHbInterval(Number(e.target.value))}>
-              {HB_INTERVALS.map((iv) => <option key={iv.s} value={iv.s}>{iv.label}</option>)}
-            </select>
-            <span className="muted small" style={{ marginLeft: 12 }}>
-              <input type="checkbox" checked={wallet} disabled={running} onChange={(e) => setWallet(e.target.checked)} /> provision OWS wallet
-            </span>
-            <span className="muted small" style={{ marginLeft: 12 }}>
-              <input type="checkbox" checked={probeAfter} disabled={running} onChange={(e) => setProbeAfter(e.target.checked)} /> probe after
-            </span>
-          </span>
+            </div>
+            {relayMode === 'select' ? (
+              <div className="chips" style={{ marginTop: 8 }}>
+                {relayTargets.length === 0 ? <span className="muted small">No other teams.</span> :
+                  relayTargets.map((n) => {
+                    const on = relaySel.includes(n);
+                    return (
+                      <button key={n} className={`chip${on ? ' on' : ''}`} disabled={locked} onClick={() => setRelaySel((s) => s.includes(n) ? s.filter((x) => x !== n) : [...s, n])}>
+                        {on ? '✓ ' : ''}{n}
+                      </button>
+                    );
+                  })}
+              </div>
+            ) : null}
+          </div>
+
+          {/* RIGHT: target team + editable roster */}
+          <div>
+            <div className="kv" style={{ gridTemplateColumns: '70px 1fr', gap: '8px 10px', alignItems: 'center' }}>
+              <span>team</span>
+              <span>
+                <select className="cell-select" disabled={locked} value={teamSel} onChange={(e) => pickTeam(e.target.value)}>
+                  {teamOptions.map((t) => <option key={t} value={t}>{t}</option>)}
+                  <option value="__new__">＋ new team…</option>
+                </select>
+                {usingNewTeam ? (
+                  <input
+                    style={{ marginLeft: 8, width: 180 }}
+                    placeholder="new team name"
+                    value={newTeam}
+                    disabled={locked}
+                    onChange={(e) => { setTeamTouched(true); setNewTeam(e.target.value); }}
+                    onBlur={() => setNewTeam(cleanTeamName(newTeam))}
+                  />
+                ) : null}
+              </span>
+            </div>
+            {usingNewTeam && newTeam && targetTeam !== newTeam ? <p className="muted small">Will create as <span className="mono">{targetTeam}</span>.</p> : null}
+            {usingNewTeam && isReservedName(targetTeam) ? <p className="status-error small"><span className="mono">{targetTeam}</span> is a reserved word — choose another team name.</p> : null}
+            {usingNewTeam && teamExists ? <p className="warn-text small">Team <span className="mono">{targetTeam}</span> exists — these agents will be added to it.</p> : null}
+
+            <div className="row-actions" style={{ justifyContent: 'space-between', alignItems: 'center', margin: '12px 0 6px' }}>
+              <span className="muted small">roster — ★ marks the lead; ▸ for persona &amp; skills</span>
+              <button className="btn small" disabled={locked} onClick={addRow}>＋ add agent</button>
+            </div>
+            <div style={{ maxHeight: 340, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 6 }}>
+              {rows.map((r, i) => {
+                const rowReserved = isReservedName(slugName(r.name));
+                return (
+                  <div key={i} style={{ border: '1px solid var(--border, #2a2a2a)', borderRadius: 6, padding: '6px 6px 8px' }}>
+                    <div className="kv" style={{ gridTemplateColumns: '26px 1.2fr 1fr 1fr 24px 24px', gap: 6, alignItems: 'center' }}>
+                      <button className={`chip${r.lead ? ' on' : ''}`} title={r.lead ? 'lead' : 'make lead'} disabled={locked} onClick={() => setLead(i)} style={{ padding: '2px 6px' }}>★</button>
+                      <input
+                        className="mono"
+                        style={{ fontSize: 12, ...(rowReserved ? { borderColor: 'var(--danger, #e5484d)' } : {}) }}
+                        placeholder="name"
+                        value={r.name}
+                        disabled={locked}
+                        title={rowReserved ? 'reserved word — rename' : undefined}
+                        onChange={(e) => updateRow(i, { name: e.target.value })}
+                        onBlur={(e) => updateRow(i, { name: slugName(e.target.value) })}
+                      />
+                      <select className="cell-select" style={{ fontSize: 12 }} disabled={locked} value={r.runtime} onChange={(e) => updateRow(i, { runtime: e.target.value, model: '' })}>
+                        {runtimes.map((rt) => <option key={rt} value={rt}>{runtimeLabel(rt)}</option>)}
+                      </select>
+                      <select className="cell-select" style={{ fontSize: 12 }} disabled={locked} value={r.model} onChange={(e) => updateRow(i, { model: e.target.value })}>
+                        <option value="">(default model)</option>
+                        {(modelCatalog[r.runtime] ?? []).map((m) => <option key={m} value={m}>{m}</option>)}
+                      </select>
+                      <button className="uv-x" title={r.open ? 'collapse' : 'persona & skills'} disabled={locked} onClick={() => updateRow(i, { open: !r.open })}>{r.open ? '▾' : '▸'}</button>
+                      <button className="uv-x" title="Remove" disabled={locked || rows.length <= 1} onClick={() => removeRow(i)}>✕</button>
+                    </div>
+                    <input style={{ fontSize: 12, width: '100%', marginTop: 4 }} placeholder="role (one line)" value={r.role} disabled={locked} maxLength={200} onChange={(e) => updateRow(i, { role: e.target.value })} />
+                    {r.open ? (
+                      <>
+                        <textarea
+                          style={{ width: '100%', marginTop: 4, fontSize: 11, minHeight: 46, fontFamily: 'inherit', resize: 'vertical' }}
+                          placeholder="description / persona — becomes this agent’s operating instructions"
+                          value={r.description}
+                          disabled={locked}
+                          maxLength={2000}
+                          onChange={(e) => updateRow(i, { description: e.target.value })}
+                        />
+                        <div className="chips" style={{ marginTop: 4 }}>
+                          {skillCatalog.length === 0 ? <span className="muted small">no library skills</span> :
+                            skillCatalog.map((s) => (
+                              <button key={s} className={`chip${r.skills.includes(s) ? ' on' : ''}`} disabled={locked} onClick={() => toggleRowSkill(i, s)}>
+                                {r.skills.includes(s) ? '✓ ' : ''}{s}
+                              </button>
+                            ))}
+                        </div>
+                      </>
+                    ) : (r.skills.length || r.description.trim()) ? (
+                      <div className="muted small" style={{ marginTop: 4 }}>
+                        {r.skills.length ? `skills: ${r.skills.join(', ')}` : ''}
+                        {r.skills.length && r.description.trim() ? ' · ' : ''}
+                        {r.description.trim() ? 'persona set' : ''}
+                      </div>
+                    ) : null}
+                  </div>
+                );
+              })}
+            </div>
+            {reserved.length ? <p className="status-error small">Reserved name(s): <span className="mono">{reserved.join(', ')}</span> — rename.</p> : null}
+            {dupes.length ? <p className="status-error small">Duplicate name(s): <span className="mono">{dupes.join(', ')}</span>.</p> : null}
+            {error ? <p className="status-error small">{error}</p> : null}
+          </div>
         </div>
 
-        {reserved.length ? <p className="status-error small">Reserved name(s): <span className="mono">{reserved.join(', ')}</span> — rename.</p> : null}
-        {dupes.length ? <p className="status-error small">Duplicate name(s): <span className="mono">{dupes.join(', ')}</span>.</p> : null}
-        {error ? <p className="status-error small">{error}</p> : null}
         {results.length ? (
           <div className="onboard-checklist" style={{ marginTop: 12 }}>
             {results.map((r) => {
               const failed = Boolean(r.error) || Boolean(r.result?.steps.some((s) => s.status === 'failed'));
               const mark = r.running ? '…' : r.error ? '✗' : r.result?.ok ? '✓' : failed ? '!' : '·';
               const detail = r.error ? r.error
-                : r.result ? (r.result.ok ? `onboarded into ${r.team}` : (r.result.steps.filter((s) => s.status === 'failed').map((s) => `${s.label}: ${s.error || 'failed'}`).join('; ') || 'finished with issues'))
-                : (r.running ? 'running…' : 'queued');
+                : r.result ? (r.result.ok ? `built into ${r.team}` : (r.result.steps.filter((s) => s.status === 'failed').map((s) => `${s.label}: ${s.error || 'failed'}`).join('; ') || 'finished with issues'))
+                : (r.running ? 'building…' : 'queued');
               const cls = r.error || failed ? 'failed' : r.result?.ok ? 'ok' : r.running ? 'running' : 'pending';
               return (
                 <div key={r.name} className="onboard-step" style={{ gridTemplateColumns: '26px minmax(140px, 1fr) minmax(0, 2fr)' }}>
@@ -1116,13 +1104,29 @@ function OnboardWizard({
                 </div>
               );
             })}
+            {post.coord ? (
+              <div className="onboard-step" style={{ gridTemplateColumns: '26px minmax(140px, 1fr) minmax(0, 2fr)' }}>
+                <span className={`step-dot ${postCls(post.coord)}`}>{postMark(post.coord)}</span>
+                <span className="step-label mono">coordinator</span>
+                <span className={`small ${post.coord === 'failed' ? 'status-error' : 'muted'}`}>{post.coord === 'failed' ? post.coordErr : `${post.leadName ?? 'lead'} → primary coordinator + preset`}</span>
+              </div>
+            ) : null}
+            {post.relay ? (
+              <div className="onboard-step" style={{ gridTemplateColumns: '26px minmax(140px, 1fr) minmax(0, 2fr)' }}>
+                <span className={`step-dot ${postCls(post.relay)}`}>{postMark(post.relay)}</span>
+                <span className="step-label mono">relay</span>
+                <span className={`small ${post.relay === 'failed' ? 'status-error' : 'muted'}`}>{post.relay === 'failed' ? post.relayErr : describeRelay(relayPayload)}</span>
+              </div>
+            ) : null}
           </div>
         ) : null}
 
         <div className="row-actions" style={{ marginTop: 14 }}>
-          <button className="btn" disabled={running} onClick={onClose}>Close</button>
-          <button className="btn primary" disabled={!canRun} onClick={() => void run()}>
-            {running ? 'Onboarding…' : `Onboard ${named.length} agent${named.length === 1 ? '' : 's'}`}
+          <button className="btn" disabled={building} onClick={onClose}>Close</button>
+          <button className="btn primary" disabled={!canBuild} onClick={() => void build()}>
+            {building ? 'Building…'
+              : teamExists ? `Add ${named.length} agent${named.length === 1 ? '' : 's'} to ${targetTeam || '…'}`
+              : `Build ${targetTeam || 'team'} + ${named.length} agent${named.length === 1 ? '' : 's'}`}
           </button>
         </div>
       </div>

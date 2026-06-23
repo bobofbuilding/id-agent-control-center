@@ -23,7 +23,7 @@ const NAV: { id: ViewId; label: string; icon: string }[] = [
   { id: 'projects', label: 'Projects', icon: '◆' },
   { id: 'health', label: 'Health', icon: '✚' },
   { id: 'identity', label: 'Identity & Keys', icon: '⬡' },
-  { id: 'teams', label: 'Teams', icon: '⛌' },
+  { id: 'teams', label: 'HR Manager', icon: '⛌' },
   { id: 'modules', label: 'Capabilities', icon: '◫' },
   { id: 'computer', label: 'Computer Use', icon: '🖥' },
   { id: 'settings', label: 'Settings', icon: '⚙' },

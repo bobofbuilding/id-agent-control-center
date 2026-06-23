@@ -201,6 +201,10 @@ const METHODS: Record<string, (...a: any[]) => Promise<unknown>> = {
     client.importTeam(String(team), agents ?? [], opts ?? {}),
   // AI-assisted parse of a free-form spec → { team, agents } (dispatches to the lead).
   'team:parseSpecAI': (spec: string) => client.parseTeamSpecAI(String(spec)),
+  // AI-assisted FULL team design → { team, agents[] } with per-agent runtime/model/skills/lead.
+  // The renderer passes its available runtimes/models/skills so the model picks valid choices.
+  'team:designAI': (spec: string, ctx?: { runtimes?: string[]; models?: Record<string, string[]>; skills?: string[] }) =>
+    client.designTeamAI(String(spec), ctx ?? {}),
 
   // team relay (cross-team delegation allow-list) + per-agent override
   teamConfig: (name: string) => client.teamConfig(String(name)),
@@ -214,7 +218,10 @@ const METHODS: Record<string, (...a: any[]) => Promise<unknown>> = {
 
   // per-agent persistent instructions (system-prompt addendum, e.g. coordinator role)
   'agent:getInstructions': (idOrName: string) => client.agentInstructions(String(idOrName)),
-  'agent:setInstructions': (idOrName: string, instructions: string) => client.setAgentInstructions(String(idOrName), String(instructions ?? '')),
+  // Optional `team` scopes the call to a specific team (e.g. the Team Builder
+  // wiring a lead in a freshly-created team that isn't the active one yet).
+  'agent:setInstructions': (idOrName: string, instructions: string, team?: string) =>
+    (team ? client.withTeam(String(team)) : client).setAgentInstructions(String(idOrName), String(instructions ?? '')),
 
   // teams: create + start a new agent
   spawnAgent: (spec: Parameters<ManagerClient['spawnAgent']>[0]) => client.spawnAgent(spec),
@@ -258,7 +265,7 @@ const METHODS: Record<string, (...a: any[]) => Promise<unknown>> = {
   uninstallSkill: (skill: string, agent: string) => client.uninstallSkill(String(skill), String(agent)),
   usage: () => client.usage(),
   setAgentMcp: (agentId: string, servers: McpServerSpec[]) => client.setAgentMcp(String(agentId), servers ?? []),
-  rebuildAgent: (agent: string) => client.remote(`/agent ${agent} rebuild`),
+  rebuildAgent: (agent: string, team?: string) => (team ? client.withTeam(String(team)) : client).remote(`/agent ${agent} rebuild`),
 
   // Computer Use: attach/detach the bundled computer-use MCP server to an agent
   // (a "bless" — lets that agent drive the Mac through the broker). Merges with

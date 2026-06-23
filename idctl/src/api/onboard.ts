@@ -17,6 +17,8 @@ export interface OnboardPlan {
   runtime?: string;
   model?: string;
   role?: string;
+  /** Full multi-line persona; becomes the agent's roleBody (falls back to role). */
+  description?: string;
   expertise?: string[];
   skills?: string[];
   wallet?: boolean;
@@ -108,6 +110,7 @@ export async function runOnboarding(
         runtime: emptyToUndefined(plan.runtime),
         model: emptyToUndefined(plan.model),
         role: emptyToUndefined(plan.role),
+        description: emptyToUndefined(plan.description),
         expertise: nonEmpty(plan.expertise),
         skills: nonEmpty(plan.skills),
         heartbeatSeconds: plan.heartbeatSeconds && plan.heartbeatSeconds > 0 ? plan.heartbeatSeconds : undefined,
