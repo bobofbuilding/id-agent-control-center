@@ -173,16 +173,13 @@ function StatusBar({ store }: { store: ReturnType<typeof useFleet> }) {
 
   const liveTeams = leads.filter((l) => l.activeCount > 0).length;
   const totalActive = leads.reduce((s, l) => s + l.activeCount, 0);
-  const totalAgents = leads.reduce((s, l) => s + l.totalCount, 0);
 
   return (
     <footer className="statusbar">
       <span className={`pill ${dot}`}>● {store.connection}</span>
       <span className="muted">{store.managerUrl || '—'}</span>
       <span className="sep">·</span>
-      <span style={{ fontWeight: 700 }}>★ all teams</span>
-      <span className="sep">·</span>
-      <span title="running / total agents across every team">{totalActive}/{totalAgents} agents active · {liveTeams} team{liveTeams === 1 ? '' : 's'} running</span>
+      <span title="running agents across every team">{totalActive} agent{totalActive === 1 ? '' : 's'} active · {liveTeams} team{liveTeams === 1 ? '' : 's'} running</span>
       {store.connection === 'offline' && store.lastError ? (
         <span className="status-error">⚠ {store.lastError}</span>
       ) : null}

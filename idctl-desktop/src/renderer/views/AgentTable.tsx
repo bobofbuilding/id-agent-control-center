@@ -56,6 +56,7 @@ export function AgentTable({ store, onProbe, probeBusy }: { store: FleetStore; o
   const [catalog, setCatalog] = useState<Record<string, string[]>>({});
   const [providers, setProviders] = useState<ProviderRow[]>([]);
   const [coords, setCoords] = useState<Record<string, string>>({}); // team → coordinator (lead) name
+  const [showStopped, setShowStopped] = useState(false); // by default the grid shows only running agents
   const modelRefs = useRef<Record<string, HTMLSelectElement | null>>({});
   const viewAll = store.viewAll;
   const orderedAgents = agentsLeadFirst(store.agents, store.coordinator);
@@ -75,6 +76,9 @@ export function AgentTable({ store, onProbe, probeBusy }: { store: FleetStore; o
         return xa !== ya ? (xa ? -1 : 1) : x.team.localeCompare(y.team);
       })
     : [];
+  const isActive = (a: TeamAgent) => statusClass(a.status) === 'ok';
+  const activeCount = shown.filter(isActive).length;
+  const stoppedCount = shown.length - activeCount;
 
   useEffect(() => {
     call<Record<string, string[]>>('runtime:models').then(setCatalog).catch(() => setCatalog({}));
@@ -195,8 +199,13 @@ export function AgentTable({ store, onProbe, probeBusy }: { store: FleetStore; o
     <>
       <section className="card grow" style={{ minWidth: 0 }}>
         <div className="row-actions" style={{ alignItems: 'center', marginBottom: 8 }}>
-          <h3 style={{ margin: 0 }}>Fleet <span className="muted small">· {shown.length} agents · {viewAll ? 'all teams' : (store.team ?? 'default')}{busy ? ` · ${busy}…` : ''}</span></h3>
+          <h3 style={{ margin: 0 }}>Fleet <span className="muted small">· {activeCount} active{busy ? ` · ${busy}…` : ''}</span></h3>
           <span className="grow" />
+          {stoppedCount ? (
+            <label className="muted small" style={{ display: 'inline-flex', alignItems: 'center', gap: 5, cursor: 'pointer' }} title="By default only running agents are shown — reveal stopped ones to start/manage them">
+              <input type="checkbox" checked={showStopped} onChange={(e) => setShowStopped(e.target.checked)} /> show stopped ({stoppedCount})
+            </label>
+          ) : null}
           <button className="btn" disabled={!!busy} onClick={() => void probeRuntimes()} title="Probe each runtime's backing inference provider for its available models">Probe runtimes</button>
         </div>
         <table className="grid">
@@ -204,18 +213,20 @@ export function AgentTable({ store, onProbe, probeBusy }: { store: FleetStore; o
             <tr><th>Agent</th><th>Status</th><th>Runtime</th><th>Model</th><th>Port</th><th>Actions</th>{onProbe ? <th>Probe</th> : null}</tr>
           </thead>
           <tbody>
-            {viewAll
-              ? groups.flatMap((g) => [
-                  <tr key={`hdr-${g.team}`} className="group-row">
-                    <td colSpan={cols} className="muted small b" style={{ background: 'var(--panel, #1b1b1b)', padding: '4px 8px' }}>
-                      {g.team} · {g.agents.filter((x) => statusClass(x.status) === 'ok').length}/{g.agents.length} running
-                    </td>
-                  </tr>,
-                  ...agentsLeadFirst(g.agents).map((a) => renderRow(a as TeamAgent)),
-                ])
-              : orderedAgents.map((a) => renderRow(a))}
-            {shown.length === 0 ? (
-              <tr><td colSpan={cols} className="muted center pad">{store.connection === 'offline' ? 'manager unreachable' : viewAll ? 'no agents in any team' : 'no agents in this team'}</td></tr>
+            {groups.flatMap((g) => {
+              const rows = agentsLeadFirst(g.agents).filter((a) => showStopped || isActive(a as TeamAgent));
+              if (!rows.length) return [];
+              return [
+                <tr key={`hdr-${g.team}`} className="group-row">
+                  <td colSpan={cols} className="muted small b" style={{ background: 'var(--panel, #1b1b1b)', padding: '4px 8px' }}>
+                    {g.team} · {g.agents.filter((x) => statusClass(x.status) === 'ok').length}/{g.agents.length} running
+                  </td>
+                </tr>,
+                ...rows.map((a) => renderRow(a as TeamAgent)),
+              ];
+            })}
+            {activeCount === 0 && !showStopped ? (
+              <tr><td colSpan={cols} className="muted center pad">{store.connection === 'offline' ? 'manager unreachable' : stoppedCount ? 'no running agents — tick “show stopped” to start one' : 'no agents'}</td></tr>
             ) : null}
           </tbody>
         </table>

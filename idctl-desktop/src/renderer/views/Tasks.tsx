@@ -296,19 +296,25 @@ function TasksPanel({ store }: { store: FleetStore }) {
 
   // Re-send a stalled task to its owner (reassigning to an active agent first if the owner is
   // stopped) so a stuck "doing" task gets picked back up. Returns false if nothing's active.
-  async function redispatchCore(t: Task): Promise<boolean> {
-    const tteam = taskTeam(t);
-    // Use the task's OWN team's agents (holistic) so a stalled cross-team task is reassigned
-    // within its team, not the active one.
+  // A stalled task isn't progressing on its current owner — and the owner can be WEDGED even
+  // while it still reports "running". So re-dispatch hands the task to a DIFFERENT active agent
+  // whenever one exists (load-balanced via `load`), only falling back to the same owner if it's
+  // the lone active agent. Returns false if no agent in the team is active.
+  function pickRedispatchTarget(t: Task, load: Record<string, number>): string | null {
     const pool = store.viewAll ? store.allAgents.filter((a) => a.team === t.teamName) : store.agents;
-    let target = t.ownerName ?? '';
-    const owner = pool.find((a) => a.name === target);
-    if (!target || (owner && !liveAgent(owner.status))) {
-      const active = pool.find((a) => liveAgent(a.status));
-      if (!active) return false;
-      target = active.name;
-      await call('remote', `/task assign ${ref(t)} ${target}`, undefined, tteam);
-    }
+    const active = pool.filter((a) => liveAgent(a.status));
+    if (!active.length) return null;
+    const others = active.filter((a) => a.name !== t.ownerName);
+    const cands = others.length ? others : active; // prefer someone other than the stuck owner
+    const target = cands.reduce((a, b) => ((load[b.name] ?? 0) < (load[a.name] ?? 0) ? b : a), cands[0]);
+    load[target.name] = (load[target.name] ?? 0) + 1;
+    return target.name;
+  }
+  async function redispatchCore(t: Task, load: Record<string, number>): Promise<boolean> {
+    const tteam = taskTeam(t);
+    const target = pickRedispatchTarget(t, load);
+    if (!target) return false;
+    if (target !== t.ownerName) await call('remote', `/task assign ${ref(t)} ${target}`, undefined, tteam);
     const msg = `Resume and complete task ${ref(t)}: ${t.title}. ${t.description ?? ''} When finished: /task done ${ref(t)}. If you're blocked, mark it done with a brief note.`;
     await call('remote', `/ask ${target} ${qArg(msg)}`, undefined, tteam); // returns once accepted (queryId); agent runs in background
     return true;
@@ -316,7 +322,7 @@ function TasksPanel({ store }: { store: FleetStore }) {
   async function redispatch(t: Task) {
     const tt = toast({ kind: 'progress', text: `Re-dispatching ${ref(t)}…` });
     try {
-      const ok = await redispatchCore(t);
+      const ok = await redispatchCore(t, {});
       tt.update(ok ? { kind: 'success', text: `re-dispatched ${ref(t)} ✓` } : { kind: 'error', text: 'no active agent to take this task' });
       if (ok) await reload();
     } catch (e) { tt.update({ kind: 'error', text: `re-dispatch failed: ${e instanceof Error ? e.message : String(e)}` }); }
@@ -325,7 +331,8 @@ function TasksPanel({ store }: { store: FleetStore }) {
     if (!stalledTasks.length) return;
     const tt = toast({ kind: 'progress', text: `Re-dispatching ${stalledTasks.length} stalled task${stalledTasks.length === 1 ? '' : 's'}…` });
     let ok = 0;
-    for (const t of stalledTasks) { try { if (await redispatchCore(t)) ok++; } catch { /* keep going */ } }
+    const load: Record<string, number> = {}; // shared so the batch spreads across active agents
+    for (const t of stalledTasks) { try { if (await redispatchCore(t, load)) ok++; } catch { /* keep going */ } }
     tt.update({ kind: ok ? 'success' : 'error', text: `re-dispatched ${ok}/${stalledTasks.length} stalled ✓` });
     await reload();
   }

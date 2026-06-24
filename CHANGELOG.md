@@ -8,6 +8,15 @@ Every change pushed or merged to `main` carries its version number in the commit
 subject (`vX.Y.Z: …`), stamped automatically by the `commit-msg` hook — see
 [CONTRIBUTING.md](CONTRIBUTING.md).
 
+## [0.1.135] — 2026-06-24
+- **Re-dispatch actually recovers stalled tasks now.** A stalled task is handed to a *different*
+  active agent (not the original owner) — because the owner can be **wedged while still reporting
+  "running"**, which is exactly why the task stalled. The bulk re-dispatch spreads the batch
+  across agents. (If an agent is wedged, also Rebuild it from the Health fleet grid.)
+- **Dropped the "all teams" labels + show only active agents.** The status bar now reads just
+  **N agents active · K teams running**; the Health **Fleet** grid shows only **running** agents
+  by default with a **show stopped (N)** toggle to reveal/start the rest.
+
 ## [0.1.134] — 2026-06-24
 - **Fix self-update "github 403".** The updater no longer hits the rate-limited
   `api.github.com` (60 unauthenticated requests/hour) for the version check — it resolves the
