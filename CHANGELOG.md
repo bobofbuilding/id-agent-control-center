@@ -8,6 +8,11 @@ Every change pushed or merged to `main` carries its version number in the commit
 subject (`vX.Y.Z: …`), stamped automatically by the `commit-msg` hook — see
 [CONTRIBUTING.md](CONTRIBUTING.md).
 
+## [0.1.111] — 2026-06-24
+- **Adjustment Loop moved to the top.** The Needs Adjustment / Under Review / Rework
+  band now sits as a full-width row above the Waiting Areas and Main Flow groups, so
+  the rework path is the first thing you see on the board.
+
 ## [0.1.110] — 2026-06-24
 - **Done tasks auto-archive.** Completed tasks now drop off the Kanban automatically
   to keep the board focused on active work — nothing is deleted (they stay `done` on

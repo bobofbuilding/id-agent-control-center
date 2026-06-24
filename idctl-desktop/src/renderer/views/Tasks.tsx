@@ -434,16 +434,27 @@ function TasksPanel({ store }: { store: FleetStore }) {
               </div>
             );
           };
+          const groupBox = (g: { title: string; lanes: { id: Lane; label: string }[] }, full = false) => (
+            <div key={g.title} className="kanban-group" style={{ border: '1px solid var(--border, #2a2a2a)', borderRadius: 8, padding: 8, background: 'var(--panel, #1b1b1b)', flexShrink: 0, ...(full ? { width: '100%', flexShrink: 1 } : {}) }}>
+              <div className="muted small b" style={{ marginBottom: 6 }}>{g.title}</div>
+              <div style={{ display: 'flex', gap: 8, alignItems: 'flex-start' }}>
+                {g.lanes.map(laneCol)}
+              </div>
+            </div>
+          );
+          // Adjustment Loop sits as a full-width band above the rest of the board.
+          const adjust = LANE_GROUPS.find((g) => g.title === 'Adjustment Loop');
+          const flow = LANE_GROUPS.filter((g) => g.title !== 'Adjustment Loop');
           return (
-            <div className="kanban-groups" style={{ display: 'flex', gap: 14, alignItems: 'flex-start', overflowX: 'auto' }}>
-              {LANE_GROUPS.map((g) => (
-                <div key={g.title} className="kanban-group" style={{ border: '1px solid var(--border, #2a2a2a)', borderRadius: 8, padding: 8, background: 'var(--panel, #1b1b1b)', flexShrink: 0 }}>
-                  <div className="muted small b" style={{ marginBottom: 6 }}>{g.title}</div>
-                  <div style={{ display: 'flex', gap: 8, alignItems: 'flex-start' }}>
-                    {g.lanes.map(laneCol)}
-                  </div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+              {adjust ? (
+                <div className="kanban-groups" style={{ display: 'flex', overflowX: 'auto' }}>
+                  {groupBox(adjust, true)}
                 </div>
-              ))}
+              ) : null}
+              <div className="kanban-groups" style={{ display: 'flex', gap: 14, alignItems: 'flex-start', overflowX: 'auto' }}>
+                {flow.map((g) => groupBox(g))}
+              </div>
             </div>
           );
         })()}
