@@ -5,6 +5,7 @@ import type { Task } from '../../../../idctl/src/api/types.ts';
 import { Schedule } from './Schedule.tsx';
 import { Loops } from './Loops.tsx';
 import { Plans } from './Plans.tsx';
+import { Dream } from './Dream.tsx';
 
 // Auto-decompose IPC shapes (mirror main/work.ts).
 type SubTask = { title: string; description: string; agent: string; dependsOn: number[] };
@@ -12,12 +13,13 @@ type DecomposeResult = { ok: boolean; subtasks: SubTask[]; raw: string; error?: 
 type CreatedTask = { idx: number; ref: string; title: string; agent: string; ok: boolean; error?: string; dependsOn: number[]; dispatched: boolean };
 type CreatePlanResult = { created: CreatedTask[]; dispatched: number; deferred: number };
 
-type Tab = 'tasks' | 'plans' | 'schedule' | 'loops';
+type Tab = 'tasks' | 'plans' | 'schedule' | 'loops' | 'dream';
 const TABS: { id: Tab; label: string }[] = [
   { id: 'plans', label: 'Plans' },
   { id: 'tasks', label: 'Tasks' },
   { id: 'schedule', label: 'Schedule' },
   { id: 'loops', label: 'Loops' },
+  { id: 'dream', label: 'Dream' },
 ];
 
 /** Stable reference the manager accepts for a task: #shortid, name, then fallbacks. */
@@ -76,6 +78,7 @@ export function Tasks({ store, initialTab }: { store: FleetStore; initialTab?: T
       {tab === 'plans' ? <Plans store={store} /> : null}
       {tab === 'schedule' ? <Schedule store={store} /> : null}
       {tab === 'loops' ? <Loops store={store} /> : null}
+      {tab === 'dream' ? <Dream store={store} /> : null}
     </div>
   );
 }

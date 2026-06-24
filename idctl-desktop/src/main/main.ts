@@ -17,6 +17,7 @@ import { listChats, listInflightChats, getChat, saveChat, renameChat, removeChat
 import { listPlans, getPlan, savePlan, removePlan, type Plan } from './planstore.ts';
 import { listBrainPlans, getBrainPlan } from './brainplans.ts';
 import { listLoops, getLoop, saveLoop, removeLoop, type Loop } from './loopstore.ts';
+import { listDreams, getDream, saveDream, removeDream, type Dream } from './dreamstore.ts';
 import { generateImage, readImage, imageModels, getImageServer, detectImageServer } from './images.ts';
 import { loadSettings, setUpdateSettings, setImageServer } from '../../../idctl/src/settings/store.ts';
 import type { ImageServerConfig } from '../../../idctl/src/settings/schema.ts';
@@ -268,6 +269,15 @@ async function appCall(method: string, args: unknown[]): Promise<unknown> {
       return saveLoop(args[0] as Loop);
     case 'loops:remove':
       return removeLoop(args[0] as string);
+    // Dreams: saved offline-reflection reports (consolidation/insights/ideas/simulations).
+    case 'dreams:list':
+      return listDreams(args[0] as string | undefined);
+    case 'dreams:get':
+      return getDream(args[0] as string);
+    case 'dreams:save':
+      return saveDream(args[0] as Dream);
+    case 'dreams:remove':
+      return removeDream(args[0] as string);
     case 'image:generate':
       return generateImage(args[0] as string, args[1] as string | undefined);
     case 'image:read':

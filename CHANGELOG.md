@@ -8,6 +8,18 @@ Every change pushed or merged to `main` carries its version number in the commit
 subject (`vX.Y.Z: …`), stamped automatically by the `commit-msg` hook — see
 [CONTRIBUTING.md](CONTRIBUTING.md).
 
+## [0.1.101] — 2026-06-24
+- **New Dream tab (Work page).** An agent runs an offline "dream" — a reflection pass
+  over its recent work and the shared brain — and returns a report with four sections:
+  **Consolidation** (facts worth keeping), **Insights** (patterns), **Ideas** (proposed
+  tasks/plans), and **Simulations** (speculative futures). **✦ Dream now** runs it on a
+  chosen agent and saves the report as a morning digest; **Schedule nightly** sets up a
+  recurring 03:00 dream. Per the research, Ideas &amp; Simulations are explicitly
+  **proposals for review — nothing is auto-executed**. (Grounded in the dream-research
+  brief: CLS/“sleep-time compute” consolidation + Generative-Agents reflection.)
+- *Completes the Work-page overhaul: Kanban tasks, live brain Plans, Schedule cleaner,
+  AI agent-chains, and Dream.*
+
 ## [0.1.100] — 2026-06-24
 - **Loops can now string agents + tasks into an AI-drafted chain.** The Loops tab
   leads with **Agent chains**: describe a goal, hit **✦ Draft chain**, and an agent
