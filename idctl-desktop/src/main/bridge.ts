@@ -183,9 +183,10 @@ const METHODS: Record<string, (...a: any[]) => Promise<unknown>> = {
     }));
     return decomposeWork(client, String(objective), String(lead), list);
   },
-  // …then create them all + farm out the work (parallel where possible).
-  'work:createPlan': (objective: string, subtasks: SubTask[]) =>
-    createAndDispatchPlan(client, String(objective), Array.isArray(subtasks) ? subtasks : []),
+  // …then create them all + farm out the work (parallel where possible). opts.lane
+  // sets the Kanban lane; opts.dispatch=false queues them unowned instead of dispatching.
+  'work:createPlan': (objective: string, subtasks: SubTask[], opts?: { dispatch?: boolean; lane?: string }) =>
+    createAndDispatchPlan(client, String(objective), Array.isArray(subtasks) ? subtasks : [], opts ?? {}),
 
   // health probes
   probeAll: () => client.probeAll(),

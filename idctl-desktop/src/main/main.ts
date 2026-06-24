@@ -18,6 +18,7 @@ import { listPlans, getPlan, savePlan, removePlan, type Plan } from './planstore
 import { listBrainPlans, getBrainPlan, setBrainPlanStatus } from './brainplans.ts';
 import { listLoops, getLoop, saveLoop, removeLoop, type Loop } from './loopstore.ts';
 import { listDreams, getDream, saveDream, removeDream, type Dream } from './dreamstore.ts';
+import { listQuestions, addQuestion, removeQuestion, type BlockerQuestion } from './questionstore.ts';
 import { generateImage, readImage, imageModels, getImageServer, detectImageServer } from './images.ts';
 import { loadSettings, setUpdateSettings, setImageServer } from '../../../idctl/src/settings/store.ts';
 import type { ImageServerConfig } from '../../../idctl/src/settings/schema.ts';
@@ -280,6 +281,13 @@ async function appCall(method: string, args: unknown[]): Promise<unknown> {
       return saveDream(args[0] as Dream);
     case 'dreams:remove':
       return removeDream(args[0] as string);
+    // Blocker-question queue (app-side; shown in the Inbox with options).
+    case 'questions:list':
+      return listQuestions(args[0] as string | undefined);
+    case 'questions:add':
+      return addQuestion(args[0] as BlockerQuestion);
+    case 'questions:remove':
+      return removeQuestion(args[0] as string);
     case 'image:generate':
       return generateImage(args[0] as string, args[1] as string | undefined);
     case 'image:read':

@@ -22,6 +22,14 @@ const TABS: { id: Tab; label: string }[] = [
   { id: 'dream', label: 'Dream' },
 ];
 
+function qArg(s: string): string { return `"${s.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`; }
+const SURFACE_BLOCKERS_PROMPT = (taskList: string) =>
+  'Review the team\'s current open tasks below. For any task BLOCKED on a decision only the USER can make ' +
+  '(a genuine fork with 2-4 discrete options — NOT work you can just do), produce a question. Return JSON ONLY ' +
+  '(no prose, no fences): [{"task":"<task ref or title>","agent":"<the owner agent>","question":"<the decision ' +
+  'needed, one line>","options":["option A","option B", ...]}]. Include ONLY tasks that truly need a user ' +
+  'decision; return [] if none.\n\nTASKS:\n' + taskList;
+
 /** Stable reference the manager accepts for a task: #shortid, name, then fallbacks. */
 function ref(t: Task): string {
   return t.shortId ?? t.name ?? t.uuid ?? t.title;
@@ -158,6 +166,36 @@ function TasksPanel({ store }: { store: FleetStore }) {
     }
   }
 
+  // Surface blocker DECISIONS (forks needing the user) as option-questions in the Inbox.
+  async function surfaceBlockers() {
+    const open = tasks.filter((t) => !isDone(t) && !isRoutine(t));
+    if (!open.length) { setNote('no open tasks to check'); return; }
+    if (!leadName) { setNote('no agent available to scan'); return; }
+    setBusy(true); setNote(`${leadName} is scanning open tasks for blocker decisions…`);
+    try {
+      const list = open.map((t) => `- ${ref(t)} [${t.ownerName ?? 'unassigned'}] ${t.title}`).join('\n');
+      const reply = await call<string>('dispatch', `/ask ${leadName} ${qArg(SURFACE_BLOCKERS_PROMPT(list))}`);
+      const a = reply.indexOf('['); const b = reply.lastIndexOf(']');
+      const arr = a >= 0 && b > a ? (() => { try { return JSON.parse(reply.slice(a, b + 1)); } catch { return []; } })() : [];
+      const agentNames = new Set(store.agents.map((x) => x.name));
+      let added = 0;
+      for (const it of (Array.isArray(arr) ? arr : [])) {
+        const question = String(it?.question ?? '').trim();
+        const options = (Array.isArray(it?.options) ? it.options : []).map((o: unknown) => String(o)).filter(Boolean);
+        if (!question || options.length < 2) continue;
+        const agent = agentNames.has(it?.agent) ? String(it.agent) : leadName;
+        const taskTitle = it?.task ? String(it.task) : undefined;
+        await call('questions:add', { question, options, agent, taskRef: taskTitle, taskTitle, team: store.team ?? 'default' });
+        added++;
+      }
+      setNote(added ? `added ${added} blocker question${added === 1 ? '' : 's'} to the Inbox ✓` : 'no blocker decisions found');
+    } catch (err) {
+      setNote(`blocker scan failed: ${err instanceof Error ? err.message : String(err)}`);
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function run(cmd: string, label: string) {
     setBusy(true);
     setNote(`${label}…`);
@@ -266,6 +304,7 @@ function TasksPanel({ store }: { store: FleetStore }) {
             <button className="btn" disabled={busy} onClick={() => setConfirmClear(true)}>Clear completed</button>
           )
         ) : null}
+        <button className="btn" disabled={busy} title="Ask the lead to surface task blockers that need YOUR decision → they appear as option-questions in the Inbox" onClick={() => void surfaceBlockers()}>⚠ Surface blockers</button>
         <button className="btn" disabled={busy || proposing} onClick={() => { setShowAssign((v) => !v); setAssignNote(''); setProposal(null); }}>{showAssign ? '− Close' : '⚡ Assign work to fleet'}</button>
         <button className="btn primary" disabled={busy} onClick={() => void newTask()}>+ New task</button>
       </div>

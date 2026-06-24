@@ -8,6 +8,19 @@ Every change pushed or merged to `main` carries its version number in the commit
 subject (`vX.Y.Z: …`), stamped automatically by the `commit-msg` hook — see
 [CONTRIBUTING.md](CONTRIBUTING.md).
 
+## [0.1.109] — 2026-06-24
+- **Compile a plan into a chosen lane, and let the lead run it.** "⤳ Compile to tasks"
+  now asks which lane (Backlog / Holding / To Do / Doing). **Doing** → the lead
+  auto-sorts the tasks into dependency order, assigns each to its agent, and dispatches
+  them to work independently to completion (the board auto-updates as they progress).
+  **Backlog / Holding / To Do** → the tasks are queued unowned in that lane (with the
+  lead's suggested owner noted) for you to start later by dragging to Doing.
+- **Blocker decisions now reach the Inbox.** New **⚠ Surface blockers** button (Tasks
+  toolbar): the lead scans open tasks and, for any blocked on a decision only you can
+  make, raises a multiple-choice question. These appear in the Inbox under **Decisions
+  needed** with clickable options — picking one delivers your answer to the blocked
+  agent and clears the question. App-side queue; no manager changes.
+
 ## [0.1.108] — 2026-06-24
 - **Tasks board scrolls sideways.** The grouped lane board now scrolls horizontally
   within its card instead of stretching the page, so all three groups are reachable.

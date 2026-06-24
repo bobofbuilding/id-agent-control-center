@@ -9,6 +9,7 @@
  */
 
 import type { ManagerClient } from '../../../idctl/src/api/client.ts';
+import { setTaskLane } from '../../../idctl/src/settings/store.ts';
 
 export interface SubTask { title: string; description: string; agent: string; dependsOn: number[] }
 export interface CreatedTask { idx: number; ref: string; title: string; agent: string; ok: boolean; error?: string; dependsOn: number[]; dispatched: boolean }
@@ -116,7 +117,11 @@ export async function createAndDispatchPlan(
   client: ManagerClient,
   objective: string,
   subtasks: SubTask[],
+  opts: { dispatch?: boolean; lane?: string } = {},
 ): Promise<CreatePlanResult> {
+  // dispatch=false → create tasks UNOWNED (status todo) into a lane and DON'T farm them
+  // out (a staged queue the lead works later). Default true = assign owners + dispatch.
+  const dispatch = opts.dispatch !== false;
   // Defense-in-depth: never trust the renderer's owner names for an outward-facing
   // fleet dispatch. Re-validate every owner against the live roster and coerce an
   // unknown one to a real agent (the first available). Also clamp deps in-range.
@@ -137,16 +142,22 @@ export async function createAndDispatchPlan(
   // 1) Create all tasks (assigned to their owner) — fast, synchronous-ish.
   for (let i = 0; i < list.length; i++) {
     const st = list[i];
-    const cmd = `/task create ${qArg(st.title)} --owner ${st.agent}${st.description ? ` --description ${qArg(st.description)}` : ''}`;
+    // Dispatching: assign the owner now (manager sets owned→doing). Queuing: create
+    // unowned (stays todo) and record the lead's suggested owner in the description.
+    const desc = dispatch ? st.description : `${st.description}${st.description ? '\n\n' : ''}(suggested owner: ${st.agent})`.trim();
+    const cmd = `/task create ${qArg(st.title)}${dispatch ? ` --owner ${st.agent}` : ''}${desc ? ` --description ${qArg(desc)}` : ''}`;
     try {
       const env = await client.remote<{ task?: { shortId?: string; name?: string } }>(cmd);
       const task = env.result?.task;
       const ref = task?.shortId ?? task?.name ?? st.title;
+      if (opts.lane && ref) { try { setTaskLane(ref, opts.lane); } catch { /* overlay is best-effort */ } }
       created.push({ idx: i, ref, title: st.title, agent: st.agent, ok: true, dependsOn: st.dependsOn, dispatched: false });
     } catch (e) {
       created.push({ idx: i, ref: st.title, title: st.title, agent: st.agent, ok: false, error: e instanceof Error ? e.message : String(e), dependsOn: st.dependsOn, dispatched: false });
     }
   }
+  // Queue-only: tasks created in the lane, not farmed out — the lead works them later.
+  if (!dispatch) return { created, dispatched: 0, deferred: created.filter((c) => c.ok).length };
 
   // 2) Background wave-dispatch. Each task waits on its backward deps' dispatches.
   // Only BACKWARD deps (index < self) chain → guaranteed DAG (no deadlock). If a

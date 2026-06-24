@@ -129,6 +129,9 @@ export function Plans({ store }: { store: FleetStore }) {
   const [busyFile, setBusyFile] = useState<string | null>(null); // one brain-plan action at a time
   const [audit, setAudit] = useState<Record<string, { from?: string; to?: string; summary: string }>>({});
   const [blockers, setBlockers] = useState<Record<string, string>>({});
+  const [compileFor, setCompileFor] = useState<string | null>(null); // plan file showing the lane picker
+  const [compileLane, setCompileLane] = useState('doing');
+  const COMPILE_LANES = [{ id: 'backlog', label: 'Backlog' }, { id: 'holding', label: 'Holding' }, { id: 'todo', label: 'To Do' }, { id: 'doing', label: 'Doing (work now)' }];
   type StatusWrite = { ok: boolean; from?: string; to?: string; error?: string };
 
   async function auditPlan(p: BrainPlan) {
@@ -166,18 +169,25 @@ export function Plans({ store }: { store: FleetStore }) {
     } finally { if (aliveRef.current) setBusyFile(null); }
   }
 
-  async function compileToTasks(p: BrainPlan) {
+  // Compile a plan into tasks in a chosen lane. lane='doing' → the lead auto-sorts
+  // (dependency order), assigns each task to its agent, and dispatches them to work
+  // independently to completion (board auto-updates). Other lanes queue them unowned.
+  async function compileToTasks(p: BrainPlan, lane: string) {
     const who = genAgent;
     if (!who) { setMsg('no agent available to compile tasks'); return; }
-    setBusyFile(p.file); setMsg(`compiling “${p.title}” into tasks via ${who}…`);
+    const dispatch = lane === 'doing';
+    setCompileFor(null); setBusyFile(p.file);
+    setMsg(`${who} is compiling “${p.title}” into ${lane}…`);
     try {
       const got = await call<{ file: string; content: string } | null>('brain:plan', p.file).catch(() => null);
       const obj = `Implement this plan as a set of tasks for the team:\n\n# ${p.title}\n\n${got?.content ?? ''}`;
       const dec = await call<DecomposeResult>('work:decompose', obj, who);
       if (!dec.ok || !dec.subtasks.length) { if (aliveRef.current) setMsg(dec.error || 'could not split this plan into tasks'); return; }
-      const res = await call<CreatePlanResult>('work:createPlan', obj, dec.subtasks);
+      const res = await call<CreatePlanResult>('work:createPlan', obj, dec.subtasks, { lane, dispatch });
       const ok = res.created.filter((c) => c.ok).length;
-      if (aliveRef.current) setMsg(`created ${ok} task${ok === 1 ? '' : 's'} from “${p.title}” (dispatched ${res.dispatched}) — see the Tasks tab`);
+      if (aliveRef.current) setMsg(dispatch
+        ? `created + dispatched ${ok} task${ok === 1 ? '' : 's'} from “${p.title}” → Doing — the lead assigned & is working them; watch the Tasks board`
+        : `queued ${ok} task${ok === 1 ? '' : 's'} from “${p.title}” → ${lane} — assign/drag to Doing on the board to start them`);
     } catch (err) {
       if (aliveRef.current) setMsg(`compile failed: ${err instanceof Error ? err.message : String(err)}`);
     } finally { if (aliveRef.current) setBusyFile(null); }
@@ -352,7 +362,18 @@ export function Plans({ store }: { store: FleetStore }) {
         <div className="row-actions" style={{ gap: 6, padding: '0 8px 6px', flexWrap: 'wrap' }} onClick={(e) => e.stopPropagation()}>
           <button className="btn small" disabled={busyFile !== null} title="Verify the real status against the codebase and update it" onClick={() => void auditPlan(p)}>{acting ? '…' : '✦ Audit status'}</button>
           <button className="btn small" disabled={busyFile !== null} title="Ask an agent what's blocking this plan" onClick={() => void findBlockers(p)}>⚠ Find blockers</button>
-          <button className="btn small" disabled={busyFile !== null} title="Decompose this plan into tasks and create them for the team" onClick={() => void compileToTasks(p)}>⤳ Compile to tasks</button>
+          {compileFor === p.file ? (
+            <span className="row-actions" style={{ gap: 4, alignItems: 'center' }}>
+              <span className="muted small">into</span>
+              <select className="cell-select small" value={compileLane} disabled={busyFile !== null} onChange={(e) => setCompileLane(e.target.value)}>
+                {COMPILE_LANES.map((l) => <option key={l.id} value={l.id}>{l.label}</option>)}
+              </select>
+              <button className="btn small" disabled={busyFile !== null} onClick={() => void compileToTasks(p, compileLane)}>Go</button>
+              <button className="btn small" disabled={busyFile !== null} onClick={() => setCompileFor(null)}>×</button>
+            </span>
+          ) : (
+            <button className="btn small" disabled={busyFile !== null} title="Decompose this plan into tasks for the team — pick a lane; Doing dispatches the lead to work them" onClick={() => setCompileFor(p.file)}>⤳ Compile to tasks</button>
+          )}
           <span className="grow" />
           {brainStatusKey(p.status) !== 'pending' ? <button className="btn small" disabled={busyFile !== null} title="Reset this plan's status to ⏳ PENDING" onClick={() => void setBrainPending(p)}>⏳ Set pending</button> : null}
         </div>
