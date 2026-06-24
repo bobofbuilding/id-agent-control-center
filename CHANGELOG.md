@@ -8,28 +8,12 @@ Every change pushed or merged to `main` carries its version number in the commit
 subject (`vX.Y.Z: …`), stamped automatically by the `commit-msg` hook — see
 [CONTRIBUTING.md](CONTRIBUTING.md).
 
-## [0.1.88] — 2026-06-23
-- **The Teams page is now the “HR Manager” page.** Same spot in the sidebar and the
-  same underlying team data — just renamed (nav label + page heading) to reflect that
-  it manages the agent workforce.
-- **One AI Team Builder replaces “Import from spec” + “Onboard agents.”** A single
-  flow now builds teams and agents end to end:
-  - **Describe in plain English or paste a spec** — a live deterministic parse drafts
-    the roster as you type; **✦ Build with AI** designs it from messy or high‑level
-    input.
-  - **AI designs the whole roster** — each agent comes back with a suggested runtime,
-    model, skills, and one ★ lead, grounded by the runtimes/models/skills actually
-    available (off‑list picks are dropped, nothing is invented).
-  - **Rich per‑agent review** — name · runtime · model · role, with an expandable row
-    for each agent’s persona and per‑agent skills; shared MCP / heartbeat / wallet /
-    probe apply to the batch.
-  - **Build in one pass** via `onboard:run`, which now carries each agent’s persona,
-    with a live per‑agent checklist. Targets a new or existing team.
-  - **Auto‑wiring** — after the agents land, the ★ lead is made the primary
-    coordinator and gets the delegate‑to‑teammates preset, and the team’s cross‑team
-    relay policy is applied (each shown as its own checklist row). The coordinator and
-    rebuild calls are team‑scoped so wiring a brand‑new team works even when it isn’t
-    the active one.
+## [0.1.95] — 2026-06-24
+- **Internal:** added a unit test for the AI Team Builder's design sanitization
+  (`sanitizeDesignedTeam` — drops off‑list runtime/model/skill picks, dedupes agent
+  names, guarantees exactly one lead). Also consolidated the two `0.1.88` changelog
+  entries below: the AI Team Builder and the interactive Inbox both shipped as
+  `v0.1.88` (two commits stamped the same version), so they're now one entry.
 
 ## [0.1.94] — 2026-06-24
 - **Local‑model concurrency now persists across manager restarts.** Your chosen
@@ -90,6 +74,27 @@ subject (`vX.Y.Z: …`), stamped automatically by the `commit-msg` hook — see
     Team Builder. *(AI‑assist needs a running agent; you’ll be told if none is up.)*
 
 ## [0.1.88] — 2026-06-23
+- **The Teams page is now the “HR Manager” page.** Same spot in the sidebar and the
+  same underlying team data — just renamed (nav label + page heading) to reflect that
+  it manages the agent workforce.
+- **One AI Team Builder replaces “Import from spec” + “Onboard agents.”** A single
+  flow now builds teams and agents end to end:
+  - **Describe in plain English or paste a spec** — a live deterministic parse drafts
+    the roster as you type; **✦ Build with AI** designs it from messy or high‑level
+    input.
+  - **AI designs the whole roster** — each agent comes back with a suggested runtime,
+    model, skills, and one ★ lead, grounded by the runtimes/models/skills actually
+    available (off‑list picks are dropped, nothing is invented).
+  - **Rich per‑agent review** — name · runtime · model · role, with an expandable row
+    for each agent’s persona and per‑agent skills; shared MCP / heartbeat / wallet /
+    probe apply to the batch.
+  - **Build in one pass** via `onboard:run`, which now carries each agent’s persona,
+    with a live per‑agent checklist. Targets a new or existing team.
+  - **Auto‑wiring** — after the agents land, the ★ lead is made the primary
+    coordinator and gets the delegate‑to‑teammates preset, and the team’s cross‑team
+    relay policy is applied (each shown as its own checklist row). The coordinator and
+    rebuild calls are team‑scoped so wiring a brand‑new team works even when it isn’t
+    the active one.
 - **The Inbox is interactive — reply to or dismiss what’s waiting.** Each item now
   has an inline reply box (⌘/Ctrl+Enter to send) and a **Dismiss** button; both
   clear the item from the manager’s pending queue. Previously the Inbox was
