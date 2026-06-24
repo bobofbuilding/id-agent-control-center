@@ -63,7 +63,7 @@ export interface FleetStore {
   setCoordinator: (agent: string) => Promise<void>;
 }
 
-const EVENT_BUFFER = 250;
+const EVENT_BUFFER = 1000;
 
 export function useFleet(): FleetStore {
   const [connection, setConnection] = useState<Connection>('connecting');

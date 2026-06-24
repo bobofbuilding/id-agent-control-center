@@ -316,7 +316,7 @@ function TasksPanel({ store }: { store: FleetStore }) {
         </section>
       ) : null}
 
-      <section className="card grow">
+      <section className="card grow" style={{ minWidth: 0 }}>
         <div className="row-actions" style={{ flexWrap: 'wrap', gap: 8, marginBottom: 10, alignItems: 'center' }}>
           <input className="catalog-search" placeholder="search tasks…" value={q} onChange={(e) => setQ(e.target.value)} />
           <label className="muted small" style={{ display: 'inline-flex', alignItems: 'center', gap: 6, cursor: 'pointer' }}>

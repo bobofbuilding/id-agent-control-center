@@ -324,9 +324,9 @@ export function Dashboard({ store }: { store: FleetStore }) {
         </section>
 
         <aside className="card feed grow">
-          <h3>Activity <span className="muted small">· live fleet events</span></h3>
+          <h3>Activity <span className="muted small">· all live fleet events{store.events.length ? ` (${store.events.length})` : ''}</span></h3>
           <div className="feed-list">
-            {store.events.slice(-120).reverse().map((e) => (
+            {[...store.events].reverse().map((e) => (
               <div className="feed-row" key={e.seq} title={e.topic}>
                 <span className={`topic ${topicClass(e.topic)}`}>{e.topic.split(':')[0]}</span>
                 <span className="desc">{describe(e, resolveAgent)}</span>

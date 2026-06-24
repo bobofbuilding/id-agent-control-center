@@ -8,6 +8,14 @@ Every change pushed or merged to `main` carries its version number in the commit
 subject (`vX.Y.Z: …`), stamped automatically by the `commit-msg` hook — see
 [CONTRIBUTING.md](CONTRIBUTING.md).
 
+## [0.1.108] — 2026-06-24
+- **Tasks board scrolls sideways.** The grouped lane board now scrolls horizontally
+  within its card instead of stretching the page, so all three groups are reachable.
+- **Dashboard Activity tile shows all events.** It was capped at the last 120; it now
+  shows the full live event history (buffer raised 250 → 1000), scrollable, with a count.
+- *(Cards already auto-reposition between lanes as a task's status changes — e.g. an
+  agent claiming a task moves its card to Doing — via the board's 5s live refresh.)*
+
 ## [0.1.107] — 2026-06-24
 - **Tasks Kanban is now a grouped, multi-lane workflow board.** Eight lanes in three
   groups — **Waiting Areas** (Backlog · Holding Pattern), **Main Flow** (To Do · Doing ·
