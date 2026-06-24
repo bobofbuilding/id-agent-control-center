@@ -8,6 +8,11 @@ Every change pushed or merged to `main` carries its version number in the commit
 subject (`vX.Y.Z: …`), stamped automatically by the `commit-msg` hook — see
 [CONTRIBUTING.md](CONTRIBUTING.md).
 
+## [0.1.129] — 2026-06-24
+- **Dashboard polish.** Activity tile is ~⅔ wider (340→560px) and its top now squares with the
+  chat card (offset past the chat's control row) when no project is focused. Removed the
+  "talking to lead · default" caption from the header. **Deleting a chat now asks to confirm.**
+
 ## [0.1.128] — 2026-06-24
 - **Work board honors "All teams."** The Tasks Kanban was stuck on the active team even with
   "All teams" selected — now it shows **every team's tasks** (each card tagged with its team),

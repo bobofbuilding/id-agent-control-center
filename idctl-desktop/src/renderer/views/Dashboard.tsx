@@ -74,7 +74,6 @@ export function Dashboard({ store }: { store: FleetStore }) {
     <div className="view" style={{ display: 'flex', flexDirection: 'column', minHeight: 0 }}>
       <header className="view-head">
         <h1>Dashboard</h1>
-        <span className="muted">talking to <b>{lead}</b> · {store.team ?? 'default'}</span>
       </header>
 
       {/* Explicit flex row so the chat fills the left and the activity tile always shows on the right. */}
@@ -84,7 +83,9 @@ export function Dashboard({ store }: { store: FleetStore }) {
           <Chat store={store} embedded lockTarget={lead} />
         </div>
 
-        <aside className="card" style={{ width: 340, flexShrink: 0, display: 'flex', flexDirection: 'column', minHeight: 0 }}>
+        {/* marginTop offsets the chat's control row so the tile top squares with the chat card
+            top (when no project is focused; a focused project's banner adds a little extra). */}
+        <aside className="card" style={{ width: 560, flexShrink: 0, marginTop: 38, display: 'flex', flexDirection: 'column', minHeight: 0 }}>
           <h3 style={{ marginTop: 0 }}>Activity <span className="muted small">· {store.team ?? 'default'}{events.length ? ` (${events.length})` : ''}</span></h3>
           <div className="feed-list" style={{ flex: 1, overflowY: 'auto', minHeight: 0 }}>
             {[...events].reverse().slice(0, 80).map((e) => (

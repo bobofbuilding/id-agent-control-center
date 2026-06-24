@@ -605,6 +605,8 @@ export function Chat({ store, embedded = false, lockTarget }: { store: FleetStor
     if (s) adoptSession(s);
   }
   async function deleteChat(id: string) {
+    const which = sessions.find((s) => s.id === id)?.title || session?.title || 'this chat';
+    if (!window.confirm(`Delete “${which}”? This can't be undone.`)) return;
     deletedRef.current.add(id); // drop any in-flight reply destined for this chat
     await call('chats:remove', id).catch(() => {});
     void store.refreshChatUnread(); // removing an unread chat must drop the badge now
