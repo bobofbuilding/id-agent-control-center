@@ -155,13 +155,20 @@ function ChatImage({ path }: { path: string }) {
   return <img className="chat-img" src={url} alt="generated" />;
 }
 
-export function Chat({ store, embedded = false, lockTarget }: { store: FleetStore; embedded?: boolean; lockTarget?: string }) {
-  const team = store.team ?? 'default';
-  const defaultTarget = useMemo(
-    () => resolveCoordinator(store.agents, store.coordinator) ?? 'lead',
-    [store.agents, store.coordinator],
+export function Chat({ store, embedded = false, lockTarget, teamOverride }: { store: FleetStore; embedded?: boolean; lockTarget?: string; teamOverride?: string }) {
+  // teamOverride pins this chat to a specific team (independent of the global
+  // active team) — its agents, lead, sessions and dispatch all scope to it.
+  const team = teamOverride ?? store.team ?? 'default';
+  const teamAgents = useMemo(
+    () => (teamOverride ? store.allAgents.filter((a) => a.team === teamOverride) : store.agents),
+    [teamOverride, store.allAgents, store.agents],
   );
-  const orderedAgents = agentsLeadFirst(store.agents, store.coordinator);
+  const teamCoordinator = teamOverride ? undefined : store.coordinator;
+  const defaultTarget = useMemo(
+    () => resolveCoordinator(teamAgents, teamCoordinator) ?? 'lead',
+    [teamAgents, teamCoordinator],
+  );
+  const orderedAgents = agentsLeadFirst(teamAgents, teamCoordinator);
 
   const [projects, setProjects] = useState<ProjectEntry[]>([]);
   const [sessions, setSessions] = useState<ChatSummary[]>([]);
@@ -360,8 +367,8 @@ export function Chat({ store, embedded = false, lockTarget }: { store: FleetStor
   useEffect(() => { sessionRef.current = session; }, [session]);
 
   const msgs = session?.messages ?? [];
-  const target = lockTarget ?? (session && store.agents.some((a) => a.name === session.target) ? session.target : defaultTarget);
-  const targetAgent = store.agents.find((a) => a.name === target);
+  const target = lockTarget ?? (session && teamAgents.some((a) => a.name === session.target) ? session.target : defaultTarget);
+  const targetAgent = teamAgents.find((a) => a.name === target);
   const focused = projects.find((p) => p.id === session?.projectId);
   const destDir = focused?.path || targetAgent?.workingDirectory || '';
   const inflight = !!session?.inflight?.queryId; // the viewed chat is awaiting a reply → lock the composer
@@ -438,7 +445,8 @@ export function Chat({ store, embedded = false, lockTarget }: { store: FleetStor
     for (let attempt = 1; attempt <= MAX; attempt++) {
       try {
         // convId (this chat's session id) isolates the agent conversation per chat.
-        return await call<{ queryId?: string; inline?: string }>('dispatch:start', cmd, convId);
+        // team pins the dispatch to this chat's team (independent of the global team).
+        return await call<{ queryId?: string; inline?: string }>('dispatch:start', cmd, convId, team);
       } catch (e) {
         lastErr = e instanceof Error ? e.message : String(e);
         if (attempt < MAX && TRANSIENT.test(lastErr)) {

@@ -8,6 +8,18 @@ Every change pushed or merged to `main` carries its version number in the commit
 subject (`vX.Y.Z: …`), stamped automatically by the `commit-msg` hook — see
 [CONTRIBUTING.md](CONTRIBUTING.md).
 
+## [0.1.138] — 2026-06-24
+- **Per-page team pickers — nothing rides on a global "active team" anymore.**
+  - **Dashboard** has a "talk to" picker: choose which team's **lead** you chat with (each option
+    shows the team's lead; the manager's active team is marked). The chat, its sessions, and every
+    dispatch now scope to the chosen team — switching teams elsewhere no longer hijacks this chat.
+  - **Work › Assign** has a **team** selector above the lead. Decompose, create-plan/dispatch, and
+    **Triage To Do** all act on the chosen team; the unassigned-To-Do counts scope to it too.
+  - Plumbing: `dispatch:start`, `work:decompose`, `work:createPlan`, and `work:triage` now take an
+    optional team and route via `withTeam(...)` (queries stay global by id).
+  - **Dashboard activity feed is now holistic** (every team's events, each row tagged `[team]`),
+    matching the all-teams model — no longer pinned to one team's stream.
+
 ## [0.1.137] — 2026-06-24
 - **Team pickers list only active teams.** The Build form's existing-team selector and the
   Capabilities team dropdown now show only teams with **running agents** (idle teams hidden) —

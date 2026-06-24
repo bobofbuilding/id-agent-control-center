@@ -129,6 +129,7 @@ function TasksPanel({ store }: { store: FleetStore }) {
   const [showAssign, setShowAssign] = useState(false);
   const [objective, setObjective] = useState('');
   const [lead, setLead] = useState('');
+  const [workTeam, setWorkTeam] = useState(''); // team this Assign/Triage panel acts on (decoupled from the global team)
   const [proposing, setProposing] = useState(false);
   const [proposal, setProposal] = useState<SubTask[] | null>(null);
   const [assignNote, setAssignNote] = useState('');
@@ -140,9 +141,22 @@ function TasksPanel({ store }: { store: FleetStore }) {
   const prompt = usePrompt();
   const toast = useToast();
 
-  const coordinator = resolveCoordinator(store.agents, store.coordinator) ?? store.agents[0]?.name ?? '';
-  const leadName = lead && store.agents.some((a) => a.name === lead) ? lead : coordinator;
-  const activeTeam = store.team ?? 'default';
+  // Teams with ≥1 running agent (idle teams hidden from the work-team picker).
+  const ACTIVE_RE = /stop|offline|dead|exit|error|crash|down|disabled|sleep/i;
+  const activeTeams = store.teams.map((t) => t.name).filter((n) => n && store.allAgents.some((a) => a.team === n && !!a.status && !ACTIVE_RE.test(a.status)));
+  // The Assign/Triage panel acts on a CHOSEN team — independent of the global active team.
+  useEffect(() => {
+    setWorkTeam((cur) => {
+      if (cur && activeTeams.includes(cur)) return cur;
+      if (store.team && activeTeams.includes(store.team)) return store.team;
+      return activeTeams[0] ?? store.team ?? 'default';
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeTeams.join(','), store.team]);
+  const activeTeam = workTeam || store.team || 'default';
+  const teamAgents = store.allAgents.filter((a) => a.team === activeTeam);
+  const coordinator = resolveCoordinator(teamAgents, activeTeam === store.team ? store.coordinator : undefined) ?? teamAgents[0]?.name ?? '';
+  const leadName = lead && teamAgents.some((a) => a.name === lead) ? lead : coordinator;
   const otherTeams = store.teams.map((t) => t.name).filter((n) => n && n !== activeTeam);
 
   // When the panel opens, fetch which other teams have an active lead (who can take work now).
@@ -152,7 +166,7 @@ function TasksPanel({ store }: { store: FleetStore }) {
     call<TeamLead[]>('work:teamLeads', otherTeams).then((r) => { if (live) setTeamInfo(r); }).catch(() => { if (live) setTeamInfo([]); });
     return () => { live = false; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [showAssign, store.team, store.teams.length]);
+  }, [showAssign, activeTeam, store.teams.length]);
 
   async function fanOut() {
     const obj = objective.trim();
@@ -261,13 +275,13 @@ function TasksPanel({ store }: { store: FleetStore }) {
   async function triage(silent = false) {
     if (triaging) return;
     if (!leadName) { if (!silent) setNote('no lead available to triage'); return; }
-    const pending = tasks.filter((t) => !t.ownerName && laneOf(t) === 'todo');
-    if (!pending.length) { if (!silent) setNote('no unassigned To Do tasks'); return; }
+    const pending = tasks.filter((t) => !t.ownerName && laneOf(t) === 'todo' && (!store.viewAll || t.teamName === activeTeam));
+    if (!pending.length) { if (!silent) setNote(`no unassigned To Do tasks in ${activeTeam}`); return; }
     setTriaging(true);
     lastTriageRef.current = Date.now();
     const t = toast({ kind: 'progress', text: `${leadName} is triaging ${pending.length} unassigned To Do task${pending.length === 1 ? '' : 's'}…` });
     try {
-      const res = await call<TriageResult>('work:triage', leadName);
+      const res = await call<TriageResult>('work:triage', leadName, activeTeam);
       if (res.error) { t.update({ kind: 'error', text: `Triage: ${res.error}` }); setNote(`triage: ${res.error}`); }
       else {
         const summary = res.assigned.length
@@ -288,7 +302,7 @@ function TasksPanel({ store }: { store: FleetStore }) {
   // appear (on the 5s poll), throttled by a 90s cooldown so it never hammers the lead.
   useEffect(() => {
     if (!autoTriage || triaging) return;
-    const pending = tasks.filter((t) => !t.ownerName && laneOf(t) === 'todo' && (!store.viewAll || t.teamName === store.team)).length;
+    const pending = tasks.filter((t) => !t.ownerName && laneOf(t) === 'todo' && (!store.viewAll || t.teamName === activeTeam)).length;
     if (!pending || Date.now() - lastTriageRef.current < 90_000) return;
     void triage(true);
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -382,7 +396,7 @@ function TasksPanel({ store }: { store: FleetStore }) {
     if (!leadName) { setAssignNote('no agent available to plan the work'); return; }
     setProposing(true); setProposal(null); setAssignNote(`asking ${leadName} to break this down…`);
     try {
-      const res = await call<DecomposeResult>('work:decompose', obj, leadName);
+      const res = await call<DecomposeResult>('work:decompose', obj, leadName, activeTeam);
       if (!res.ok || !res.subtasks.length) { setAssignNote(res.error || 'could not split this into tasks — rephrase and retry'); return; }
       setProposal(res.subtasks);
       const par = res.subtasks.filter((s) => !s.dependsOn.length).length;
@@ -411,7 +425,7 @@ function TasksPanel({ store }: { store: FleetStore }) {
     // Global toast: persists after the panel closes / you switch pages.
     const t = toast({ kind: 'progress', text: `Creating ${n} task${n === 1 ? '' : 's'} & dispatching to ${activeTeam}…` });
     try {
-      const res = await call<CreatePlanResult>('work:createPlan', objective.trim(), proposal);
+      const res = await call<CreatePlanResult>('work:createPlan', objective.trim(), proposal, { team: activeTeam });
       const okCount = res.created.filter((c) => c.ok).length;
       const failed = res.created.length - okCount;
       const summary = `created ${okCount} task${okCount === 1 ? '' : 's'} · dispatched ${res.dispatched} now${res.deferred ? ` · ${res.deferred} queued on deps` : ''}${failed ? ` · ${failed} failed` : ''}`;
@@ -433,7 +447,7 @@ function TasksPanel({ store }: { store: FleetStore }) {
   const doneCount = tasks.filter(isDone).length;
   // Unassigned To-Do tasks the lead can triage/assign. Triage runs on the ACTIVE team's lead,
   // so in holistic view the count is scoped to the active team (avoids a misleading total).
-  const unassignedTodo = tasks.filter((t) => !t.ownerName && laneOf(t) === 'todo' && (!store.viewAll || t.teamName === store.team)).length;
+  const unassignedTodo = tasks.filter((t) => !t.ownerName && laneOf(t) === 'todo' && (!store.viewAll || t.teamName === activeTeam)).length;
   // Owned "doing" tasks with no status change in 30m+ → stalled (re-dispatchable).
   const stalledTasks = tasks.filter((t) => {
     if (colOf(t.status) !== 'doing' || !t.ownerName) return false;
@@ -481,10 +495,16 @@ function TasksPanel({ store }: { store: FleetStore }) {
           <h3 style={{ marginTop: 0 }}>Assign work to the fleet</h3>
           <p className="muted small" style={{ marginTop: -4 }}>Describe an objective. {leadName || 'The lead'} breaks it into sub-tasks, each owned by the best-suited agent — independent ones run in parallel, dependents follow their prerequisites.</p>
           <div className="kv" style={{ gridTemplateColumns: '70px 1fr', gap: '8px 12px', alignItems: 'start' }}>
+            <span>team</span>
+            <b>
+              <select className="cell-select" value={activeTeam} disabled={proposing} onChange={(e) => { setWorkTeam(e.target.value); setLead(''); }}>
+                {(activeTeams.length ? activeTeams : [activeTeam]).map((t) => <option key={t} value={t}>{t}{t === store.team ? ' (active)' : ''}</option>)}
+              </select>
+            </b>
             <span>lead</span>
             <b>
               <select className="cell-select" value={leadName} disabled={proposing} onChange={(e) => setLead(e.target.value)}>
-                {store.agents.map((a) => <option key={a.id} value={a.name}>{a.name}{liveAgent(a.status) ? '' : ' · stopped'}</option>)}
+                {teamAgents.map((a) => <option key={a.id} value={a.name}>{a.name}{liveAgent(a.status) ? '' : ' · stopped'}</option>)}
               </select>
             </b>
             <span>objective</span>

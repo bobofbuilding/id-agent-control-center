@@ -183,9 +183,12 @@ const METHODS: Record<string, (...a: any[]) => Promise<unknown>> = {
   // Resumable dispatch: START returns a queryId (or an inline reply for
   // manager-local commands); POLL checks that query. The renderer owns the loop
   // so an in-flight reply survives navigation, long tasks, and app restarts.
-  'dispatch:start': async (command: string, sessionId?: string) => {
+  'dispatch:start': async (command: string, sessionId?: string, team?: string) => {
     // sessionId = the desktop chat id → agent conversation key (isolates each chat).
-    const env = await client.remote<{ queryId?: string; status?: string; result?: string; message?: string }>(String(command), undefined, undefined, sessionId ? String(sessionId) : undefined);
+    // team (optional) pins this dispatch to a specific team's manager namespace so
+    // the caller (e.g. a per-page lead chat) is independent of the global active team.
+    const c = team ? client.withTeam(String(team)) : client;
+    const env = await c.remote<{ queryId?: string; status?: string; result?: string; message?: string }>(String(command), undefined, undefined, sessionId ? String(sessionId) : undefined);
     const r = env.result as any;
     const queryId = r?.queryId;
     if (queryId) return { queryId: String(queryId) };
@@ -200,26 +203,28 @@ const METHODS: Record<string, (...a: any[]) => Promise<unknown>> = {
   },
 
   // auto-decompose work for the fleet: lead splits an objective into sub-tasks…
-  'work:decompose': async (objective: string, lead: string) => {
-    const agents = await client.agents().catch(() => []);
+  'work:decompose': async (objective: string, lead: string, team?: string) => {
+    const c = team ? client.withTeam(String(team)) : client;
+    const agents = await c.agents().catch(() => []);
     const list = agents.map((a) => ({
       name: a.name,
       runtime: a.runtime,
       status: a.status,
       skills: Array.isArray(a.metadata?.skills) ? (a.metadata!.skills as string[]) : [],
     }));
-    return decomposeWork(client, String(objective), String(lead), list);
+    return decomposeWork(c, String(objective), String(lead), list);
   },
   // …then create them all + farm out the work (parallel where possible). opts.lane
   // sets the Kanban lane; opts.dispatch=false queues them unowned instead of dispatching.
-  'work:createPlan': (objective: string, subtasks: SubTask[], opts?: { dispatch?: boolean; lane?: string }) =>
-    createAndDispatchPlan(client, String(objective), Array.isArray(subtasks) ? subtasks : [], opts ?? {}),
+  // opts.team pins the plan to a specific team (independent of the global active team).
+  'work:createPlan': (objective: string, subtasks: SubTask[], opts?: { dispatch?: boolean; lane?: string; team?: string }) =>
+    createAndDispatchPlan(opts?.team ? client.withTeam(String(opts.team)) : client, String(objective), Array.isArray(subtasks) ? subtasks : [], opts ?? {}),
   // Cross-team fan-out: hand one objective to several teams' ACTIVE leads at once.
   'work:teamLeads': (teams: string[]) => teamLeads(client, Array.isArray(teams) ? teams.map(String) : []),
   'work:fanout': (objective: string, teams: string[]) =>
     fanOutObjective(client, String(objective), Array.isArray(teams) ? teams.map(String) : []),
   // Lead triages unassigned To-Do tasks: assign each to the best active agent + dispatch.
-  'work:triage': (lead: string) => triageUnassigned(client, String(lead)),
+  'work:triage': (lead: string, team?: string) => triageUnassigned(team ? client.withTeam(String(team)) : client, String(lead)),
 
   // health probes
   probeAll: () => client.probeAll(),

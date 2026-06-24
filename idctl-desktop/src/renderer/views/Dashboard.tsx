@@ -1,11 +1,15 @@
-import { resolveCoordinator, type FleetStore } from '../store.ts';
+import { useEffect, useMemo, useState } from 'react';
+import { call, resolveCoordinator, type FleetStore, type TeamEvent } from '../store.ts';
 import { Chat } from './Chat.tsx';
 
 /**
- * Dashboard = talk to your lead + watch the fleet. The main panel is a chat locked to the
- * team's lead/coordinator (no agent picker — that's what HR Manager and the full Chat page
- * are for), beside a slim, live activity feed of recent fleet events.
+ * Dashboard = talk to a team lead + watch the fleet. The main panel is a chat locked to a
+ * chosen team's lead/coordinator (pick the team from the header — independent of any global
+ * active team), beside a slim, live activity feed spanning every team.
  */
+
+const ACTIVE_RE = /stop|offline|dead|exit|error|crash|down|disabled|sleep/i;
+function isActive(status?: string): boolean { return !!status && !ACTIVE_RE.test(status); }
 
 function ago(ts?: number): string {
   if (!ts) return '';
@@ -64,34 +68,70 @@ function topicClass(t: string): string {
 }
 
 export function Dashboard({ store }: { store: FleetStore }) {
-  const lead = resolveCoordinator(store.agents, store.coordinator) ?? 'lead';
-  // Recent, detailed activity for the active team (live cursor — newest first).
-  const agentById = new Map(store.agents.map((a) => [a.id, a.name] as const));
+  // Teams that currently have ≥1 running agent (idle teams hidden from the picker).
+  const activeTeams = useMemo(
+    () => store.teams.map((t) => t.name).filter((n) => store.allAgents.some((a) => a.team === n && isActive(a.status))),
+    [store.teams, store.allAgents],
+  );
+  // The chat targets a CHOSEN team's lead — independent of the global active team.
+  // Default to the active team (if running) else the first team with running agents.
+  const [chatTeam, setChatTeam] = useState<string>('');
+  useEffect(() => {
+    setChatTeam((cur) => {
+      if (cur && activeTeams.includes(cur)) return cur;
+      if (store.team && activeTeams.includes(store.team)) return store.team;
+      return activeTeams[0] ?? store.team ?? 'default';
+    });
+  }, [activeTeams, store.team]);
+
+  const teamAgents = useMemo(() => store.allAgents.filter((a) => a.team === chatTeam), [store.allAgents, chatTeam]);
+  // For the active team we honor the user's ★ coordinator; for any other team fall
+  // back to the role heuristic (lead/manager → first agent).
+  const lead = resolveCoordinator(teamAgents, chatTeam === store.team ? store.coordinator : undefined) ?? 'lead';
+
+  // Holistic activity feed: recent events across EVERY team (newest first).
+  const [events, setEvents] = useState<TeamEvent[]>([]);
+  useEffect(() => {
+    let live = true;
+    const load = () => call<TeamEvent[]>('events:multi', 80).then((r) => { if (live) setEvents(r); }).catch(() => {});
+    void load();
+    const iv = setInterval(load, 4000);
+    return () => { live = false; clearInterval(iv); };
+  }, []);
+  const agentById = useMemo(() => new Map(store.allAgents.map((a) => [a.id, a.name] as const)), [store.allAgents]);
   const resolveAgent = (id: string) => agentLabel(id, agentById);
-  const events = store.events;
 
   return (
     <div className="view" style={{ display: 'flex', flexDirection: 'column', minHeight: 0 }}>
-      <header className="view-head">
+      <header className="view-head" style={{ display: 'flex', alignItems: 'baseline', gap: 12 }}>
         <h1>Dashboard</h1>
+        <label className="muted small" style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+          talk to
+          <select value={chatTeam} onChange={(e) => setChatTeam(e.target.value)} style={{ maxWidth: 260 }}>
+            {(activeTeams.length ? activeTeams : [chatTeam].filter(Boolean)).map((t) => {
+              const tl = resolveCoordinator(store.allAgents.filter((a) => a.team === t), t === store.team ? store.coordinator : undefined) ?? 'lead';
+              return <option key={t} value={t}>{t}{t === store.team ? ' (active)' : ''} · {tl}</option>;
+            })}
+          </select>
+        </label>
       </header>
 
       {/* Explicit flex row so the chat fills the left and the activity tile always shows on the right. */}
       <div style={{ display: 'flex', gap: 14, flex: 1, minHeight: 0, alignItems: 'stretch' }}>
-        {/* Lead chat: a chat locked to the team lead, no agent picker (Chat renders its own card). */}
+        {/* Lead chat: locked to the chosen team's lead (no agent picker — Chat renders its own card). */}
         <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column' }}>
-          <Chat store={store} embedded lockTarget={lead} />
+          <Chat store={store} embedded teamOverride={chatTeam} lockTarget={lead} key={chatTeam} />
         </div>
 
         {/* marginTop offsets the chat's control row so the tile top squares with the chat card
             top (when no project is focused; a focused project's banner adds a little extra). */}
         <aside className="card" style={{ width: 560, flexShrink: 0, marginTop: 38, display: 'flex', flexDirection: 'column', minHeight: 0 }}>
-          <h3 style={{ marginTop: 0 }}>Activity <span className="muted small">· {store.team ?? 'default'}{events.length ? ` (${events.length})` : ''}</span></h3>
+          <h3 style={{ marginTop: 0 }}>Activity <span className="muted small">· all teams{events.length ? ` (${events.length})` : ''}</span></h3>
           <div className="feed-list" style={{ flex: 1, overflowY: 'auto', minHeight: 0 }}>
             {[...events].reverse().slice(0, 80).map((e) => (
-              <div className="feed-row" key={e.seq} title={e.topic}>
+              <div className="feed-row" key={`${e.team ?? ''}-${e.seq}`} title={e.topic}>
                 <span className={`topic ${topicClass(e.topic)}`}>{e.topic.split(':')[0]}</span>
-                <span className="desc">{describe(e, resolveAgent)}</span>
+                <span className="desc">{e.team ? <span className="muted" style={{ marginRight: 4 }}>[{e.team}]</span> : null}{describe(e, resolveAgent)}</span>
                 {e.timestamp ? <span className="muted t">{ago(e.timestamp)}</span> : null}
               </div>
             ))}
