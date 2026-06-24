@@ -8,6 +8,13 @@ Every change pushed or merged to `main` carries its version number in the commit
 subject (`vX.Y.Z: …`), stamped automatically by the `commit-msg` hook — see
 [CONTRIBUTING.md](CONTRIBUTING.md).
 
+## [0.1.114] — 2026-06-24
+- **One compile/dispatch step.** Merged "Compile to tasks" and "Fan out to teams" on
+  brain plans into a single **⤳ Compile & dispatch** picker. Check the **active team**
+  (with a lane — its cards land on the board you're viewing) and/or any **other teams**
+  (handed to their active lead, greyed out when none are running), then one **Go** does
+  it all in parallel. No more two-button dance.
+
 ## [0.1.113] — 2026-06-24
 - **Cross-team fan-out.** Hand one objective to several teams at once: in **Assign work
   to fleet** (Tasks) pick other teams to fan it out to, and on any **brain plan** use the

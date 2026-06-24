@@ -131,45 +131,26 @@ export function Plans({ store }: { store: FleetStore }) {
   const [busyFile, setBusyFile] = useState<string | null>(null); // one brain-plan action at a time
   const [audit, setAudit] = useState<Record<string, { from?: string; to?: string; summary: string }>>({});
   const [blockers, setBlockers] = useState<Record<string, string>>({});
-  const [compileFor, setCompileFor] = useState<string | null>(null); // plan file showing the lane picker
-  const [compileLane, setCompileLane] = useState('doing');
+  // One unified compile/dispatch picker per plan: the ACTIVE team gets tasks in a chosen
+  // lane (cards land on the board you're viewing), and/or OTHER teams get the plan handed
+  // to their active lead. Same procedure, one Go.
+  const [compileFor, setCompileFor] = useState<string | null>(null);  // plan file with the picker open
+  const [compileLane, setCompileLane] = useState('doing');            // lane for the active team's tasks
+  const [compileActive, setCompileActive] = useState(true);           // include the active team
+  const [fanPick, setFanPick] = useState<Set<string>>(new Set());     // other teams to hand the plan to
+  const [teamInfo, setTeamInfo] = useState<TeamLead[]>([]);           // active-lead + running counts per team
   const COMPILE_LANES = [{ id: 'backlog', label: 'Backlog' }, { id: 'holding', label: 'Holding' }, { id: 'todo', label: 'To Do' }, { id: 'doing', label: 'Doing (work now)' }];
-  const [fanFor, setFanFor] = useState<string | null>(null);          // plan file showing the team fan-out picker
-  const [fanPick, setFanPick] = useState<Set<string>>(new Set());     // teams chosen for this plan
-  const [fanInfo, setFanInfo] = useState<TeamLead[]>([]);             // active-lead + running counts per team
-  const allTeams = useMemo(() => store.teams.map((t) => t.name).filter(Boolean), [store.teams]);
+  const activeTeam = store.team ?? 'default';
+  const otherTeams = useMemo(() => store.teams.map((t) => t.name).filter((n) => n && n !== activeTeam), [store.teams, activeTeam]);
 
-  // Load active-lead info for every team when a fan-out picker opens.
+  // Load active-lead info for the other teams when the picker opens.
   useEffect(() => {
-    if (!fanFor || !allTeams.length) return;
+    if (!compileFor || !otherTeams.length) return;
     let live = true;
-    call<TeamLead[]>('work:teamLeads', allTeams).then((r) => { if (live) setFanInfo(r); }).catch(() => { if (live) setFanInfo([]); });
+    call<TeamLead[]>('work:teamLeads', otherTeams).then((r) => { if (live) setTeamInfo(r); }).catch(() => { if (live) setTeamInfo([]); });
     return () => { live = false; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [fanFor, store.teams.length]);
-
-  /** Fan a brain plan out to several teams' ACTIVE leads — each runs it independently. */
-  async function fanOutPlan(p: BrainPlan) {
-    const teams = [...fanPick];
-    if (!teams.length) return;
-    setFanFor(null); setBusyFile(p.file);
-    setMsg(`fanning “${p.title}” out to ${teams.length} team${teams.length > 1 ? 's' : ''}…`);
-    try {
-      const got = await call<{ file: string; content: string } | null>('brain:plan', p.file).catch(() => null);
-      const obj = `Implement this plan for your team, end to end:\n\n# ${p.title}\n\n${got?.content ?? ''}`;
-      const res = await call<FanoutResult[]>('work:fanout', obj, teams);
-      const ok = res.filter((r) => r.status === 'dispatched');
-      const bad = res.filter((r) => r.status !== 'dispatched');
-      const parts = [
-        ok.length ? `dispatched to ${ok.map((r) => `${r.team}/${r.lead}`).join(', ')}` : '',
-        bad.length ? `skipped ${bad.map((r) => `${r.team} (${r.status === 'no-active-agent' ? 'no active agent' : 'failed'})`).join(', ')}` : '',
-      ].filter(Boolean);
-      if (aliveRef.current) setMsg(parts.join(' · ') || 'nothing dispatched');
-      if (ok.length) setFanPick(new Set());
-    } catch (err) {
-      if (aliveRef.current) setMsg(`fan-out failed: ${err instanceof Error ? err.message : String(err)}`);
-    } finally { if (aliveRef.current) setBusyFile(null); }
-  }
+  }, [compileFor, store.teams.length]);
   type StatusWrite = { ok: boolean; from?: string; to?: string; error?: string };
 
   async function auditPlan(p: BrainPlan) {
@@ -207,27 +188,42 @@ export function Plans({ store }: { store: FleetStore }) {
     } finally { if (aliveRef.current) setBusyFile(null); }
   }
 
-  // Compile a plan into tasks in a chosen lane. lane='doing' → the lead auto-sorts
-  // (dependency order), assigns each task to its agent, and dispatches them to work
-  // independently to completion (board auto-updates). Other lanes queue them unowned.
-  async function compileToTasks(p: BrainPlan, lane: string) {
+  // Unified compile & dispatch. The ACTIVE team (if included) gets the plan decomposed
+  // into tasks in the chosen lane — lane='doing' → the lead auto-sorts (dependency order),
+  // assigns each task, and dispatches them to completion (board auto-updates); other lanes
+  // queue them unowned. EACH chosen OTHER team gets the same plan handed to its active lead,
+  // which runs it independently on its own board. One step, fanned out in parallel.
+  async function runDispatch(p: BrainPlan) {
+    const teams = [...fanPick];
+    if (!compileActive && !teams.length) { setMsg('pick the active team and/or other teams first'); return; }
     const who = genAgent;
-    if (!who) { setMsg('no agent available to compile tasks'); return; }
-    const dispatch = lane === 'doing';
+    if (compileActive && !who) { setMsg('no agent available to compile tasks'); return; }
     setCompileFor(null); setBusyFile(p.file);
-    setMsg(`${who} is compiling “${p.title}” into ${lane}…`);
+    setMsg(`dispatching “${p.title}”…`);
     try {
       const got = await call<{ file: string; content: string } | null>('brain:plan', p.file).catch(() => null);
-      const obj = `Implement this plan as a set of tasks for the team:\n\n# ${p.title}\n\n${got?.content ?? ''}`;
-      const dec = await call<DecomposeResult>('work:decompose', obj, who);
-      if (!dec.ok || !dec.subtasks.length) { if (aliveRef.current) setMsg(dec.error || 'could not split this plan into tasks'); return; }
-      const res = await call<CreatePlanResult>('work:createPlan', obj, dec.subtasks, { lane, dispatch });
-      const ok = res.created.filter((c) => c.ok).length;
-      if (aliveRef.current) setMsg(dispatch
-        ? `created + dispatched ${ok} task${ok === 1 ? '' : 's'} from “${p.title}” → Doing — the lead assigned & is working them; watch the Tasks board`
-        : `queued ${ok} task${ok === 1 ? '' : 's'} from “${p.title}” → ${lane} — assign/drag to Doing on the board to start them`);
+      const obj = `Implement this plan, end to end:\n\n# ${p.title}\n\n${got?.content ?? ''}`;
+      const parts: string[] = [];
+      // 1) Active team → tasks in the chosen lane (Doing dispatches the lead to work them).
+      if (compileActive && who) {
+        const dispatch = compileLane === 'doing';
+        const dec = await call<DecomposeResult>('work:decompose', obj, who);
+        if (dec.ok && dec.subtasks.length) {
+          const res = await call<CreatePlanResult>('work:createPlan', obj, dec.subtasks, { lane: compileLane, dispatch });
+          const ok = res.created.filter((c) => c.ok).length;
+          parts.push(`${activeTeam}: ${dispatch ? `dispatched ${ok}` : `queued ${ok}`} → ${compileLane}`);
+        } else {
+          parts.push(`${activeTeam}: ${dec.error || 'could not split into tasks'}`);
+        }
+      }
+      // 2) Other teams → each team's active lead runs it independently, in parallel.
+      if (teams.length) {
+        const fr = await call<FanoutResult[]>('work:fanout', obj, teams);
+        for (const r of fr) parts.push(`${r.team}: ${r.status === 'dispatched' ? `→ ${r.lead}` : r.status === 'no-active-agent' ? 'no active agent' : 'failed'}`);
+      }
+      if (aliveRef.current) { setMsg(parts.join(' · ') || 'nothing dispatched'); setFanPick(new Set()); }
     } catch (err) {
-      if (aliveRef.current) setMsg(`compile failed: ${err instanceof Error ? err.message : String(err)}`);
+      if (aliveRef.current) setMsg(`dispatch failed: ${err instanceof Error ? err.message : String(err)}`);
     } finally { if (aliveRef.current) setBusyFile(null); }
   }
 
@@ -401,38 +397,37 @@ export function Plans({ store }: { store: FleetStore }) {
           <button className="btn small" disabled={busyFile !== null} title="Verify the real status against the codebase and update it" onClick={() => void auditPlan(p)}>{acting ? '…' : '✦ Audit status'}</button>
           <button className="btn small" disabled={busyFile !== null} title="Ask an agent what's blocking this plan" onClick={() => void findBlockers(p)}>⚠ Find blockers</button>
           {compileFor === p.file ? (
-            <span className="row-actions" style={{ gap: 4, alignItems: 'center' }}>
-              <span className="muted small">into</span>
-              <select className="cell-select small" value={compileLane} disabled={busyFile !== null} onChange={(e) => setCompileLane(e.target.value)}>
-                {COMPILE_LANES.map((l) => <option key={l.id} value={l.id}>{l.label}</option>)}
-              </select>
-              <button className="btn small" disabled={busyFile !== null} onClick={() => void compileToTasks(p, compileLane)}>Go</button>
-              <button className="btn small" disabled={busyFile !== null} onClick={() => setCompileFor(null)}>×</button>
-            </span>
-          ) : (
-            <button className="btn small" disabled={busyFile !== null} title="Decompose this plan into tasks for the active team — pick a lane; Doing dispatches the lead to work them" onClick={() => setCompileFor(p.file)}>⤳ Compile to tasks</button>
-          )}
-          {fanFor === p.file ? (
-            <span className="row-actions" style={{ gap: 6, alignItems: 'center', flexWrap: 'wrap' }}>
-              <span className="muted small">to teams:</span>
-              {allTeams.map((name) => {
-                const info = fanInfo.find((t) => t.team === name);
+            <div style={{ flexBasis: '100%', display: 'flex', flexDirection: 'column', gap: 6, border: '1px solid var(--border, #2a2a2a)', borderRadius: 6, padding: 8, marginTop: 4 }}>
+              <div className="muted small">Compile &amp; dispatch “{p.title}” to one or more teams — the active team gets task cards on this board, others run it via their lead:</div>
+              <label className="small" style={{ display: 'inline-flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+                <input type="checkbox" checked={compileActive} disabled={busyFile !== null} onChange={(e) => setCompileActive(e.target.checked)} />
+                <span style={{ width: 7, height: 7, borderRadius: '50%', background: '#3ccb78', display: 'inline-block' }} />
+                <b>{activeTeam}</b> <span className="muted">(this board)</span> → into
+                <select className="cell-select small" value={compileLane} disabled={busyFile !== null || !compileActive} onChange={(e) => setCompileLane(e.target.value)}>
+                  {COMPILE_LANES.map((l) => <option key={l.id} value={l.id}>{l.label}</option>)}
+                </select>
+              </label>
+              {otherTeams.map((name) => {
+                const info = teamInfo.find((t) => t.team === name);
                 const canTake = (info?.activeCount ?? 0) > 0 && !!info?.lead;
                 return (
-                  <label key={name} className="small" title={!info ? 'checking…' : canTake ? `lead: ${info.lead} · ${info.activeCount}/${info.totalCount} running` : `${info.totalCount} agent(s), none running`}
-                    style={{ display: 'inline-flex', alignItems: 'center', gap: 4, opacity: canTake ? 1 : 0.5, cursor: canTake && busyFile === null ? 'pointer' : 'not-allowed' }}>
+                  <label key={name} className="small" title={!info ? 'checking…' : canTake ? `lead: ${info.lead} · ${info.activeCount}/${info.totalCount} running` : `${info?.totalCount ?? 0} agent(s), none running`}
+                    style={{ display: 'inline-flex', alignItems: 'center', gap: 6, opacity: canTake ? 1 : 0.5, cursor: canTake && busyFile === null ? 'pointer' : 'not-allowed' }}>
                     <input type="checkbox" disabled={!canTake || busyFile !== null} checked={fanPick.has(name)}
                       onChange={(e) => setFanPick((prev) => { const n = new Set(prev); if (e.target.checked) n.add(name); else n.delete(name); return n; })} />
-                    <span style={{ width: 6, height: 6, borderRadius: '50%', background: canTake ? '#3ccb78' : '#888', display: 'inline-block' }} />
-                    {name}
+                    <span style={{ width: 7, height: 7, borderRadius: '50%', background: canTake ? '#3ccb78' : '#888', display: 'inline-block' }} />
+                    {name} <span className="muted">{info ? `${info.activeCount}/${info.totalCount}` : '…'}</span>
+                    <span className="muted">{canTake ? `→ ${info!.lead}` : '(none running)'}</span>
                   </label>
                 );
               })}
-              <button className="btn small" disabled={busyFile !== null || !fanPick.size} onClick={() => void fanOutPlan(p)}>Go</button>
-              <button className="btn small" disabled={busyFile !== null} onClick={() => { setFanFor(null); setFanPick(new Set()); }}>×</button>
-            </span>
+              <div className="row-actions" style={{ gap: 6, marginTop: 2 }}>
+                <button className="btn small primary" disabled={busyFile !== null || (!compileActive && !fanPick.size)} onClick={() => void runDispatch(p)}>Go</button>
+                <button className="btn small" disabled={busyFile !== null} onClick={() => { setCompileFor(null); setFanPick(new Set()); }}>Cancel</button>
+              </div>
+            </div>
           ) : (
-            <button className="btn small" disabled={busyFile !== null} title="Hand this plan to other teams' active leads — each team runs it independently (/ask <team>/<lead>)" onClick={() => { setFanFor(p.file); setFanPick(new Set()); }}>⇄ Fan out to teams</button>
+            <button className="btn small" disabled={busyFile !== null} title="Compile this plan into tasks for the active team (pick a lane) and/or fan it out to other teams' active leads — one step" onClick={() => { setCompileFor(p.file); setFanPick(new Set()); }}>⤳ Compile &amp; dispatch</button>
           )}
           <span className="grow" />
           {brainStatusKey(p.status) !== 'pending' ? <button className="btn small" disabled={busyFile !== null} title="Reset this plan's status to ⏳ PENDING" onClick={() => void setBrainPending(p)}>⏳ Set pending</button> : null}
