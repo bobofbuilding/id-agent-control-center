@@ -8,6 +8,12 @@ Every change pushed or merged to `main` carries its version number in the commit
 subject (`vX.Y.Z: …`), stamped automatically by the `commit-msg` hook — see
 [CONTRIBUTING.md](CONTRIBUTING.md).
 
+## [0.1.131] — 2026-06-24
+- **Capabilities: apply across all teams / all leads.** The apply-to picker now has a **scope**
+  selector — **This team / All teams / All team leads** — so you can attach an MCP server or
+  install a skill across every team's agents (or just every team's lead) in one action. Each
+  apply routes to the agent's own team; incompatible-runtime agents are still excluded.
+
 ## [0.1.130] — 2026-06-24
 - **No more task pile-ups.** Decompose/compile and Triage now **spread** assignments across the
   active roster (best-fit up to a cap, overflow to the least-loaded agent) instead of dumping

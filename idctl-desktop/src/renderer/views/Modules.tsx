@@ -84,14 +84,22 @@ export function Modules({ store }: { store: FleetStore }) {
   // selected agents; switch teams with the team picker in the header. Default
   // (untouched) = every agent in the team; toggling switches to an explicit set.
   const activeTeam = store.team ?? 'default';
+  // Apply scope: this team / all teams / all team leads. Cross-team scopes route each apply to
+  // the agent's OWN team.
+  const [scope, setScope] = useState<'team' | 'all' | 'leads'>('team');
+  const [coords, setCoords] = useState<Record<string, string>>({});
+  useEffect(() => { call<{ coordinators?: Record<string, string> }>('coordinator:hierarchy').then((h) => setCoords(h.coordinators ?? {})).catch(() => {}); }, [store.lastUpdated]);
   // Capability gating: an agent can only be a target for the active tab's
   // capability if its runtime can actually consume it (e.g. ollama can't use
   // MCP — see LOCAL_MODEL_TOOL_CALLING_PLAN.md). Incompatible agents are shown
   // disabled and excluded from every apply/attach/install action.
   const capForTab: RuntimeCapability = TAB_CAPABILITY[tab];
   const agentSupports = (a: Agent) => runtimeSupports(agentRuntime(a), capForTab);
-  const eligibleAgents = store.agents.filter(agentSupports);
-  const incompatAgents = store.agents.filter((a) => !agentSupports(a));
+  const baseAgents: (Agent & { team?: string })[] =
+    scope === 'team' ? store.agents : scope === 'leads' ? store.allAgents.filter((a) => coords[a.team ?? ''] === a.name) : store.allAgents;
+  const eligibleAgents = baseAgents.filter(agentSupports);
+  const incompatAgents = baseAgents.filter((a) => !agentSupports(a));
+  const teamOf = (a: { team?: string }) => (scope === 'team' ? undefined : a.team);
 
   const [touched, setTouched] = useState(false);
   const [explicit, setExplicit] = useState<Set<string>>(new Set());
@@ -108,7 +116,8 @@ export function Modules({ store }: { store: FleetStore }) {
   // Default (untouched) = every ELIGIBLE agent; an explicit set is always
   // intersected with eligibility so an incompatible agent can never be a target.
   const selectedIds: Set<string> = touched ? explicit : new Set(eligibleAgents.map((a) => a.id));
-  const targetAgents = eligibleAgents.filter((a) => selectedIds.has(a.id));
+  // Team scope honors the chip selection; cross-team scopes target every eligible agent.
+  const targetAgents = scope === 'team' ? eligibleAgents.filter((a) => selectedIds.has(a.id)) : eligibleAgents;
   const targetCount = targetAgents.length;
   function baseSet(): Set<string> {
     return touched ? new Set(explicit) : new Set(eligibleAgents.map((a) => a.id));
@@ -231,7 +240,7 @@ export function Modules({ store }: { store: FleetStore }) {
   }
 
   // Apply an action to every selected agent (sequentially, in the active team).
-  async function applyToTargets(label: string, fn: (a: { id: string; name: string; metadata?: unknown }) => Promise<unknown>) {
+  async function applyToTargets(label: string, fn: (a: { id: string; name: string; metadata?: unknown; team?: string }) => Promise<unknown>) {
     if (targetCount === 0) {
       setNote('select at least one agent above');
       return;
@@ -254,22 +263,22 @@ export function Modules({ store }: { store: FleetStore }) {
   async function attachServer(p: McpServerProfile) {
     await applyToTargets(`attach ${p.name}`, async (a) => {
       const next = [...curMcp(a).filter((s) => s.name !== p.name), toSpec(p)];
-      await call<SetMcpResult>('setAgentMcp', a.id, next);
+      await call<SetMcpResult>('setAgentMcp', a.id, next, teamOf(a));
     });
   }
   async function detachServer(p: McpServerProfile) {
     await applyToTargets(`detach ${p.name}`, async (a) => {
-      await call<SetMcpResult>('setAgentMcp', a.id, curMcp(a).filter((s) => s.name !== p.name));
+      await call<SetMcpResult>('setAgentMcp', a.id, curMcp(a).filter((s) => s.name !== p.name), teamOf(a));
     });
   }
   async function rebuildTargets() {
-    await applyToTargets('rebuild', (a) => call('rebuildAgent', a.name));
+    await applyToTargets('rebuild', (a) => call('rebuildAgent', a.name, teamOf(a)));
   }
   async function installSkillAll(skill: string) {
-    await applyToTargets(`install ${skill}`, (a) => call('installSkill', skill, a.name));
+    await applyToTargets(`install ${skill}`, (a) => call('installSkill', skill, a.name, teamOf(a)));
   }
   async function uninstallSkillAll(skill: string) {
-    await applyToTargets(`uninstall ${skill}`, (a) => call('uninstallSkill', skill, a.name));
+    await applyToTargets(`uninstall ${skill}`, (a) => call('uninstallSkill', skill, a.name, teamOf(a)));
   }
   // Two-step confirm for the destructive library delete (window.confirm is not
   // reliable in Electron, and a single misclick must not nuke a skill).
@@ -368,6 +377,16 @@ export function Modules({ store }: { store: FleetStore }) {
       <header className="view-head">
         <h1>Capabilities</h1>
         <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+          <span className="muted small">scope</span>
+          <select className="cell-select" value={scope} onChange={(e) => setScope(e.target.value as 'team' | 'all' | 'leads')} title="Apply to the active team, every team, or every team's lead">
+            <option value="team">This team</option>
+            <option value="all">All teams</option>
+            <option value="leads">All team leads</option>
+          </select>
+          {scope !== 'team' ? (
+            <span className="muted small" title="every eligible agent across all teams (incompatible runtimes excluded)">apply to <b>{eligibleAgents.length}</b> {scope === 'leads' ? 'team lead' : 'agent'}{eligibleAgents.length === 1 ? '' : 's'} across all teams{incompatAgents.length ? ` · ${incompatAgents.length} excluded` : ''}</span>
+          ) : (
+          <>
           <span className="muted small">team</span>
           <select className="cell-select" value={activeTeam} onChange={(e) => void store.setTeam(e.target.value)}>
             {store.teams.map((t) => (
@@ -401,6 +420,8 @@ export function Modules({ store }: { store: FleetStore }) {
                 {targetCount === eligibleAgents.length ? 'none' : 'all'}
               </button>
             </>
+          )}
+          </>
           )}
         </div>
       </header>
