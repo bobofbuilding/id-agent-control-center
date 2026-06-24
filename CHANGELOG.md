@@ -8,6 +8,15 @@ Every change pushed or merged to `main` carries its version number in the commit
 subject (`vX.Y.Z: …`), stamped automatically by the `commit-msg` hook — see
 [CONTRIBUTING.md](CONTRIBUTING.md).
 
+## [0.1.103] — 2026-06-24
+- **Updates surface faster + stop hoarding disk.**
+  - **Auto-prune staged downloads.** Each applied update used to leave its ~100 MB zip
+    in `staged-update/` forever (had grown to ~4 GB / 43 files); the updater now keeps
+    only the pending download and removes the rest after staging.
+  - **Default update check is now hourly** (was every 4h).
+  - **Focus re-check debounce dropped to 1 min** (was 5 min) — clicking back into the
+    app surfaces a fresh release almost immediately.
+
 ## [0.1.102] — 2026-06-24
 - **Fix: Plans → Brain plans said "brain plans dir not found" even when configured.**
   The brain-plans reader called the projects-root detector with no argument, so it

@@ -116,7 +116,7 @@ export interface UpdateSettings {
 }
 
 export function defaultUpdateSettings(): UpdateSettings {
-  return { autoUpgrade: true, updateRepo: 'bobofbuilding/id-agent-control-center', checkIntervalHours: 4 };
+  return { autoUpgrade: true, updateRepo: 'bobofbuilding/id-agent-control-center', checkIntervalHours: 1 };
 }
 
 /** The id-agents repo's canonical default team. */

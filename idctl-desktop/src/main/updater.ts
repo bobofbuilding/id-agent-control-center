@@ -17,7 +17,7 @@
 
 import { app, BrowserWindow, Notification } from 'electron';
 import { spawn } from 'node:child_process';
-import { existsSync, mkdirSync, writeFileSync, readFileSync, rmSync, copyFileSync } from 'node:fs';
+import { existsSync, mkdirSync, writeFileSync, readFileSync, rmSync, copyFileSync, readdirSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { loadSettings } from '../../../idctl/src/settings/store.ts';
 import type { UpdateSettings } from '../../../idctl/src/settings/schema.ts';
@@ -149,7 +149,21 @@ async function stage(manifest: UpdateManifest): Promise<string> {
     writeFileSync(dest, buf);
   }
   writeFileSync(stagedMetaPath(), JSON.stringify({ version: manifest.version, zip: dest, notes: manifest.notes ?? '' }));
+  pruneStaged(dest);
   return dest;
+}
+
+/** Remove spent download zips from the staging dir, keeping only `keep` (the
+ *  pending one). Without this, every staged version's ~100MB zip piled up forever. */
+function pruneStaged(keep: string): void {
+  try {
+    const dir = stagedDir();
+    for (const f of readdirSync(dir)) {
+      if (!/^update-.*\.zip$/.test(f)) continue;
+      const full = join(dir, f);
+      if (full !== keep) rmSync(full, { force: true });
+    }
+  } catch { /* best-effort */ }
 }
 
 function readStaged(): { version: string; zip: string; notes: string } | null {
@@ -269,7 +283,7 @@ export function startUpdater(win: BrowserWindow): void {
   // Re-check whenever the user focuses the window (debounced) — so a release cut
   // while the app is open surfaces in seconds instead of waiting for the timer.
   win.on('focus', () => {
-    if (Date.now() - lastFocusCheck < 5 * 60_000) return;
+    if (Date.now() - lastFocusCheck < 60_000) return; // debounce: at most once/min
     lastFocusCheck = Date.now();
     void checkForUpdate();
   });
