@@ -43,6 +43,22 @@ function pickActiveLead(agents: { name: string; status?: string }[]): string | n
   ).name;
 }
 
+/** Spread assignments so no single agent is handed a pile of tasks at once: cap each agent at
+ *  max(2, ceil(total/active)) and move overflow to the least-loaded active agent. Keeps the
+ *  best-fit owner up to the cap, then balances. Mutates items[].agent in place. */
+function balanceOwners(items: { agent: string }[], activeNames: string[]): void {
+  if (activeNames.length <= 1 || items.length <= 1) return;
+  const cap = Math.max(2, Math.ceil(items.length / activeNames.length));
+  const load: Record<string, number> = {};
+  for (const n of activeNames) load[n] = 0;
+  for (const it of items) {
+    let agent = activeNames.includes(it.agent) ? it.agent : activeNames[0];
+    if (load[agent] >= cap) agent = activeNames.reduce((a, b) => (load[b] < load[a] ? b : a), activeNames[0]);
+    load[agent]++;
+    it.agent = agent;
+  }
+}
+
 /** Pull the first JSON array out of a model reply (tolerates code fences / surrounding prose). */
 function extractJsonArray(text: string): unknown[] | null {
   if (!text) return null;
@@ -170,6 +186,8 @@ export async function createAndDispatchPlan(
   }));
   const created: CreatedTask[] = [];
   if (!fallback) return { created, dispatched: 0, deferred: 0 }; // no agents → nothing to dispatch
+  // Don't pile every task on one agent — spread across the active roster (best-fit up to a cap).
+  balanceOwners(list, [...names]);
 
   // 1) Create all tasks (assigned to their owner) — fast, synchronous-ish.
   for (let i = 0; i < list.length; i++) {
@@ -196,16 +214,23 @@ export async function createAndDispatchPlan(
   // prerequisite failed to be created, its dependents are NOT released — they'd
   // otherwise run against output that never got produced.
   const done: Promise<void>[] = new Array(list.length);
+  // One in-flight dispatch per OWNER: an agent works its tasks one at a time so we never fire
+  // N concurrent /ask at a single agent (the cause of the stalled pile-up).
+  const ownerChain: Record<string, Promise<void> | undefined> = {};
   const startSub = (i: number): Promise<void> => {
     const c = created[i];
     if (!c.ok) return Promise.resolve();
     const backDeps = (list[i].dependsOn || []).filter((d) => d >= 0 && d < i);
     if (backDeps.some((d) => !created[d]?.ok)) { c.dispatched = false; return Promise.resolve(); } // prereq never created
     const deps = backDeps.map((d) => done[d]).filter(Boolean);
-    return Promise.allSettled(deps).then(() => {
+    const prevForOwner = ownerChain[c.agent];
+    const waits = prevForOwner ? [...deps, prevForOwner] : deps;
+    const p = Promise.allSettled(waits).then(() => {
       c.dispatched = true;
       return client.dispatch(`/ask ${c.agent} ${qArg(WORK_PROMPT(objective, list[i], c.ref))}`).then(() => {}, () => {});
     });
+    ownerChain[c.agent] = p; // the owner's next task waits on this one
+    return p;
   };
   for (let i = 0; i < list.length; i++) done[i] = startSub(i);
   // Fire-and-forget: the fleet runs in the background; swallow to avoid unhandled rejections.
@@ -356,21 +381,27 @@ export async function triageUnassigned(client: ManagerClient, lead: string, opts
   for (const ref of byRef.keys()) {
     if (!planned.has(ref)) { planned.set(ref, active[i % active.length].name); i++; }
   }
+  // Spread so no agent gets a pile — best-fit up to a cap, overflow to the least-loaded.
+  const plan = [...planned].map(([ref, agent]) => ({ ref, agent }));
+  balanceOwners(plan, [...activeNames]);
 
   // Assign owners (sets the owner DB row; manager moves owned → doing).
   const assigned: { ref: string; agent: string }[] = [];
-  for (const [ref, agent] of planned) {
+  for (const { ref, agent } of plan) {
     try { await client.remote(`/task assign ${ref} ${agent}`); assigned.push({ ref, agent }); }
     catch { /* skip this one; keep going */ }
   }
-  // Dispatch the work in the background so the agents actually do it (assign ≠ work).
+  // Dispatch in the background — but ONE in-flight /ask per owner (sequential per agent) so we
+  // never overload a single agent with concurrent work.
   let dispatched = 0;
   if (dispatch) {
+    const ownerChain: Record<string, Promise<void> | undefined> = {};
     for (const { ref, agent } of assigned) {
       const t = byRef.get(ref);
       if (!t) continue;
       dispatched++;
-      void client.dispatch(`/ask ${agent} ${qArg(TRIAGE_WORK(ref, t.title, clip(t.description ?? '', 400)))}`).then(() => {}, () => {});
+      const prev = ownerChain[agent] ?? Promise.resolve();
+      ownerChain[agent] = prev.then(() => client.dispatch(`/ask ${agent} ${qArg(TRIAGE_WORK(ref, t.title, clip(t.description ?? '', 400)))}`).then(() => {}, () => {}));
     }
   }
   return { considered: unassigned.length, assigned, skipped: unassigned.length - assigned.length, dispatched };

@@ -487,6 +487,10 @@ function TasksPanel({ store }: { store: FleetStore }) {
           {!proposal && otherTeams.length ? (
             <div style={{ marginTop: 10 }}>
               <div className="muted small" style={{ marginBottom: 5 }}>⇄ Or fan this objective out to other teams — each team's <b>active lead</b> runs it independently (◷ teams with no running agent can't take work):</div>
+              <div className="row-actions" style={{ gap: 6, marginBottom: 6 }}>
+                <button className="btn small" disabled={proposing} title="Select every team that has a running lead (fan out to all team leads at once)" onClick={() => setFanTeams(new Set(teamInfo.filter((t) => t.activeCount > 0 && t.lead).map((t) => t.team)))}>★ All team leads</button>
+                {fanTeams.size ? <button className="btn small" disabled={proposing} onClick={() => setFanTeams(new Set())}>clear</button> : null}
+              </div>
               <div style={{ display: 'flex', flexWrap: 'wrap', gap: 7 }}>
                 {otherTeams.map((name) => {
                   const info = teamInfo.find((t) => t.team === name);

@@ -8,6 +8,14 @@ Every change pushed or merged to `main` carries its version number in the commit
 subject (`vX.Y.Z: …`), stamped automatically by the `commit-msg` hook — see
 [CONTRIBUTING.md](CONTRIBUTING.md).
 
+## [0.1.130] — 2026-06-24
+- **No more task pile-ups.** Decompose/compile and Triage now **spread** assignments across the
+  active roster (best-fit up to a cap, overflow to the least-loaded agent) instead of dumping
+  many tasks on one agent, and dispatch **one task per owner at a time** (sequential per agent)
+  so a single agent is never hit with N concurrent /ask — the original cause of the stalled pile.
+- **Fan out to all team leads.** The Work fan-out picker has a **★ All team leads** button that
+  selects every team with a running lead in one click.
+
 ## [0.1.129] — 2026-06-24
 - **Dashboard polish.** Activity tile is ~⅔ wider (340→560px) and its top now squares with the
   chat card (offset past the chat's control row) when no project is focused. Removed the
