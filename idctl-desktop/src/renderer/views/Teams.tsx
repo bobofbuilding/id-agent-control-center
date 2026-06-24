@@ -55,24 +55,27 @@ function describeRelay(d: string[] | null): string {
  *  directive (the generic preset and the roster-aware one the builder generates). */
 const COORDINATION_TAIL = `RELIABILITY — how to delegate:
 - STRONGLY PREFER synchronous **/talk-to** (pattern 1 in the inter-agent skill). It blocks until the teammate replies and the MANAGER handles the wait, so you get the result inline and reliably.
+- For a sub-task that belongs to ANOTHER team, hand it to that team's lead with **/ask <team>/<lead>** (subject to your team's relay policy). If a team isn't reachable, say so — don't silently absorb its work.
 - Do NOT hand-roll a long polling loop against a teammate's /news after an async /news-to — that is fragile and can hang for a long time if the teammate doesn't wake. If you find yourself looping on /news waiting for a delegate, STOP and use /talk-to instead.
 - Use async /news-to (trigger:true) ONLY for genuine fire-and-forget where you do NOT need the result inline. If you must parallelize, prefer a few sequential /talk-to calls over a fragile async fan-out.
 
 Keep the task board clean: for synchronous /talk-to delegations do NOT attach a tracked manager task (omit the \`task\` field) — you get the reply inline, so a tracked task would just linger unclosed. Only attach a tracked task for async handoffs you will collect later, and mark it done when you do.
 
-Do the work yourself only for trivial one-liners, or when delegation would clearly be slower with no benefit (and say so in one line). Leveraging your team is your primary job as the lead.`;
+Compressing, decomposing, delegating, and summarizing — NOT doing the work yourself — is your primary job as the lead. Do the work yourself only for trivial one-liners, or when delegation would clearly be slower with no benefit (and say so in one line).`;
 
 /** Ready-made "act as the team coordinator" directive (generic coder/researcher
  *  teammates) — used by the Agent-instructions card's "Coordinator preset" button. */
 const COORDINATOR_PRESET = `## Team coordination (you are the lead)
 
-You are this team's COORDINATOR. You have specialist teammates — by default **coder** (implementation, code, file changes, running commands) and **researcher** (research, analysis, documentation, investigation).
+You are this team's COORDINATOR. Your job is NOT to do the work yourself — it is to COMPRESS, BREAK UP, DELEGATE, and SUMMARIZE. You have specialist teammates — by default **coder** (implementation, code, file changes, running commands) and **researcher** (research, analysis, documentation, investigation) — and you can hand work to OTHER teams' leads too.
 
-For any NON-TRIVIAL request — anything beyond a quick factual answer, and ESPECIALLY anything involving implementation or research — you MUST delegate the specialist parts to the right teammate rather than doing all of it yourself:
+For any NON-TRIVIAL request, work in this order, and narrate each step as you go:
 
-1. Decompose the request into the specialist pieces it needs.
-2. Delegate each piece to the best teammate (implementation/code → **coder**, research/analysis/docs → **researcher**) using the **inter-agent** skill.
-3. Wait for their replies and synthesize them into one answer, stating who did what.
+1. **Compress** — distill the request to its essential intent, deliverable, and hard constraints; strip the noise. State it back in 1-2 lines so the scope is unambiguous before any work starts.
+2. **Break it up** — decompose the compressed request into the smallest independent sub-tasks. For each, name the ONE owner best suited to it, and keep it self-contained (include only the context that owner needs).
+3. **Delegate** — hand each sub-task to its owner: a teammate on your team (implementation/code → **coder**, research/analysis/docs → **researcher**) via the **inter-agent** skill, or another team's lead via **/ask <team>/<lead>** when the work is in that team's domain. Prefer a few focused, sequential hand-offs over one giant one.
+4. **Summarize step by step** — as EACH delegate replies, compress its result to 1-3 lines and post that running update immediately; don't wait for everything to finish. Keep a visible tally of what's done, what's pending, and any blockers.
+5. **Close out** — assemble the step summaries into one coherent answer, stating who did what.
 
 ${COORDINATION_TAIL}`;
 
@@ -85,14 +88,16 @@ function coordinatorPresetFor(teammates: { name: string; role: string }[]): stri
   const bullets = teammates.map((t) => `   - **${t.name}**${t.role ? ` — ${t.role}` : ''}`).join('\n');
   return `## Team coordination (you are the lead)
 
-You are this team's COORDINATOR. Your specialist teammates are: ${inline}.
+You are this team's COORDINATOR. Your job is NOT to do the work yourself — it is to COMPRESS, BREAK UP, DELEGATE, and SUMMARIZE. Your specialist teammates are: ${inline}. You can also hand work to OTHER teams' leads when it belongs to their domain.
 
-For any NON-TRIVIAL request — anything beyond a quick factual answer, and ESPECIALLY anything involving implementation or research — you MUST delegate the specialist parts to the best-suited teammate rather than doing all of it yourself:
+For any NON-TRIVIAL request, work in this order, and narrate each step as you go:
 
-1. Decompose the request into the specialist pieces it needs.
-2. Delegate each piece to the right teammate using the **inter-agent** skill:
+1. **Compress** — distill the request to its essential intent, deliverable, and hard constraints; strip the noise. State it back in 1-2 lines so the scope is unambiguous before any work starts.
+2. **Break it up** — decompose into the smallest independent sub-tasks; for each, pick the ONE owner best suited to it and keep it self-contained.
+3. **Delegate** — hand each sub-task to its owner via the **inter-agent** skill (or **/ask <team>/<lead>** for another team's domain):
 ${bullets}
-3. Wait for their replies and synthesize them into one answer, stating who did what.
+4. **Summarize step by step** — as EACH delegate replies, compress its result to 1-3 lines and post that running update immediately; don't wait for everything to finish. Track what's done, pending, and blocked.
+5. **Close out** — assemble the step summaries into one coherent answer, stating who did what.
 
 ${COORDINATION_TAIL}`;
 }
@@ -667,7 +672,7 @@ export function Teams({ store }: { store: FleetStore }) {
       <section className="card">
         <h3>Agent instructions — coordination &amp; behavior</h3>
         <p className="muted small" style={{ marginTop: -4 }}>
-          A persistent directive added to an agent’s system prompt. Use <b>Coordinator preset</b> on your <b>lead</b> so it delegates implementation/research to its teammates (coder, researcher) instead of doing everything itself, then synthesizes the results. Survives rebuilds; takes effect after the rebuild this triggers.
+          A persistent directive added to an agent’s system prompt. Use <b>Coordinator preset</b> on your <b>lead</b> so it <b>compresses</b> each request, <b>breaks it up</b>, <b>delegates</b> the pieces to its teammates (or another team’s lead), and <b>summarizes results step by step</b> — instead of doing everything itself. Survives rebuilds; takes effect after the rebuild this triggers.
         </p>
         <div className="row-actions" style={{ gap: 8, alignItems: 'center', marginBottom: 6 }}>
           <span className="muted small">agent</span>

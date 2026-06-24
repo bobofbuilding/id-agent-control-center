@@ -8,6 +8,18 @@ Every change pushed or merged to `main` carries its version number in the commit
 subject (`vX.Y.Z: …`), stamped automatically by the `commit-msg` hook — see
 [CONTRIBUTING.md](CONTRIBUTING.md).
 
+## [0.1.97] — 2026-06-24
+- **The lead/coordinator preset now prioritizes orchestration over doing the work.**
+  Applied to a lead (via the Coordinator preset button, the Team Builder's auto-wiring,
+  or HR Manager → Structure/Manage), the directive now drives an explicit five-step
+  loop, narrated as it goes: **1. Compress** the request to its essential intent +
+  constraints, **2. Break it up** into the smallest self-contained sub-tasks, **3.
+  Delegate** each to the best owner — a teammate (`/talk-to`) **or another team's lead**
+  (`/ask <team>/<lead>`), **4. Summarize step by step** (compress each delegate's reply
+  to 1–3 lines and post a running update as results land, not just at the end), and
+  **5. Close out** with one synthesized answer. The roster-aware variant names the
+  actual teammates that were created.
+
 ## [0.1.96] — 2026-06-24
 - **Skills are now auto-categorized, so the catalog's tag search actually works.**
   Skills created in other sessions land in the library with no `metadata.tags`, so
