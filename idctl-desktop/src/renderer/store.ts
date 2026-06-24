@@ -69,7 +69,6 @@ export interface FleetStore {
   refreshChatUnread: () => Promise<void>;
   setTeam: (team: string) => Promise<void>;
   setCoordinator: (agent: string) => Promise<void>;
-  setViewAll: (on: boolean) => void;
 }
 
 const EVENT_BUFFER = 1000;
@@ -89,15 +88,10 @@ export function useFleet(): FleetStore {
   const [chatUnread, setChatUnread] = useState(0);
   const [lastError, setLastError] = useState<string>();
   const [lastUpdated, setLastUpdated] = useState<number>();
-  // Holistic "all teams" view — DEFAULT ON. Persisted so it sticks across launches.
-  const [viewAll, setViewAllState] = useState<boolean>(() => {
-    try { return localStorage.getItem('idctl.viewAll') !== 'false'; } catch { return true; }
-  });
+  // Holistic "all teams" is now ALWAYS ON, app-wide — there is no per-team view toggle.
+  // (store.team still tracks the manager's active team for the few lead-scoped actions.)
+  const viewAll = true;
   const [allAgents, setAllAgents] = useState<TeamAgent[]>([]);
-  const setViewAll = useCallback((on: boolean) => {
-    setViewAllState(on);
-    try { localStorage.setItem('idctl.viewAll', String(on)); } catch { /* no storage */ }
-  }, []);
   const [tick, setTick] = useState(0);
   const [streamEpoch, setStreamEpoch] = useState(0); // bumped ONLY on team change → never resets the event cursor on a plain refresh
   const epoch = useRef(0); // bump on team change to reset the event cursor loop
@@ -208,10 +202,9 @@ export function useFleet(): FleetStore {
     // restart this loop, or it would reset the cursor to 0 and replay history.
   }, [streamEpoch]);
 
-  // Holistic aggregate: while viewAll, fetch every team's agents (each tagged with its team)
-  // so the fleet grid + status bar can show all teams at once. Cleared when off.
+  // Holistic aggregate (always on): fetch every team's agents (each tagged with its team) so the
+  // fleet grid + Dashboard + Work board + status bar always show all teams at once.
   useEffect(() => {
-    if (!viewAll) { setAllAgents([]); return; }
     let alive = true;
     let timer: ReturnType<typeof setTimeout>;
     const load = async () => {
@@ -224,7 +217,7 @@ export function useFleet(): FleetStore {
     };
     void load();
     return () => { alive = false; clearTimeout(timer); };
-  }, [viewAll, tick]);
+  }, [tick]);
 
-  return { connection, managerUrl, team, coordinator, agents, teams, events, inbox, chatUnread, lastError, lastUpdated, viewAll, allAgents, refresh, refreshChatUnread, setTeam, setCoordinator, setViewAll };
+  return { connection, managerUrl, team, coordinator, agents, teams, events, inbox, chatUnread, lastError, lastUpdated, viewAll, allAgents, refresh, refreshChatUnread, setTeam, setCoordinator };
 }

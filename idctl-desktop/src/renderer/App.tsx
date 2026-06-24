@@ -154,10 +154,6 @@ function Router({ view, store }: { view: ViewId; store: ReturnType<typeof useFle
 }
 
 type TeamLeadInfo = { team: string; lead: string | null; activeCount: number; totalCount: number };
-function isLive(status?: string): boolean {
-  const s = String(status || '').toLowerCase();
-  return !!s && !/stop|offline|dead|exit|error|crash|down|disabled|sleep/.test(s);
-}
 
 function StatusBar({ store }: { store: ReturnType<typeof useFleet> }) {
   const dot =
@@ -175,67 +171,18 @@ function StatusBar({ store }: { store: ReturnType<typeof useFleet> }) {
     return () => { live = false; clearInterval(iv); };
   }, [names, store.team]);
 
-  const viewAll = store.viewAll;
-  const activeTeam = store.team ?? 'default';
-  const cur = leads.find((l) => l.team === activeTeam);
-  const curActive = cur ? cur.activeCount : store.agents.filter((a) => isLive(a.status)).length;
-  const curTotal = cur ? cur.totalCount : store.agents.length;
   const liveTeams = leads.filter((l) => l.activeCount > 0).length;
   const totalActive = leads.reduce((s, l) => s + l.activeCount, 0);
   const totalAgents = leads.reduce((s, l) => s + l.totalCount, 0);
-  // Active teams first (running agents), then idle; alphabetical within each.
-  const sorted = [...store.teams].sort((a, b) => {
-    const la = (leads.find((l) => l.team === a.name)?.activeCount ?? 0) > 0;
-    const lb = (leads.find((l) => l.team === b.name)?.activeCount ?? 0) > 0;
-    return la !== lb ? (la ? -1 : 1) : a.name.localeCompare(b.name);
-  });
 
   return (
     <footer className="statusbar">
       <span className={`pill ${dot}`}>● {store.connection}</span>
       <span className="muted">{store.managerUrl || '—'}</span>
       <span className="sep">·</span>
-      <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
-        view
-        <select
-          className="cell-select"
-          style={{ fontSize: 12, fontWeight: 700 }}
-          value={viewAll ? '__all__' : activeTeam}
-          title="Holistic view (all teams) by default — the Dashboard & activity show the whole fleet. Pick a team to scope per-team pages. ● = running agents, ○ = idle; counts are running/total."
-          onChange={(e) => {
-            const v = e.target.value;
-            if (v === '__all__') store.setViewAll(true);
-            else { store.setViewAll(false); void store.setTeam(v); }
-          }}
-        >
-          <option value="__all__">★ All teams{totalAgents ? ` ${totalActive}/${totalAgents}` : ''}</option>
-          {(sorted.length ? sorted : [{ id: 'default', name: activeTeam, agentCount: store.agents.length }]).map((t) => {
-            const l = leads.find((x) => x.team === t.name);
-            const total = l ? l.totalCount : t.agentCount;
-            const running = l ? l.activeCount : undefined;
-            const live = (running ?? 0) > 0;
-            return (
-              <option key={t.id} value={t.name}>
-                {live ? '● ' : '○ '}{t.name} {running != null ? `${running}/${total}` : `(${total})`}{running != null && !live ? ' · idle' : ''}
-              </option>
-            );
-          })}
-        </select>
-      </span>
+      <span style={{ fontWeight: 700 }}>★ all teams</span>
       <span className="sep">·</span>
-      {viewAll ? (
-        <span title="running / total agents across every team">{totalActive}/{totalAgents} agents active · {liveTeams} team{liveTeams === 1 ? '' : 's'} running</span>
-      ) : (
-        <>
-          <span title="running / total agents in this team">{curActive}/{curTotal} agents active</span>
-          {liveTeams ? (
-            <>
-              <span className="sep">·</span>
-              <span className="muted" title="teams with at least one running agent">{liveTeams} team{liveTeams === 1 ? '' : 's'} running</span>
-            </>
-          ) : null}
-        </>
-      )}
+      <span title="running / total agents across every team">{totalActive}/{totalAgents} agents active · {liveTeams} team{liveTeams === 1 ? '' : 's'} running</span>
       {store.connection === 'offline' && store.lastError ? (
         <span className="status-error">⚠ {store.lastError}</span>
       ) : null}

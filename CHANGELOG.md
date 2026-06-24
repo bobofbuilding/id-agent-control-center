@@ -8,6 +8,14 @@ Every change pushed or merged to `main` carries its version number in the commit
 subject (`vX.Y.Z: …`), stamped automatically by the `commit-msg` hook — see
 [CONTRIBUTING.md](CONTRIBUTING.md).
 
+## [0.1.133] — 2026-06-24
+- **All-teams is now global — no view toggle.** Removed the status-bar view selector; the whole
+  app (Dashboard, Health, Work board, HR graph, status counts) is permanently holistic across
+  every team. The status bar just shows **★ all teams · N/M agents active · K teams running**.
+  (Where a single team is still needed — the lead chat, Assign-work/Triage, Capabilities "This
+  team" scope, HR Manager Build/Route — it follows the manager's active team, switchable from
+  HR Manager and the Capabilities team dropdown.)
+
 ## [0.1.132] — 2026-06-24
 - **Set the lead from HR Manager → Structure.** Selecting an agent in the team graph now shows a
   **★ make lead** button in its panel (★ when it's already the team's coordinator) — set any
