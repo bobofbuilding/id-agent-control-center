@@ -8,6 +8,19 @@ Every change pushed or merged to `main` carries its version number in the commit
 subject (`vX.Y.Z: …`), stamped automatically by the `commit-msg` hook — see
 [CONTRIBUTING.md](CONTRIBUTING.md).
 
+## [0.1.112] — 2026-06-24
+- **Board proportions.** Below the full-width Adjustment Loop band, the **Waiting Areas**
+  group is now ⅓ width and **Main Flow** ⅔ width (a 1:2 split that mirrors the
+  Adjustment band on top). Lanes compress further before the row starts scrolling.
+- **Richer task cards.** Each card now shows an **● working** pulse when an agent has
+  actively claimed it (green-bordered), plus a fuller timeline — *created Xm ago*,
+  *working Xm* (how long it's been in progress), and *done Xm ago* — each with the exact
+  timestamp on hover. Assigned-but-not-started tasks read *◴ queued*.
+- **Global team switcher.** The status bar's team label is now a dropdown listing every
+  team (with agent counts). Switching it re-scopes assignment, task routing, and the
+  activity feed to that team's fleet — so you can drive ops-team, research, skillmesh, etc.,
+  not just `default`. (Cross-team routing *within a single decompose* is still a follow-up.)
+
 ## [0.1.111] — 2026-06-24
 - **Adjustment Loop moved to the top.** The Needs Adjustment / Under Review / Rework
   band now sits as a full-width row above the Waiting Areas and Main Flow groups, so

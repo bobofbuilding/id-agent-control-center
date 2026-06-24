@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, type CSSProperties } from 'react';
 import { call, resolveCoordinator, type FleetStore } from '../store.ts';
 import { usePrompt } from '../components/prompt.tsx';
 import type { Task } from '../../../../idctl/src/api/types.ts';
@@ -71,6 +71,11 @@ function ago(ts?: number): string {
   const h = Math.round(m / 60); if (h < 24) return `${h}h`;
   const d = Math.round(h / 24); if (d < 30) return `${d}d`;
   return `${Math.round(d / 30)}mo`;
+}
+/** Absolute local timestamp for a tooltip. Normalizes seconds → ms like ago(). */
+function absTime(ts?: number): string | undefined {
+  if (!ts) return undefined;
+  return new Date(ts < 1e12 ? ts * 1000 : ts).toLocaleString();
 }
 
 /** Tabbed wrapper: Tasks + Schedule + Loops in one page. */
@@ -295,6 +300,7 @@ function TasksPanel({ store }: { store: FleetStore }) {
 
   return (
     <>
+      <style>{`@keyframes idctlPulse{0%,100%{opacity:1;transform:scale(1)}50%{opacity:.35;transform:scale(.8)}}.idctl-pulse{animation:idctlPulse 1.2s ease-in-out infinite}`}</style>
       <div className="row-actions" style={{ marginBottom: 8, alignItems: 'center' }}>
         <span className="muted small">{openCount} open · {doneCount} done</span>
         <span className="grow" />
@@ -376,20 +382,32 @@ function TasksPanel({ store }: { store: FleetStore }) {
         </div>
 
         {(() => {
-          const card = (t: Task) => (
+          const card = (t: Task) => {
+            const phase = colOf(t.status);                       // todo | doing | done
+            const working = phase === 'doing' && !!t.ownerName;  // an agent has claimed it and is on it
+            const cAbs = absTime(t.createdAt);
+            const uAbs = absTime(t.updatedAt);
+            const dAbs = absTime(t.completedAt ?? t.updatedAt);
+            return (
             <div
               key={ref(t)}
               draggable={!busy}
               onDragStart={(e) => { setDragRef(ref(t)); e.dataTransfer.setData('text/plain', ref(t)); e.dataTransfer.effectAllowed = 'move'; }}
               onDragEnd={() => setDragRef(null)}
               className="kanban-card"
-              style={{ border: '1px solid var(--border, #2a2a2a)', borderRadius: 6, padding: '6px 8px', background: 'var(--bg, #141414)', cursor: busy ? 'default' : 'grab' }}
+              style={{ border: `1px solid ${working ? 'rgba(60,203,120,0.55)' : 'var(--border, #2a2a2a)'}`, borderRadius: 6, padding: '6px 8px', background: 'var(--bg, #141414)', cursor: busy ? 'default' : 'grab' }}
             >
               <div className="b" style={{ fontSize: 13 }}>{t.title}</div>
               <div className="muted small mono">{t.shortId ?? ref(t)}{isRoutine(t) ? ' · routine' : ''}</div>
               <div className="row-actions" style={{ marginTop: 4, alignItems: 'center', gap: 6 }}>
-                {t.ownerName ? (
-                  <span className="muted small">{t.ownerName}</span>
+                {working ? (
+                  <span className="small" title={`${t.ownerName} is actively working on this${uAbs ? ` — active since ${uAbs}` : ''}`}
+                    style={{ display: 'inline-flex', alignItems: 'center', gap: 5, color: '#3ccb78', background: 'rgba(60,203,120,0.13)', borderRadius: 10, padding: '1px 7px', fontWeight: 600 }}>
+                    <span className="idctl-pulse" style={{ width: 7, height: 7, borderRadius: '50%', background: '#3ccb78', display: 'inline-block' }} />
+                    {t.ownerName} · working
+                  </span>
+                ) : t.ownerName ? (
+                  <span className="muted small" title={phase === 'done' ? 'completed by this agent' : 'assigned, not yet started'}>{phase === 'done' ? '✓' : '◴'} {t.ownerName}</span>
                 ) : !isDone(t) ? (
                   <select className="cell-select" style={{ fontSize: 11 }} defaultValue="" disabled={busy} onChange={(e) => assign(t, e.target.value)}>
                     <option value="">assign…</option>
@@ -397,7 +415,6 @@ function TasksPanel({ store }: { store: FleetStore }) {
                   </select>
                 ) : <span className="muted small">—</span>}
                 <span className="grow" />
-                <span className="muted small" title={t.createdAt ? new Date((t.createdAt < 1e12 ? t.createdAt * 1000 : t.createdAt)).toLocaleString() : undefined}>{ago(t.createdAt)}</span>
                 {confirmDel === ref(t) ? (
                   <>
                     <button className="btn icon-danger small" disabled={busy} onClick={() => void del(t)}>Delete?</button>
@@ -407,15 +424,22 @@ function TasksPanel({ store }: { store: FleetStore }) {
                   <button className="btn icon-danger small" disabled={busy} title="Delete task" onClick={() => setConfirmDel(ref(t))}>✕</button>
                 )}
               </div>
+              <div className="muted" style={{ marginTop: 3, display: 'flex', gap: 9, flexWrap: 'wrap', fontSize: 10.5, opacity: 0.85 }}>
+                <span title={cAbs ? `created ${cAbs}` : undefined}>⊕ created {ago(t.createdAt)} ago</span>
+                {working && t.updatedAt ? <span style={{ color: '#3ccb78' }} title={uAbs ? `active since ${uAbs}` : undefined}>▶ working {ago(t.updatedAt)}</span> : null}
+                {phase === 'done' && (t.completedAt || t.updatedAt) ? <span title={dAbs ? `completed ${dAbs}` : undefined}>✓ done {ago(t.completedAt ?? t.updatedAt)} ago</span> : null}
+                {phase === 'todo' && t.ownerName ? <span title="assigned but not started yet">◴ queued</span> : null}
+              </div>
             </div>
-          );
+            );
+          };
           const laneCol = (lane: { id: Lane; label: string }) => {
             const items = filtered.filter((t) => laneOf(t) === lane.id);
             return (
               <div
                 key={lane.id}
                 className="kanban-col"
-                style={{ flex: '1 1 0', minWidth: 172, background: 'var(--bg, #141414)', border: `1px solid ${dragRef ? 'var(--accent, #6aa8ff)' : 'var(--border, #2a2a2a)'}`, borderRadius: 6, padding: 6 }}
+                style={{ flex: '1 1 0', minWidth: 124, background: 'var(--bg, #141414)', border: `1px solid ${dragRef ? 'var(--accent, #6aa8ff)' : 'var(--border, #2a2a2a)'}`, borderRadius: 6, padding: 6 }}
                 onDragOver={(e) => { if (dragRef) e.preventDefault(); }}
                 onDrop={(e) => { e.preventDefault(); const r = dragRef || e.dataTransfer.getData('text/plain'); const t = tasks.find((x) => ref(x) === r); if (t) void moveToLane(t, lane.id); setDragRef(null); }}
               >
@@ -434,26 +458,35 @@ function TasksPanel({ store }: { store: FleetStore }) {
               </div>
             );
           };
-          const groupBox = (g: { title: string; lanes: { id: Lane; label: string }[] }, full = false) => (
-            <div key={g.title} className="kanban-group" style={{ border: '1px solid var(--border, #2a2a2a)', borderRadius: 8, padding: 8, background: 'var(--panel, #1b1b1b)', flexShrink: 0, ...(full ? { width: '100%', flexShrink: 1 } : {}) }}>
-              <div className="muted small b" style={{ marginBottom: 6 }}>{g.title}</div>
-              <div style={{ display: 'flex', gap: 8, alignItems: 'flex-start' }}>
-                {g.lanes.map(laneCol)}
+          // full → width:100% (the Adjustment band); grow → flex weight so the bottom
+          // row sizes Waiting:Main = 1:2 (i.e. ⅓ and ⅔ of the Adjustment band's width).
+          const groupBox = (g: { title: string; lanes: { id: Lane; label: string }[] }, opts: { full?: boolean; grow?: number } = {}) => {
+            const sizing: CSSProperties = opts.full
+              ? { width: '100%' }
+              : opts.grow
+                ? { flex: `${opts.grow} 1 0`, minWidth: 0 }
+                : { flexShrink: 0 };
+            return (
+              <div key={g.title} className="kanban-group" style={{ border: '1px solid var(--border, #2a2a2a)', borderRadius: 8, padding: 8, background: 'var(--panel, #1b1b1b)', ...sizing }}>
+                <div className="muted small b" style={{ marginBottom: 6 }}>{g.title}</div>
+                <div style={{ display: 'flex', gap: 8, alignItems: 'flex-start' }}>
+                  {g.lanes.map(laneCol)}
+                </div>
               </div>
-            </div>
-          );
-          // Adjustment Loop sits as a full-width band above the rest of the board.
+            );
+          };
+          // Adjustment Loop is a full-width band on top; below it Waiting (⅓) + Main Flow (⅔).
           const adjust = LANE_GROUPS.find((g) => g.title === 'Adjustment Loop');
           const flow = LANE_GROUPS.filter((g) => g.title !== 'Adjustment Loop');
           return (
             <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
               {adjust ? (
                 <div className="kanban-groups" style={{ display: 'flex', overflowX: 'auto' }}>
-                  {groupBox(adjust, true)}
+                  {groupBox(adjust, { full: true })}
                 </div>
               ) : null}
               <div className="kanban-groups" style={{ display: 'flex', gap: 14, alignItems: 'flex-start', overflowX: 'auto' }}>
-                {flow.map((g) => groupBox(g))}
+                {flow.map((g) => groupBox(g, { grow: g.title === 'Main Flow' ? 2 : 1 }))}
               </div>
             </div>
           );

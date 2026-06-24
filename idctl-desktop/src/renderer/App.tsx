@@ -159,8 +159,19 @@ function StatusBar({ store }: { store: ReturnType<typeof useFleet> }) {
       <span className={`pill ${dot}`}>● {store.connection}</span>
       <span className="muted">{store.managerUrl || '—'}</span>
       <span className="sep">·</span>
-      <span>
-        team <b>{store.team ?? 'default'}</b>
+      <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+        team
+        <select
+          className="cell-select"
+          style={{ fontSize: 12, fontWeight: 700 }}
+          value={store.team ?? 'default'}
+          title="Active team. Assignment, task routing, and activity are all scoped to this team — switch to drive another team's fleet."
+          onChange={(e) => void store.setTeam(e.target.value)}
+        >
+          {(store.teams.length ? store.teams : [{ id: 'default', name: store.team ?? 'default', agentCount: store.agents.length }]).map((t) => (
+            <option key={t.id} value={t.name}>{t.name}{typeof t.agentCount === 'number' ? ` (${t.agentCount})` : ''}</option>
+          ))}
+        </select>
       </span>
       <span className="sep">·</span>
       <span>{store.agents.length} agents</span>
