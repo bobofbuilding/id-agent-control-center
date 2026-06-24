@@ -8,6 +8,17 @@ Every change pushed or merged to `main` carries its version number in the commit
 subject (`vX.Y.Z: …`), stamped automatically by the `commit-msg` hook — see
 [CONTRIBUTING.md](CONTRIBUTING.md).
 
+## [0.1.104] — 2026-06-24
+- **Plans are now organizable.** A shared toolbar over both sets (brain plans + your
+  drafts): **search**, **sort** (most-recent / title / status), and **group by status**.
+  Each set has **status-filter chips** (Done/Partial/Pending/On hold for brain;
+  draft/active/done/archived for drafts), and drafts gain **tags/categories** — assign
+  them per plan and filter by tag.
+- **Richer per-plan AI editing (drafts).** When a draft is open you can now **pick which
+  agent revises** it, and **✦ Suggest improvements** asks that agent to propose concrete
+  changes and drops them into the instruction box to review/edit before applying (still
+  versioned with a changelog). Brain plans stay read-only.
+
 ## [0.1.103] — 2026-06-24
 - **Updates surface faster + stop hoarding disk.**
   - **Auto-prune staged downloads.** Each applied update used to leave its ~100 MB zip
