@@ -31,6 +31,13 @@ subject (`vX.Y.Z: …`), stamped automatically by the `commit-msg` hook — see
     rebuild calls are team‑scoped so wiring a brand‑new team works even when it isn’t
     the active one.
 
+## [0.1.93] — 2026-06-24
+- **No more false “health probe failed” on freshly‑built agents.** A just‑spawned
+  agent needs a second or two to bind its HTTP server, so the onboarding probe used
+  to fire too early and red‑flag a perfectly healthy agent (`request to …/talk
+  failed`). The probe now retries for a short startup grace (~12s) before declaring a
+  failure, so it only reports agents that are actually unreachable.
+
 ## [0.1.92] — 2026-06-24
 - **Tune local‑model parallelism + fix a local‑agent deadlock.** Local (`ollama`)
   agents share one model server, so the manager runs them through a concurrency gate

@@ -162,7 +162,7 @@ export async function runOnboarding(
 
   const shouldProbe = plan.probeAfter !== false && (!retrying || retryKeys.has('probe'));
   if (shouldProbe) {
-    await run('probe', 'Health probe', async () => summarizeProbe(await client.probeOne(plan.name)), {
+    await run('probe', 'Health probe', () => probeWithGrace(client, plan.name), {
       failSoft: true,
     });
   } else if (!retrying && plan.probeAfter === false) {
@@ -185,6 +185,28 @@ function summarizeProbe(probe: ProbeResult): string {
   const firstFailed = probe.results.find((r) => r.status !== 'ok');
   if (probe.failed > 0) throw new Error(firstFailed?.error ?? `${probe.failed} probe(s) failed`);
   return `${probe.passed}/${probe.probed} passed`;
+}
+
+/**
+ * Probe with a startup grace: a freshly-spawned agent takes a couple seconds to
+ * bind its HTTP server, so an immediate probe gets a (transient) connection
+ * failure. Retry for a short window before declaring the probe failed, so we
+ * don't red-flag agents that are simply still booting.
+ */
+async function probeWithGrace(client: ManagerClient, name: string, graceMs = 12_000): Promise<string> {
+  const deadline = Date.now() + graceMs;
+  let last = '';
+  for (;;) {
+    try {
+      const probe = await client.probeOne(name);
+      if (probe.failed === 0) return summarizeProbe(probe); // healthy → done
+      last = probe.results.find((r) => r.status !== 'ok')?.error ?? `${probe.failed} probe(s) failed`;
+    } catch (e) {
+      last = e instanceof Error ? e.message : String(e);
+    }
+    if (Date.now() >= deadline) throw new Error(last || 'probe failed after startup grace');
+    await new Promise((r) => setTimeout(r, 2_000));
+  }
 }
 
 function nonEmpty(values: string[] | undefined): string[] | undefined {
