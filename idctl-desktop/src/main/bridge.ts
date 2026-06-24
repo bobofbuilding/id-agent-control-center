@@ -232,7 +232,8 @@ const METHODS: Record<string, (...a: any[]) => Promise<unknown>> = {
   // …then create them all + farm out the work (parallel where possible). opts.lane
   // sets the Kanban lane; opts.dispatch=false queues them unowned instead of dispatching.
   // opts.team pins the plan to a specific team (independent of the global active team).
-  'work:createPlan': (objective: string, subtasks: SubTask[], opts?: { dispatch?: boolean; lane?: string; team?: string }) =>
+  // opts.respectOwners keeps each subtask's explicit owner (used for direct assignments).
+  'work:createPlan': (objective: string, subtasks: SubTask[], opts?: { dispatch?: boolean; lane?: string; team?: string; respectOwners?: boolean }) =>
     createAndDispatchPlan(opts?.team ? client.withTeam(String(opts.team)) : client, String(objective), Array.isArray(subtasks) ? subtasks : [], opts ?? {}),
   // Cross-team fan-out: hand one objective to several teams' ACTIVE leads at once.
   'work:teamLeads': (teams: string[]) => teamLeads(client, Array.isArray(teams) ? teams.map(String) : []),
@@ -249,10 +250,12 @@ const METHODS: Record<string, (...a: any[]) => Promise<unknown>> = {
   checkins: () => client.checkins(),
   'checkins:close': (id: string) => client.closeCheckin(String(id)),
   schedules: () => client.schedules(),
-  addHeartbeat: (agent: string, seconds: number, message: string, delivery?: 'internal' | 'talk') =>
-    client.addHeartbeat(String(agent), Number(seconds), String(message), delivery),
-  addCalendarCheckin: (agent: string, time: string, when: string, message: string, opts?: { timezone?: string; delivery?: 'internal' | 'talk' }) =>
-    client.addCalendarCheckin(String(agent), String(time), String(when), String(message), opts ?? {}),
+  // team (optional, trailing) routes the schedule to an agent in a specific team —
+  // used by the Work fold-out's Schedule/Loop/Dream modes (decoupled from active team).
+  addHeartbeat: (agent: string, seconds: number, message: string, delivery?: 'internal' | 'talk', team?: string) =>
+    (team ? client.withTeam(String(team)) : client).addHeartbeat(String(agent), Number(seconds), String(message), delivery),
+  addCalendarCheckin: (agent: string, time: string, when: string, message: string, opts?: { timezone?: string; delivery?: 'internal' | 'talk' }, team?: string) =>
+    (team ? client.withTeam(String(team)) : client).addCalendarCheckin(String(agent), String(time), String(when), String(message), opts ?? {}),
   pauseSchedule: (id: string) => client.pauseSchedule(String(id)),
   resumeSchedule: (id: string) => client.resumeSchedule(String(id)),
   removeSchedule: (id: string) => client.removeSchedule(String(id)),

@@ -8,6 +8,19 @@ Every change pushed or merged to `main` carries its version number in the commit
 subject (`vX.Y.Z: …`), stamped automatically by the `commit-msg` hook — see
 [CONTRIBUTING.md](CONTRIBUTING.md).
 
+## [0.1.141] — 2026-06-24
+- **Work › Create is now a 5-mode creator** (was just auto-decompose). The fold-out has a mode
+  switch — all decoupled per team:
+  - **Plan** — auto-decompose an objective into balanced sub-tasks (the original flow).
+  - **Assign** — hand a task to chosen agent(s); creates one task per agent and dispatches now,
+    keeping the exact owner (`work:createPlan` gained `respectOwners`).
+  - **Schedule** — recurring check-in (interval or calendar days/time) with talk/internal delivery.
+  - **Loop** — re-run a standing objective every interval (internal wake → review/next-step/report).
+  - **Dream** — a slow, no-deadline background aspiration the agent advances in spare cycles.
+  Schedule/Loop/Dream ride the manager's `/schedule` surface (team-routed `addHeartbeat`/
+  `addCalendarCheckin`) and show up in the Schedule tab (pause/stop there). Toolbar button renamed
+  **⚡ Create work**.
+
 ## [0.1.140] — 2026-06-24
 - **Dashboard activity feed now truly spans all teams (and is live, not stale).** Two bugs in
   the holistic `events:multi` aggregator: it fetched each team's **oldest** events (`since=0`

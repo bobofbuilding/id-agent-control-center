@@ -130,6 +130,16 @@ function TasksPanel({ store }: { store: FleetStore }) {
   const [objective, setObjective] = useState('');
   const [lead, setLead] = useState('');
   const [workTeam, setWorkTeam] = useState(''); // team this Assign/Triage panel acts on (decoupled from the global team)
+  // The fold-out creates several kinds of work, not just an auto-decomposed plan.
+  const [mode, setMode] = useState<'plan' | 'assign' | 'schedule' | 'loop' | 'dream'>('plan');
+  const [schedTarget, setSchedTarget] = useState('');       // single-agent target (schedule/loop/dream)
+  const [assignTo, setAssignTo] = useState<Set<string>>(new Set()); // multi-agent target (assignment)
+  const [taskDesc, setTaskDesc] = useState('');             // assignment description / details
+  const [schedKind, setSchedKind] = useState<'interval' | 'calendar'>('interval');
+  const [everyMin, setEveryMin] = useState(30);             // interval cadence (minutes)
+  const [calTime, setCalTime] = useState('09:00');
+  const [calDays, setCalDays] = useState('mon,tue,wed,thu,fri');
+  const [delivery, setDelivery] = useState<'internal' | 'talk'>('talk');
   const [proposing, setProposing] = useState(false);
   const [proposal, setProposal] = useState<SubTask[] | null>(null);
   const [assignNote, setAssignNote] = useState('');
@@ -158,6 +168,12 @@ function TasksPanel({ store }: { store: FleetStore }) {
   const coordinator = resolveCoordinator(teamAgents, activeTeam === store.team ? store.coordinator : undefined) ?? teamAgents[0]?.name ?? '';
   const leadName = lead && teamAgents.some((a) => a.name === lead) ? lead : coordinator;
   const otherTeams = store.teams.map((t) => t.name).filter((n) => n && n !== activeTeam);
+  const activeTeamAgents = teamAgents.filter((a) => liveAgent(a.status)); // routable members of the chosen team
+  // Keep the single-agent target (schedule/loop/dream) valid as the team changes.
+  useEffect(() => {
+    setSchedTarget((cur) => (cur && teamAgents.some((a) => a.name === cur) ? cur : (leadName || teamAgents[0]?.name || '')));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeTeam, teamAgents.length, leadName]);
 
   // When the panel opens, fetch which other teams have an active lead (who can take work now).
   useEffect(() => {
@@ -442,6 +458,83 @@ function TasksPanel({ store }: { store: FleetStore }) {
     }
   }
 
+  // ── Direct assignment: create the task(s) owned by the chosen agent(s) + dispatch now
+  //    (no decomposition; respectOwners keeps the exact owners). ──────────────────────
+  async function createAssignment() {
+    const title = objective.trim();
+    const agents = [...assignTo].filter(Boolean);
+    if (!title || !agents.length) { setAssignNote('enter a task and pick at least one agent'); return; }
+    setProposing(true);
+    const t = toast({ kind: 'progress', text: `Assigning “${title.slice(0, 40)}” to ${agents.join(', ')}…` });
+    try {
+      const subtasks = agents.map((a) => ({ title, description: taskDesc.trim(), agent: a, dependsOn: [] as number[] }));
+      const res = await call<CreatePlanResult>('work:createPlan', title, subtasks, { team: activeTeam, dispatch: true, respectOwners: true });
+      const ok = res.created.filter((c) => c.ok).length;
+      t.update({ kind: ok ? 'success' : 'error', text: `${activeTeam}: assigned ${ok}/${agents.length} · dispatched ${res.dispatched}` });
+      setAssignNote(`assigned to ${agents.join(', ')} ✓`);
+      setObjective(''); setTaskDesc(''); setAssignTo(new Set()); setShowAssign(false);
+      await reload();
+    } catch (err) {
+      const m = err instanceof Error ? err.message : String(err);
+      t.update({ kind: 'error', text: `Assign failed: ${m}` }); setAssignNote(`assign failed: ${m}`);
+    } finally { setProposing(false); }
+  }
+
+  // ── Schedule / Loop / Dream: all ride the manager's /schedule heartbeat+calendar
+  //    surface. Loop = recurring objective continuation; Dream = slow idle aspiration;
+  //    both wake the agent internally (self-directed), a plain Schedule pings/talks. ──
+  function intervalLabel(min: number): string {
+    if (min < 60) return `${min}m`;
+    if (min % 60 === 0) return `${min / 60}h`;
+    return `${Math.floor(min / 60)}h${min % 60}m`;
+  }
+  async function createSchedule() {
+    const msg = objective.trim();
+    if (!schedTarget || !msg) { setAssignNote('pick an agent and enter the check-in message'); return; }
+    setProposing(true);
+    const cadence = schedKind === 'interval' ? `every ${intervalLabel(everyMin)}` : `${calDays} @ ${calTime}`;
+    const t = toast({ kind: 'progress', text: `Scheduling ${schedTarget} (${cadence})…` });
+    try {
+      if (schedKind === 'interval') await call('addHeartbeat', schedTarget, everyMin * 60, msg, delivery, activeTeam);
+      else await call('addCalendarCheckin', schedTarget, calTime, calDays, msg, { delivery }, activeTeam);
+      t.update({ kind: 'success', text: `Scheduled ${schedTarget} · ${cadence} → see the Schedule tab` });
+      setAssignNote(`scheduled ${schedTarget} ${cadence} ✓`); setObjective(''); setShowAssign(false);
+    } catch (err) {
+      const m = err instanceof Error ? err.message : String(err);
+      t.update({ kind: 'error', text: `Schedule failed: ${m}` }); setAssignNote(`schedule failed: ${m}`);
+    } finally { setProposing(false); }
+  }
+  async function createLoop() {
+    const obj = objective.trim();
+    if (!schedTarget || !obj) { setAssignNote('pick an agent and describe the loop objective'); return; }
+    setProposing(true);
+    const t = toast({ kind: 'progress', text: `Starting loop on ${schedTarget} (every ${intervalLabel(everyMin)})…` });
+    try {
+      const msg = `Loop cycle (repeats every ${intervalLabel(everyMin)}). Continue this standing objective: ${obj}. Review what's already done, do the next concrete increment, update any related tasks, and briefly report progress. If it's fully complete, say so.`;
+      await call('addHeartbeat', schedTarget, everyMin * 60, msg, 'internal', activeTeam);
+      t.update({ kind: 'success', text: `Loop running on ${schedTarget} every ${intervalLabel(everyMin)} → Schedule tab` });
+      setAssignNote(`loop started on ${schedTarget} ✓`); setObjective(''); setShowAssign(false);
+    } catch (err) {
+      const m = err instanceof Error ? err.message : String(err);
+      t.update({ kind: 'error', text: `Loop failed: ${m}` }); setAssignNote(`loop failed: ${m}`);
+    } finally { setProposing(false); }
+  }
+  async function createDream() {
+    const vision = objective.trim();
+    if (!schedTarget || !vision) { setAssignNote('pick an agent and describe the aspiration'); return; }
+    setProposing(true);
+    const t = toast({ kind: 'progress', text: `Setting a dream for ${schedTarget}…` });
+    try {
+      const msg = `Dream — a standing background aspiration, no deadline (revisited every ${intervalLabel(everyMin)}): ${vision}. When you have spare capacity between assigned tasks, take ONE small concrete step toward it and note what you did. Never let this preempt assigned work.`;
+      await call('addHeartbeat', schedTarget, everyMin * 60, msg, 'internal', activeTeam);
+      t.update({ kind: 'success', text: `Dream set for ${schedTarget} (revisited every ${intervalLabel(everyMin)}) → Schedule tab` });
+      setAssignNote(`dream set for ${schedTarget} ✓`); setObjective(''); setShowAssign(false);
+    } catch (err) {
+      const m = err instanceof Error ? err.message : String(err);
+      t.update({ kind: 'error', text: `Dream failed: ${m}` }); setAssignNote(`dream failed: ${m}`);
+    } finally { setProposing(false); }
+  }
+
   const routineCount = tasks.filter(isRoutine).length;
   const openCount = tasks.filter((t) => !isDone(t)).length;
   const doneCount = tasks.filter(isDone).length;
@@ -486,32 +579,119 @@ function TasksPanel({ store }: { store: FleetStore }) {
           auto
         </label>
         <button className="btn" disabled={busy} title="Ask the lead to surface task blockers that need YOUR decision → they appear as option-questions in the Inbox" onClick={() => void surfaceBlockers()}>⚠ Surface blockers</button>
-        <button className="btn" disabled={busy || proposing} onClick={() => { setShowAssign((v) => !v); setAssignNote(''); setProposal(null); }}>{showAssign ? '− Close' : '⚡ Assign work to fleet'}</button>
+        <button className="btn" disabled={busy || proposing} title="Create work: auto-plan, direct assignment, schedule, loop, or dream" onClick={() => { setShowAssign((v) => !v); setAssignNote(''); setProposal(null); }}>{showAssign ? '− Close' : '⚡ Create work'}</button>
         <button className="btn primary" disabled={busy} onClick={() => void newTask()}>+ New task</button>
       </div>
 
       {showAssign ? (
         <section className="card" style={{ marginBottom: 10 }}>
-          <h3 style={{ marginTop: 0 }}>Assign work to the fleet</h3>
-          <p className="muted small" style={{ marginTop: -4 }}>Describe an objective. {leadName || 'The lead'} breaks it into sub-tasks, each owned by the best-suited agent — independent ones run in parallel, dependents follow their prerequisites.</p>
-          <div className="kv" style={{ gridTemplateColumns: '70px 1fr', gap: '8px 12px', alignItems: 'start' }}>
+          {(() => {
+            const META: Record<string, { title: string; hint: string }> = {
+              plan: { title: 'Plan — auto-decompose an objective', hint: `Describe an objective. ${leadName || 'The lead'} breaks it into sub-tasks, each owned by the best-suited active agent — independents run in parallel, dependents follow their prerequisites.` },
+              assign: { title: 'Assignment — hand a task to specific agent(s)', hint: 'Create one task per chosen agent and dispatch it now — no decomposition, the owner you pick is kept exactly.' },
+              schedule: { title: 'Schedule — recurring check-in', hint: 'Wake an agent on a cadence (interval or calendar days/time) with a message. Use “talk” to ping you, “internal” for a self-directed nudge. Appears in the Schedule tab.' },
+              loop: { title: 'Loop — repeat an objective on a cadence', hint: 'The agent re-runs a standing objective every interval (internal wake): review → next increment → report. Pause/stop it anytime in the Schedule tab.' },
+              dream: { title: 'Dream — a slow background aspiration', hint: 'A no-deadline goal the agent advances in spare cycles between assigned work. Revisited on a slow cadence; never preempts real tasks.' },
+            };
+            const m = META[mode];
+            return (<>
+              <h3 style={{ marginTop: 0 }}>{m.title}</h3>
+              <div className="row-actions" style={{ gap: 6, marginBottom: 8 }}>
+                {(['plan', 'assign', 'schedule', 'loop', 'dream'] as const).map((id) => (
+                  <button key={id} className={`btn small${mode === id ? ' primary' : ''}`} disabled={proposing}
+                    onClick={() => { setMode(id); setProposal(null); setAssignNote(''); if (id === 'dream' && everyMin < 120) setEveryMin(360); if (id === 'loop' && everyMin > 120) setEveryMin(30); if (id === 'schedule') setDelivery('talk'); }}>
+                    {id === 'plan' ? '◳ Plan' : id === 'assign' ? '☑ Assign' : id === 'schedule' ? '🕑 Schedule' : id === 'loop' ? '↻ Loop' : '✸ Dream'}
+                  </button>
+                ))}
+              </div>
+              <p className="muted small" style={{ marginTop: -2 }}>{m.hint}</p>
+            </>);
+          })()}
+          <div className="kv" style={{ gridTemplateColumns: '90px 1fr', gap: '8px 12px', alignItems: 'start' }}>
             <span>team</span>
             <b>
-              <select className="cell-select" value={activeTeam} disabled={proposing} onChange={(e) => { setWorkTeam(e.target.value); setLead(''); }}>
+              <select className="cell-select" value={activeTeam} disabled={proposing} onChange={(e) => { setWorkTeam(e.target.value); setLead(''); setAssignTo(new Set()); }}>
                 {(activeTeams.length ? activeTeams : [activeTeam]).map((t) => <option key={t} value={t}>{t}{t === store.team ? ' (active)' : ''}</option>)}
               </select>
             </b>
-            <span>lead</span>
-            <b>
-              <select className="cell-select" value={leadName} disabled={proposing} onChange={(e) => setLead(e.target.value)}>
-                {teamAgents.map((a) => <option key={a.id} value={a.name}>{a.name}{liveAgent(a.status) ? '' : ' · stopped'}</option>)}
-              </select>
-            </b>
-            <span>objective</span>
-            <b><textarea style={{ width: '100%', minHeight: 64 }} placeholder="e.g. “Ship a /status page: API endpoint, React widget, tests, and docs.”" value={objective} disabled={proposing} onChange={(e) => setObjective(e.target.value)} /></b>
+
+            {mode === 'plan' ? (<>
+              <span>lead</span>
+              <b>
+                <select className="cell-select" value={leadName} disabled={proposing} onChange={(e) => setLead(e.target.value)}>
+                  {teamAgents.map((a) => <option key={a.id} value={a.name}>{a.name}{liveAgent(a.status) ? '' : ' · stopped'}</option>)}
+                </select>
+              </b>
+            </>) : null}
+
+            {mode === 'assign' ? (<>
+              <span>agents</span>
+              <b style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+                {(activeTeamAgents.length ? activeTeamAgents : teamAgents).map((a) => (
+                  <label key={a.id} className="small" style={{ display: 'inline-flex', alignItems: 'center', gap: 5, border: '1px solid var(--border, #2a2a2a)', borderRadius: 6, padding: '2px 8px', opacity: liveAgent(a.status) ? 1 : 0.5, cursor: proposing ? 'default' : 'pointer' }}>
+                    <input type="checkbox" disabled={proposing || !liveAgent(a.status)} checked={assignTo.has(a.name)}
+                      onChange={(e) => setAssignTo((prev) => { const n = new Set(prev); if (e.target.checked) n.add(a.name); else n.delete(a.name); return n; })} />
+                    {a.name}{liveAgent(a.status) ? '' : ' · stopped'}
+                  </label>
+                ))}
+                {activeTeamAgents.length ? <button className="btn small" disabled={proposing} onClick={() => setAssignTo(new Set(activeTeamAgents.map((a) => a.name)))}>all active</button> : null}
+              </b>
+            </>) : null}
+
+            {mode === 'schedule' || mode === 'loop' || mode === 'dream' ? (<>
+              <span>agent</span>
+              <b>
+                <select className="cell-select" value={schedTarget} disabled={proposing} onChange={(e) => setSchedTarget(e.target.value)}>
+                  {teamAgents.map((a) => <option key={a.id} value={a.name}>{a.name}{liveAgent(a.status) ? '' : ' · stopped'}</option>)}
+                </select>
+              </b>
+            </>) : null}
+
+            {/* cadence: interval for loop/dream + schedule-interval; calendar option for schedule */}
+            {mode === 'schedule' ? (<>
+              <span>cadence</span>
+              <b className="row-actions" style={{ gap: 6 }}>
+                <button className={`btn small${schedKind === 'interval' ? ' primary' : ''}`} disabled={proposing} onClick={() => setSchedKind('interval')}>interval</button>
+                <button className={`btn small${schedKind === 'calendar' ? ' primary' : ''}`} disabled={proposing} onClick={() => setSchedKind('calendar')}>calendar</button>
+              </b>
+            </>) : null}
+
+            {(mode === 'loop' || mode === 'dream' || (mode === 'schedule' && schedKind === 'interval')) ? (<>
+              <span>every</span>
+              <b style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+                <input type="number" min={1} value={everyMin} disabled={proposing} onChange={(e) => setEveryMin(Math.max(1, Number(e.target.value) || 1))} style={{ width: 72 }} /> min
+                {[15, 30, 60, 120, 360, 720, 1440].map((mm) => <button key={mm} className="btn small" disabled={proposing} onClick={() => setEveryMin(mm)}>{intervalLabel(mm)}</button>)}
+              </b>
+            </>) : null}
+
+            {mode === 'schedule' && schedKind === 'calendar' ? (<>
+              <span>when</span>
+              <b style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                <input type="time" value={calTime} disabled={proposing} onChange={(e) => setCalTime(e.target.value)} />
+                <input type="text" value={calDays} disabled={proposing} placeholder="mon,tue,… or YYYY-MM-DD" onChange={(e) => setCalDays(e.target.value)} style={{ width: 200 }} />
+              </b>
+            </>) : null}
+
+            {mode === 'schedule' ? (<>
+              <span>delivery</span>
+              <b className="row-actions" style={{ gap: 6 }}>
+                <button className={`btn small${delivery === 'talk' ? ' primary' : ''}`} disabled={proposing} onClick={() => setDelivery('talk')} title="ping you / external message">talk</button>
+                <button className={`btn small${delivery === 'internal' ? ' primary' : ''}`} disabled={proposing} onClick={() => setDelivery('internal')} title="self-directed wake-up (no message to you)">internal</button>
+              </b>
+            </>) : null}
+
+            <span>{mode === 'assign' ? 'task' : mode === 'schedule' ? 'message' : mode === 'dream' ? 'aspiration' : 'objective'}</span>
+            <b><textarea style={{ width: '100%', minHeight: 60 }} disabled={proposing}
+              placeholder={mode === 'assign' ? 'e.g. “Add a /healthz endpoint with a test.”' : mode === 'schedule' ? 'e.g. “Post a 1-line status of open PRs.”' : mode === 'loop' ? 'e.g. “Keep the docs in sync with the API.”' : mode === 'dream' ? 'e.g. “Make our test suite the fastest in the org.”' : 'e.g. “Ship a /status page: API endpoint, React widget, tests, and docs.”'}
+              value={objective} onChange={(e) => setObjective(e.target.value)} /></b>
+
+            {mode === 'assign' ? (<>
+              <span>details</span>
+              <b><textarea style={{ width: '100%', minHeight: 44 }} disabled={proposing} placeholder="optional — extra context / acceptance criteria" value={taskDesc} onChange={(e) => setTaskDesc(e.target.value)} /></b>
+            </>) : null}
           </div>
 
-          {!proposal && otherTeams.length ? (
+          {mode === 'plan' && !proposal && otherTeams.length ? (
             <div style={{ marginTop: 10 }}>
               <div className="muted small" style={{ marginBottom: 5 }}>⇄ Or fan this objective out to other teams — each team's <b>active lead</b> runs it independently (◷ teams with no running agent can't take work):</div>
               <div className="row-actions" style={{ gap: 6, marginBottom: 6 }}>
@@ -541,18 +721,28 @@ function TasksPanel({ store }: { store: FleetStore }) {
           <div className="row-actions" style={{ marginTop: 10, alignItems: 'center' }}>
             {assignNote ? <span className={`small ${/failed|could not|no agent/.test(assignNote) ? 'status-error' : 'muted'}`}>{assignNote}</span> : null}
             <span className="grow" />
-            {proposal ? <button className="btn" disabled={proposing} onClick={() => { setProposal(null); setAssignNote(''); }}>Discard</button> : null}
-            {!proposal && fanTeams.size ? (
-              <button className="btn primary" disabled={proposing || !objective.trim()} onClick={() => void fanOut()}>{proposing ? 'Fanning out…' : `⇄ Fan out to ${fanTeams.size} team${fanTeams.size > 1 ? 's' : ''}`}</button>
-            ) : null}
-            {!proposal ? (
-              <button className="btn primary" disabled={proposing || !objective.trim()} onClick={() => void decompose()}>{proposing ? 'Planning…' : `Decompose for ${activeTeam}`}</button>
+            {mode === 'plan' ? (<>
+              {proposal ? <button className="btn" disabled={proposing} onClick={() => { setProposal(null); setAssignNote(''); }}>Discard</button> : null}
+              {!proposal && fanTeams.size ? (
+                <button className="btn primary" disabled={proposing || !objective.trim()} onClick={() => void fanOut()}>{proposing ? 'Fanning out…' : `⇄ Fan out to ${fanTeams.size} team${fanTeams.size > 1 ? 's' : ''}`}</button>
+              ) : null}
+              {!proposal ? (
+                <button className="btn primary" disabled={proposing || !objective.trim()} onClick={() => void decompose()}>{proposing ? 'Planning…' : `Decompose for ${activeTeam}`}</button>
+              ) : (
+                <button className="btn primary" disabled={proposing} onClick={() => void createPlan()}>{proposing ? 'Dispatching…' : `Create ${proposal.length} & dispatch`}</button>
+              )}
+            </>) : mode === 'assign' ? (
+              <button className="btn primary" disabled={proposing || !objective.trim() || !assignTo.size} onClick={() => void createAssignment()}>{proposing ? 'Assigning…' : `☑ Assign to ${assignTo.size || ''} ${assignTo.size === 1 ? 'agent' : 'agents'} & dispatch`}</button>
+            ) : mode === 'schedule' ? (
+              <button className="btn primary" disabled={proposing || !objective.trim() || !schedTarget} onClick={() => void createSchedule()}>{proposing ? 'Scheduling…' : '🕑 Schedule'}</button>
+            ) : mode === 'loop' ? (
+              <button className="btn primary" disabled={proposing || !objective.trim() || !schedTarget} onClick={() => void createLoop()}>{proposing ? 'Starting…' : `↻ Start loop (every ${intervalLabel(everyMin)})`}</button>
             ) : (
-              <button className="btn primary" disabled={proposing} onClick={() => void createPlan()}>{proposing ? 'Dispatching…' : `Create ${proposal.length} & dispatch`}</button>
+              <button className="btn primary" disabled={proposing || !objective.trim() || !schedTarget} onClick={() => void createDream()}>{proposing ? 'Setting…' : '✸ Set dream'}</button>
             )}
           </div>
 
-          {proposal ? (
+          {mode === 'plan' && proposal ? (
             <div className="decomp-list" style={{ marginTop: 10 }}>
               {proposal.map((s, i) => (
                 <div className="decomp-row" key={i}>
@@ -711,7 +901,7 @@ function TasksPanel({ store }: { store: FleetStore }) {
             </div>
           );
         })()}
-        {tasks.length === 0 ? <p className="muted center pad">No tasks. Create one with “+ New task”, or “⚡ Assign work to fleet”.</p> : null}
+        {tasks.length === 0 ? <p className="muted center pad">No tasks. Create one with “+ New task”, or “⚡ Create work” (plan · assign · schedule · loop · dream).</p> : null}
       </section>
     </>
   );

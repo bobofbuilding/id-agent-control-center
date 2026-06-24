@@ -160,7 +160,7 @@ export async function createAndDispatchPlan(
   client: ManagerClient,
   objective: string,
   subtasks: SubTask[],
-  opts: { dispatch?: boolean; lane?: string } = {},
+  opts: { dispatch?: boolean; lane?: string; respectOwners?: boolean } = {},
 ): Promise<CreatePlanResult> {
   // dispatch=false → create tasks UNOWNED (status todo) into a lane and DON'T farm them
   // out (a staged queue the lead works later). Default true = assign owners + dispatch.
@@ -187,7 +187,8 @@ export async function createAndDispatchPlan(
   const created: CreatedTask[] = [];
   if (!fallback) return { created, dispatched: 0, deferred: 0 }; // no agents → nothing to dispatch
   // Don't pile every task on one agent — spread across the active roster (best-fit up to a cap).
-  balanceOwners(list, [...names]);
+  // respectOwners=true (direct assignments) keeps the caller's chosen owner verbatim.
+  if (!opts.respectOwners) balanceOwners(list, [...names]);
 
   // 1) Create all tasks (assigned to their owner) — fast, synchronous-ish.
   for (let i = 0; i < list.length; i++) {
