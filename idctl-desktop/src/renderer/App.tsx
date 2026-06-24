@@ -154,9 +154,40 @@ function Router({ view, store }: { view: ViewId; store: ReturnType<typeof useFle
   }
 }
 
+type TeamLeadInfo = { team: string; lead: string | null; activeCount: number; totalCount: number };
+function isLive(status?: string): boolean {
+  const s = String(status || '').toLowerCase();
+  return !!s && !/stop|offline|dead|exit|error|crash|down|disabled|sleep/.test(s);
+}
+
 function StatusBar({ store }: { store: ReturnType<typeof useFleet> }) {
   const dot =
     store.connection === 'online' ? 'ok' : store.connection === 'offline' ? 'err' : 'warn';
+  // Running/total agents per team — drives "active teams / active agents" in the bar.
+  const [leads, setLeads] = useState<TeamLeadInfo[]>([]);
+  const names = store.teams.map((t) => t.name).filter(Boolean).join(',');
+  useEffect(() => {
+    const list = names ? names.split(',') : [];
+    if (!list.length) { setLeads([]); return; }
+    let live = true;
+    const load = () => call<TeamLeadInfo[]>('work:teamLeads', list).then((r) => { if (live) setLeads(r); }).catch(() => {});
+    void load();
+    const iv = setInterval(load, 20000); // refresh running counts every 20s
+    return () => { live = false; clearInterval(iv); };
+  }, [names, store.team]);
+
+  const activeTeam = store.team ?? 'default';
+  const cur = leads.find((l) => l.team === activeTeam);
+  const curActive = cur ? cur.activeCount : store.agents.filter((a) => isLive(a.status)).length;
+  const curTotal = cur ? cur.totalCount : store.agents.length;
+  const liveTeams = leads.filter((l) => l.activeCount > 0).length;
+  // Active teams first (running agents), then idle; alphabetical within each.
+  const sorted = [...store.teams].sort((a, b) => {
+    const la = (leads.find((l) => l.team === a.name)?.activeCount ?? 0) > 0;
+    const lb = (leads.find((l) => l.team === b.name)?.activeCount ?? 0) > 0;
+    return la !== lb ? (la ? -1 : 1) : a.name.localeCompare(b.name);
+  });
+
   return (
     <footer className="statusbar">
       <span className={`pill ${dot}`}>● {store.connection}</span>
@@ -167,17 +198,31 @@ function StatusBar({ store }: { store: ReturnType<typeof useFleet> }) {
         <select
           className="cell-select"
           style={{ fontSize: 12, fontWeight: 700 }}
-          value={store.team ?? 'default'}
-          title="Active team. Assignment, task routing, and activity are all scoped to this team — switch to drive another team's fleet."
+          value={activeTeam}
+          title="Active team — assignment, task routing, and activity are scoped here. ● = has running agents, ○ = idle; counts are running/total."
           onChange={(e) => void store.setTeam(e.target.value)}
         >
-          {(store.teams.length ? store.teams : [{ id: 'default', name: store.team ?? 'default', agentCount: store.agents.length }]).map((t) => (
-            <option key={t.id} value={t.name}>{t.name}{typeof t.agentCount === 'number' ? ` (${t.agentCount})` : ''}</option>
-          ))}
+          {(sorted.length ? sorted : [{ id: 'default', name: activeTeam, agentCount: store.agents.length }]).map((t) => {
+            const l = leads.find((x) => x.team === t.name);
+            const total = l ? l.totalCount : t.agentCount;
+            const running = l ? l.activeCount : undefined;
+            const live = (running ?? 0) > 0;
+            return (
+              <option key={t.id} value={t.name}>
+                {live ? '● ' : '○ '}{t.name} {running != null ? `${running}/${total}` : `(${total})`}{running != null && !live ? ' · idle' : ''}
+              </option>
+            );
+          })}
         </select>
       </span>
       <span className="sep">·</span>
-      <span>{store.agents.length} agents</span>
+      <span title="running / total agents in the active team">{curActive}/{curTotal} agents active</span>
+      {liveTeams ? (
+        <>
+          <span className="sep">·</span>
+          <span className="muted" title="teams with at least one running agent">{liveTeams} team{liveTeams === 1 ? '' : 's'} running</span>
+        </>
+      ) : null}
       {store.connection === 'offline' && store.lastError ? (
         <span className="status-error">⚠ {store.lastError}</span>
       ) : null}

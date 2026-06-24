@@ -8,6 +8,15 @@ Every change pushed or merged to `main` carries its version number in the commit
 subject (`vX.Y.Z: …`), stamped automatically by the `commit-msg` hook — see
 [CONTRIBUTING.md](CONTRIBUTING.md).
 
+## [0.1.117] — 2026-06-24
+- **Status bar shows active teams & agents.** The footer team selector no longer just
+  lists teams by total size — each option now shows **running/total** with ● (has running
+  agents) vs ○ (idle), **active teams sorted first**, and the trailing count reads
+  **"N/M agents active · K teams running"** instead of a bare total. Makes it obvious
+  which teams are live and switchable, not just that `default` is selected.
+- **Product spec.** Added `docs/PRODUCT_SPEC.md` — a complete, page-by-page specification
+  of the app as it ships, produced by reviewing every page.
+
 ## [0.1.116] — 2026-06-24
 - **Lead triage of unassigned To Do tasks.** New **⚖ Triage To Do (N)** button on the
   Tasks toolbar: the team lead reviews every unassigned task in the To Do lane, assigns

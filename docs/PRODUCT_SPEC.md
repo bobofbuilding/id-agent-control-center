@@ -1,0 +1,474 @@
+# ID Agents Control Center — Product Spec
+
+_Updated 2026-06-24 · reflects app **v0.1.117**. This is a page-by-page specification of
+the desktop app as it actually ships today, produced by reviewing every page._
+
+---
+
+## 1. What it is
+
+**ID Agents Control Center** is a macOS desktop app (Electron + React) — a mouse-and-keyboard
+GUI for running a fleet of AI agents. It is a **control client**, not the engine: all agents,
+state, identity, and workspaces live in the **id-agents manager daemon** (a local HTTP server at
+`http://127.0.0.1:4100`). The app is to the manager what Lens/kubectl is to Kubernetes — it reads
+and drives, it never owns the runtime.
+
+### Architecture
+- **Main process** (`src/main/*`) holds the `ManagerClient` (HTTP), settings, keys, and OS
+  integrations (file dialogs, git, Ollama, subscriptions CLIs, Computer-Use broker). It exposes an
+  allow-listed IPC surface to the renderer via `window.idagents.call(method, …args)` →
+  `bridge.ts` (manager-proxied methods) + `main.ts appCall` (app-local methods; falls through to
+  the bridge).
+- **Renderer** (`src/renderer/*`) is the React UI. `store.ts` (`useFleet`) polls the manager every
+  ~3s (agents/teams/inbox snapshot) plus a long-poll event cursor, exposing `store.{agents, teams,
+  team, coordinator, events, inbox, connection, …}`.
+- **Team scoping (important):** the app is scoped to **one active team at a time**
+  (`store.team`). Agent lists, the task board, assignment, routing, and the activity feed all
+  reflect the active team. Switch teams from the status-bar selector (§2.2). Counts shown are
+  **running / total** agents.
+
+---
+
+## 2. Global UI (present on every page)
+
+### 2.1 Sidebar navigation
+Eleven destinations: **Dashboard** ▦, **Chat** ✦, **Inbox** ✉ (badge = pending messages),
+**Work** ☑, **Projects** ◆, **Health** ✚, **Identity & Keys** ⬡, **HR Manager** ⛌,
+**Capabilities** ◫, **Computer Use** 🖥, **Settings** ⚙. The Chat item also carries an unread-reply
+badge. The last-open view is remembered across launches (and self-update relaunches).
+
+### 2.2 Status bar (footer)
+`● <connection> · <manager URL> · team [<selector>] · <N/M> agents active · <K> teams running`.
+- **Connection pill**: online / offline / connecting.
+- **Team selector**: every team, **active teams first** (those with ≥1 running agent), then idle.
+  Each option reads `● name running/total` (active) or `○ name running/total · idle`. Switching
+  re-scopes the whole app.
+- **Active counts**: running/total agents in the current team, and how many teams have a running
+  agent. (Running counts refresh every 20s via `work:teamLeads`.)
+
+### 2.3 Toasts (bottom-right, global)
+Long-running dispatches (compile & dispatch, fan-out, assign-to-fleet, triage) raise a toast that
+shows a spinner while working and updates to **✓ result** or **⚠ error**. Toasts **live above page
+routing**, so a confirmation still arrives if you navigate away (the work runs in the manager
+process and is never tied to a view). Auto-dismiss after ~8s or on click.
+
+### 2.4 Prompt modal & update banner
+Electron has no `window.prompt`, so text input uses an in-app modal (`usePrompt`). When a newer
+release is staged, the sidebar shows **⬆ vX → vY · Restart & update**.
+
+---
+
+## 3. Dashboard (nav: "Dashboard" ▦, route: `dashboard`)
+
+**Purpose:** The operator's home — a live, single-screen surface listing every agent in the active
+team with inline runtime/model switching and lifecycle actions, beside a real-time activity feed
+and a detail panel for the selected agent.
+
+**What you can do**
+- Header summary: agent count, active team, and an inline busy/status message during operations.
+- **Probe runtimes** (header) — re-query each runtime's provider to refresh model lists.
+- **Agent grid** (lead pinned first): name, status (colored dot), runtime, model, port, actions.
+  Click a row to select it (populates the detail panel).
+- **Runtime dropdown** (local agents only): switch runtime → auto-picks a compatible model →
+  rebuilds. Remote agents show a static runtime label.
+- **Model dropdown**: pick from the runtime's models (+ current); selecting rebuilds immediately. A
+  model/runtime mismatch is flagged `⚠` with a tooltip.
+- **Actions** (⋯) per agent: Start, Stop, Rebuild, Probe, Delete (Delete confirms; working files
+  kept).
+- **Activity feed** (aside): all live fleet events, newest first, topic-chip + plain-English
+  description (agent ids → names) + relative age; live count in the header.
+- **Detail panel**: status, runtime, model, port, skill chips, working directory.
+
+**Data & actions:** `info`/`agents`/`teams`/`events` (store poll); `runtime:models`,
+`providers:list`, `runtime:probe`, `setAgentRuntime`; `remote` for `/model`, `/agent … rebuild|
+start|stop|probe`, `/delete`.
+
+**Known issues / polish**
+- Two unrelated operations both say "Probe" (header = provider model probe; ⋯ = agent liveness probe).
+- Errors are surfaced two ways on one page (transient busy-string banner vs `window.alert`).
+- `runtime:models` re-fetches on every 3s poll (minor IPC churn).
+- Mismatch warning is heuristic; unknown runtimes never warn.
+
+---
+
+## 4. Chat (nav: "Chat" ✦, route: `chat`)
+
+**Purpose:** A multi-session conversational workspace for talking to the fleet — message any agent
+(default: the team coordinator), optionally scope to a project, attach files, and watch the agent's
+live tool/file activity stream. The composer also generates images and can auto-save plan-style
+replies into Work › Plans.
+
+**What you can do**
+- Compose & send (Enter sends, Shift+Enter newline); **target any agent** from the Address sidebar;
+  set the ★ coordinator there.
+- **Focus on a project** (dropdown) — adds a `[Focus: …]` context line and sets the attachment
+  destination; banner with **open ↗** to Finder.
+- **Attach files** (📎 / paste / drop) — chips with remove; land in `<project>/uploads` or the
+  agent's workspace.
+- **Generate an image** from the same composer (conservative local intent-detection; only when an
+  image-capable provider is configured; routes to local/free first). Renders inline with model + cost.
+- **Auto-save a reply as a Plan** when the message reads as a plan request.
+- **Live "behind the scenes" feed** while a dispatch runs (tool/file steps + delegations,
+  elapsed timer); a collapsible trace persists with the finished reply.
+- **Sessions:** open/rename/delete chats, ＋ New, unread dots, auto-titled from the first message.
+- **Resumable dispatches:** a reply keeps polling across navigation and app restart, lands in the
+  right chat with an unread badge; transient failures auto-retry; a sustained outage posts one
+  soft notice and keeps polling.
+
+**Data & actions:** `chats:list/get/save/patch/remove/inflight/markRead/unreadCount`,
+`chat:genTitle/pickFiles/saveFiles/savePasted`, `dispatch:start` + `query:poll`, `activity:get`,
+`image:models/generate/read`, `projects:list`, `project:openFolder`, `plans:save`,
+`coordinator:set`.
+
+**Known issues / polish**
+- "untitled chat" placeholder copy vs always-auto-named sessions (cosmetic).
+- `endRef` dead code; `persist()`/`patch()` overlap.
+- Plan auto-save heuristic can false-positive.
+- Concurrent dispatches can misattribute the live delegation trace (no queryId on the event log) —
+  acknowledged in code.
+
+---
+
+## 5. Inbox (nav: "Inbox" ✉, route: `inbox`)
+
+**Purpose:** The one place you answer things that are blocked on **you** — multiple-choice task
+decisions raised by agents, and direct questions the manager is blocked on.
+
+**What you can do**
+- **Decisions needed** (shown when present): each blocker question from a task renders its prompt +
+  the agent/task it concerns + **clickable option buttons**. Picking one delivers your answer to the
+  blocked agent (`/ask <agent>`) and clears the question; **Skip** dismisses without answering. These
+  are an app-side queue (`questions:*`), populated by Work › Tasks "⚠ Surface blockers".
+- **Manager inbox**: each item the manager is blocked on, with an inline **reply** box (⌘/Ctrl+Enter
+  to send) and **Dismiss**. The header reads "N waiting on your reply", or "nothing needs a reply
+  right now" when empty (with "You're all caught up").
+
+**Data & actions:** `questions:list/add/remove`, `dispatch` (deliver answers), `inbox:respond`,
+`inbox:dismiss`; nav badge = `store.inbox.length`.
+
+**Known issues / polish:** none outstanding (the misleading "manager is blocked" empty-state header
+was corrected in v0.1.116).
+
+---
+
+## 6. Work (nav: "Work" ☑, route: `tasks`)
+
+A tabbed workspace: **Plans · Tasks · Schedule · Loops · Dream** (default: Plans).
+
+### 6.1 Work › Plans
+**Purpose:** Two plan sets under one organizer — **Brain plans** (the live plan set the brain
+maintains on disk) and **Your drafts** (local AI-generated plans you can version & revise).
+
+**What you can do**
+- **Organizer bar**: search, sort, group, show-archived toggle, status chips (brain: done/partial/
+  pending/hold; drafts: draft/active/done/archived), and tag chips (incl. draft tags). **Request a
+  plan** (top) → an agent drafts Markdown → saved as a draft.
+- **Drafts**: open/rename/status, browse & **restore past versions**, **revise with AI** (each
+  revision = a new version + changelog note); marking a draft "done" **auto-archives** it.
+- **Brain plan actions** (per card): **✦ Audit status** (verify real status vs the codebase and
+  write it back to the brain README), **⚠ Find blockers** (agent reports what's blocking it),
+  **⤳ Compile & dispatch** (see below), **⏳ Set pending**.
+- **⤳ Compile & dispatch** (unified, v0.1.114+): one picker assigns the plan to one or more teams —
+  the **active team** (with a chosen lane; its cards land on the board you're viewing; **Doing** has
+  the lead auto-sort by dependency, assign, and dispatch to completion) **and/or** any **other
+  teams** (handed to each team's **active lead** to run independently). Teams with no running agent
+  are greyed out. One **Go** runs them all in parallel; a toast reports the result.
+
+**Data & actions:** `brain:plans/plan/setPlanStatus`, `plans:*` (draft store), `work:decompose`,
+`work:createPlan` (lane + dispatch), `work:teamLeads`, `work:fanout`, `dispatch`.
+
+### 6.2 Work › Tasks (the Kanban)
+**Purpose:** A drag-and-drop board over the manager's tasks, with richer lanes than the manager's
+three statuses (`todo|doing|done`) via an app-side **lane overlay**.
+
+**Board layout (8 lanes in 3 groups):**
+- **Adjustment Loop** (full-width band on top): Needs Adjustment · Under Review · Rework.
+- Below, side by side: **Waiting Areas** (⅓ width): Backlog · Holding Pattern — and **Main Flow**
+  (⅔ width): To Do · Doing · Done.
+- Lanes map onto the real status (`backlog/holding/todo→todo`, `doing/needs-adjustment/under-review/
+  rework→doing`, `done→done`). The board scrolls sideways on narrow windows.
+
+**What you can do**
+- **Drag a card between lanes** — saves the lane overlay and sets the mapped status if it changed.
+  Cards **auto-reposition** as agents claim/complete work (5s poll).
+- **Richer cards**: an **● working** green pulse when an agent has actively claimed it, plus a
+  timeline — *created Xm ago · working Xm · done Xm ago* (exact timestamps on hover);
+  assigned-but-not-started reads *◴ queued*. Inline owner/assign dropdown (stopped agents marked
+  `· stopped`).
+- **⚖ Triage To Do (N)** — the lead reviews every **unassigned** task in the To-Do lane, assigns
+  each to the best-fit **active** agent, and dispatches it (Backlog/Holding are left alone). An
+  **auto** checkbox keeps the lead doing this for new unassigned To-Do tasks (~90s throttle).
+- **⚡ Assign work to fleet** — describe an objective → the lead decomposes it into sub-tasks
+  (owners + dependencies), preview/edit owners → **Decompose for <team>** then create + dispatch
+  (independent tasks run in parallel; dependents follow). Or **⇄ Fan out to N teams** to hand the
+  same objective to other teams' active leads.
+- **⚠ Surface blockers** — the lead surfaces task decisions that need **your** call as
+  option-questions in the **Inbox**.
+- **Done auto-archives** (hidden by default) with a **show archived (N)** toggle and a Done-lane
+  reveal; **Clear archived** permanently deletes completed ones; **hide routine** toggle; search.
+- **+ New task**.
+
+**Auto-route to active agents:** decomposition/assignment/triage route only to **running** agents
+(the lead is told never to assign a `[STOPPED]` agent; stopped owners are reassigned at dispatch;
+teams with no running agent are reported and skipped).
+
+**Data & actions:** `tasks:lanes/setLane`, `remote` (`/task …`), `work:decompose/createPlan/
+fanout/teamLeads/triage`, `questions:add`, `dispatch`.
+
+### 6.3 Work › Schedule
+**Purpose:** Per-agent **heartbeats** (interval self-checks) and a **supervision check-ins** tracker
+(auto-created watchers that ping a delegator about a tracked task on a cadence).
+**What you can do:** set/enable/update a heartbeat interval per agent (1m–24h), pause/resume,
+disable; see status (♥ on / paused / ⚠ missed / ⚠ last run failed); view check-ins with cadence &
+fire counts, **Close** one, or **🧹 Clean up N** stale ones (watching finished/removed tasks).
+**Data & actions:** `schedules` (`/schedule list`), `checkins`, `addHeartbeat`, `pause/resume/
+removeSchedule`, `checkins:close`.
+**Polish:** auto-close copy slightly overpromises; heartbeat message is fixed; no confirm on disable/cleanup.
+
+### 6.4 Work › Loops
+**Purpose:** **Agent chains** (an AI-drafted sequential agent→task pipeline; each step's output
+feeds the next; runs on demand while the app is open) **and** **Scheduled objectives** (one agent
+runs a fixed objective on a calendar cadence via the manager — runs 24/7 even when the app is closed).
+**What you can do:** draft a chain from a goal (✦ Draft chain), edit/reorder/add/remove steps, save,
+run (per-step live status + output, stops on failure), load/delete saved chains; create scheduled
+objectives (agent + objective + cadence + time), Run now, pause/resume/delete.
+**Data & actions:** `loops:list/get/save/remove`, `dispatch`, `schedules`, `addCalendarCheckin`,
+`pause/resume/removeSchedule`.
+**Polish:** chains-vs-scheduled distinction is fine-print; draft caps 12 vs store caps 20; Run-now is
+serial with generic failure.
+
+### 6.5 Work › Dream
+**Purpose:** Have an agent run an offline "dream" — a reflection over recent work + the brain/memory
+— returning a Markdown report (Consolidation / Insights / Ideas / Simulations), saved as a digest.
+**What you can do:** pick an agent + optional focus → **✦ Dream now** (saved + opened); **Schedule
+nightly** (03:00 daily calendar check-in); browse/expand/delete saved dreams.
+**Data & actions:** `dreams:list/get/save/remove`, `dispatch`, `addCalendarCheckin`.
+**Polish:** scheduled nightly dreams deliver to chat and are **not** saved into this tab's list (only
+manual dreams persist); nightly time/cadence hard-coded; report shown as raw markdown in `<pre>`.
+
+---
+
+## 7. Projects (nav: "Projects" ◆, route: `projects`)
+
+**Purpose:** A local project tracker (status/description/team/tags/links/notes) with live git state
+and one-click git ops, auto-discovered from the id-agents workspace folder.
+
+**What you can do:** browse/filter by status (with counts); see & change the workspace root;
+**⟳ Sync workspace** (additive/idempotent discovery); **⤓ Add from GitHub** (clone SSH→HTTPS,
+auto-fill from GitHub API + README); **Import folder…**; create/edit projects; per-card quick
+status; delete (folder left intact); **✨ Refine with lead** (AI description+tags); per-project git
+panel — status badge (branch, ahead/behind, fork, dirty), **open ↗**, and whitelisted git actions
+(**fetch / pull / status / log / diff**) streamed into a `<pre>`, plus **remote ↗**.
+
+**Data & actions:** `projects:list/save/remove/detectRoot/syncRoot`, `project:git/gitRun/readme/
+pickFolder/openFolder/cloneGithub/githubMeta`, `dispatch`.
+
+**Polish:** first-run auto-sync repopulates if the list is emptied (deletions can "come back");
+`project:git` fan-out runs for every project on each load (no cancellation); quick-status save is
+silent on failure.
+
+---
+
+## 8. Health (nav: "Health" ✚, route: `health`)
+
+**Purpose:** Fleet health — local-model (Ollama) token-throughput analytics + a cross-team roster
+with on-demand liveness probes.
+
+**What you can do:** read the **throughput gauge** (live tok/s), **24h / 7d** windows (tokens,
+queries, avg/query, avg tok/s) and **per-agent 24h** breakdown; browse the **all-teams roster**
+(grouped, active team first, "N/M up"); **Probe all** / per-row **Probe** (active team only) → a
+results panel with pass/fail, duration, and errors.
+
+**Data & actions:** `usage` (`/usage`, null when absent), `agents:allTeams`, `probeAll/probeOne`.
+
+**Polish:** probes gated to the active team though the roster is cross-team; `usage` + roster
+re-fetch on every 3s poll (heavy on large fleets); "running" is a status-string regex (non-matching
+healthy statuses show red).
+
+---
+
+## 9. Identity & Keys (nav: "Identity & Keys" ⬡, route: `identity`)
+
+**Purpose:** Manage each agent's onchain identity (ENS/ID-chain domain + OWS wallet) and its
+ERC-4337 smart account, including time-boxed, scope-limited **session keys**. Today it runs against
+a **mock** provider ("Base Sepolia (mock)") that swaps for a real Safe4337 + bundler with no UI change.
+
+**What you can do:** pick an agent; see identity (domain/wallet), **Register identity**, **Provision
+wallet**; see the Safe account (deployed vs counterfactual, address, owner), **Create account**,
+**Deploy**; list **session keys** (scope, address, time-remaining / revoked / expired), **Revoke**;
+**Issue a session key** by scope preset (registry-write / skill-publish / payments / full) + TTL
+preset (1h / 24h / 7d / 30d / until revoked).
+
+**Data & actions:** `keys:caps/presets/list/ensure/deploy/issue/revoke`, `identity:register`,
+`wallet:provision`.
+
+**Polish:** mock-only today ("· MOCK" header + footnote); write actions have **no error surfacing**
+(silent on failure); Register has no idempotency guard; reload trigger is coarse (`agents.length`).
+
+---
+
+## 10. HR Manager (nav: "HR Manager" ⛌, route: `teams`)
+
+**Purpose:** The org-design surface — create teams & agents, shape hierarchy (coordinator/lead,
+primary cross-team lead), edit per-agent instructions, and govern cross-team delegation. (File:
+`Teams.tsx`; page title "HR Manager".)
+
+**What you can do** — four sub-tabs: **Structure · Build · Manage · Route**, plus header
+**+ From template** and **✦ Build a team**.
+- **AI Team Builder** (describe/paste a spec → live deterministic parse → **✦ Build with AI**
+  (`team:designAI`, constrained to valid runtimes/models/skills) → editable roster (per-agent ★lead,
+  name, runtime, model, role, persona/instructions, skill chips) → fleet-wide options (MCP server,
+  heartbeat, OWS wallet, probe-after) → coordination preset + cross-team relay → **Build**
+  (sequential `onboard:run` with a live checklist, then auto-wires coordinator + instructions +
+  relay) → per-agent **↻ retry**).
+- **Create team from template/config** (+ From template): pick source (default template / library
+  template / saved config), name it, debounced **Preflight** preview, create.
+- **Structure**: live **team graph** (lead-on-top, click to select/switch), **⭑ make primary lead**,
+  selected-agent panel (reassign team, routing, rebuild, goals/instructions editor with preset +
+  ✦ AI draft + save & rebuild), selected-team panel (build/add, relay, **Start/Stop/Probe/Rebuild
+  all**), teams table (switch/manage/delete empty non-default), lead-hierarchy coordinators.
+- **Build**: launcher to add agents to the active team.
+- **Manage**: standalone agent-instructions editor (preset / ✦ AI draft / save & rebuild).
+- **Route**: cross-team **relay** policy (Any / All `*` / Selected / Blocked) with dirty indicator +
+  save, and **per-agent overrides** (Inherit / Any / Selected / Blocked) applied immediately, plus
+  per-agent reassign-to-team.
+
+**Data & actions:** `agents:allTeams`, `runtime:models`, `librarySkills`, `providers:list`,
+`teamConfig`, `setTeamDelegates`, `setAgentDelegates`, `agent:getInstructions/setInstructions`,
+`rebuildAgent`, `ai:draft`, `team:designAI`, `onboard:run`, `coordinator:hierarchy/set/setPrimary`,
+`agent:move`, `team:lifecycle/probe/delete`, `libraryTeams`, `configs`, `team:preflight/install`,
+`deployTeam`.
+
+**Polish:** relay UI + coordinator preset are reimplemented in two places (drift risk); per-agent
+"inherit" vs explicit-empty is ambiguous in the displayed mode; AI draft/design require a running
+agent (fresh team fails with no guidance); `makePrimary` can silently no-op.
+
+---
+
+## 11. Capabilities (nav: "Capabilities" ◫, route: `modules`)
+
+**Purpose:** One workbench to extend what agents can *do* — register/test/attach **MCP** tool-servers,
+browse/create/install **Skills**, inspect bundled **Plugins** — applied across a multi-agent
+selection in the active team.
+
+**What you can do**
+- **Shared header**: team dropdown + an **"apply to" agent chip row** (default = all eligible; click
+  to make an explicit set; all/none). **Runtime capability gating** disables `⊘` chips whose runtime
+  can't use the active tab's capability (e.g. ollama can't use MCP) and excludes them from actions.
+- **MCP servers**: registry table (endpoint, attached `have/target`, **Test**), per-row **Attach /
+  Detach / Test / ✕**, **Rebuild <targets>** (attach/detach take effect on rebuild); **Add from
+  catalog** (guided, validated inputs, secret masking) + **Add custom (advanced)** (stdio/http/sse).
+- **Skills**: catalog cards (license, install `have/target`, tags incl. **auto-categorized**),
+  **Install / Uninstall** per selection, two-step **delete**, search + tag filter, batch
+  **auto-categorize** (+ ↻ re-categorize), **Create skill** (validated `SKILL.md`).
+- **Plugins**: read-only table (name, version, provider, description) — attached via team config.
+
+**Data & actions:** `mcp:list/add/remove/test`, `librarySkills`, `libraryPlugins`,
+`skills:autoTags/categorize`, `createSkill`, `deleteSkill`, `installSkill/uninstallSkill`,
+`setAgentMcp`, `rebuildAgent`.
+
+**Polish:** the Rebuild button disappears after detaching the *last* server (can't trigger the
+rebuild that applies it); `setAgentMcp` is a wholesale replace (can clobber concurrent changes);
+removing a registry entry doesn't detach it from agents; auto-categorize makes a billable call on
+first load.
+
+---
+
+## 12. Computer Use (nav: "Computer Use" 🖥, route: `computer`)
+
+**Purpose:** Let a "blessed" Claude/codex agent see your Mac's screen and drive mouse+keyboard,
+watched live in-app, routed through an in-app **broker** that only acts while **ARMED**. Disarmed by
+default; gated on macOS Screen Recording + Accessibility; per-action approval, pause, and panic stop.
+
+**What you can do:** **Arm/Disarm** (Arm blesses the currently-attached agents); **Pause/Resume**;
+**PANIC** (■, never blocked, global hotkey ⌘⌥⇧P); watch the **live view** of the primary display;
+manage **Permissions** (Open Settings / Relaunch / Re-check); **Bless / Remove** a capable agent
+(attaches the bundled `mac-control` MCP server + rebuilds); read the **Activity log** (last 40,
+blocked actions flagged); toggle **Safety → "Approve every action"** (supervised default-on; in
+autonomous mode risky actions — Trash, ⌘Q, destructive shell — are still held); respond to
+**approval prompts** (Allow/Deny, 60s auto-decline).
+
+**Data & actions:** `cu:permissions/status/attached/audit/arm/disarm/pause/setSupervised/panic/
+confirm/watch/openPermission/relaunch/attach/detach`, `rebuildAgent`; push events `onComputerFrame/
+Pending/Panic`; 2.5s poll.
+
+**Polish:** bless eligibility is runtime-name regex; "bless applies on next Arm" copy contradicts the
+re-sync-while-armed behavior; attach-then-rebuild-fail leaves an agent blessed-but-not-wired (only the
+`⚠` text signals it); primary-display only; per-frame React state churn.
+
+---
+
+## 13. Settings (nav: "Settings" ⚙, route: `settings`)
+
+**Purpose:** The infrastructure control panel — the machine, the connection, the AI backends/
+subscriptions/local models/image servers, and self-update. (Team composition is configured in HR
+Manager; this is the plumbing.)
+
+**What you can do** (by card):
+- **Hardware**: read-only host compute (chip, cores, GPU, memory, disk) — used for local-model fit
+  warnings.
+- **Connection**: manager URL + active team (read-only here), and the team **coordinator** dropdown.
+- **Self-update**: version, status, **auto-upgrade** toggle, **Check now**.
+- **Subscriptions (Claude · ChatGPT · Cursor)**: runtime OAuth (no API key) — sign in / switch /
+  sign out / install CLI / re-check; powers the `claude-*`, `codex`, `cursor-cli` runtimes.
+- **Local models (Ollama)**: parallel-inference cap (1–16), installed chips, **Download** by id
+  (streamed progress), a searchable **catalog** with capability filters and hardware fit-warnings.
+- **Local image generator**: URL + API style (Automatic1111 / OpenAI-images), **Detect**, Save/Clear
+  (used first for in-chat images; cloud is fallback).
+- **Local LLM stacks**: curated list, **⟳ Scan running**, Install/Run-in-Terminal/Uninstall, docs ↗.
+- **Inference backends**: **⟳ Discover local servers** (+ Add / Add all), provider table (★ default,
+  enable, key badge, status, model list, **Connect & sync**, ✕), **Add a backend** (catalog or custom;
+  cloud keys auto-detected from env).
+
+**Data & actions:** `app:hardware`, `coordinator:set`, `app:version`, `update:status/check/
+getSettings/setSettings`, `subs:status/signin/signout/install`, `manager:localConcurrency/
+setLocalConcurrency`, `ollama:tags/pull/remove`, `image:getServer/setServer/detectServer`,
+`app:runInTerminal`, `providers:list/add/remove/setDefault/toggle/connect/discover`.
+
+**Polish:** no in-view "Restart & apply now" button despite a "downloaded — restart to apply" status;
+signin success is assumed after a 4s recheck (slow OAuth leaves the card stale); concurrency
+running/queued figures are a snapshot; clipboard fallbacks fail silently.
+
+---
+
+## 14. Cross-cutting concepts
+
+- **Active-team scoping**: everything is scoped to `store.team`; switch via the status-bar selector.
+- **Runtimes**: `claude-*` / `codex` / `cursor-cli` use logged-in CLI subscriptions; `ollama` /
+  local servers and metered API providers are configured in Settings → Inference. MCP currently
+  works on Claude & Codex runtimes; skills on all; plugins via team config.
+- **Active-agent routing**: assignment, decomposition, triage, and fan-out target only **running**
+  agents; stopped agents are skipped and reported.
+- **Cross-team fan-out**: an objective can be handed to several teams' active leads at once
+  (`work:fanout` → `/ask <team>/<lead>`), each running it independently and in parallel.
+
+### Release process (operator note)
+Bump `idctl-desktop/package.json` + lockfile → CHANGELOG `## [X.Y.Z]` → commit + tag `vX.Y.Z` +
+push (SSH) → `cd idctl-desktop && CSC_IDENTITY_AUTO_DISCOVERY=false npm run dist` → ditto-zip the
+arm64 asset → publish **directly** with the deployer PAT and assign an ops-lead follow-up task
+(local tool `.iacc-publish/release-publish.py X.Y.Z`). The app self-updates from GitHub
+`releases/latest`.
+
+---
+
+## 15. Polish backlog (prioritized, from this review)
+
+**Should fix (user-facing correctness/UX)**
+1. Identity & Keys: write actions silently swallow errors → add error surfacing.
+2. Capabilities: Rebuild affordance disappears after detaching the last MCP server → keep it when a
+   detach is pending.
+3. Capabilities: `setAgentMcp` wholesale-replace can clobber concurrent changes → guard like
+   `cu:attach`.
+4. Computer Use: "bless applies on next Arm" copy contradicts re-sync-while-armed behavior → fix copy.
+5. Projects: deleting all projects silently repopulates on next load (auto-sync) → gate first-run
+   auto-sync so it doesn't undo deletions.
+6. Dashboard: two different "Probe" meanings → relabel one.
+
+**Nice to have**
+- Dashboard/Health: throttle re-fetches that run on every 3s poll.
+- Work › Dream: scheduled nightly dreams don't appear in the saved list; render markdown (not `<pre>`).
+- Settings: add "Restart & apply now"; confirm signin instead of timed recheck.
+- HR Manager: de-duplicate the two relay pickers / coordinator presets; clarify inherit-vs-blocked.
+- Chat: remove dead `endRef`; tighten the plan auto-save heuristic.
+
+_None of the above are regressions; they're refinements surfaced by the page-by-page review._
