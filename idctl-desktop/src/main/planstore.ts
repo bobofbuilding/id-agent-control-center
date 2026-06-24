@@ -37,7 +37,7 @@ export interface Plan {
   createdAt: number;
   updatedAt: number;
 }
-export interface PlanSummary { id: string; title: string; status: PlanStatus; version: number; agent?: string; team: string; updatedAt: number; tags?: string[] }
+export interface PlanSummary { id: string; title: string; status: PlanStatus; version: number; agent?: string; team: string; createdAt: number; updatedAt: number; tags?: string[] }
 
 function fileFor(id: string): string {
   const safe = String(id).replace(/[^a-zA-Z0-9_-]/g, '').slice(0, 80);
@@ -53,7 +53,7 @@ export function listPlans(team?: string): PlanSummary[] {
     try {
       const p = JSON.parse(readFileSync(join(dir, f), 'utf8')) as Plan;
       if (team && p.team !== team) continue;
-      out.push({ id: p.id, title: p.title || '(untitled plan)', status: p.status ?? 'draft', version: p.version ?? 1, agent: p.agent, team: p.team, updatedAt: p.updatedAt || 0, tags: Array.isArray(p.tags) ? p.tags : [] });
+      out.push({ id: p.id, title: p.title || '(untitled plan)', status: p.status ?? 'draft', version: p.version ?? 1, agent: p.agent, team: p.team, createdAt: p.createdAt || 0, updatedAt: p.updatedAt || 0, tags: Array.isArray(p.tags) ? p.tags : [] });
     } catch { /* skip corrupt */ }
   }
   return out.sort((a, b) => b.updatedAt - a.updatedAt);

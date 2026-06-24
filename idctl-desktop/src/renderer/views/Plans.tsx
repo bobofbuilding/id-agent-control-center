@@ -19,8 +19,8 @@ interface Plan {
   status: PlanStatus; content: string; version: number; revisions: PlanRevision[];
   tags?: string[]; createdAt: number; updatedAt: number;
 }
-type PlanSummary = { id: string; title: string; status: PlanStatus; version: number; agent?: string; team: string; updatedAt: number; tags?: string[] };
-type BrainPlan = { num?: string; title: string; file: string; status?: string; effort?: string; notes?: string };
+type PlanSummary = { id: string; title: string; status: PlanStatus; version: number; agent?: string; team: string; createdAt: number; updatedAt: number; tags?: string[] };
+type BrainPlan = { num?: string; title: string; file: string; status?: string; effort?: string; notes?: string; mtime?: number };
 type BrainPlansResp = { dir: string | null; plans: BrainPlan[] };
 type SortMode = 'recent' | 'title' | 'status';
 
@@ -52,10 +52,13 @@ function clip(s: string, n: number): string { const t = s.replace(/\s+/g, ' ').t
 function newId(): string { return `plan_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 7)}`; }
 function splitTags(s: string): string[] { return [...new Set(s.split(/[,\n]/).map((t) => t.trim()).filter(Boolean))]; }
 function ago(ts: number): string {
+  if (!ts) return '—';
   const s = Math.max(0, Math.round((Date.now() - ts) / 1000));
   if (s < 60) return `${s}s ago`; if (s < 3600) return `${Math.round(s / 60)}m ago`;
   if (s < 86400) return `${Math.round(s / 3600)}h ago`; return `${Math.round(s / 86400)}d ago`;
 }
+/** Absolute local date-time (for tooltips). */
+function abs(ts: number): string { return ts ? new Date(ts).toLocaleString() : '—'; }
 function group<T>(items: T[], keyOf: (x: T) => string, buckets: { key: string; label: string }[]) {
   return buckets.map((b) => ({ ...b, items: items.filter((x) => keyOf(x) === b.key) })).filter((g) => g.items.length);
 }
@@ -400,6 +403,7 @@ export function Plans({ store }: { store: FleetStore }) {
           {p.effort ? <span className="muted small">· {p.effort}</span> : null}
           <span className="grow" />
           {p.notes ? <span className="muted small" style={{ maxWidth: 220, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={p.notes}>{p.notes}</span> : null}
+          {p.mtime ? <span className="muted small" title={`file last modified ${abs(p.mtime)}`}>updated {ago(p.mtime)}</span> : null}
           <span className="muted">{isOpen ? '▾' : '▸'}</span>
         </div>
         <div className="row-actions" style={{ gap: 6, padding: '0 8px 6px', flexWrap: 'wrap' }} onClick={(e) => e.stopPropagation()}>
@@ -467,7 +471,11 @@ export function Plans({ store }: { store: FleetStore }) {
           <span className="muted small">· v{p.version}{p.agent ? ` · ${p.agent}` : ''}</span>
           {(p.tags ?? []).length ? <span className="muted small">· {(p.tags ?? []).join(', ')}</span> : null}
           <span className="grow" />
-          <span className="muted small">{ago(p.updatedAt)}</span>
+          <span className="muted small" title={`created ${abs(p.createdAt)}\nupdated ${abs(p.updatedAt)}`}>
+            {p.createdAt && p.updatedAt && Math.abs(p.updatedAt - p.createdAt) > 60000
+              ? `created ${ago(p.createdAt)} · updated ${ago(p.updatedAt)}`
+              : `created ${ago(p.createdAt || p.updatedAt)}`}
+          </span>
           <span className="muted">{isOpen ? '▾' : '▸'}</span>
         </div>
         {isOpen && detail ? (
@@ -488,6 +496,9 @@ export function Plans({ store }: { store: FleetStore }) {
               ) : (
                 <button className="btn icon-danger small" disabled={busy} title="Delete plan" onClick={() => setConfirmDel(true)}>✕</button>
               )}
+            </div>
+            <div className="muted small" style={{ marginBottom: 4 }} title={`created ${abs(detail.createdAt)}\nupdated ${abs(detail.updatedAt)}`}>
+              created {abs(detail.createdAt)} · updated {abs(detail.updatedAt)} ({ago(detail.updatedAt)}) · v{detail.version}
             </div>
             {viewVer != null ? <div className="muted small" style={{ marginBottom: 4 }}>viewing v{viewVer} · <button className="link-btn" onClick={() => setViewVer(null)}>back to current (v{detail.version})</button></div> : null}
             <pre className="plan-content">{shownContent}</pre>

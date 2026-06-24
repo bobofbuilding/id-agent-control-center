@@ -4,7 +4,7 @@
  * and live, so Work → Plans reflects the brain as its files change on disk. We never
  * write here (the brain owns these files).
  */
-import { existsSync, readFileSync, readdirSync, writeFileSync, renameSync, rmSync } from 'node:fs';
+import { existsSync, readFileSync, readdirSync, writeFileSync, renameSync, rmSync, statSync } from 'node:fs';
 import { join, basename, resolve } from 'node:path';
 import { detectProjectsRoot } from './projects.ts';
 import { loadSettings } from '../../../idctl/src/settings/store.ts';
@@ -16,6 +16,7 @@ export interface BrainPlan {
   status?: string; // e.g. "✅ DONE" / "🔄 PARTIAL" / "⏳ PENDING" / "🛑 ON HOLD"
   effort?: string;
   notes?: string;
+  mtime?: number; // plan file's last-modified time (epoch ms) — "last updated"
 }
 
 /** Resolve the brain plans dir from the projects root. Falls back to the saved
@@ -65,6 +66,14 @@ export function listBrainPlans(configured?: string): { dir: string | null; plans
         .sort()
         .map((f) => ({ file: f, title: f.replace(/\.md$/i, '').replace(/^\d+[-_]?/, '').replace(/[-_]/g, ' ') }));
     } catch { /* ignore */ }
+  }
+  // Stamp each plan with its file's last-modified time ("last updated"). Best-effort
+  // and guarded to the plans dir (the README may reference odd paths).
+  for (const p of plans) {
+    try {
+      const fp = resolve(dir, p.file);
+      if (fp.startsWith(resolve(dir))) p.mtime = statSync(fp).mtimeMs;
+    } catch { /* file may be missing/renamed — leave mtime undefined */ }
   }
   return { dir, plans };
 }

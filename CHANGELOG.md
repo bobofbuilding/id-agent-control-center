@@ -8,6 +8,13 @@ Every change pushed or merged to `main` carries its version number in the commit
 subject (`vX.Y.Z: …`), stamped automatically by the `commit-msg` hook — see
 [CONTRIBUTING.md](CONTRIBUTING.md).
 
+## [0.1.143] — 2026-06-24
+- **Plans now show created/updated timestamps.** Draft plans display **created … · updated …**
+  (relative, with exact local date-time on hover) on each card, plus an explicit created/updated/
+  version line in the expanded detail (the data was already stored — `PlanSummary` just didn’t
+  expose `createdAt`). Brain plans now show **updated &lt;ago&gt;** from the plan file’s mtime
+  (`listBrainPlans` stamps each with `mtime`).
+
 ## [0.1.142] — 2026-06-24
 - **Task dependencies are now visible on the board.** When Plan decomposition creates tasks with
   “after #N” edges, those are persisted app-side (`taskDeps` overlay — the manager has no deps
