@@ -182,7 +182,8 @@ function TasksPanel({ store }: { store: FleetStore }) {
 
   async function reload() {
     try {
-      const t = await call<Task[]>('tasks');
+      // Holistic "All teams" → every team's tasks (tagged with teamName); else the active team.
+      const t = await call<Task[]>(store.viewAll ? 'tasks:allTeams' : 'tasks');
       setTasks([...t].sort((a, b) => (b.createdAt ?? 0) - (a.createdAt ?? 0)));
     } catch {
       setTasks([]);
@@ -192,13 +193,15 @@ function TasksPanel({ store }: { store: FleetStore }) {
   useEffect(() => {
     reload();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [store.team, store.lastUpdated]);
+  }, [store.team, store.viewAll, store.lastUpdated]);
   // Auto-refresh the board so it stays live as agents claim/complete work.
   useEffect(() => {
     const id = setInterval(() => { void reload(); }, 5000);
     return () => clearInterval(id);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [store.team]);
+  }, [store.team, store.viewAll]);
+  // In holistic mode each per-task action must hit the task's OWN team.
+  const taskTeam = (t: Task): string | undefined => (store.viewAll ? t.teamName : undefined);
 
   // A task's effective lane: its overlay lane if that still matches the manager status,
   // else the default lane for the real status (so an agent's status change wins).
@@ -214,7 +217,7 @@ function TasksPanel({ store }: { store: FleetStore }) {
     setBusy(true); setNote(`move ${ref(t)} → ${lane.replace(/-/g, ' ')}…`);
     try {
       await call('tasks:setLane', ref(t), lane);
-      if (colOf(t.status) !== targetStatus) await call('remote', `/task status ${ref(t)} ${targetStatus}`);
+      if (colOf(t.status) !== targetStatus) await call('remote', `/task status ${ref(t)} ${targetStatus}`, undefined, taskTeam(t));
       setNote('');
       await reload();
     } catch (err) {
@@ -285,7 +288,7 @@ function TasksPanel({ store }: { store: FleetStore }) {
   // appear (on the 5s poll), throttled by a 90s cooldown so it never hammers the lead.
   useEffect(() => {
     if (!autoTriage || triaging) return;
-    const pending = tasks.filter((t) => !t.ownerName && laneOf(t) === 'todo').length;
+    const pending = tasks.filter((t) => !t.ownerName && laneOf(t) === 'todo' && (!store.viewAll || t.teamName === store.team)).length;
     if (!pending || Date.now() - lastTriageRef.current < 90_000) return;
     void triage(true);
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -294,16 +297,20 @@ function TasksPanel({ store }: { store: FleetStore }) {
   // Re-send a stalled task to its owner (reassigning to an active agent first if the owner is
   // stopped) so a stuck "doing" task gets picked back up. Returns false if nothing's active.
   async function redispatchCore(t: Task): Promise<boolean> {
+    const tteam = taskTeam(t);
+    // Use the task's OWN team's agents (holistic) so a stalled cross-team task is reassigned
+    // within its team, not the active one.
+    const pool = store.viewAll ? store.allAgents.filter((a) => a.team === t.teamName) : store.agents;
     let target = t.ownerName ?? '';
-    const owner = store.agents.find((a) => a.name === target);
+    const owner = pool.find((a) => a.name === target);
     if (!target || (owner && !liveAgent(owner.status))) {
-      const active = store.agents.find((a) => liveAgent(a.status));
+      const active = pool.find((a) => liveAgent(a.status));
       if (!active) return false;
       target = active.name;
-      await call('remote', `/task assign ${ref(t)} ${target}`);
+      await call('remote', `/task assign ${ref(t)} ${target}`, undefined, tteam);
     }
     const msg = `Resume and complete task ${ref(t)}: ${t.title}. ${t.description ?? ''} When finished: /task done ${ref(t)}. If you're blocked, mark it done with a brief note.`;
-    await call('remote', `/ask ${target} ${qArg(msg)}`); // returns once accepted (queryId); agent runs in background
+    await call('remote', `/ask ${target} ${qArg(msg)}`, undefined, tteam); // returns once accepted (queryId); agent runs in background
     return true;
   }
   async function redispatch(t: Task) {
@@ -323,11 +330,11 @@ function TasksPanel({ store }: { store: FleetStore }) {
     await reload();
   }
 
-  async function run(cmd: string, label: string) {
+  async function run(cmd: string, label: string, team?: string) {
     setBusy(true);
     setNote(`${label}…`);
     try {
-      await call('remote', cmd);
+      await call('remote', cmd, undefined, team);
       setNote('');
       await reload();
     } catch (err) {
@@ -342,16 +349,16 @@ function TasksPanel({ store }: { store: FleetStore }) {
     if (clean) void run(`/task create "${clean}"`, `create “${clean}”`);
   }
   function assign(t: Task, agent: string) {
-    if (agent) void run(`/task assign ${ref(t)} ${agent}`, `assign ${ref(t)} → ${agent}`);
+    if (agent) void run(`/task assign ${ref(t)} ${agent}`, `assign ${ref(t)} → ${agent}`, taskTeam(t));
   }
-  async function del(t: Task) { setConfirmDel(null); await run(`/task remove ${ref(t)}`, `delete ${ref(t)}`); }
+  async function del(t: Task) { setConfirmDel(null); await run(`/task remove ${ref(t)}`, `delete ${ref(t)}`, taskTeam(t)); }
   async function clearDone() {
     const done = tasks.filter(isDone);
     setConfirmClear(false);
     setBusy(true);
     setNote(`clearing ${done.length} completed…`);
     try {
-      for (const t of done) await call('remote', `/task remove ${ref(t)}`);
+      for (const t of done) await call('remote', `/task remove ${ref(t)}`, undefined, taskTeam(t));
       setNote(`cleared ${done.length} completed ✓`);
       await reload();
     } catch (err) {
@@ -417,8 +424,9 @@ function TasksPanel({ store }: { store: FleetStore }) {
   const routineCount = tasks.filter(isRoutine).length;
   const openCount = tasks.filter((t) => !isDone(t)).length;
   const doneCount = tasks.filter(isDone).length;
-  // Unassigned tasks sitting in the To-Do lane — what the lead can triage/assign.
-  const unassignedTodo = tasks.filter((t) => !t.ownerName && laneOf(t) === 'todo').length;
+  // Unassigned To-Do tasks the lead can triage/assign. Triage runs on the ACTIVE team's lead,
+  // so in holistic view the count is scoped to the active team (avoids a misleading total).
+  const unassignedTodo = tasks.filter((t) => !t.ownerName && laneOf(t) === 'todo' && (!store.viewAll || t.teamName === store.team)).length;
   // Owned "doing" tasks with no status change in 30m+ → stalled (re-dispatchable).
   const stalledTasks = tasks.filter((t) => {
     if (colOf(t.status) !== 'doing' || !t.ownerName) return false;
@@ -572,7 +580,7 @@ function TasksPanel({ store }: { store: FleetStore }) {
               style={{ border: `1px solid ${working ? 'rgba(60,203,120,0.55)' : stale ? 'rgba(224,163,60,0.55)' : 'var(--border, #2a2a2a)'}`, borderRadius: 6, padding: '6px 8px', background: 'var(--bg, #141414)', cursor: busy ? 'default' : 'grab' }}
             >
               <div className="b" style={{ fontSize: 13 }}>{t.title}</div>
-              <div className="muted small mono">{t.shortId ?? ref(t)}{isRoutine(t) ? ' · routine' : ''}</div>
+              <div className="muted small mono">{t.shortId ?? ref(t)}{isRoutine(t) ? ' · routine' : ''}{store.viewAll && t.teamName ? ` · ${t.teamName}` : ''}</div>
               <div className="row-actions" style={{ marginTop: 4, alignItems: 'center', gap: 6 }}>
                 {working ? (
                   <span className="small" title={`${t.ownerName} recently picked this up${uAbs ? ` — moved to Doing ${uAbs}` : ''}`}
@@ -590,7 +598,7 @@ function TasksPanel({ store }: { store: FleetStore }) {
                 ) : !isDone(t) ? (
                   <select className="cell-select" style={{ fontSize: 11 }} defaultValue="" disabled={busy} onChange={(e) => assign(t, e.target.value)}>
                     <option value="">assign…</option>
-                    {store.agents.map((a) => <option key={a.id} value={a.name}>{a.name}{liveAgent(a.status) ? '' : ' · stopped'}</option>)}
+                    {(store.viewAll ? store.allAgents.filter((a) => a.team === t.teamName) : store.agents).map((a) => <option key={a.id} value={a.name}>{a.name}{liveAgent(a.status) ? '' : ' · stopped'}</option>)}
                   </select>
                 ) : <span className="muted small">—</span>}
                 <span className="grow" />

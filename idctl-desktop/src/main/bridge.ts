@@ -160,6 +160,15 @@ const METHODS: Record<string, (...a: any[]) => Promise<unknown>> = {
 
   // tasks
   tasks: () => client.tasks(),
+  // Holistic task board: every team's tasks, each tagged with its teamName.
+  'tasks:allTeams': async () => {
+    const teams = await client.teams().catch(() => []);
+    const names = teams.length ? teams.map((t) => t.name) : [cfg.team ?? 'default'];
+    const per = await Promise.all(
+      names.map(async (name) => (await client.withTeam(name).tasks().catch(() => [])).map((t) => ({ ...t, teamName: t.teamName ?? name }))),
+    );
+    return per.flat();
+  },
   // app-side Kanban lane overlay (task ref → fine-grained lane; never sent to the manager)
   'tasks:lanes': () => Promise.resolve(loadSettings().taskLanes ?? {}),
   'tasks:setLane': (ref: string, lane: string) => Promise.resolve(setTaskLane(String(ref), String(lane ?? '')).taskLanes ?? {}),

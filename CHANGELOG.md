@@ -8,6 +8,14 @@ Every change pushed or merged to `main` carries its version number in the commit
 subject (`vX.Y.Z: …`), stamped automatically by the `commit-msg` hook — see
 [CONTRIBUTING.md](CONTRIBUTING.md).
 
+## [0.1.128] — 2026-06-24
+- **Work board honors "All teams."** The Tasks Kanban was stuck on the active team even with
+  "All teams" selected — now it shows **every team's tasks** (each card tagged with its team),
+  and per-task actions (lane/status change, assign, delete, re-dispatch, clear) route to that
+  task's **own team**. The assign dropdown lists the task's team's agents. (Lead-driven bulk
+  actions — Triage / Assign-work / Surface-blockers — still operate on the active team's lead;
+  the Triage count is scoped to the active team accordingly.)
+
 ## [0.1.127] — 2026-06-24
 - **Re-dispatch stalled tasks.** Stalled cards (⏳, no update in 30m+) now have a **↻** button to
   re-send the task to its owner — and if the owner is stopped, it's auto-reassigned to an active
