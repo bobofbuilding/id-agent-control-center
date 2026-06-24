@@ -67,6 +67,9 @@ const EVENT_BUFFER = 250;
 
 export function useFleet(): FleetStore {
   const [connection, setConnection] = useState<Connection>('connecting');
+  // Fires once per offline→online transition so we re-push persisted settings
+  // (e.g. local-model concurrency) to the manager on connect AND after a restart.
+  const wasOnlineRef = useRef(false);
   const [managerUrl, setManagerUrl] = useState('');
   const [team, setTeamState] = useState<string | undefined>(undefined);
   const [coordinator, setCoordinatorState] = useState<string | undefined>(undefined);
@@ -129,12 +132,19 @@ export function useFleet(): FleetStore {
         setConnection('online');
         setLastError(undefined);
         setLastUpdated(Date.now());
+        // On (re)connect — including after a manager restart — re-apply persisted
+        // settings the manager doesn't keep itself (local-model concurrency).
+        if (!wasOnlineRef.current) {
+          wasOnlineRef.current = true;
+          void call('manager:applyStoredConcurrency').catch(() => {});
+        }
         // Unviewed-chat count for the Chat nav badge (scoped to the active team).
         const cu = await call<number>('chats:unreadCount', info.team).catch(() => 0);
         if (alive) setChatUnread(typeof cu === 'number' ? cu : 0);
       } catch (err) {
         if (!alive) return;
         setConnection('offline');
+        wasOnlineRef.current = false; // re-arm so the next reconnect re-applies settings
         setLastError(err instanceof Error ? err.message : String(err));
       } finally {
         if (alive) timer = setTimeout(poll, 3000);

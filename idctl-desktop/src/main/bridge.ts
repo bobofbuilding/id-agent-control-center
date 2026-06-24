@@ -26,6 +26,7 @@ import {
   upsertProject,
   removeProject,
   saveSettings,
+  setLocalConcurrencyPref,
 } from '../../../idctl/src/settings/store.ts';
 import { detectProjectsRoot, scanProjectsRoot } from './projects.ts';
 import { realpathSync } from 'node:fs';
@@ -213,7 +214,19 @@ const METHODS: Record<string, (...a: any[]) => Promise<unknown>> = {
   'team:probe': (team: string) => client.probeTeam(String(team)),
   // Local-model (ollama) concurrency — how many local inferences run at once.
   'manager:localConcurrency': () => client.localConcurrency(),
-  'manager:setLocalConcurrency': (n: number) => client.setLocalConcurrency(Number(n)),
+  'manager:setLocalConcurrency': async (n: number) => {
+    const r = await client.setLocalConcurrency(Number(n));
+    setLocalConcurrencyPref(Number(n)); // persist → re-applied on connect (survives a manager restart)
+    return r;
+  },
+  // Re-apply the persisted local concurrency to the manager — called on (re)connect.
+  'manager:applyStoredConcurrency': async () => {
+    const pref = loadSettings().localConcurrency;
+    if (typeof pref === 'number' && pref >= 1) {
+      return client.setLocalConcurrency(pref).then((r) => ({ applied: r.concurrency })).catch(() => ({ applied: null as number | null }));
+    }
+    return { applied: null as number | null };
+  },
   // AI-assisted parse of a free-form spec → { team, agents }. Dispatches to the
   // team's designated coordinator (★) when set, else any running agent.
   'team:parseSpecAI': (spec: string) =>

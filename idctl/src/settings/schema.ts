@@ -60,6 +60,12 @@ export interface IdctlConfig {
    * unset, image generation falls back to the cloud provider. Client-side only.
    */
   imageServer?: ImageServerConfig;
+  /**
+   * Preferred local-model (ollama) concurrency — how many local inferences the
+   * manager runs at once. Re-applied to the manager on connect so it survives a
+   * manager restart (the manager itself doesn't persist it). Client-side only.
+   */
+  localConcurrency?: number;
 }
 
 /** A local image-generation backend. */

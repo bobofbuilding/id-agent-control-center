@@ -48,6 +48,9 @@ export function loadSettings(file = resolveConfigPath()): IdctlConfig {
       imageServer: raw.imageServer && typeof raw.imageServer === 'object' && typeof (raw.imageServer as any).url === 'string'
         ? raw.imageServer
         : undefined,
+      localConcurrency: typeof raw.localConcurrency === 'number' && raw.localConcurrency >= 1
+        ? Math.floor(raw.localConcurrency)
+        : undefined,
     };
     // Validation: at most one default provider.
     let seenDefault = false;
@@ -153,6 +156,15 @@ export function removeManager(name: string, file = resolveConfigPath()): IdctlCo
 export function setDefaultManager(name: string | undefined, file = resolveConfigPath()): IdctlConfig {
   const cfg = loadSettings(file);
   cfg.defaultManager = name;
+  saveSettings(cfg, file);
+  return cfg;
+}
+
+/** Persist the preferred local-model concurrency (re-applied to the manager on
+ *  connect so it survives a manager restart). Pass undefined to clear it. */
+export function setLocalConcurrencyPref(n: number | undefined, file = resolveConfigPath()): IdctlConfig {
+  const cfg = loadSettings(file);
+  cfg.localConcurrency = typeof n === 'number' && n >= 1 ? Math.floor(n) : undefined;
   saveSettings(cfg, file);
   return cfg;
 }

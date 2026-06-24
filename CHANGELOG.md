@@ -31,6 +31,12 @@ subject (`vX.Y.Z: …`), stamped automatically by the `commit-msg` hook — see
     rebuild calls are team‑scoped so wiring a brand‑new team works even when it isn’t
     the active one.
 
+## [0.1.94] — 2026-06-24
+- **Local‑model concurrency now persists across manager restarts.** Your chosen
+  “parallel local inferences” value is saved in the app and **re‑applied to the
+  manager automatically every time the app connects** — including after the manager
+  restarts — so it sticks without needing the `LOCAL_MODEL_CONCURRENCY` env var.
+
 ## [0.1.93] — 2026-06-24
 - **No more false “health probe failed” on freshly‑built agents.** A just‑spawned
   agent needs a second or two to bind its HTTP server, so the onboarding probe used
