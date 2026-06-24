@@ -8,6 +8,10 @@ Every change pushed or merged to `main` carries its version number in the commit
 subject (`vX.Y.Z: …`), stamped automatically by the `commit-msg` hook — see
 [CONTRIBUTING.md](CONTRIBUTING.md).
 
+## [0.1.139] — 2026-06-24
+- **Cleanup:** removed the dead `CreateTeamModal` (~200 lines) left over from the Build-page
+  consolidation — the unified inline `TeamBuilder` replaced it. No behavior change.
+
 ## [0.1.138] — 2026-06-24
 - **Per-page team pickers — nothing rides on a global "active team" anymore.**
   - **Dashboard** has a "talk to" picker: choose which team's **lead** you chat with (each option
