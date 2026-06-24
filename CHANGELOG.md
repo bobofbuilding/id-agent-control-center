@@ -8,6 +8,12 @@ Every change pushed or merged to `main` carries its version number in the commit
 subject (`vX.Y.Z: …`), stamped automatically by the `commit-msg` hook — see
 [CONTRIBUTING.md](CONTRIBUTING.md).
 
+## [0.1.127] — 2026-06-24
+- **Re-dispatch stalled tasks.** Stalled cards (⏳, no update in 30m+) now have a **↻** button to
+  re-send the task to its owner — and if the owner is stopped, it's auto-reassigned to an active
+  agent first. A toolbar **↻ Re-dispatch stalled (N)** button does the whole batch at once. This
+  answers "if tasks stall, how do I refresh them."
+
 ## [0.1.126] — 2026-06-24
 - **Dashboard fixes.** The lead-chat controls are now one row in order **＋New · select chat ·
   focus · chat name**, and the **activity tile on the right is back** (explicit layout + its own

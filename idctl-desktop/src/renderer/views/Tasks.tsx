@@ -291,6 +291,38 @@ function TasksPanel({ store }: { store: FleetStore }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [autoTriage, tasks, triaging]);
 
+  // Re-send a stalled task to its owner (reassigning to an active agent first if the owner is
+  // stopped) so a stuck "doing" task gets picked back up. Returns false if nothing's active.
+  async function redispatchCore(t: Task): Promise<boolean> {
+    let target = t.ownerName ?? '';
+    const owner = store.agents.find((a) => a.name === target);
+    if (!target || (owner && !liveAgent(owner.status))) {
+      const active = store.agents.find((a) => liveAgent(a.status));
+      if (!active) return false;
+      target = active.name;
+      await call('remote', `/task assign ${ref(t)} ${target}`);
+    }
+    const msg = `Resume and complete task ${ref(t)}: ${t.title}. ${t.description ?? ''} When finished: /task done ${ref(t)}. If you're blocked, mark it done with a brief note.`;
+    await call('remote', `/ask ${target} ${qArg(msg)}`); // returns once accepted (queryId); agent runs in background
+    return true;
+  }
+  async function redispatch(t: Task) {
+    const tt = toast({ kind: 'progress', text: `Re-dispatching ${ref(t)}…` });
+    try {
+      const ok = await redispatchCore(t);
+      tt.update(ok ? { kind: 'success', text: `re-dispatched ${ref(t)} ✓` } : { kind: 'error', text: 'no active agent to take this task' });
+      if (ok) await reload();
+    } catch (e) { tt.update({ kind: 'error', text: `re-dispatch failed: ${e instanceof Error ? e.message : String(e)}` }); }
+  }
+  async function redispatchAll() {
+    if (!stalledTasks.length) return;
+    const tt = toast({ kind: 'progress', text: `Re-dispatching ${stalledTasks.length} stalled task${stalledTasks.length === 1 ? '' : 's'}…` });
+    let ok = 0;
+    for (const t of stalledTasks) { try { if (await redispatchCore(t)) ok++; } catch { /* keep going */ } }
+    tt.update({ kind: ok ? 'success' : 'error', text: `re-dispatched ${ok}/${stalledTasks.length} stalled ✓` });
+    await reload();
+  }
+
   async function run(cmd: string, label: string) {
     setBusy(true);
     setNote(`${label}…`);
@@ -387,6 +419,12 @@ function TasksPanel({ store }: { store: FleetStore }) {
   const doneCount = tasks.filter(isDone).length;
   // Unassigned tasks sitting in the To-Do lane — what the lead can triage/assign.
   const unassignedTodo = tasks.filter((t) => !t.ownerName && laneOf(t) === 'todo').length;
+  // Owned "doing" tasks with no status change in 30m+ → stalled (re-dispatchable).
+  const stalledTasks = tasks.filter((t) => {
+    if (colOf(t.status) !== 'doing' || !t.ownerName) return false;
+    const up = t.updatedAt ? (t.updatedAt < 1e12 ? t.updatedAt * 1000 : t.updatedAt) : 0;
+    return up > 0 && Date.now() - up > 30 * 60 * 1000;
+  });
   // Done tasks auto-archive: hidden from the board by default, revealed by the "show archived" toggle.
   const archivedCount = tasks.filter((t) => isDone(t) && (!hideRoutine || !isRoutine(t))).length;
   const filtered = tasks.filter((t) => {
@@ -413,6 +451,7 @@ function TasksPanel({ store }: { store: FleetStore }) {
           )
         ) : null}
         <button className="btn" disabled={busy || triaging || !unassignedTodo} title={unassignedTodo ? `Have ${leadName || 'the lead'} assign the ${unassignedTodo} unassigned To Do task${unassignedTodo === 1 ? '' : 's'} to the best active agents and start them` : 'no unassigned To Do tasks'} onClick={() => void triage()}>{triaging ? '⚖ Triaging…' : `⚖ Triage To Do${unassignedTodo ? ` (${unassignedTodo})` : ''}`}</button>
+        {stalledTasks.length ? <button className="btn" disabled={busy} title={`Re-dispatch the ${stalledTasks.length} stalled task${stalledTasks.length === 1 ? '' : 's'} (no update in 30m+) to active agents`} onClick={() => void redispatchAll()}>↻ Re-dispatch stalled ({stalledTasks.length})</button> : null}
         <label className="muted small" style={{ display: 'inline-flex', alignItems: 'center', gap: 5, cursor: 'pointer' }} title="Keep the lead auto-assigning new unassigned To Do tasks (checked every poll, throttled ~90s)">
           <input type="checkbox" checked={autoTriage} onChange={(e) => setAutoTriage(e.target.checked)} />
           auto
@@ -555,6 +594,7 @@ function TasksPanel({ store }: { store: FleetStore }) {
                   </select>
                 ) : <span className="muted small">—</span>}
                 <span className="grow" />
+                {stale ? <button className="btn small" disabled={busy} title={`Re-dispatch ${ref(t)} to ${t.ownerName} (it's stalled)`} onClick={(e) => { e.stopPropagation(); void redispatch(t); }}>↻</button> : null}
                 {confirmDel === ref(t) ? (
                   <>
                     <button className="btn icon-danger small" disabled={busy} onClick={() => void del(t)}>Delete?</button>
