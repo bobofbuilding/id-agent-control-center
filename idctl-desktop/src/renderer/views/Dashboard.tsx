@@ -71,21 +71,22 @@ export function Dashboard({ store }: { store: FleetStore }) {
   const events = store.events;
 
   return (
-    <div className="view">
+    <div className="view" style={{ display: 'flex', flexDirection: 'column', minHeight: 0 }}>
       <header className="view-head">
         <h1>Dashboard</h1>
         <span className="muted">talking to <b>{lead}</b> · {store.team ?? 'default'}</span>
       </header>
 
-      <div className="cols dash-top">
+      {/* Explicit flex row so the chat fills the left and the activity tile always shows on the right. */}
+      <div style={{ display: 'flex', gap: 14, flex: 1, minHeight: 0, alignItems: 'stretch' }}>
         {/* Lead chat: a chat locked to the team lead, no agent picker (Chat renders its own card). */}
-        <div className="grow" style={{ minWidth: 0, display: 'flex', flexDirection: 'column' }}>
+        <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column' }}>
           <Chat store={store} embedded lockTarget={lead} />
         </div>
 
-        <aside className="card feed" style={{ maxWidth: 360 }}>
-          <h3>Activity <span className="muted small">· {store.team ?? 'default'}{events.length ? ` (${events.length})` : ''}</span></h3>
-          <div className="feed-list">
+        <aside className="card" style={{ width: 340, flexShrink: 0, display: 'flex', flexDirection: 'column', minHeight: 0 }}>
+          <h3 style={{ marginTop: 0 }}>Activity <span className="muted small">· {store.team ?? 'default'}{events.length ? ` (${events.length})` : ''}</span></h3>
+          <div className="feed-list" style={{ flex: 1, overflowY: 'auto', minHeight: 0 }}>
             {[...events].reverse().slice(0, 80).map((e) => (
               <div className="feed-row" key={e.seq} title={e.topic}>
                 <span className={`topic ${topicClass(e.topic)}`}>{e.topic.split(':')[0]}</span>

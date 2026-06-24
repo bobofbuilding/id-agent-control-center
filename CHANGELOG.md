@@ -8,6 +8,16 @@ Every change pushed or merged to `main` carries its version number in the commit
 subject (`vX.Y.Z: …`), stamped automatically by the `commit-msg` hook — see
 [CONTRIBUTING.md](CONTRIBUTING.md).
 
+## [0.1.126] — 2026-06-24
+- **Dashboard fixes.** The lead-chat controls are now one row in order **＋New · select chat ·
+  focus · chat name**, and the **activity tile on the right is back** (explicit layout + its own
+  scroll). The **Chat page was removed from the nav** — the Dashboard *is* the lead chat now.
+- **Fleet grid moved to Health.** The agent table (runtime/model/actions/probe) now lives on the
+  **Health** page (combined with the token-usage + probe tiles), not HR Manager.
+- **Set the lead from the fleet grid.** Each agent row has a **★** — click it to make that agent
+  its team's coordinator (lead). (The graph's "lead" is this per-team coordinator setting, which
+  is why it could show a non-"lead"-named agent; now you can fix it in one click.)
+
 ## [0.1.125] — 2026-06-24
 - **Projects: per-project "⤴ Request commit."** Each project with a path now has a button that
   routes a **GitHub-commit task to ops-lead** (commit + push that project's changes, init the

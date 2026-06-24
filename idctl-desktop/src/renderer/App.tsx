@@ -18,7 +18,6 @@ type ViewId = 'dashboard' | 'chat' | 'inbox' | 'tasks' | 'projects' | 'health' |
 
 const NAV: { id: ViewId; label: string; icon: string }[] = [
   { id: 'dashboard', label: 'Dashboard', icon: '▦' },
-  { id: 'chat', label: 'Chat', icon: '✦' },
   { id: 'inbox', label: 'Inbox', icon: '✉' },
   { id: 'tasks', label: 'Work', icon: '☑' },
   { id: 'projects', label: 'Projects', icon: '◆' },

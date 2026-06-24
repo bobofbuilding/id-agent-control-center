@@ -754,30 +754,51 @@ export function Chat({ store, embedded = false, lockTarget }: { store: FleetStor
     }
   }
 
+  // Shared dropdowns reused by both layouts.
+  const selectChat = (
+    <select className="cell-select" value={session?.id ?? ''} disabled={busy} onChange={(e) => void openChat(e.target.value)} title="Open a saved chat" style={{ maxWidth: 200 }}>
+      {session && !sessions.some((s) => s.id === session.id) ? <option value={session.id}>{session.title || '(this chat)'}</option> : null}
+      {sessions.map((s) => <option key={s.id} value={s.id}>{s.unread ? '● ' : ''}{(s.title || '(untitled)')} · {fmtAge(s.updatedAt)}</option>)}
+    </select>
+  );
+  const focusSelect = (
+    <select className="cell-select" value={session?.projectId ?? ''} disabled={busy} onChange={(e) => setFocus(e.target.value)} title="Scope this chat to a project (sent as context)">
+      <option value="">(no project)</option>
+      {focusedProjects.map((p) => <option key={p.id} value={p.id}>{p.name}{p.status !== 'active' ? ` · ${p.status}` : ''}</option>)}
+    </select>
+  );
+
   return (
     <div className={embedded ? 'chat-embedded' : 'view'} style={embedded ? { display: 'flex', flexDirection: 'column', minWidth: 0, flex: 1, minHeight: 0 } : undefined}>
-      <header className={embedded ? 'row-actions' : 'view-head'} style={embedded ? { marginBottom: 6, alignItems: 'center' } : undefined}>
-        {!embedded ? <h1>Chat</h1> : null}
-        <div className="row-actions" style={{ alignItems: 'center', gap: 8 }}>
-          <select className="cell-select" value={session?.id ?? ''} disabled={busy} onChange={(e) => void openChat(e.target.value)} title="Open a saved chat" style={{ maxWidth: 220 }}>
-            {session && !sessions.some((s) => s.id === session.id) ? <option value={session.id}>{session.title || '(this chat)'}</option> : null}
-            {sessions.map((s) => <option key={s.id} value={s.id}>{s.unread ? '● ' : ''}{(s.title || '(untitled)')} · {fmtAge(s.updatedAt)}</option>)}
-          </select>
+      {embedded ? (
+        // One control row, in order: New · select chat · focus · chat name.
+        <div className="chat-bar" style={{ marginBottom: 6 }}>
           <button className="btn" disabled={busy} onClick={newChat}>＋ New</button>
+          {selectChat}
+          <span className="muted small">focus</span>
+          {focusSelect}
+          <input className="chat-title grow" value={session?.title ?? ''} placeholder="chat name" disabled={busy} onChange={(e) => rename(e.target.value)} />
+          {session ? <button className="btn icon-danger" disabled={busy} title="Delete this chat" onClick={() => void deleteChat(session.id)}>✕</button> : null}
         </div>
-      </header>
-
-      <div className="chat-bar">
-        <input className="chat-title" value={session?.title ?? ''} placeholder="untitled chat — name it" disabled={busy} onChange={(e) => rename(e.target.value)} />
-        <span className="muted small">focus</span>
-        <select className="cell-select" value={session?.projectId ?? ''} disabled={busy} onChange={(e) => setFocus(e.target.value)} title="Scope this chat to a project (sent as context)">
-          <option value="">(no project)</option>
-          {focusedProjects.map((p) => <option key={p.id} value={p.id}>{p.name}{p.status !== 'active' ? ` · ${p.status}` : ''}</option>)}
-        </select>
-        <span className="grow" />
-        <span className="muted">→ {target}</span>
-        {session ? <button className="btn icon-danger" disabled={busy} title="Delete this chat" onClick={() => void deleteChat(session.id)}>✕</button> : null}
-      </div>
+      ) : (
+        <>
+          <header className="view-head">
+            <h1>Chat</h1>
+            <div className="row-actions" style={{ alignItems: 'center', gap: 8 }}>
+              {selectChat}
+              <button className="btn" disabled={busy} onClick={newChat}>＋ New</button>
+            </div>
+          </header>
+          <div className="chat-bar">
+            <input className="chat-title" value={session?.title ?? ''} placeholder="untitled chat — name it" disabled={busy} onChange={(e) => rename(e.target.value)} />
+            <span className="muted small">focus</span>
+            {focusSelect}
+            <span className="grow" />
+            <span className="muted">→ {target}</span>
+            {session ? <button className="btn icon-danger" disabled={busy} title="Delete this chat" onClick={() => void deleteChat(session.id)}>✕</button> : null}
+          </div>
+        </>
+      )}
       {focused ? (
         <div className="chat-focus muted small">
           <b className="accent-text">◆ {focused.name}</b>

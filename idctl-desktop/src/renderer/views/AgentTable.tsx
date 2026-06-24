@@ -55,6 +55,7 @@ export function AgentTable({ store, onProbe, probeBusy }: { store: FleetStore; o
   const [busy, setBusy] = useState<string | null>(null);
   const [catalog, setCatalog] = useState<Record<string, string[]>>({});
   const [providers, setProviders] = useState<ProviderRow[]>([]);
+  const [coords, setCoords] = useState<Record<string, string>>({}); // team → coordinator (lead) name
   const modelRefs = useRef<Record<string, HTMLSelectElement | null>>({});
   const viewAll = store.viewAll;
   const orderedAgents = agentsLeadFirst(store.agents, store.coordinator);
@@ -78,7 +79,17 @@ export function AgentTable({ store, onProbe, probeBusy }: { store: FleetStore; o
   useEffect(() => {
     call<Record<string, string[]>>('runtime:models').then(setCatalog).catch(() => setCatalog({}));
     call<ProviderRow[]>('providers:list').then(setProviders).catch(() => setProviders([]));
+    call<{ coordinators?: Record<string, string> }>('coordinator:hierarchy').then((h) => setCoords(h.coordinators ?? {})).catch(() => {});
   }, [store.lastUpdated]);
+
+  // ★ set an agent as its team's coordinator (lead) — works per-team in the holistic view.
+  const teamFor = (a: TeamAgent) => a.team ?? store.team ?? 'default';
+  const isLead = (a: TeamAgent) => (coords[teamFor(a)] ?? (teamFor(a) === store.team ? store.coordinator : undefined)) === a.name;
+  async function makeLead(a: TeamAgent) {
+    const team = teamFor(a);
+    try { await call('coordinator:set', team, a.name); setCoords((c) => ({ ...c, [team]: a.name })); store.refresh(); }
+    catch (err) { window.alert(`couldn't set lead: ${err instanceof Error ? err.message : String(err)}`); }
+  }
   useEffect(() => {
     call<Record<string, string[]>>('runtime:probe').then(setCatalog).catch(() => {});
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -139,7 +150,11 @@ export function AgentTable({ store, onProbe, probeBusy }: { store: FleetStore; o
     const mismatch = runtimeModelMismatch(a.runtime, a.model);
     return (
       <tr key={`${a.team ?? ''}-${a.id}`} className={sel?.id === a.id ? 'sel' : ''} onClick={() => setSelected(a.id)}>
-        <td className="b">{a.name}</td>
+        <td className="b">
+          <button className={`star${isLead(a) ? ' on' : ''}`} title={isLead(a) ? `${a.name} is ${teamFor(a)}'s lead` : `Make ${a.name} the lead of ${teamFor(a)}`}
+            onClick={(e) => { e.stopPropagation(); if (!isLead(a)) void makeLead(a); }} style={{ marginRight: 5 }}>{isLead(a) ? '★' : '☆'}</button>
+          {a.name}
+        </td>
         <td><span className={`dot ${statusClass(a.status)}`} /> {a.status}</td>
         <td onClick={(e) => e.stopPropagation()}>
           {isLocal ? (
