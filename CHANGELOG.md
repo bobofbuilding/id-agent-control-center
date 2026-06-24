@@ -8,6 +8,14 @@ Every change pushed or merged to `main` carries its version number in the commit
 subject (`vX.Y.Z: …`), stamped automatically by the `commit-msg` hook — see
 [CONTRIBUTING.md](CONTRIBUTING.md).
 
+## [0.1.120] — 2026-06-24
+- **HR Manager reorganized.** Team-creation (**+ From template** / **✦ Build a team**) moved
+  from the page header into the **Build** tab; the **teams table** (switch/manage/delete) moved
+  to the **Manage** tab; **Lead hierarchy & coordinators** moved to the **Route** tab. The
+  **Structure** tab is now just the live team graph + selected agent/team panels, and the graph
+  now updates in lock-step with the app's live all-teams poll (more reactive). _(First of a
+  multi-part UI reorg — Dashboard, Health, Settings & Projects changes follow.)_
+
 ## [0.1.119] — 2026-06-24
 - **Holistic "All teams" view by default.** The app now opens showing the **whole fleet**
   instead of a single team. The status-bar selector defaults to **★ All teams**; the

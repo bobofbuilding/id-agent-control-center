@@ -115,8 +115,16 @@ export function Teams({ store }: { store: FleetStore }) {
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
   const [graphGroups, setGraphGroups] = useState<{ team: string; agents: Agent[] }[]>([]);
   useEffect(() => {
+    // Prefer the store's live all-teams poll (holistic view) so the graph reacts in lock-step
+    // with the rest of the app; fall back to a direct fetch when that isn't populated.
+    if (store.allAgents.length) {
+      const byTeam: Record<string, Agent[]> = {};
+      for (const a of store.allAgents) (byTeam[a.team ?? '—'] ??= []).push(a);
+      setGraphGroups(Object.entries(byTeam).map(([team, agents]) => ({ team, agents })));
+      return;
+    }
     call<{ team: string; agents: Agent[] }[]>('agents:allTeams').then(setGraphGroups).catch(() => setGraphGroups([]));
-  }, [store.lastUpdated]);
+  }, [store.lastUpdated, store.allAgents]);
 
   // Cross-team relay policy (delegates_to) for the active team.
   const activeTeam = store.team ?? 'default';
@@ -378,14 +386,6 @@ export function Teams({ store }: { store: FleetStore }) {
     <div className="view modules">
       <header className="view-head">
         <h1>HR Manager</h1>
-        <div className="row-actions">
-          <button className="btn" disabled={busy} onClick={() => setCreateOpen(true)} title="Create a team from a library template or saved server config">
-            + From template
-          </button>
-          <button className="btn primary" disabled={busy} onClick={() => setBuilderTeam('')} title="Describe a team in plain English (or paste a spec) and let AI design + build the whole roster">
-            ✦ Build a team
-          </button>
-        </div>
       </header>
       <div className="tabs">
         {([['structure', 'Structure'], ['build', 'Build'], ['manage', 'Manage'], ['route', 'Route']] as const).map(([k, lbl]) => (
@@ -498,7 +498,7 @@ export function Teams({ store }: { store: FleetStore }) {
         </section>
       ) : null}
 
-      {tab === 'structure' ? (
+      {tab === 'manage' ? (
       <section className="card">
         <table className="grid">
           <thead>
@@ -540,16 +540,18 @@ export function Teams({ store }: { store: FleetStore }) {
 
       {tab === 'build' ? (
       <section className="card">
-        <div className="row-actions" style={{ justifyContent: 'space-between', alignItems: 'center' }}>
+        <div className="row-actions" style={{ justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 10 }}>
           <div>
-            <h3 style={{ margin: 0 }}>Add agents to {activeTeam}</h3>
+            <h3 style={{ margin: 0 }}>Build &amp; add agents</h3>
             <p className="muted small" style={{ margin: '4px 0 0' }}>
-              Describe the agents you need (or paste a spec) and let AI design the roster — per-agent runtime, model &amp; skills — then review and build them into <b>{activeTeam}</b> in one pass.
+              Create a team from a template, design a brand-new team with AI, or add agents to <b>{activeTeam}</b> — describe what you need and AI builds the roster (per-agent runtime, model &amp; skills).
             </p>
           </div>
-          <button className="btn primary" onClick={() => setBuilderTeam(activeTeam)}>
-            ✦ Build / add agents
-          </button>
+          <div className="row-actions" style={{ gap: 8, flexWrap: 'wrap' }}>
+            <button className="btn" disabled={busy} onClick={() => setCreateOpen(true)} title="Create a team from a library template or saved server config">+ From template</button>
+            <button className="btn" disabled={busy} onClick={() => setBuilderTeam('')} title="Describe a brand-new team in plain English (or paste a spec) and let AI design + build the whole roster">✦ Build a team</button>
+            <button className="btn primary" disabled={busy} onClick={() => setBuilderTeam(activeTeam)} title={`Add agents to ${activeTeam}`}>✦ Build / add agents</button>
+          </div>
         </div>
       </section>
       ) : null}
@@ -696,7 +698,7 @@ export function Teams({ store }: { store: FleetStore }) {
       </section>
       ) : null}
 
-      {tab === 'structure' ? (
+      {tab === 'route' ? (
       <section className="card">
         <h3>Lead hierarchy &amp; coordinators</h3>
         <p className="muted small" style={{ marginTop: -4 }}>
