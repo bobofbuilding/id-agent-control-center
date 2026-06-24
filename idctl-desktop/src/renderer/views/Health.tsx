@@ -1,10 +1,8 @@
 import { useCallback, useEffect, useState } from 'react';
 import { call, type FleetStore } from '../store.ts';
-import type { ProbeResult, Agent } from '../../../../idctl/src/api/types.ts';
-
-type TeamGroup = { team: string; agents: Agent[] };
-const isUp = (a: Agent) => /running|online|ready|healthy/i.test(`${a.status ?? ''} ${a.health ?? ''}`);
+import type { ProbeResult } from '../../../../idctl/src/api/types.ts';
 import type { UsageReport, UsageWindow } from '../../../../idctl/src/api/client.ts';
+import { AgentTable } from './AgentTable.tsx';
 
 /** Compact number: 1234 → "1.2k", 2_500_000 → "2.5M". */
 function fmt(n: number): string {
@@ -61,18 +59,13 @@ export function Health({ store }: { store: FleetStore }) {
   }, []);
   useEffect(() => { void loadUsage(); }, [loadUsage, store.lastUpdated]);
 
-  // Whole-fleet roster, grouped by team (all teams, not just the active one).
-  const [roster, setRoster] = useState<TeamGroup[]>([]);
-  const loadRoster = useCallback(async () => {
-    try { setRoster(await call<TeamGroup[]>('agents:allTeams')); } catch { /* keep last */ }
-  }, []);
-  useEffect(() => { void loadRoster(); }, [loadRoster, store.lastUpdated]);
-
-  async function probe(which: 'all' | string) {
+  // The fleet roster is the shared, live AgentTable below. Probing routes to the agent's
+  // own team (holistic) or the active team.
+  async function probe(which: 'all' | string, team?: string) {
     setProbing(which);
     setResult(null);
     try {
-      const r = await call<ProbeResult>(which === 'all' ? 'probeAll' : 'probeOne', ...(which === 'all' ? [] : [which]));
+      const r = await call<ProbeResult>(which === 'all' ? 'probeAll' : 'probeOne', ...(which === 'all' ? [] : [which, team]));
       setResult(r);
     } catch (err) {
       setResult({ team: store.team ?? '', probed: 0, passed: 0, failed: 1, results: [{ name: which, status: 'failed', error: err instanceof Error ? err.message : String(err) }] });
@@ -86,13 +79,6 @@ export function Health({ store }: { store: FleetStore }) {
   const gaugeVal = usage ? (usage.recent?.tps ?? usage.day.avgTps ?? 0) : 0;
   const gaugeMax = usage ? niceMax(Math.max(gaugeVal, usage.day.avgTps, usage.week.avgTps)) : 100;
   const localAgents = usage?.day.agents ?? [];
-
-  // Active team first, then alphabetical; within a team, running agents on top.
-  const sortedRoster = [...roster]
-    .sort((x, y) => (x.team === store.team ? -1 : y.team === store.team ? 1 : x.team.localeCompare(y.team)))
-    .map((g) => ({ team: g.team, agents: [...g.agents].sort((a, b) => (isUp(b) ? 1 : 0) - (isUp(a) ? 1 : 0) || a.name.localeCompare(b.name)) }));
-  const totalAgents = roster.reduce((n, g) => n + g.agents.length, 0);
-  const upAgents = roster.reduce((n, g) => n + g.agents.filter(isUp).length, 0);
 
   return (
     <div className="view">
@@ -121,8 +107,8 @@ export function Health({ store }: { store: FleetStore }) {
             <div className="gauge-wrap">
               <Gauge value={gaugeVal} max={gaugeMax} />
               <div className="gauge-cap">
-                throughput
-                {usage.recent ? <span className="muted small"> · last: {usage.recent.agent}</span> : null}
+                throughput <span className="muted small">(rate)</span>
+                {usage.recent ? <span className="muted small"> · last run: {usage.recent.agent}</span> : null}
               </div>
               <div className="muted small" style={{ textAlign: 'center' }}>
                 24h avg {fmtTps(usage.day.avgTps)} · 7d avg {fmtTps(usage.week.avgTps)} tok/s
@@ -132,12 +118,12 @@ export function Health({ store }: { store: FleetStore }) {
             <WindowCard title="Last 7 days" w={usage.week} />
             {localAgents.length > 0 ? (
               <div className="usage-card grow">
-                <div className="usage-card-title">By agent · 24h</div>
+                <div className="usage-card-title">By agent · 24h <span className="muted small">(total tokens · rate)</span></div>
                 {localAgents.slice(0, 6).map((a) => (
                   <div className="usage-agent-row" key={a.agent}>
                     <span className="b">{a.agent}</span>
-                    <span className="muted small grow">{fmt(a.output)} out · {a.count}q</span>
-                    <span className="ok-text small">{fmtTps(a.avgTps)} tok/s</span>
+                    <span className="muted small grow">{fmt(a.output)} tokens · {a.count}q</span>
+                    <span className="ok-text small" title="average throughput rate (not a total)">{fmtTps(a.avgTps)} tok/s avg</span>
                   </div>
                 ))}
               </div>
@@ -146,62 +132,28 @@ export function Health({ store }: { store: FleetStore }) {
         )}
       </section>
 
-      <div className="cols">
-        <section className="card grow">
-          <div className="row-actions" style={{ alignItems: 'baseline' }}>
-            <h3 className="grow">Fleet · {totalAgents} agents · <span className="ok-text">{upAgents} running</span></h3>
-            <button className="btn small" onClick={() => void loadRoster()}>Refresh</button>
-          </div>
-          {sortedRoster.length === 0 ? (
-            <p className="muted small">No agents found across teams.</p>
-          ) : sortedRoster.map((g) => (
-            <div className="roster-group" key={g.team}>
-              <div className="roster-team">
-                <span className="b">{g.team}</span>
-                {g.team === store.team ? <span className="chip on" style={{ marginLeft: 6 }}>active</span> : null}
-                <span className="muted small" style={{ marginLeft: 6 }}>{g.agents.filter(isUp).length}/{g.agents.length} up</span>
+      {/* The fleet roster is the shared AgentTable — runtime/model dropdowns + lifecycle
+          actions + per-row Probe, live & holistic (all teams grouped in "All teams" view). */}
+      <AgentTable store={store} onProbe={(a) => void probe(a.name, store.viewAll ? a.team : undefined)} probeBusy={probing} />
+
+      <section className="card feed">
+        <h3>Probe result</h3>
+        {result ? (
+          <div>
+            <p className={result.failed > 0 ? 'status-error' : 'ok-text'}>{result.passed}/{result.probed} ok</p>
+            {result.results.map((r) => (
+              <div className="feed-row" key={r.name}>
+                <span className={`dot ${r.status === 'ok' ? 'ok' : 'err'}`} />
+                <span>{r.name}</span>
+                <span className="muted t">{r.duration_ms != null ? `${r.duration_ms}ms` : ''}</span>
+                {r.error ? <div className="muted small">{r.error}</div> : null}
               </div>
-              <table className="grid">
-                <tbody>
-                  {g.agents.map((a) => (
-                    <tr key={a.id}>
-                      <td className="b">{a.name}</td>
-                      <td><span className={`dot ${isUp(a) ? 'ok' : 'err'}`} /> {a.status}</td>
-                      <td className="muted">{a.runtime ?? a.type}</td>
-                      <td className="muted small">{a.model ?? ''}</td>
-                      <td className="row-actions">
-                        {g.team === store.team ? (
-                          <button className="btn small" disabled={!!probing} onClick={() => void probe(a.name)}>{probing === a.name ? '…' : 'Probe'}</button>
-                        ) : null}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          ))}
-        </section>
-        <aside className="card feed">
-          <h3>Probe result</h3>
-          {result ? (
-            <div>
-              <p className={result.failed > 0 ? 'status-error' : 'ok-text'}>
-                {result.passed}/{result.probed} ok
-              </p>
-              {result.results.map((r) => (
-                <div className="feed-row" key={r.name}>
-                  <span className={`dot ${r.status === 'ok' ? 'ok' : 'err'}`} />
-                  <span>{r.name}</span>
-                  <span className="muted t">{r.duration_ms != null ? `${r.duration_ms}ms` : ''}</span>
-                  {r.error ? <div className="muted small">{r.error}</div> : null}
-                </div>
-              ))}
-            </div>
-          ) : (
-            <p className="muted">Run a probe to verify each agent responds on its dispatch path.</p>
-          )}
-        </aside>
-      </div>
+            ))}
+          </div>
+        ) : (
+          <p className="muted">Run a probe (per-row or “Probe all”) to verify each agent responds on its dispatch path.</p>
+        )}
+      </section>
     </div>
   );
 }

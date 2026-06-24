@@ -214,7 +214,7 @@ const METHODS: Record<string, (...a: any[]) => Promise<unknown>> = {
 
   // health probes
   probeAll: () => client.probeAll(),
-  probeOne: (name: string) => client.probeOne(String(name)),
+  probeOne: (name: string, team?: string) => (team ? client.withTeam(String(team)) : client).probeOne(String(name)),
 
   // scheduling
   checkins: () => client.checkins(),

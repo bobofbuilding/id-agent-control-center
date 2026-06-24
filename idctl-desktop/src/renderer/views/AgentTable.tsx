@@ -49,7 +49,8 @@ function skillsOf(a: Agent): string[] {
   return Array.isArray(s) ? (s as string[]) : [];
 }
 
-export function AgentTable({ store }: { store: FleetStore }) {
+export function AgentTable({ store, onProbe, probeBusy }: { store: FleetStore; onProbe?: (a: TeamAgent) => void; probeBusy?: string | null }) {
+  const cols = onProbe ? 7 : 6;
   const [selected, setSelected] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [catalog, setCatalog] = useState<Record<string, string[]>>({});
@@ -166,6 +167,11 @@ export function AgentTable({ store }: { store: FleetStore }) {
             <option>Delete</option>
           </select>
         </td>
+        {onProbe ? (
+          <td onClick={(e) => e.stopPropagation()}>
+            <button className="btn small" disabled={probeBusy === a.name} onClick={() => onProbe(a)}>{probeBusy === a.name ? '…' : 'Probe'}</button>
+          </td>
+        ) : null}
       </tr>
     );
   };
@@ -180,13 +186,13 @@ export function AgentTable({ store }: { store: FleetStore }) {
         </div>
         <table className="grid">
           <thead>
-            <tr><th>Agent</th><th>Status</th><th>Runtime</th><th>Model</th><th>Port</th><th>Actions</th></tr>
+            <tr><th>Agent</th><th>Status</th><th>Runtime</th><th>Model</th><th>Port</th><th>Actions</th>{onProbe ? <th>Probe</th> : null}</tr>
           </thead>
           <tbody>
             {viewAll
               ? groups.flatMap((g) => [
                   <tr key={`hdr-${g.team}`} className="group-row">
-                    <td colSpan={6} className="muted small b" style={{ background: 'var(--panel, #1b1b1b)', padding: '4px 8px' }}>
+                    <td colSpan={cols} className="muted small b" style={{ background: 'var(--panel, #1b1b1b)', padding: '4px 8px' }}>
                       {g.team} · {g.agents.filter((x) => statusClass(x.status) === 'ok').length}/{g.agents.length} running
                     </td>
                   </tr>,
@@ -194,7 +200,7 @@ export function AgentTable({ store }: { store: FleetStore }) {
                 ])
               : orderedAgents.map((a) => renderRow(a))}
             {shown.length === 0 ? (
-              <tr><td colSpan={6} className="muted center pad">{store.connection === 'offline' ? 'manager unreachable' : viewAll ? 'no agents in any team' : 'no agents in this team'}</td></tr>
+              <tr><td colSpan={cols} className="muted center pad">{store.connection === 'offline' ? 'manager unreachable' : viewAll ? 'no agents in any team' : 'no agents in this team'}</td></tr>
             ) : null}
           </tbody>
         </table>

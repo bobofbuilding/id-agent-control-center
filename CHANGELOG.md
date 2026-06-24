@@ -8,6 +8,14 @@ Every change pushed or merged to `main` carries its version number in the commit
 subject (`vX.Y.Z: …`), stamped automatically by the `commit-msg` hook — see
 [CONTRIBUTING.md](CONTRIBUTING.md).
 
+## [0.1.123] — 2026-06-24
+- **Health: runtime/model controls + live.** The Health roster is now the shared **AgentTable**
+  — per-agent runtime/model dropdowns + lifecycle actions + per-row **Probe**, live and holistic
+  (all teams grouped in "All teams" view). Probe routes to each agent's own team.
+- **Token-usage labels clarified.** The gauge is labelled **throughput (rate) · last run**, and
+  the by-agent column now reads **"N tokens · Nq"** (totals) and **"N tok/s avg"** (rate) — so the
+  large per-run tok/s numbers aren't mistaken for totals.
+
 ## [0.1.122] — 2026-06-24
 - **Dashboard is now your lead.** The Dashboard is a chat **locked to the team lead** (no
   agent picker) beside a slim, **properly-detailed** live activity feed (recent events with
