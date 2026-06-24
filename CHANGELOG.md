@@ -8,6 +8,15 @@ Every change pushed or merged to `main` carries its version number in the commit
 subject (`vX.Y.Z: …`), stamped automatically by the `commit-msg` hook — see
 [CONTRIBUTING.md](CONTRIBUTING.md).
 
+## [0.1.105] — 2026-06-24
+- **Auto-check a brain plan's real status (the “why is everything PARTIAL?” fix).**
+  The brain README hand-marks status, so it drifts — 33 of 60 plans sat at 🔄 PARTIAL,
+  many likely stale. Each brain plan now has a **✦ check** button: an agent audits the
+  plan against the actual codebase + its knowledge, returns a verdict (DONE / PARTIAL /
+  PENDING + a one-line "what's done / what's left"), shows it inline, and **writes the
+  verdict back to the README's Status column** so the index stays fresh. The write is
+  surgical (only that row's status cell, atomic) and verified idempotent.
+
 ## [0.1.104] — 2026-06-24
 - **Plans are now organizable.** A shared toolbar over both sets (brain plans + your
   drafts): **search**, **sort** (most-recent / title / status), and **group by status**.

@@ -60,6 +60,11 @@ const UPDATE_PROMPT = (content: string, instr: string) =>
   `Here is the current plan (Markdown):\n\n${content}\n\nRevise it according to these instructions: ${instr}\n\nReturn the COMPLETE updated plan in Markdown (the full document, not just the changes).`;
 const SUGGEST_PROMPT = (content: string) =>
   `Review this implementation plan and list 3-6 concrete, high-value improvements as short imperative instructions, ONE per line, no preamble or numbering (e.g. "Add a rollback step to phase 3", "Specify the DB migration order"). Plan:\n\n${content}`;
+const AUDIT_PROMPT = (title: string, content: string) =>
+  'Audit the TRUE current status of this implementation plan. Verify against the ACTUAL codebase and your ' +
+  'knowledge of the system — use your tools to check what is really implemented; do NOT just trust the plan\'s own ' +
+  'claims. Reply with JSON ONLY (no prose, no fences): {"status":"DONE|PARTIAL|PENDING","summary":"<1-3 sentences: ' +
+  'what is actually done and what remains>"}.\n\nPLAN: ' + title + '\n\n' + content;
 
 export function Plans({ store }: { store: FleetStore }) {
   const team = store.team ?? 'default';
@@ -115,6 +120,37 @@ export function Plans({ store }: { store: FleetStore }) {
     setBrainOpen(file); setBrainContent('loading…');
     const r = await call<{ file: string; content: string } | null>('brain:plan', file).catch(() => null);
     if (aliveRef.current) setBrainContent(r?.content ?? '(could not read this plan)');
+  }
+
+  // Auto-audit a brain plan: an agent verifies its real status against the codebase,
+  // then we write the verdict back to the README's Status column.
+  const [auditing, setAuditing] = useState<string | null>(null);
+  const [audit, setAudit] = useState<Record<string, { from?: string; to?: string; summary: string }>>({});
+  async function auditPlan(p: BrainPlan) {
+    const who = genAgent;
+    if (!who) { setMsg('no agent available to audit'); return; }
+    const tok = ++genTok.current;
+    setAuditing(p.file); setMsg(`${who} is auditing “${p.title}” against the codebase…`);
+    try {
+      const got = await call<{ file: string; content: string } | null>('brain:plan', p.file).catch(() => null);
+      const reply = okContent(await call<string>('dispatch', `/ask ${who} ${qArg(AUDIT_PROMPT(p.title, got?.content ?? ''))}`));
+      if (genTok.current !== tok) return; // cancelled/superseded
+      const a = reply.indexOf('{'); const b = reply.lastIndexOf('}');
+      const obj = a >= 0 && b > a ? (() => { try { return JSON.parse(reply.slice(a, b + 1)); } catch { return null; } })() : null;
+      const status = String(obj?.status ?? '').trim();
+      const summary = String(obj?.summary ?? '').trim() || reply.slice(0, 300);
+      if (!status) { if (aliveRef.current) { setAudit((m) => ({ ...m, [p.file]: { summary } })); setMsg('audit returned no clear status'); } return; }
+      type StatusWrite = { ok: boolean; from?: string; to?: string; error?: string };
+      const res = await call<StatusWrite>('brain:setPlanStatus', p.file, status).catch((): StatusWrite => ({ ok: false, error: 'write failed' }));
+      if (!aliveRef.current) return;
+      setAudit((m) => ({ ...m, [p.file]: { from: res.from, to: res.to, summary } }));
+      setMsg(res.ok ? `“${p.title}”: ${res.from} → ${res.to} ✓` : `audited (write failed: ${res.error ?? 'n/a'})`);
+      await reloadBrain();
+    } catch (err) {
+      if (aliveRef.current && genTok.current === tok) setMsg(`audit failed: ${err instanceof Error ? err.message : String(err)}`);
+    } finally {
+      if (aliveRef.current && genTok.current === tok) setAuditing(null);
+    }
   }
 
   async function open(id: string) {
@@ -255,9 +291,18 @@ export function Plans({ store }: { store: FleetStore }) {
           <span className="b">{p.title}</span>
           {p.effort ? <span className="muted small">· {p.effort}</span> : null}
           <span className="grow" />
-          {p.notes ? <span className="muted small" style={{ maxWidth: 300, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={p.notes}>{p.notes}</span> : null}
+          {p.notes ? <span className="muted small" style={{ maxWidth: 240, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={p.notes}>{p.notes}</span> : null}
+          <button className="btn small" disabled={auditing !== null} title="Audit the real status against the codebase and update it" onClick={(e) => { e.stopPropagation(); void auditPlan(p); }}>
+            {auditing === p.file ? '…' : '✦ check'}
+          </button>
           <span className="muted">{isOpen ? '▾' : '▸'}</span>
         </div>
+        {audit[p.file] ? (
+          <div className="muted small" style={{ padding: '2px 8px 6px' }}>
+            {audit[p.file].to ? <span className="ok-text">{audit[p.file].from} → {audit[p.file].to} · </span> : null}
+            {audit[p.file].summary}
+          </div>
+        ) : null}
         {isOpen ? <pre className="plan-content">{brainContent}</pre> : null}
       </div>
     );

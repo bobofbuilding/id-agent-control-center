@@ -4,7 +4,7 @@
  * and live, so Work → Plans reflects the brain as its files change on disk. We never
  * write here (the brain owns these files).
  */
-import { existsSync, readFileSync, readdirSync } from 'node:fs';
+import { existsSync, readFileSync, readdirSync, writeFileSync, renameSync, rmSync } from 'node:fs';
 import { join, basename, resolve } from 'node:path';
 import { detectProjectsRoot } from './projects.ts';
 import { loadSettings } from '../../../idctl/src/settings/store.ts';
@@ -79,4 +79,54 @@ export function getBrainPlan(file: string, configured?: string): { file: string;
   if (!full.startsWith(resolve(dir))) return null; // belt-and-suspenders against traversal
   if (!existsSync(full)) return null;
   try { return { file: safe, content: readFileSync(full, 'utf8') }; } catch { return null; }
+}
+
+/** Map a free verdict ("done"/"DONE"/"✅ DONE"…) to the README's canonical label. */
+function normStatusLabel(s: string): string | null {
+  const t = (s || '').toLowerCase();
+  if (/done|✅/.test(t)) return '✅ DONE';
+  if (/partial|🔄|progress/.test(t)) return '🔄 PARTIAL';
+  if (/hold|🛑/.test(t)) return '🛑 ON HOLD';
+  if (/pending|⏳|todo|not started/.test(t)) return '⏳ PENDING';
+  return null;
+}
+
+/**
+ * Update ONLY the Status cell of a plan's row in the brain plans README (the table
+ * `| # | [title](file) | Status | … |`). Guarded: resolves inside the brain plans
+ * dir, only touches the matched row's status column, atomic write. Returns the
+ * previous + new label so the UI can show the change.
+ */
+export function setBrainPlanStatus(file: string, status: string, configured?: string): { ok: boolean; from?: string; to?: string; error?: string } {
+  const dir = brainPlansDir(configured);
+  if (!dir) return { ok: false, error: 'brain plans dir not found' };
+  const safe = basename(String(file || ''));
+  if (!/\.md$/i.test(safe)) return { ok: false, error: 'invalid plan file' };
+  const label = normStatusLabel(status);
+  if (!label) return { ok: false, error: `unrecognized status "${status}"` };
+  const readme = join(dir, 'README.md');
+  if (!existsSync(readme)) return { ok: false, error: 'README not found' };
+  try {
+    const lines = readFileSync(readme, 'utf8').split(/\r?\n/);
+    let from: string | undefined;
+    let changed = false;
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i];
+      if (!line.includes(`](${safe})`) && !line.includes(`](./${safe})`)) continue;
+      const parts = line.split('|'); // ['', ' # ', ' [t](f) ', ' status ', ' effort ', ' notes ', '']
+      if (parts.length < 6) continue; // not the expected table shape
+      from = parts[3].trim();
+      parts[3] = ` ${label} `;
+      lines[i] = parts.join('|');
+      changed = true;
+      break;
+    }
+    if (!changed) return { ok: false, error: 'plan row not found in README' };
+    const tmp = `${readme}.${process.pid}.tmp`;
+    writeFileSync(tmp, lines.join('\n'));
+    try { renameSync(tmp, readme); } catch (e) { try { rmSync(tmp, { force: true }); } catch { /* */ } throw e; }
+    return { ok: true, from, to: label };
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : String(e) };
+  }
 }

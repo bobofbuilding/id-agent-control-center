@@ -15,7 +15,7 @@ import { pickProjectFolder, openProjectFolder, projectReadme, projectGit, projec
 import { pickChatFiles, saveChatFiles, savePastedFile } from './chatfiles.ts';
 import { listChats, listInflightChats, getChat, saveChat, renameChat, removeChat, genTitle, unreadChatCount, markChatRead, patchChat, type ChatSession, type ChatPatch } from './chatstore.ts';
 import { listPlans, getPlan, savePlan, removePlan, type Plan } from './planstore.ts';
-import { listBrainPlans, getBrainPlan } from './brainplans.ts';
+import { listBrainPlans, getBrainPlan, setBrainPlanStatus } from './brainplans.ts';
 import { listLoops, getLoop, saveLoop, removeLoop, type Loop } from './loopstore.ts';
 import { listDreams, getDream, saveDream, removeDream, type Dream } from './dreamstore.ts';
 import { generateImage, readImage, imageModels, getImageServer, detectImageServer } from './images.ts';
@@ -260,6 +260,8 @@ async function appCall(method: string, args: unknown[]): Promise<unknown> {
       return listBrainPlans(args[0] as string | undefined);
     case 'brain:plan':
       return getBrainPlan(args[0] as string, args[1] as string | undefined);
+    case 'brain:setPlanStatus':
+      return setBrainPlanStatus(args[0] as string, args[1] as string, args[2] as string | undefined);
     // Loops: saved sequential agent→task chains (definition + last-run results).
     case 'loops:list':
       return listLoops(args[0] as string | undefined);
