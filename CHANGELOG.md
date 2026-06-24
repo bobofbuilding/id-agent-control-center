@@ -8,6 +8,16 @@ Every change pushed or merged to `main` carries its version number in the commit
 subject (`vX.Y.Z: …`), stamped automatically by the `commit-msg` hook — see
 [CONTRIBUTING.md](CONTRIBUTING.md).
 
+## [0.1.107] — 2026-06-24
+- **Tasks Kanban is now a grouped, multi-lane workflow board.** Eight lanes in three
+  groups — **Waiting Areas** (Backlog · Holding Pattern), **Main Flow** (To Do · Doing ·
+  Done), and **Adjustment Loop** (Needs Adjustment · Under Review · Rework). Drag a card
+  to any lane. Since the manager only stores todo/doing/done, the fine-grained lane is an
+  **app-side overlay** that maps onto a real status (Backlog/Holding→todo;
+  Doing/Needs-Adjustment/Under-Review/Rework→doing; Done→done) — so agents still see the
+  coarse status, and if an agent changes a task's status the card falls back to that
+  status's default lane.
+
 ## [0.1.106] — 2026-06-24
 - **Three clearly-labeled per-plan actions** on each brain plan: **✦ Audit status**
   (verify vs codebase + write back), **⚠ Find blockers** (agent lists what's blocking

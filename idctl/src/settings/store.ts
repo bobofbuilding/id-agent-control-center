@@ -326,6 +326,16 @@ export function setSkillTags(tags: Record<string, string[]>, file = resolveConfi
   return cfg;
 }
 
+/** Set (or clear, with lane='') a task's Kanban lane in the client-side overlay. */
+export function setTaskLane(ref: string, lane: string, file = resolveConfigPath()): IdctlConfig {
+  const cfg = loadSettings(file);
+  const lanes = { ...(cfg.taskLanes ?? {}) };
+  if (lane) lanes[ref] = lane; else delete lanes[ref];
+  cfg.taskLanes = lanes;
+  saveSettings(cfg, file);
+  return cfg;
+}
+
 export function setDefaultTeam(name: string, file = resolveConfigPath()): IdctlConfig {
   const cfg = loadSettings(file);
   cfg.defaultTeam = name;

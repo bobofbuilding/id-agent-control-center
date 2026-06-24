@@ -32,18 +32,27 @@ function isDone(t: Task): boolean {
 function isRoutine(t: Task): boolean {
   return /heartbeat/i.test(t.title) || /heartbeat/i.test(t.name ?? '');
 }
-// Kanban columns mirror the manager's task statuses (validStatuses = todo|doing|done).
+// The manager only stores 3 task statuses; the Kanban refines them into lanes with an
+// app-side overlay. Each lane maps onto one real status (validStatuses = todo|doing|done).
 type Col = 'todo' | 'doing' | 'done';
-const COLUMNS: { id: Col; label: string }[] = [
-  { id: 'todo', label: 'To do' },
-  { id: 'doing', label: 'Doing' },
-  { id: 'done', label: 'Done' },
-];
 function colOf(status: string): Col {
   if (/done|complete/i.test(status)) return 'done';
   if (/doing|claim|progress|start|active/i.test(status)) return 'doing';
   return 'todo';
 }
+type Lane = 'backlog' | 'holding' | 'todo' | 'doing' | 'done' | 'needs-adjustment' | 'under-review' | 'rework';
+const LANE_STATUS: Record<Lane, Col> = {
+  backlog: 'todo', holding: 'todo', todo: 'todo',
+  doing: 'doing', 'needs-adjustment': 'doing', 'under-review': 'doing', rework: 'doing',
+  done: 'done',
+};
+const DEFAULT_LANE: Record<Col, Lane> = { todo: 'todo', doing: 'doing', done: 'done' };
+// Lane groups mirror the workflow diagram: waiting → main flow → adjustment loop.
+const LANE_GROUPS: { title: string; lanes: { id: Lane; label: string }[] }[] = [
+  { title: 'Waiting Areas', lanes: [{ id: 'backlog', label: 'Backlog' }, { id: 'holding', label: 'Holding Pattern' }] },
+  { title: 'Main Flow', lanes: [{ id: 'todo', label: 'To Do' }, { id: 'doing', label: 'Doing' }, { id: 'done', label: 'Done' }] },
+  { title: 'Adjustment Loop', lanes: [{ id: 'needs-adjustment', label: 'Needs Adjustment' }, { id: 'under-review', label: 'Under Review' }, { id: 'rework', label: 'Rework' }] },
+];
 /** Relative age. createdAt comes from the manager in SECONDS; normalize to ms. */
 function ago(ts?: number): string {
   if (!ts) return '—';
@@ -89,7 +98,8 @@ function TasksPanel({ store }: { store: FleetStore }) {
   const [note, setNote] = useState('');
   const [q, setQ] = useState('');
   const [hideRoutine, setHideRoutine] = useState(true);
-  const [dragRef, setDragRef] = useState<string | null>(null); // task being dragged across columns
+  const [dragRef, setDragRef] = useState<string | null>(null); // task being dragged across lanes
+  const [laneOverlay, setLaneOverlay] = useState<Record<string, string>>({}); // ref → fine-grained lane
   const [confirmDel, setConfirmDel] = useState<string | null>(null);
   const [confirmClear, setConfirmClear] = useState(false);
   // Auto-decompose: describe an objective → lead splits it → create + farm out.
@@ -111,6 +121,7 @@ function TasksPanel({ store }: { store: FleetStore }) {
     } catch {
       setTasks([]);
     }
+    setLaneOverlay(await call<Record<string, string>>('tasks:lanes').catch(() => ({})));
   }
   useEffect(() => {
     reload();
@@ -123,10 +134,28 @@ function TasksPanel({ store }: { store: FleetStore }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [store.team]);
 
-  // Drag a card to another column → set the manager status (todo|doing|done).
-  function moveTo(t: Task, col: Col) {
-    if (colOf(t.status) === col) return;
-    void run(`/task status ${ref(t)} ${col}`, `move ${ref(t)} → ${col}`);
+  // A task's effective lane: its overlay lane if that still matches the manager status,
+  // else the default lane for the real status (so an agent's status change wins).
+  function laneOf(t: Task): Lane {
+    const ov = laneOverlay[ref(t)] as Lane | undefined;
+    if (ov && LANE_STATUS[ov] === colOf(t.status)) return ov;
+    return DEFAULT_LANE[colOf(t.status)];
+  }
+  // Drag a card to a lane → save the lane overlay + set the mapped manager status if it changed.
+  async function moveToLane(t: Task, lane: Lane) {
+    if (laneOf(t) === lane) return;
+    const targetStatus = LANE_STATUS[lane];
+    setBusy(true); setNote(`move ${ref(t)} → ${lane.replace(/-/g, ' ')}…`);
+    try {
+      await call('tasks:setLane', ref(t), lane);
+      if (colOf(t.status) !== targetStatus) await call('remote', `/task status ${ref(t)} ${targetStatus}`);
+      setNote('');
+      await reload();
+    } catch (err) {
+      setNote(`move failed: ${err instanceof Error ? err.message : String(err)}`);
+    } finally {
+      setBusy(false);
+    }
   }
 
   async function run(cmd: string, label: string) {
@@ -294,68 +323,79 @@ function TasksPanel({ store }: { store: FleetStore }) {
             <input type="checkbox" checked={hideRoutine} onChange={(e) => setHideRoutine(e.target.checked)} />
             hide routine{routineCount ? ` (${routineCount})` : ''}
           </label>
-          <span className="muted small" title="The board re-fetches every 5s; drag a card between columns to change its status">⟳ live · drag to move</span>
+          <span className="muted small" title="The board re-fetches every 5s; drag a card between lanes">⟳ live · drag between lanes</span>
           <span className="grow" />
           {note ? <span className={`small ${/failed/.test(note) ? 'status-error' : 'muted'}`}>{note}</span> : null}
         </div>
 
-        <div className="kanban" style={{ display: 'flex', gap: 10, alignItems: 'flex-start', overflowX: 'auto' }}>
-          {COLUMNS.map((col) => {
-            const items = filtered.filter((t) => colOf(t.status) === col.id);
-            const headClass = col.id === 'done' ? 'ok-text' : col.id === 'doing' ? 'warn-text' : '';
-            const isDrop = dragRef != null;
+        {(() => {
+          const card = (t: Task) => (
+            <div
+              key={ref(t)}
+              draggable={!busy}
+              onDragStart={(e) => { setDragRef(ref(t)); e.dataTransfer.setData('text/plain', ref(t)); e.dataTransfer.effectAllowed = 'move'; }}
+              onDragEnd={() => setDragRef(null)}
+              className="kanban-card"
+              style={{ border: '1px solid var(--border, #2a2a2a)', borderRadius: 6, padding: '6px 8px', background: 'var(--bg, #141414)', cursor: busy ? 'default' : 'grab' }}
+            >
+              <div className="b" style={{ fontSize: 13 }}>{t.title}</div>
+              <div className="muted small mono">{t.shortId ?? ref(t)}{isRoutine(t) ? ' · routine' : ''}</div>
+              <div className="row-actions" style={{ marginTop: 4, alignItems: 'center', gap: 6 }}>
+                {t.ownerName ? (
+                  <span className="muted small">{t.ownerName}</span>
+                ) : !isDone(t) ? (
+                  <select className="cell-select" style={{ fontSize: 11 }} defaultValue="" disabled={busy} onChange={(e) => assign(t, e.target.value)}>
+                    <option value="">assign…</option>
+                    {store.agents.map((a) => <option key={a.id} value={a.name}>{a.name}</option>)}
+                  </select>
+                ) : <span className="muted small">—</span>}
+                <span className="grow" />
+                <span className="muted small" title={t.createdAt ? new Date((t.createdAt < 1e12 ? t.createdAt * 1000 : t.createdAt)).toLocaleString() : undefined}>{ago(t.createdAt)}</span>
+                {confirmDel === ref(t) ? (
+                  <>
+                    <button className="btn icon-danger small" disabled={busy} onClick={() => void del(t)}>Delete?</button>
+                    <button className="btn small" disabled={busy} onClick={() => setConfirmDel(null)}>×</button>
+                  </>
+                ) : (
+                  <button className="btn icon-danger small" disabled={busy} title="Delete task" onClick={() => setConfirmDel(ref(t))}>✕</button>
+                )}
+              </div>
+            </div>
+          );
+          const laneCol = (lane: { id: Lane; label: string }) => {
+            const items = filtered.filter((t) => laneOf(t) === lane.id);
             return (
               <div
-                key={col.id}
+                key={lane.id}
                 className="kanban-col"
-                style={{ flex: '1 1 0', minWidth: 240, background: 'var(--panel, #1b1b1b)', border: `1px solid ${isDrop ? 'var(--accent, #6aa8ff)' : 'var(--border, #2a2a2a)'}`, borderRadius: 8, padding: 8 }}
+                style={{ flex: '1 1 0', minWidth: 172, background: 'var(--bg, #141414)', border: `1px solid ${dragRef ? 'var(--accent, #6aa8ff)' : 'var(--border, #2a2a2a)'}`, borderRadius: 6, padding: 6 }}
                 onDragOver={(e) => { if (dragRef) e.preventDefault(); }}
-                onDrop={(e) => { e.preventDefault(); const r = dragRef || e.dataTransfer.getData('text/plain'); const t = tasks.find((x) => ref(x) === r); if (t) moveTo(t, col.id); setDragRef(null); }}
+                onDrop={(e) => { e.preventDefault(); const r = dragRef || e.dataTransfer.getData('text/plain'); const t = tasks.find((x) => ref(x) === r); if (t) void moveToLane(t, lane.id); setDragRef(null); }}
               >
                 <div className="row-actions" style={{ justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
-                  <b className={headClass}>{col.label}</b>
+                  <b className="small">{lane.label}</b>
                   <span className="muted small">{items.length}</span>
                 </div>
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 6, minHeight: 48 }}>
-                  {items.map((t) => (
-                    <div
-                      key={ref(t)}
-                      draggable={!busy}
-                      onDragStart={(e) => { setDragRef(ref(t)); e.dataTransfer.setData('text/plain', ref(t)); e.dataTransfer.effectAllowed = 'move'; }}
-                      onDragEnd={() => setDragRef(null)}
-                      className="kanban-card"
-                      style={{ border: '1px solid var(--border, #2a2a2a)', borderRadius: 6, padding: '6px 8px', background: 'var(--bg, #141414)', cursor: busy ? 'default' : 'grab' }}
-                    >
-                      <div className="b" style={{ fontSize: 13 }}>{t.title}</div>
-                      <div className="muted small mono">{t.shortId ?? ref(t)}{isRoutine(t) ? ' · routine' : ''}</div>
-                      <div className="row-actions" style={{ marginTop: 4, alignItems: 'center', gap: 6 }}>
-                        {t.ownerName ? (
-                          <span className="muted small">{t.ownerName}</span>
-                        ) : col.id !== 'done' ? (
-                          <select className="cell-select" style={{ fontSize: 11 }} defaultValue="" disabled={busy} onChange={(e) => assign(t, e.target.value)}>
-                            <option value="">assign…</option>
-                            {store.agents.map((a) => <option key={a.id} value={a.name}>{a.name}</option>)}
-                          </select>
-                        ) : <span className="muted small">—</span>}
-                        <span className="grow" />
-                        <span className="muted small" title={t.createdAt ? new Date((t.createdAt < 1e12 ? t.createdAt * 1000 : t.createdAt)).toLocaleString() : undefined}>{ago(t.createdAt)}</span>
-                        {confirmDel === ref(t) ? (
-                          <>
-                            <button className="btn icon-danger small" disabled={busy} onClick={() => void del(t)}>Delete?</button>
-                            <button className="btn small" disabled={busy} onClick={() => setConfirmDel(null)}>×</button>
-                          </>
-                        ) : (
-                          <button className="btn icon-danger small" disabled={busy} title="Delete task" onClick={() => setConfirmDel(ref(t))}>✕</button>
-                        )}
-                      </div>
-                    </div>
-                  ))}
-                  {items.length === 0 ? <div className="muted small center" style={{ padding: '10px 0' }}>—</div> : null}
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 6, minHeight: 40 }}>
+                  {items.map(card)}
+                  {items.length === 0 ? <div className="muted small center" style={{ padding: '8px 0' }}>—</div> : null}
                 </div>
               </div>
             );
-          })}
-        </div>
+          };
+          return (
+            <div className="kanban-groups" style={{ display: 'flex', gap: 14, alignItems: 'flex-start', overflowX: 'auto' }}>
+              {LANE_GROUPS.map((g) => (
+                <div key={g.title} className="kanban-group" style={{ border: '1px solid var(--border, #2a2a2a)', borderRadius: 8, padding: 8, background: 'var(--panel, #1b1b1b)', flexShrink: 0 }}>
+                  <div className="muted small b" style={{ marginBottom: 6 }}>{g.title}</div>
+                  <div style={{ display: 'flex', gap: 8, alignItems: 'flex-start' }}>
+                    {g.lanes.map(laneCol)}
+                  </div>
+                </div>
+              ))}
+            </div>
+          );
+        })()}
         {tasks.length === 0 ? <p className="muted center pad">No tasks. Create one with “+ New task”, or “⚡ Assign work to fleet”.</p> : null}
       </section>
     </>

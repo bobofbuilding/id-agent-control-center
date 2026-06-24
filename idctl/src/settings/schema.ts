@@ -52,6 +52,12 @@ export interface IdctlConfig {
    * skill file. Cached so auto-categorization runs once per skill. Client-side only.
    */
   skillTags?: Record<string, string[]>;
+  /**
+   * App-side Kanban lane overlay for tasks — task ref → fine-grained lane
+   * (backlog/holding/needs-adjustment/under-review/rework/…). The manager only
+   * knows todo/doing/done; this refines the board within those. Client-side only.
+   */
+  taskLanes?: Record<string, string>;
   /** Local project tracker entries (the "Projects" page). Client-side only. */
   projects?: ProjectEntry[];
   /**
