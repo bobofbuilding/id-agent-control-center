@@ -8,6 +8,13 @@ Every change pushed or merged to `main` carries its version number in the commit
 subject (`vX.Y.Z: …`), stamped automatically by the `commit-msg` hook — see
 [CONTRIBUTING.md](CONTRIBUTING.md).
 
+## [0.1.110] — 2026-06-24
+- **Done tasks auto-archive.** Completed tasks now drop off the Kanban automatically
+  to keep the board focused on active work — nothing is deleted (they stay `done` on
+  the manager). A new **show archived (N)** toggle (and a **🗄 N archived · show**
+  affordance in the Done lane) reveals them on demand. The old "Clear completed" button
+  is now **Clear archived** — it still permanently deletes the completed ones.
+
 ## [0.1.109] — 2026-06-24
 - **Compile a plan into a chosen lane, and let the lead run it.** "⤳ Compile to tasks"
   now asks which lane (Backlog / Holding / To Do / Doing). **Doing** → the lead

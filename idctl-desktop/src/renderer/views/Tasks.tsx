@@ -106,6 +106,7 @@ function TasksPanel({ store }: { store: FleetStore }) {
   const [note, setNote] = useState('');
   const [q, setQ] = useState('');
   const [hideRoutine, setHideRoutine] = useState(true);
+  const [showArchived, setShowArchived] = useState(false); // done tasks auto-archive (hidden) until revealed
   const [dragRef, setDragRef] = useState<string | null>(null); // task being dragged across lanes
   const [laneOverlay, setLaneOverlay] = useState<Record<string, string>>({}); // ref → fine-grained lane
   const [confirmDel, setConfirmDel] = useState<string | null>(null);
@@ -283,8 +284,11 @@ function TasksPanel({ store }: { store: FleetStore }) {
   const routineCount = tasks.filter(isRoutine).length;
   const openCount = tasks.filter((t) => !isDone(t)).length;
   const doneCount = tasks.filter(isDone).length;
+  // Done tasks auto-archive: hidden from the board by default, revealed by the "show archived" toggle.
+  const archivedCount = tasks.filter((t) => isDone(t) && (!hideRoutine || !isRoutine(t))).length;
   const filtered = tasks.filter((t) => {
     if (hideRoutine && isRoutine(t)) return false;
+    if (!showArchived && isDone(t)) return false;
     const s = q.trim().toLowerCase();
     return !s || t.title.toLowerCase().includes(s) || (t.ownerName ?? '').toLowerCase().includes(s) || ref(t).toLowerCase().includes(s);
   });
@@ -297,11 +301,11 @@ function TasksPanel({ store }: { store: FleetStore }) {
         {doneCount > 0 ? (
           confirmClear ? (
             <>
-              <button className="btn icon-danger" disabled={busy} onClick={() => void clearDone()}>Clear {doneCount} done?</button>
+              <button className="btn icon-danger" disabled={busy} onClick={() => void clearDone()}>Delete {doneCount} archived?</button>
               <button className="btn" disabled={busy} onClick={() => setConfirmClear(false)}>Cancel</button>
             </>
           ) : (
-            <button className="btn" disabled={busy} onClick={() => setConfirmClear(true)}>Clear completed</button>
+            <button className="btn" disabled={busy} title="Permanently delete completed (archived) tasks from the manager" onClick={() => setConfirmClear(true)}>Clear archived</button>
           )
         ) : null}
         <button className="btn" disabled={busy} title="Ask the lead to surface task blockers that need YOUR decision → they appear as option-questions in the Inbox" onClick={() => void surfaceBlockers()}>⚠ Surface blockers</button>
@@ -362,6 +366,10 @@ function TasksPanel({ store }: { store: FleetStore }) {
             <input type="checkbox" checked={hideRoutine} onChange={(e) => setHideRoutine(e.target.checked)} />
             hide routine{routineCount ? ` (${routineCount})` : ''}
           </label>
+          <label className="muted small" style={{ display: 'inline-flex', alignItems: 'center', gap: 6, cursor: 'pointer' }} title="Completed tasks auto-archive (hidden) to keep the board clean — toggle to see them in the Done lane">
+            <input type="checkbox" checked={showArchived} onChange={(e) => setShowArchived(e.target.checked)} />
+            show archived{archivedCount ? ` (${archivedCount})` : ''}
+          </label>
           <span className="muted small" title="The board re-fetches every 5s; drag a card between lanes">⟳ live · drag between lanes</span>
           <span className="grow" />
           {note ? <span className={`small ${/failed/.test(note) ? 'status-error' : 'muted'}`}>{note}</span> : null}
@@ -417,7 +425,11 @@ function TasksPanel({ store }: { store: FleetStore }) {
                 </div>
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 6, minHeight: 40 }}>
                   {items.map(card)}
-                  {items.length === 0 ? <div className="muted small center" style={{ padding: '8px 0' }}>—</div> : null}
+                  {items.length === 0 ? (
+                    lane.id === 'done' && !showArchived && archivedCount > 0
+                      ? <button className="btn small" style={{ width: '100%' }} title="Completed tasks auto-archive to keep the board clean — click to reveal them" onClick={() => setShowArchived(true)}>🗄 {archivedCount} archived · show</button>
+                      : <div className="muted small center" style={{ padding: '8px 0' }}>—</div>
+                  ) : null}
                 </div>
               </div>
             );
