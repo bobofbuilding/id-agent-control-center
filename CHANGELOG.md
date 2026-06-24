@@ -8,6 +8,11 @@ Every change pushed or merged to `main` carries its version number in the commit
 subject (`vX.Y.Z: …`), stamped automatically by the `commit-msg` hook — see
 [CONTRIBUTING.md](CONTRIBUTING.md).
 
+## [0.1.118] — 2026-06-24
+- **Plans organizer tweaks.** Renamed the "Brain plans" section (and the `brain:` filter
+  label) to **"Plans"**, and moved **clear filters** to the far left of the filter row
+  (always shown, disabled when no filters are active).
+
 ## [0.1.117] — 2026-06-24
 - **Status bar shows active teams & agents.** The footer team selector no longer just
   lists teams by total size — each option now shows **running/total** with ● (has running

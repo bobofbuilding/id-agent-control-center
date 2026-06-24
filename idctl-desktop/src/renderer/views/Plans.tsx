@@ -555,7 +555,8 @@ export function Plans({ store }: { store: FleetStore }) {
           <button className="btn primary" disabled={busy} onClick={() => setShowNew((v) => !v)}>{showNew ? '− Cancel' : '+ Request a plan'}</button>
         </div>
         <div className="row-actions" style={{ gap: 10, flexWrap: 'wrap', alignItems: 'center', marginTop: 8 }}>
-          <span className="muted small">brain:</span>
+          <button className="btn small" disabled={!(brainStatus.size || draftStatus.size || tagFilter.size)} onClick={() => { setBrainStatus(new Set()); setDraftStatus(new Set()); setTagFilter(new Set()); }}>clear filters</button>
+          <span className="muted small">plans:</span>
           {statusChips(BRAIN_BUCKETS.map((b) => b.key), brainStatus, (id) => toggle(setBrainStatus, id), (k) => BRAIN_BUCKETS.find((b) => b.key === k)?.label ?? k, (k) => BRAIN_KEY_CLASS[k])}
           <span className="muted small" style={{ marginLeft: 6 }}>drafts:</span>
           {statusChips(STATUSES, draftStatus, (id) => toggle(setDraftStatus, id), (s) => s, (s) => STATUS_CLASS[s as PlanStatus])}
@@ -569,7 +570,6 @@ export function Plans({ store }: { store: FleetStore }) {
               </span>
             </>
           ) : null}
-          {(brainStatus.size || draftStatus.size || tagFilter.size) ? <button className="btn small" onClick={() => { setBrainStatus(new Set()); setDraftStatus(new Set()); setTagFilter(new Set()); }}>clear filters</button> : null}
         </div>
       </section>
 
@@ -595,7 +595,7 @@ export function Plans({ store }: { store: FleetStore }) {
 
       <section className="card">
         <div className="row-actions" style={{ alignItems: 'center', marginBottom: 6 }}>
-          <h3 style={{ margin: 0 }}>Brain plans</h3>
+          <h3 style={{ margin: 0 }}>Plans</h3>
           <span className="muted small">· {brainActive.length} active{brainArchived.length ? ` · ${brainArchived.length} done` : ''} · ⟳ live</span>
           <span className="grow" />
           {brain.dir
