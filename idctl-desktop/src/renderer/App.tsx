@@ -176,11 +176,14 @@ function StatusBar({ store }: { store: ReturnType<typeof useFleet> }) {
     return () => { live = false; clearInterval(iv); };
   }, [names, store.team]);
 
+  const viewAll = store.viewAll;
   const activeTeam = store.team ?? 'default';
   const cur = leads.find((l) => l.team === activeTeam);
   const curActive = cur ? cur.activeCount : store.agents.filter((a) => isLive(a.status)).length;
   const curTotal = cur ? cur.totalCount : store.agents.length;
   const liveTeams = leads.filter((l) => l.activeCount > 0).length;
+  const totalActive = leads.reduce((s, l) => s + l.activeCount, 0);
+  const totalAgents = leads.reduce((s, l) => s + l.totalCount, 0);
   // Active teams first (running agents), then idle; alphabetical within each.
   const sorted = [...store.teams].sort((a, b) => {
     const la = (leads.find((l) => l.team === a.name)?.activeCount ?? 0) > 0;
@@ -194,14 +197,19 @@ function StatusBar({ store }: { store: ReturnType<typeof useFleet> }) {
       <span className="muted">{store.managerUrl || '—'}</span>
       <span className="sep">·</span>
       <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
-        team
+        view
         <select
           className="cell-select"
           style={{ fontSize: 12, fontWeight: 700 }}
-          value={activeTeam}
-          title="Active team — assignment, task routing, and activity are scoped here. ● = has running agents, ○ = idle; counts are running/total."
-          onChange={(e) => void store.setTeam(e.target.value)}
+          value={viewAll ? '__all__' : activeTeam}
+          title="Holistic view (all teams) by default — the Dashboard & activity show the whole fleet. Pick a team to scope per-team pages. ● = running agents, ○ = idle; counts are running/total."
+          onChange={(e) => {
+            const v = e.target.value;
+            if (v === '__all__') store.setViewAll(true);
+            else { store.setViewAll(false); void store.setTeam(v); }
+          }}
         >
+          <option value="__all__">★ All teams{totalAgents ? ` ${totalActive}/${totalAgents}` : ''}</option>
           {(sorted.length ? sorted : [{ id: 'default', name: activeTeam, agentCount: store.agents.length }]).map((t) => {
             const l = leads.find((x) => x.team === t.name);
             const total = l ? l.totalCount : t.agentCount;
@@ -216,13 +224,19 @@ function StatusBar({ store }: { store: ReturnType<typeof useFleet> }) {
         </select>
       </span>
       <span className="sep">·</span>
-      <span title="running / total agents in the active team">{curActive}/{curTotal} agents active</span>
-      {liveTeams ? (
+      {viewAll ? (
+        <span title="running / total agents across every team">{totalActive}/{totalAgents} agents active · {liveTeams} team{liveTeams === 1 ? '' : 's'} running</span>
+      ) : (
         <>
-          <span className="sep">·</span>
-          <span className="muted" title="teams with at least one running agent">{liveTeams} team{liveTeams === 1 ? '' : 's'} running</span>
+          <span title="running / total agents in this team">{curActive}/{curTotal} agents active</span>
+          {liveTeams ? (
+            <>
+              <span className="sep">·</span>
+              <span className="muted" title="teams with at least one running agent">{liveTeams} team{liveTeams === 1 ? '' : 's'} running</span>
+            </>
+          ) : null}
         </>
-      ) : null}
+      )}
       {store.connection === 'offline' && store.lastError ? (
         <span className="status-error">⚠ {store.lastError}</span>
       ) : null}

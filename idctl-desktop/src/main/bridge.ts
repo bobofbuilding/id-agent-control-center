@@ -128,6 +128,20 @@ const METHODS: Record<string, (...a: any[]) => Promise<unknown>> = {
     return groups.filter((g) => g.agents.length > 0);
   },
   events: (since: number) => client.events(Number(since) || 0, { wait: 20, limit: 100 }),
+  // Holistic activity: merge every team's recent events into one stream (tagged with
+  // team), newest last. Used by the "All teams" Dashboard feed.
+  'events:multi': async (limit?: number) => {
+    const lim = Math.min(Number(limit) || 80, 120);
+    const teams = await client.teams().catch(() => []);
+    const names = teams.length ? teams.map((t) => t.name) : [cfg.team ?? 'default'];
+    const per = await Promise.all(
+      names.map(async (name) => {
+        const r = await client.withTeam(name).events(0, { wait: 0, limit: lim }).catch(() => ({ events: [], next_seq: 0 }));
+        return (r.events ?? []).map((e) => ({ ...e, team: e.team ?? name, timestamp: e.timestamp ?? e.occurred_at }));
+      }),
+    );
+    return per.flat().sort((a, b) => (a.timestamp ?? 0) - (b.timestamp ?? 0)).slice(-lim);
+  },
   // Live agent activity (tool/file steps) for the chat "what they're doing" feed.
   // Team-scoped so a same-named agent in another team can't bleed in; an optional
   // queryId narrows to a single dispatch (exact attribution when two dispatches
@@ -152,7 +166,10 @@ const METHODS: Record<string, (...a: any[]) => Promise<unknown>> = {
 
   // dispatch / lifecycle
   dispatch: (command: string) => client.dispatch(String(command)),
-  remote: (command: string, agent?: string) => client.remote(String(command), agent),
+  // team (optional, 3rd arg) routes the command to another team's fleet — used by the
+  // holistic "All teams" Dashboard so per-agent actions hit the agent's own team.
+  remote: (command: string, agent?: string, team?: string) =>
+    (team ? client.withTeam(String(team)) : client).remote(String(command), agent),
 
   // Resumable dispatch: START returns a queryId (or an inline reply for
   // manager-local commands); POLL checks that query. The renderer owns the loop
@@ -255,7 +272,8 @@ const METHODS: Record<string, (...a: any[]) => Promise<unknown>> = {
   setAgentDelegates: (id: string, delegates: string[] | null) => client.setAgentDelegates(String(id), delegates ?? null),
 
   // dashboard: switch runtime (rebuild required to apply)
-  setAgentRuntime: (id: string, runtime: string) => client.setAgentRuntime(String(id), String(runtime)),
+  setAgentRuntime: (id: string, runtime: string, team?: string) =>
+    (team ? client.withTeam(String(team)) : client).setAgentRuntime(String(id), String(runtime)),
   // reassign a local agent to another team (rebuilds it there)
   'agent:move': (id: string, team: string) => client.moveAgent(String(id), String(team)),
 

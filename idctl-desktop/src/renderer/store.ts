@@ -45,6 +45,10 @@ export function agentsLeadFirst(agents: Agent[], coordinator?: string): Agent[] 
   return [...agents].sort((a, b) => Number(b.name === lead) - Number(a.name === lead));
 }
 
+/** An agent tagged with the team it belongs to (used by the holistic all-teams view). */
+export type TeamAgent = Agent & { team?: string };
+export type TeamEvent = ManagerEvent & { team?: string };
+
 export interface FleetStore {
   connection: Connection;
   managerUrl: string;
@@ -57,10 +61,17 @@ export interface FleetStore {
   chatUnread: number;
   lastError?: string;
   lastUpdated?: number;
+  /** Holistic mode (default): the Dashboard + status bar show every team's fleet at once. */
+  viewAll: boolean;
+  /** All agents across every team (each tagged with `.team`); populated only while viewAll. */
+  allAgents: TeamAgent[];
+  /** Merged recent activity across every team; populated only while viewAll. */
+  allEvents: TeamEvent[];
   refresh: () => void;
   refreshChatUnread: () => Promise<void>;
   setTeam: (team: string) => Promise<void>;
   setCoordinator: (agent: string) => Promise<void>;
+  setViewAll: (on: boolean) => void;
 }
 
 const EVENT_BUFFER = 1000;
@@ -80,6 +91,18 @@ export function useFleet(): FleetStore {
   const [chatUnread, setChatUnread] = useState(0);
   const [lastError, setLastError] = useState<string>();
   const [lastUpdated, setLastUpdated] = useState<number>();
+  // Holistic "all teams" view — DEFAULT ON. Persisted so it sticks across launches.
+  const [viewAll, setViewAllState] = useState<boolean>(() => {
+    try { return localStorage.getItem('idctl.viewAll') !== 'false'; } catch { return true; }
+  });
+  const [allAgents, setAllAgents] = useState<TeamAgent[]>([]);
+  const [allEvents, setAllEvents] = useState<TeamEvent[]>([]);
+  const viewAllRef = useRef(viewAll);
+  useEffect(() => { viewAllRef.current = viewAll; }, [viewAll]);
+  const setViewAll = useCallback((on: boolean) => {
+    setViewAllState(on);
+    try { localStorage.setItem('idctl.viewAll', String(on)); } catch { /* no storage */ }
+  }, []);
   const [tick, setTick] = useState(0);
   const [streamEpoch, setStreamEpoch] = useState(0); // bumped ONLY on team change → never resets the event cursor on a plain refresh
   const epoch = useRef(0); // bump on team change to reset the event cursor loop
@@ -190,5 +213,27 @@ export function useFleet(): FleetStore {
     // restart this loop, or it would reset the cursor to 0 and replay history.
   }, [streamEpoch]);
 
-  return { connection, managerUrl, team, coordinator, agents, teams, events, inbox, chatUnread, lastError, lastUpdated, refresh, refreshChatUnread, setTeam, setCoordinator };
+  // Holistic aggregate: while viewAll, fetch every team's agents + merge their recent
+  // events into one fleet-wide stream (each tagged with its team). Cleared when off.
+  useEffect(() => {
+    if (!viewAll) { setAllAgents([]); setAllEvents([]); return; }
+    let alive = true;
+    let timer: ReturnType<typeof setTimeout>;
+    const load = async () => {
+      try {
+        const [groups, ev] = await Promise.all([
+          call<{ team: string; agents: Agent[] }[]>('agents:allTeams').catch(() => []),
+          call<TeamEvent[]>('events:multi', 80).catch(() => []),
+        ]);
+        if (!alive) return;
+        setAllAgents(groups.flatMap((g) => g.agents.map((a) => ({ ...a, team: g.team }))));
+        setAllEvents(ev);
+      } catch { /* keep last */ }
+      finally { if (alive) timer = setTimeout(load, 3000); }
+    };
+    void load();
+    return () => { alive = false; clearTimeout(timer); };
+  }, [viewAll, tick]);
+
+  return { connection, managerUrl, team, coordinator, agents, teams, events, inbox, chatUnread, lastError, lastUpdated, viewAll, allAgents, allEvents, refresh, refreshChatUnread, setTeam, setCoordinator, setViewAll };
 }

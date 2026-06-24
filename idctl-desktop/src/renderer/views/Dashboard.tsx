@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { call, agentsLeadFirst, type FleetStore } from '../store.ts';
+import { call, agentsLeadFirst, type FleetStore, type TeamAgent, type TeamEvent } from '../store.ts';
 import type { Agent } from '../../../../idctl/src/api/types.ts';
 import { RUNTIMES, offerableRuntimes } from '../../../../idctl/src/settings/runtimeCatalog.ts';
 
@@ -124,13 +124,32 @@ export function Dashboard({ store }: { store: FleetStore }) {
   const [catalog, setCatalog] = useState<Record<string, string[]>>({});
   const [providers, setProviders] = useState<ProviderRow[]>([]);
   const modelRefs = useRef<Record<string, HTMLSelectElement | null>>({});
+  const viewAll = store.viewAll;
   // Coordinator/lead first, so the team's lead sits at the top of the table.
   const orderedAgents = agentsLeadFirst(store.agents, store.coordinator);
-  const sel: Agent | undefined = orderedAgents.find((a) => a.id === selected) ?? orderedAgents[0];
-  // Resolve agent ids → names for the activity feed (so it reads "coder replied",
-  // not "agent_178…"). Recomputed each render; the fleet is small.
-  const agentById = new Map(store.agents.map((a) => [a.id, a.name] as const));
+  // The agents shown: every team (holistic, default) or just the active team.
+  const shown: TeamAgent[] = viewAll ? store.allAgents : orderedAgents;
+  const sel: TeamAgent | undefined = shown.find((a) => a.id === selected) ?? shown[0];
+  // In holistic mode each action must hit the agent's OWN team.
+  const teamOf = (a: TeamAgent): string | undefined => (viewAll ? a.team : undefined);
+  // Group by team for the holistic view (active teams first, then alphabetical).
+  const groups = viewAll
+    ? Object.values(
+        store.allAgents.reduce<Record<string, { team: string; agents: TeamAgent[] }>>((acc, a) => {
+          const t = a.team ?? '—';
+          (acc[t] ??= { team: t, agents: [] }).agents.push(a);
+          return acc;
+        }, {}),
+      ).sort((x, y) => {
+        const xa = x.agents.some((a) => statusClass(a.status) === 'ok');
+        const ya = y.agents.some((a) => statusClass(a.status) === 'ok');
+        return xa !== ya ? (xa ? -1 : 1) : x.team.localeCompare(y.team);
+      })
+    : [];
+  // Resolve agent ids → names for the activity feed across whatever set is shown.
+  const agentById = new Map(shown.map((a) => [a.id, a.name] as const));
   const resolveAgent = (id: string) => agentLabel(id, agentById);
+  const feedEvents: TeamEvent[] = viewAll ? store.allEvents : store.events;
 
   // Per-runtime model catalog (synced providers + curated). Refreshed when the
   // fleet snapshot updates so provider syncs from Settings flow through.
@@ -158,10 +177,10 @@ export function Dashboard({ store }: { store: FleetStore }) {
     }
   }
 
-  async function run(label: string, cmd: string) {
+  async function run(label: string, cmd: string, team?: string) {
     setBusy(label);
     try {
-      await call('remote', cmd);
+      await call('remote', cmd, undefined, team);
       store.refresh();
     } catch (err) {
       window.alert(`${label} failed: ${err instanceof Error ? err.message : String(err)}`);
@@ -169,12 +188,13 @@ export function Dashboard({ store }: { store: FleetStore }) {
       setBusy(null);
     }
   }
-  async function setModel(a: Agent, model: string) {
+  async function setModel(a: TeamAgent, model: string) {
     if (!model || model === a.model) return;
+    const team = teamOf(a);
     setBusy(`model ${a.name}`);
     try {
-      await call('remote', `/model ${a.name} ${model}`);
-      await call('remote', `/agent ${a.name} rebuild`); // apply immediately — no confirm
+      await call('remote', `/model ${a.name} ${model}`, undefined, team);
+      await call('remote', `/agent ${a.name} rebuild`, undefined, team); // apply immediately — no confirm
       store.refresh();
       setBusy(null);
     } catch (err) {
@@ -182,34 +202,36 @@ export function Dashboard({ store }: { store: FleetStore }) {
       setTimeout(() => setBusy(null), 4000);
     }
   }
-  function action(a: Agent, act: string) {
+  function action(a: TeamAgent, act: string) {
     if (!act) return;
+    const team = teamOf(a);
     if (act === 'Delete') {
-      if (window.confirm(`Delete agent "${a.name}"? Working files are left in place.`)) void run(`delete ${a.name}`, `/delete ${a.name}`);
+      if (window.confirm(`Delete agent "${a.name}"? Working files are left in place.`)) void run(`delete ${a.name}`, `/delete ${a.name}`, team);
       return;
     }
-    void run(`${act} ${a.name}`, `/agent ${a.name} ${act.toLowerCase()}`);
+    void run(`${act} ${a.name}`, `/agent ${a.name} ${act.toLowerCase()}`, team);
   }
   // Switching runtime: set it, pick a model the new runtime can actually serve,
   // drop the model dropdown open for fine-tuning, and rebuild — all without any
   // confirmation/alert popup.
-  async function setRuntime(a: Agent, runtime: string) {
+  async function setRuntime(a: TeamAgent, runtime: string) {
     if (!runtime || runtime === a.runtime) return;
+    const team = teamOf(a);
     setBusy(`runtime ${a.name}`);
     try {
-      await call('setAgentRuntime', a.id, runtime);
+      await call('setAgentRuntime', a.id, runtime, team);
       // A model from the OLD runtime usually won't run on the new one → default
       // to the first model the new runtime offers when the current one mismatches.
       const models = catalog[runtime] ?? [];
       const model = !a.model || runtimeModelMismatch(runtime, a.model) ? models[0] ?? a.model : a.model;
-      if (model && model !== a.model) await call('remote', `/model ${a.name} ${model}`);
+      if (model && model !== a.model) await call('remote', `/model ${a.name} ${model}`, undefined, team);
       store.refresh();
       // Auto-open the model dropdown so the pick is one click away. Native
       // showPicker() needs recent user activation — the change event provides it,
       // and we fire well inside the window. Best-effort; harmless if unavailable.
       setTimeout(() => { try { modelRefs.current[a.id]?.showPicker?.(); } catch { /* no activation */ } }, 250);
       // Rebuild to apply the new runtime + model — no confirmation.
-      await call('remote', `/agent ${a.name} rebuild`);
+      await call('remote', `/agent ${a.name} rebuild`, undefined, team);
       store.refresh();
       setBusy(null);
     } catch (err) {
@@ -218,13 +240,60 @@ export function Dashboard({ store }: { store: FleetStore }) {
     }
   }
 
+  // One agent row — shared by the per-team table and the grouped all-teams table.
+  const renderRow = (a: TeamAgent) => {
+    const runtimeModels = catalog[a.runtime ?? ''] ?? [];
+    const modelOpts = Array.from(new Set([a.model, ...runtimeModels].filter(Boolean))) as string[];
+    const isLocal = (a.type ?? '') === 'claude' || RUNTIMES.includes(a.runtime ?? '');
+    const runtimeOpts = Array.from(new Set([a.runtime, ...offerableRuntimes(providers, a.runtime ?? undefined)].filter(Boolean))) as string[];
+    const mismatch = runtimeModelMismatch(a.runtime, a.model);
+    return (
+      <tr key={`${a.team ?? ''}-${a.id}`} className={sel?.id === a.id ? 'sel' : ''} onClick={() => setSelected(a.id)}>
+        <td className="b">{a.name}</td>
+        <td><span className={`dot ${statusClass(a.status)}`} /> {a.status}</td>
+        <td onClick={(e) => e.stopPropagation()}>
+          {isLocal ? (
+            <select className="cell-select" value={a.runtime ?? ''} onChange={(e) => void setRuntime(a, e.target.value)}>
+              {runtimeOpts.map((r) => <option key={r} value={r}>{runtimeLabel(r)}</option>)}
+            </select>
+          ) : (
+            <span className="muted" title="remote agents have no switchable runtime">{short(a.runtime ?? a.type)}</span>
+          )}
+        </td>
+        <td onClick={(e) => e.stopPropagation()}>
+          <select
+            ref={(el) => { modelRefs.current[a.id] = el; }}
+            className={`cell-select${mismatch ? ' mismatch' : ''}`}
+            value={a.model ?? ''}
+            onChange={(e) => void setModel(a, e.target.value)}
+            title={mismatch ?? undefined}
+          >
+            {modelOpts.map((m) => <option key={m} value={m}>{short(m)}</option>)}
+          </select>
+          {mismatch ? <span className="warn-text" title={mismatch} style={{ marginLeft: 4, cursor: 'help' }}>⚠</span> : null}
+        </td>
+        <td className="muted" title="port is assigned by the manager">{a.port || '—'}</td>
+        <td onClick={(e) => e.stopPropagation()}>
+          <select className="cell-select" value="" onChange={(e) => { action(a, e.target.value); e.target.value = ''; }}>
+            <option value="">⋯</option>
+            <option>Start</option>
+            <option>Stop</option>
+            <option>Rebuild</option>
+            <option>Probe</option>
+            <option>Delete</option>
+          </select>
+        </td>
+      </tr>
+    );
+  };
+
   return (
     <div className="view">
       <header className="view-head">
         <h1>Dashboard</h1>
         <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
           <span className="muted">
-            {store.agents.length} agents · {store.team ?? 'default'}
+            {shown.length} agents · {viewAll ? 'all teams' : (store.team ?? 'default')}
             {busy ? ` · ${busy}…` : ''}
           </span>
           <button className="btn" disabled={!!busy} onClick={() => void probeRuntimes()} title="Probe each runtime's backing inference provider for its available models">
@@ -247,75 +316,20 @@ export function Dashboard({ store }: { store: FleetStore }) {
               </tr>
             </thead>
             <tbody>
-              {orderedAgents.map((a) => {
-                // Only models available for this agent's runtime, plus its current one.
-                const runtimeModels = catalog[a.runtime ?? ''] ?? [];
-                const modelOpts = Array.from(new Set([a.model, ...runtimeModels].filter(Boolean))) as string[];
-                const isLocal = (a.type ?? '') === 'claude' || RUNTIMES.includes(a.runtime ?? '');
-                const runtimeOpts = Array.from(new Set([a.runtime, ...offerableRuntimes(providers, a.runtime ?? undefined)].filter(Boolean))) as string[];
-                const mismatch = runtimeModelMismatch(a.runtime, a.model);
-                return (
-                  <tr key={a.id} className={sel?.id === a.id ? 'sel' : ''} onClick={() => setSelected(a.id)}>
-                    <td className="b">{a.name}</td>
-                    <td>
-                      <span className={`dot ${statusClass(a.status)}`} /> {a.status}
-                    </td>
-                    <td onClick={(e) => e.stopPropagation()}>
-                      {isLocal ? (
-                        <select className="cell-select" value={a.runtime ?? ''} onChange={(e) => void setRuntime(a, e.target.value)}>
-                          {runtimeOpts.map((r) => (
-                            <option key={r} value={r}>
-                              {runtimeLabel(r)}
-                            </option>
-                          ))}
-                        </select>
-                      ) : (
-                        <span className="muted" title="remote agents have no switchable runtime">{short(a.runtime ?? a.type)}</span>
-                      )}
-                    </td>
-                    <td onClick={(e) => e.stopPropagation()}>
-                      <select
-                        ref={(el) => { modelRefs.current[a.id] = el; }}
-                        className={`cell-select${mismatch ? ' mismatch' : ''}`}
-                        value={a.model ?? ''}
-                        onChange={(e) => void setModel(a, e.target.value)}
-                        title={mismatch ?? undefined}
-                      >
-                        {modelOpts.map((m) => (
-                          <option key={m} value={m}>
-                            {short(m)}
-                          </option>
-                        ))}
-                      </select>
-                      {mismatch ? <span className="warn-text" title={mismatch} style={{ marginLeft: 4, cursor: 'help' }}>⚠</span> : null}
-                    </td>
-                    <td className="muted" title="port is assigned by the manager">
-                      {a.port || '—'}
-                    </td>
-                    <td onClick={(e) => e.stopPropagation()}>
-                      <select
-                        className="cell-select"
-                        value=""
-                        onChange={(e) => {
-                          action(a, e.target.value);
-                          e.target.value = '';
-                        }}
-                      >
-                        <option value="">⋯</option>
-                        <option>Start</option>
-                        <option>Stop</option>
-                        <option>Rebuild</option>
-                        <option>Probe</option>
-                        <option>Delete</option>
-                      </select>
-                    </td>
-                  </tr>
-                );
-              })}
-              {store.agents.length === 0 ? (
+              {viewAll
+                ? groups.flatMap((g) => [
+                    <tr key={`hdr-${g.team}`} className="group-row">
+                      <td colSpan={6} className="muted small b" style={{ background: 'var(--panel, #1b1b1b)', padding: '4px 8px' }}>
+                        {g.team} · {g.agents.filter((x) => statusClass(x.status) === 'ok').length}/{g.agents.length} running
+                      </td>
+                    </tr>,
+                    ...agentsLeadFirst(g.agents).map((a) => renderRow(a as TeamAgent)),
+                  ])
+                : orderedAgents.map((a) => renderRow(a))}
+              {shown.length === 0 ? (
                 <tr>
                   <td colSpan={6} className="muted center pad">
-                    {store.connection === 'offline' ? 'manager unreachable' : 'no agents in this team'}
+                    {store.connection === 'offline' ? 'manager unreachable' : viewAll ? 'no agents in any team' : 'no agents in this team'}
                   </td>
                 </tr>
               ) : null}
@@ -324,16 +338,16 @@ export function Dashboard({ store }: { store: FleetStore }) {
         </section>
 
         <aside className="card feed grow">
-          <h3>Activity <span className="muted small">· all live fleet events{store.events.length ? ` (${store.events.length})` : ''}</span></h3>
+          <h3>Activity <span className="muted small">· {viewAll ? 'all teams' : 'this team'}{feedEvents.length ? ` (${feedEvents.length})` : ''}</span></h3>
           <div className="feed-list">
-            {[...store.events].reverse().map((e) => (
-              <div className="feed-row" key={e.seq} title={e.topic}>
+            {[...feedEvents].reverse().map((e) => (
+              <div className="feed-row" key={`${e.team ?? ''}-${e.seq}`} title={e.topic}>
                 <span className={`topic ${topicClass(e.topic)}`}>{e.topic.split(':')[0]}</span>
-                <span className="desc">{describe(e, resolveAgent)}</span>
+                <span className="desc">{viewAll && e.team ? <span className="muted small">[{e.team}] </span> : null}{describe(e, resolveAgent)}</span>
                 {e.timestamp ? <span className="muted t">{ago(e.timestamp)}</span> : null}
               </div>
             ))}
-            {store.events.length === 0 ? <div className="muted">waiting for events…</div> : null}
+            {feedEvents.length === 0 ? <div className="muted">waiting for events…</div> : null}
           </div>
         </aside>
       </div>
@@ -346,6 +360,7 @@ export function Dashboard({ store }: { store: FleetStore }) {
             <b>
               <span className={`dot ${statusClass(sel.status)}`} /> {sel.status}
             </b>
+            {viewAll ? (<><span>team</span><b>{sel.team ?? '—'}</b></>) : null}
             <span>runtime</span>
             <b>{sel.runtime ?? sel.type ?? '—'}</b>
             <span>model</span>

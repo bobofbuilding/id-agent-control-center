@@ -22,10 +22,12 @@ and drives, it never owns the runtime.
 - **Renderer** (`src/renderer/*`) is the React UI. `store.ts` (`useFleet`) polls the manager every
   ~3s (agents/teams/inbox snapshot) plus a long-poll event cursor, exposing `store.{agents, teams,
   team, coordinator, events, inbox, connection, …}`.
-- **Team scoping (important):** the app is scoped to **one active team at a time**
-  (`store.team`). Agent lists, the task board, assignment, routing, and the activity feed all
-  reflect the active team. Switch teams from the status-bar selector (§2.2). Counts shown are
-  **running / total** agents.
+- **Holistic by default (v0.1.119+):** the app opens in an **All teams** view — the Dashboard
+  and activity feed show every team's fleet at once (`store.viewAll`, default on, persisted).
+  **Action-centric pages** (Work, Chat, HR Manager, Capabilities, Computer Use) still operate on
+  one **active team** (`store.team`); pick a specific team from the status-bar selector (§2.2) to
+  scope them. In All-teams mode, per-agent Dashboard actions route to each agent's **own** team.
+  Counts shown are **running / total** agents.
 
 ---
 
@@ -38,13 +40,14 @@ Eleven destinations: **Dashboard** ▦, **Chat** ✦, **Inbox** ✉ (badge = pen
 badge. The last-open view is remembered across launches (and self-update relaunches).
 
 ### 2.2 Status bar (footer)
-`● <connection> · <manager URL> · team [<selector>] · <N/M> agents active · <K> teams running`.
+`● <connection> · <manager URL> · view [<selector>] · <N/M> agents active · <K> teams running`.
 - **Connection pill**: online / offline / connecting.
-- **Team selector**: every team, **active teams first** (those with ≥1 running agent), then idle.
-  Each option reads `● name running/total` (active) or `○ name running/total · idle`. Switching
-  re-scopes the whole app.
-- **Active counts**: running/total agents in the current team, and how many teams have a running
-  agent. (Running counts refresh every 20s via `work:teamLeads`.)
+- **View selector**: defaults to **★ All teams** (holistic). Below it, every team — **active teams
+  first** (≥1 running agent), then idle — each `● name running/total` or `○ name running/total · idle`.
+  Choosing **All teams** sets the holistic view; choosing a team scopes the action-centric pages to
+  it. (Running counts refresh every 20s via `work:teamLeads`.)
+- **Counts**: in All-teams mode, running/total agents across the whole fleet + how many teams are
+  running; in a single team, that team's running/total.
 
 ### 2.3 Toasts (bottom-right, global)
 Long-running dispatches (compile & dispatch, fan-out, assign-to-fleet, triage) raise a toast that
@@ -60,14 +63,16 @@ release is staged, the sidebar shows **⬆ vX → vY · Restart & update**.
 
 ## 3. Dashboard (nav: "Dashboard" ▦, route: `dashboard`)
 
-**Purpose:** The operator's home — a live, single-screen surface listing every agent in the active
-team with inline runtime/model switching and lifecycle actions, beside a real-time activity feed
-and a detail panel for the selected agent.
+**Purpose:** The operator's home — a live surface over the fleet with inline runtime/model switching
+and lifecycle actions, beside a real-time activity feed and a detail panel. **Holistic by default**:
+shows every team's agents grouped by team (each group headed `team · N/M running`), or just the
+active team when one is selected in the status bar. Per-agent actions route to that agent's own team.
 
 **What you can do**
-- Header summary: agent count, active team, and an inline busy/status message during operations.
+- Header summary: agent count, "all teams" (or the active team), and an inline busy message.
 - **Probe runtimes** (header) — re-query each runtime's provider to refresh model lists.
-- **Agent grid** (lead pinned first): name, status (colored dot), runtime, model, port, actions.
+- **Agent grid**, grouped by team in All-teams mode (lead pinned first within each group): name,
+  status (colored dot), runtime, model, port, actions.
   Click a row to select it (populates the detail panel).
 - **Runtime dropdown** (local agents only): switch runtime → auto-picks a compatible model →
   rebuilds. Remote agents show a static runtime label.

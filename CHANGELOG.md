@@ -8,6 +8,16 @@ Every change pushed or merged to `main` carries its version number in the commit
 subject (`vX.Y.Z: …`), stamped automatically by the `commit-msg` hook — see
 [CONTRIBUTING.md](CONTRIBUTING.md).
 
+## [0.1.119] — 2026-06-24
+- **Holistic "All teams" view by default.** The app now opens showing the **whole fleet**
+  instead of a single team. The status-bar selector defaults to **★ All teams**; the
+  **Dashboard** lists every team's agents grouped by team (each group headed
+  `team · N/M running`), and the **activity feed** merges all teams' events (tagged by team).
+  Per-agent actions in this mode route to each agent's own team. Pick a specific team from the
+  selector to scope the action-centric pages (Work, Chat, HR Manager, Capabilities, Computer Use)
+  as before; the choice is remembered across launches. Status-bar counts now read fleet-wide
+  ("N/M agents active · K teams running") in All-teams mode.
+
 ## [0.1.118] — 2026-06-24
 - **Plans organizer tweaks.** Renamed the "Brain plans" section (and the `brain:` filter
   label) to **"Plans"**, and moved **clear filters** to the far left of the filter row
