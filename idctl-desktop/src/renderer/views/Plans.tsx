@@ -2,12 +2,13 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { call, resolveCoordinator, type FleetStore } from '../store.ts';
 
 /**
- * Plans tab (under Work). Two sets:
- *  - Brain plans — the LIVE, read-only plan set the brain maintains on disk.
- *  - Your drafts — local AI-generated plans you can edit, version (with a changelog),
- *    organize (search / status filter / sort / tags / group), and revise with AI.
- * Both sets share one organizer toolbar (search / sort / group); each keeps its own
- * status filter (and drafts add tag filters).
+ * Plans tab (under Work). Two sets, one shared organizer (search / sort / group /
+ * status + tag filters / archive) at the top:
+ *  - Brain plans — the LIVE plan set the brain maintains on disk. Read-only content,
+ *    but per-plan actions can AUDIT the real status (and write it back), find BLOCKERS,
+ *    COMPILE the plan into tasks, or set it PENDING.
+ *  - Your drafts — local AI-generated plans you can edit, version, organize, tag, and
+ *    revise with AI. Marking a draft "done" auto-archives it.
  */
 
 type PlanStatus = 'draft' | 'active' | 'done' | 'archived';
@@ -18,20 +19,23 @@ interface Plan {
   tags?: string[]; createdAt: number; updatedAt: number;
 }
 type PlanSummary = { id: string; title: string; status: PlanStatus; version: number; agent?: string; team: string; updatedAt: number; tags?: string[] };
-
-// Brain plans: the LIVE, read-only plan set the brain maintains on disk.
 type BrainPlan = { num?: string; title: string; file: string; status?: string; effort?: string; notes?: string };
 type BrainPlansResp = { dir: string | null; plans: BrainPlan[] };
-
 type SortMode = 'recent' | 'title' | 'status';
+
+// Auto-decompose IPC shapes (mirror main/work.ts) for "compile into tasks".
+type SubTask = { title: string; description: string; agent: string; dependsOn: number[] };
+type DecomposeResult = { ok: boolean; subtasks: SubTask[]; raw: string; error?: string };
+type CreatedTask = { ok: boolean };
+type CreatePlanResult = { created: CreatedTask[]; dispatched: number; deferred: number };
 
 const STATUSES: PlanStatus[] = ['draft', 'active', 'done', 'archived'];
 const STATUS_CLASS: Record<PlanStatus, string> = { draft: 'st-paused', active: 'st-active', done: 'st-done', archived: 'st-blocked' };
-
 const BRAIN_BUCKETS: { key: string; label: string }[] = [
   { key: 'done', label: 'Done' }, { key: 'partial', label: 'Partial' },
   { key: 'pending', label: 'Pending' }, { key: 'hold', label: 'On hold' },
 ];
+const BRAIN_KEY_CLASS: Record<string, string> = { done: 'st-done', partial: 'st-active', pending: 'st-paused', hold: 'st-blocked' };
 function brainStatusKey(s?: string): string {
   const t = (s || '').toLowerCase();
   if (/done|✅/.test(t)) return 'done';
@@ -39,7 +43,6 @@ function brainStatusKey(s?: string): string {
   if (/hold|🛑|block/.test(t)) return 'hold';
   return 'pending';
 }
-const BRAIN_KEY_CLASS: Record<string, string> = { done: 'st-done', partial: 'st-active', pending: 'st-paused', hold: 'st-blocked' };
 
 function qArg(s: string): string { return `"${s.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`; }
 function clip(s: string, n: number): string { const t = s.replace(/\s+/g, ' ').trim(); return t.length > n ? t.slice(0, n) + '…' : t; }
@@ -59,31 +62,30 @@ const GEN_PROMPT = (req: string) =>
 const UPDATE_PROMPT = (content: string, instr: string) =>
   `Here is the current plan (Markdown):\n\n${content}\n\nRevise it according to these instructions: ${instr}\n\nReturn the COMPLETE updated plan in Markdown (the full document, not just the changes).`;
 const SUGGEST_PROMPT = (content: string) =>
-  `Review this implementation plan and list 3-6 concrete, high-value improvements as short imperative instructions, ONE per line, no preamble or numbering (e.g. "Add a rollback step to phase 3", "Specify the DB migration order"). Plan:\n\n${content}`;
+  `Review this implementation plan and list 3-6 concrete, high-value improvements as short imperative instructions, ONE per line, no preamble or numbering (e.g. "Add a rollback step to phase 3"). Plan:\n\n${content}`;
 const AUDIT_PROMPT = (title: string, content: string) =>
-  'Audit the TRUE current status of this implementation plan. Verify against the ACTUAL codebase and your ' +
-  'knowledge of the system — use your tools to check what is really implemented; do NOT just trust the plan\'s own ' +
-  'claims. Reply with JSON ONLY (no prose, no fences): {"status":"DONE|PARTIAL|PENDING","summary":"<1-3 sentences: ' +
-  'what is actually done and what remains>"}.\n\nPLAN: ' + title + '\n\n' + content;
+  'Audit the TRUE current status of this implementation plan. Verify against the ACTUAL codebase and your knowledge — use your tools to check what is really implemented; do NOT just trust the plan\'s own claims. Reply with JSON ONLY (no prose, no fences): {"status":"DONE|PARTIAL|PENDING","summary":"<1-3 sentences: what is actually done and what remains>"}.\n\nPLAN: ' + title + '\n\n' + content;
+const BLOCKERS_PROMPT = (title: string, content: string) =>
+  'Identify the concrete BLOCKERS preventing this plan from progressing or completing — missing prerequisites, unmet dependencies, decisions needed, or risks that would stop it. Verify against the actual codebase where relevant. Reply with a SHORT markdown bullet list (3-6 bullets max); if there are none, reply exactly "No blockers found." PLAN: ' + title + '\n\n' + content;
 
 export function Plans({ store }: { store: FleetStore }) {
   const team = store.team ?? 'default';
   const coordinator = resolveCoordinator(store.agents, store.coordinator) ?? store.agents[0]?.name ?? '';
   const [plans, setPlans] = useState<PlanSummary[]>([]);
-  const [detail, setDetail] = useState<Plan | null>(null); // the expanded plan
+  const [detail, setDetail] = useState<Plan | null>(null);
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState('');
   const [showNew, setShowNew] = useState(false);
   const [req, setReq] = useState('');
   const [agent, setAgent] = useState('');
   const [updInstr, setUpdInstr] = useState('');
-  const [updAgent, setUpdAgent] = useState(''); // agent chosen to revise / suggest
-  const [tagInput, setTagInput] = useState(''); // detail tags editor buffer
+  const [updAgent, setUpdAgent] = useState('');
+  const [tagInput, setTagInput] = useState('');
   const [showLog, setShowLog] = useState(false);
-  const [viewVer, setViewVer] = useState<number | null>(null); // a past revision being viewed
+  const [viewVer, setViewVer] = useState<number | null>(null);
   const [confirmDel, setConfirmDel] = useState(false);
-  const aliveRef = useRef(true);          // skip UI updates after unmount
-  const genTok = useRef(0);               // bump to abandon an in-flight dispatch
+  const aliveRef = useRef(true);
+  const genTok = useRef(0);
   useEffect(() => () => { aliveRef.current = false; }, []);
   function cancel() { genTok.current++; setBusy(false); setMsg('cancelled'); }
 
@@ -91,10 +93,11 @@ export function Plans({ store }: { store: FleetStore }) {
   const okContent = (s: string) => { const t = (s || '').trim(); return t && t !== '(empty reply)' && t !== '(no reply)' ? t : ''; };
   const names = useMemo(() => store.agents.map((a) => a.name), [store.agents]);
 
-  // ---- organizer (shared) ----
+  // ---- organizer (shared, top) ----
   const [q, setQ] = useState('');
   const [sort, setSort] = useState<SortMode>('recent');
   const [groupBy, setGroupBy] = useState(false);
+  const [showArchived, setShowArchived] = useState(false);
   const [draftStatus, setDraftStatus] = useState<Set<string>>(new Set());
   const [tagFilter, setTagFilter] = useState<Set<string>>(new Set());
   const [brainStatus, setBrainStatus] = useState<Set<string>>(new Set());
@@ -104,14 +107,14 @@ export function Plans({ store }: { store: FleetStore }) {
   async function reload() { setPlans(await call<PlanSummary[]>('plans:list', team).catch(() => [])); }
   useEffect(() => { void reload(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [team, store.lastUpdated]);
 
-  // Brain plans: live, self-updating from <projectsRoot>/brain/plans (read-only).
+  // ---- brain plans (live, read-only content) ----
   const [brain, setBrain] = useState<BrainPlansResp>({ dir: null, plans: [] });
   const [brainOpen, setBrainOpen] = useState<string | null>(null);
   const [brainContent, setBrainContent] = useState('');
   async function reloadBrain() { setBrain(await call<BrainPlansResp>('brain:plans').catch(() => ({ dir: null, plans: [] }))); }
   useEffect(() => {
     void reloadBrain();
-    const id = setInterval(() => { void reloadBrain(); }, 10000); // self-update as the brain edits its files
+    const id = setInterval(() => { void reloadBrain(); }, 10000);
     return () => clearInterval(id);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [team, store.lastUpdated]);
@@ -122,46 +125,82 @@ export function Plans({ store }: { store: FleetStore }) {
     if (aliveRef.current) setBrainContent(r?.content ?? '(could not read this plan)');
   }
 
-  // Auto-audit a brain plan: an agent verifies its real status against the codebase,
-  // then we write the verdict back to the README's Status column.
-  const [auditing, setAuditing] = useState<string | null>(null);
+  // ---- per-brain-plan actions ----
+  const [busyFile, setBusyFile] = useState<string | null>(null); // one brain-plan action at a time
   const [audit, setAudit] = useState<Record<string, { from?: string; to?: string; summary: string }>>({});
+  const [blockers, setBlockers] = useState<Record<string, string>>({});
+  type StatusWrite = { ok: boolean; from?: string; to?: string; error?: string };
+
   async function auditPlan(p: BrainPlan) {
     const who = genAgent;
     if (!who) { setMsg('no agent available to audit'); return; }
-    const tok = ++genTok.current;
-    setAuditing(p.file); setMsg(`${who} is auditing “${p.title}” against the codebase…`);
+    setBusyFile(p.file); setMsg(`${who} is auditing “${p.title}” against the codebase…`);
     try {
       const got = await call<{ file: string; content: string } | null>('brain:plan', p.file).catch(() => null);
       const reply = okContent(await call<string>('dispatch', `/ask ${who} ${qArg(AUDIT_PROMPT(p.title, got?.content ?? ''))}`));
-      if (genTok.current !== tok) return; // cancelled/superseded
       const a = reply.indexOf('{'); const b = reply.lastIndexOf('}');
       const obj = a >= 0 && b > a ? (() => { try { return JSON.parse(reply.slice(a, b + 1)); } catch { return null; } })() : null;
       const status = String(obj?.status ?? '').trim();
       const summary = String(obj?.summary ?? '').trim() || reply.slice(0, 300);
       if (!status) { if (aliveRef.current) { setAudit((m) => ({ ...m, [p.file]: { summary } })); setMsg('audit returned no clear status'); } return; }
-      type StatusWrite = { ok: boolean; from?: string; to?: string; error?: string };
       const res = await call<StatusWrite>('brain:setPlanStatus', p.file, status).catch((): StatusWrite => ({ ok: false, error: 'write failed' }));
       if (!aliveRef.current) return;
       setAudit((m) => ({ ...m, [p.file]: { from: res.from, to: res.to, summary } }));
       setMsg(res.ok ? `“${p.title}”: ${res.from} → ${res.to} ✓` : `audited (write failed: ${res.error ?? 'n/a'})`);
       await reloadBrain();
     } catch (err) {
-      if (aliveRef.current && genTok.current === tok) setMsg(`audit failed: ${err instanceof Error ? err.message : String(err)}`);
-    } finally {
-      if (aliveRef.current && genTok.current === tok) setAuditing(null);
-    }
+      if (aliveRef.current) setMsg(`audit failed: ${err instanceof Error ? err.message : String(err)}`);
+    } finally { if (aliveRef.current) setBusyFile(null); }
+  }
+
+  async function findBlockers(p: BrainPlan) {
+    const who = genAgent;
+    if (!who) { setMsg('no agent available'); return; }
+    setBusyFile(p.file); setMsg(`${who} is checking “${p.title}” for blockers…`);
+    try {
+      const got = await call<{ file: string; content: string } | null>('brain:plan', p.file).catch(() => null);
+      const reply = okContent(await call<string>('dispatch', `/ask ${who} ${qArg(BLOCKERS_PROMPT(p.title, got?.content ?? ''))}`));
+      if (aliveRef.current) { setBlockers((m) => ({ ...m, [p.file]: reply || 'no response' })); setMsg(`blockers checked for “${p.title}”`); }
+    } catch (err) {
+      if (aliveRef.current) setMsg(`blockers check failed: ${err instanceof Error ? err.message : String(err)}`);
+    } finally { if (aliveRef.current) setBusyFile(null); }
+  }
+
+  async function compileToTasks(p: BrainPlan) {
+    const who = genAgent;
+    if (!who) { setMsg('no agent available to compile tasks'); return; }
+    setBusyFile(p.file); setMsg(`compiling “${p.title}” into tasks via ${who}…`);
+    try {
+      const got = await call<{ file: string; content: string } | null>('brain:plan', p.file).catch(() => null);
+      const obj = `Implement this plan as a set of tasks for the team:\n\n# ${p.title}\n\n${got?.content ?? ''}`;
+      const dec = await call<DecomposeResult>('work:decompose', obj, who);
+      if (!dec.ok || !dec.subtasks.length) { if (aliveRef.current) setMsg(dec.error || 'could not split this plan into tasks'); return; }
+      const res = await call<CreatePlanResult>('work:createPlan', obj, dec.subtasks);
+      const ok = res.created.filter((c) => c.ok).length;
+      if (aliveRef.current) setMsg(`created ${ok} task${ok === 1 ? '' : 's'} from “${p.title}” (dispatched ${res.dispatched}) — see the Tasks tab`);
+    } catch (err) {
+      if (aliveRef.current) setMsg(`compile failed: ${err instanceof Error ? err.message : String(err)}`);
+    } finally { if (aliveRef.current) setBusyFile(null); }
+  }
+
+  async function setBrainPending(p: BrainPlan) {
+    setBusyFile(p.file); setMsg(`marking “${p.title}” pending…`);
+    try {
+      const res = await call<StatusWrite>('brain:setPlanStatus', p.file, 'PENDING').catch((): StatusWrite => ({ ok: false, error: 'write failed' }));
+      if (aliveRef.current) setMsg(res.ok ? `“${p.title}” → ⏳ PENDING ✓` : `failed: ${res.error ?? 'n/a'}`);
+      await reloadBrain();
+    } finally { if (aliveRef.current) setBusyFile(null); }
   }
 
   async function open(id: string) {
-    if (detail?.id === id) { setDetail(null); return; } // toggle closed
+    if (detail?.id === id) { setDetail(null); return; }
     setViewVer(null); setShowLog(false); setConfirmDel(false); setUpdInstr('');
     const p = await call<Plan | null>('plans:get', id).catch(() => null);
     setDetail(p);
-    setUpdAgent(p?.agent && names.includes(p.agent) ? p.agent : genAgent);
+    const a = p?.agent;
+    setUpdAgent(a && names.includes(a) ? a : genAgent);
     setTagInput((p?.tags ?? []).join(', '));
   }
-
   const reviser = updAgent && names.includes(updAgent) ? updAgent : (detail?.agent && names.includes(detail.agent) ? detail.agent : genAgent);
 
   async function generate() {
@@ -172,7 +211,7 @@ export function Plans({ store }: { store: FleetStore }) {
     setBusy(true); setMsg(`generating plan with ${genAgent}…`);
     try {
       const content = okContent(await call<string>('dispatch', `/ask ${genAgent} ${qArg(GEN_PROMPT(request))}`));
-      if (genTok.current !== tok) return; // cancelled
+      if (genTok.current !== tok) return;
       if (!content) { if (aliveRef.current) setMsg('agent returned an empty plan — try again'); return; }
       const now = Date.now();
       const plan: Plan = {
@@ -180,7 +219,7 @@ export function Plans({ store }: { store: FleetStore }) {
         content, version: 1, revisions: [{ version: 1, at: now, note: `Generated from: ${clip(request, 80)}`, content }],
         tags: [], createdAt: now, updatedAt: now,
       };
-      await call('plans:save', plan); // persist even if the tab was unmounted
+      await call('plans:save', plan);
       if (!aliveRef.current) return;
       setReq(''); setShowNew(false); setMsg('plan generated ✓');
       await reload();
@@ -201,7 +240,7 @@ export function Plans({ store }: { store: FleetStore }) {
     setBusy(true); setMsg(`updating plan with ${who}…`);
     try {
       const content = okContent(await call<string>('dispatch', `/ask ${who} ${qArg(UPDATE_PROMPT(base.content, instr))}`));
-      if (genTok.current !== tok) return; // cancelled
+      if (genTok.current !== tok) return;
       if (!content) { if (aliveRef.current) setMsg('agent returned an empty revision — kept the current version'); return; }
       const now = Date.now();
       const version = base.version + 1;
@@ -217,7 +256,6 @@ export function Plans({ store }: { store: FleetStore }) {
     }
   }
 
-  /** Ask the agent to propose improvements; drop them into the instruction box for review. */
   async function suggest() {
     if (!detail) return;
     const who = reviser;
@@ -235,12 +273,12 @@ export function Plans({ store }: { store: FleetStore }) {
     }
   }
 
-  /** Field edit (title/status/tags): merge onto the LATEST stored plan so it can't
-   *  clobber a freshly-saved revision. */
+  /** Field edit (title/status/tags). Setting status to "done" auto-archives the draft. */
   async function patchPlan(p: Partial<Plan>) {
     if (!detail) return;
     const cur = (await call<Plan | null>('plans:get', detail.id).catch(() => null)) ?? detail;
-    const next = { ...cur, ...p, updatedAt: Date.now() };
+    const next: Plan = { ...cur, ...p, updatedAt: Date.now() };
+    if (p.status === 'done') next.status = 'archived'; // auto-archive on done
     setDetail(next);
     await call('plans:save', next).catch(() => {});
     if (aliveRef.current) await reload();
@@ -264,7 +302,7 @@ export function Plans({ store }: { store: FleetStore }) {
     });
     if (sort === 'title') list = [...list].sort((a, b) => a.title.localeCompare(b.title));
     else if (sort === 'status') list = [...list].sort((a, b) => BRAIN_BUCKETS.findIndex((x) => x.key === brainStatusKey(a.status)) - BRAIN_BUCKETS.findIndex((x) => x.key === brainStatusKey(b.status)));
-    return list; // 'recent' keeps the index order
+    return list;
   }, [brain.plans, q, brainStatus, sort]);
 
   const organizedDrafts = useMemo(() => {
@@ -277,12 +315,29 @@ export function Plans({ store }: { store: FleetStore }) {
     });
     if (sort === 'title') list = [...list].sort((a, b) => a.title.localeCompare(b.title));
     else if (sort === 'status') list = [...list].sort((a, b) => STATUSES.indexOf(a.status) - STATUSES.indexOf(b.status));
-    return list; // 'recent' = plans:list order (updatedAt desc)
+    return list;
   }, [plans, q, draftStatus, tagFilter, sort]);
 
-  // ---- card renderers ----
+  // active vs archived (auto-archive: brain DONE + draft done/archived are "archived")
+  const brainActive = organizedBrain.filter((p) => brainStatusKey(p.status) !== 'done');
+  const brainArchived = organizedBrain.filter((p) => brainStatusKey(p.status) === 'done');
+  const draftActive = organizedDrafts.filter((p) => p.status !== 'archived' && p.status !== 'done');
+  const draftArchived = organizedDrafts.filter((p) => p.status === 'archived' || p.status === 'done');
+  const archivedCount = brainArchived.length + draftArchived.length;
+
+  const statusChips = (ids: string[], active: Set<string>, onToggle: (id: string) => void, labelOf: (id: string) => string, classOf: (id: string) => string) => (
+    <span className="chips">
+      {ids.map((id) => (
+        <button key={id} className={`chip${active.has(id) ? ' on' : ''}`} onClick={() => onToggle(id)} title={`filter: ${labelOf(id)}`}>
+          <span className={`st-dot ${classOf(id)}`} /> {labelOf(id)}
+        </button>
+      ))}
+    </span>
+  );
+
   const brainCard = (p: BrainPlan) => {
     const isOpen = brainOpen === p.file;
+    const acting = busyFile === p.file;
     return (
       <div className={`skill-card${isOpen ? ' editing' : ''}`} key={p.file}>
         <div className="skill-card-head" style={{ cursor: 'pointer' }} onClick={() => void openBrain(p.file)}>
@@ -291,16 +346,25 @@ export function Plans({ store }: { store: FleetStore }) {
           <span className="b">{p.title}</span>
           {p.effort ? <span className="muted small">· {p.effort}</span> : null}
           <span className="grow" />
-          {p.notes ? <span className="muted small" style={{ maxWidth: 240, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={p.notes}>{p.notes}</span> : null}
-          <button className="btn small" disabled={auditing !== null} title="Audit the real status against the codebase and update it" onClick={(e) => { e.stopPropagation(); void auditPlan(p); }}>
-            {auditing === p.file ? '…' : '✦ check'}
-          </button>
+          {p.notes ? <span className="muted small" style={{ maxWidth: 220, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={p.notes}>{p.notes}</span> : null}
           <span className="muted">{isOpen ? '▾' : '▸'}</span>
         </div>
+        <div className="row-actions" style={{ gap: 6, padding: '0 8px 6px', flexWrap: 'wrap' }} onClick={(e) => e.stopPropagation()}>
+          <button className="btn small" disabled={busyFile !== null} title="Verify the real status against the codebase and update it" onClick={() => void auditPlan(p)}>{acting ? '…' : '✦ Audit status'}</button>
+          <button className="btn small" disabled={busyFile !== null} title="Ask an agent what's blocking this plan" onClick={() => void findBlockers(p)}>⚠ Find blockers</button>
+          <button className="btn small" disabled={busyFile !== null} title="Decompose this plan into tasks and create them for the team" onClick={() => void compileToTasks(p)}>⤳ Compile to tasks</button>
+          <span className="grow" />
+          {brainStatusKey(p.status) !== 'pending' ? <button className="btn small" disabled={busyFile !== null} title="Reset this plan's status to ⏳ PENDING" onClick={() => void setBrainPending(p)}>⏳ Set pending</button> : null}
+        </div>
         {audit[p.file] ? (
-          <div className="muted small" style={{ padding: '2px 8px 6px' }}>
-            {audit[p.file].to ? <span className="ok-text">{audit[p.file].from} → {audit[p.file].to} · </span> : null}
-            {audit[p.file].summary}
+          <div className="muted small" style={{ padding: '0 8px 6px' }}>
+            {audit[p.file].to ? <span className="ok-text">{audit[p.file].from} → {audit[p.file].to} · </span> : null}{audit[p.file].summary}
+          </div>
+        ) : null}
+        {blockers[p.file] ? (
+          <div className="small" style={{ padding: '0 8px 8px' }}>
+            <div className="b warn-text" style={{ marginBottom: 2 }}>Blockers</div>
+            <pre className="plan-content" style={{ maxHeight: 160, marginTop: 0 }}>{blockers[p.file]}</pre>
           </div>
         ) : null}
         {isOpen ? <pre className="plan-content">{brainContent}</pre> : null}
@@ -324,11 +388,11 @@ export function Plans({ store }: { store: FleetStore }) {
         {isOpen && detail ? (
           <div className="plan-detail">
             <div className="row-actions" style={{ gap: 8, flexWrap: 'wrap', alignItems: 'center', marginBottom: 6 }}>
-              <input className="chat-title" style={{ flex: '0 1 280px' }} value={detail.title} disabled={busy} onChange={(e) => setDetail({ ...detail, title: e.target.value })} onBlur={(e) => void patchPlan({ title: e.target.value })} />
+              <input className="chat-title" style={{ flex: '0 1 260px' }} value={detail.title} disabled={busy} onChange={(e) => setDetail({ ...detail, title: e.target.value })} onBlur={(e) => void patchPlan({ title: e.target.value })} />
               <select className="cell-select small" value={detail.status} disabled={busy} onChange={(e) => void patchPlan({ status: e.target.value as PlanStatus })}>
                 {STATUSES.map((s) => <option key={s} value={s}>{s}</option>)}
               </select>
-              <input style={{ flex: '0 1 220px', fontSize: 12 }} placeholder="tags (comma-separated)" value={tagInput} disabled={busy} onChange={(e) => setTagInput(e.target.value)} onBlur={() => void patchPlan({ tags: splitTags(tagInput) })} title="categorize this plan" />
+              <input style={{ flex: '0 1 200px', fontSize: 12 }} placeholder="tags (comma-separated)" value={tagInput} disabled={busy} onChange={(e) => setTagInput(e.target.value)} onBlur={() => void patchPlan({ tags: splitTags(tagInput) })} title="categorize this plan" />
               <span className="grow" />
               <button className="btn small" disabled={busy} onClick={() => setShowLog((v) => !v)}>{showLog ? 'Hide changelog' : `Changelog (${detail.revisions.length})`}</button>
               {confirmDel ? (
@@ -340,10 +404,8 @@ export function Plans({ store }: { store: FleetStore }) {
                 <button className="btn icon-danger small" disabled={busy} title="Delete plan" onClick={() => setConfirmDel(true)}>✕</button>
               )}
             </div>
-
             {viewVer != null ? <div className="muted small" style={{ marginBottom: 4 }}>viewing v{viewVer} · <button className="link-btn" onClick={() => setViewVer(null)}>back to current (v{detail.version})</button></div> : null}
             <pre className="plan-content">{shownContent}</pre>
-
             {showLog ? (
               <div className="plan-log">
                 <div className="muted small b" style={{ margin: '8px 0 4px' }}>Changelog</div>
@@ -357,7 +419,6 @@ export function Plans({ store }: { store: FleetStore }) {
                 ))}
               </div>
             ) : null}
-
             <div className="row-actions" style={{ gap: 6, marginTop: 8, alignItems: 'center', flexWrap: 'wrap' }}>
               <span className="muted small">revise with</span>
               <select className="cell-select small" value={reviser} disabled={busy} onChange={(e) => setUpdAgent(e.target.value)} title="agent that revises this plan">
@@ -375,81 +436,61 @@ export function Plans({ store }: { store: FleetStore }) {
     );
   };
 
-  const statusChips = (ids: string[], active: Set<string>, onToggle: (id: string) => void, labelOf: (id: string) => string, classOf: (id: string) => string) => (
-    <span className="chips">
-      {ids.map((id) => (
-        <button key={id} className={`chip${active.has(id) ? ' on' : ''}`} onClick={() => onToggle(id)} title={`filter: ${labelOf(id)}`}>
-          <span className={`st-dot ${classOf(id)}`} /> {labelOf(id)}
-        </button>
-      ))}
-    </span>
-  );
+  const renderList = (active: unknown[], renderCard: (x: never) => JSX.Element, keyOf: (x: never) => string, buckets: { key: string; label: string }[]) =>
+    groupBy
+      ? group(active as never[], keyOf, buckets).map((g) => (
+          <div key={g.key}>
+            <div className="muted small b" style={{ margin: '8px 0 4px' }}>{g.label} · {g.items.length}</div>
+            <div className="skill-catalog">{(g.items as never[]).map(renderCard)}</div>
+          </div>
+        ))
+      : <div className="skill-catalog">{(active as never[]).map(renderCard)}</div>;
 
   return (
     <>
-      {/* Shared organizer */}
-      <div className="row-actions" style={{ gap: 8, flexWrap: 'wrap', alignItems: 'center', marginBottom: 8 }}>
-        <input className="catalog-search" placeholder="search plans…" value={q} onChange={(e) => setQ(e.target.value)} />
-        <span className="muted small">sort</span>
-        <select className="cell-select small" value={sort} onChange={(e) => setSort(e.target.value as SortMode)}>
-          <option value="recent">most recent</option>
-          <option value="title">title (A–Z)</option>
-          <option value="status">status</option>
-        </select>
-        <label className="muted small" style={{ display: 'inline-flex', alignItems: 'center', gap: 6, cursor: 'pointer' }}>
-          <input type="checkbox" checked={groupBy} onChange={(e) => setGroupBy(e.target.checked)} /> group by status
-        </label>
-        <span className="grow" />
-        {msg ? <span className={`small ${/failed|timed out|expired|cancelled/.test(msg) ? 'status-error' : 'muted'}`}>{msg}</span> : null}
-        {busy ? <button className="btn" onClick={cancel}>Cancel</button> : null}
-      </div>
-
-      <section className="card">
-        <div className="row-actions" style={{ alignItems: 'center', marginBottom: 6, flexWrap: 'wrap', gap: 8 }}>
-          <h3 style={{ margin: 0 }}>Brain plans</h3>
-          <span className="muted small">· {organizedBrain.length}/{brain.plans.length} · ⟳ live</span>
-          {statusChips(BRAIN_BUCKETS.map((b) => b.key), brainStatus, (id) => toggle(setBrainStatus, id), (k) => BRAIN_BUCKETS.find((b) => b.key === k)?.label ?? k, (k) => BRAIN_KEY_CLASS[k])}
+      {/* Unified organizer */}
+      <section className="card" style={{ marginBottom: 10 }}>
+        <div className="row-actions" style={{ gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
+          <input className="catalog-search" placeholder="search plans…" value={q} onChange={(e) => setQ(e.target.value)} />
+          <span className="muted small">sort</span>
+          <select className="cell-select small" value={sort} onChange={(e) => setSort(e.target.value as SortMode)}>
+            <option value="recent">most recent</option>
+            <option value="title">title (A–Z)</option>
+            <option value="status">status</option>
+          </select>
+          <label className="muted small" style={{ display: 'inline-flex', alignItems: 'center', gap: 6, cursor: 'pointer' }}>
+            <input type="checkbox" checked={groupBy} onChange={(e) => setGroupBy(e.target.checked)} /> group by status
+          </label>
+          <label className="muted small" style={{ display: 'inline-flex', alignItems: 'center', gap: 6, cursor: 'pointer' }}>
+            <input type="checkbox" checked={showArchived} onChange={(e) => setShowArchived(e.target.checked)} /> show archived{archivedCount ? ` (${archivedCount})` : ''}
+          </label>
           <span className="grow" />
-          {brain.dir
-            ? <span className="muted small mono" title={brain.dir}>{brain.dir.replace(/^.*\/projects\//, '…/')}</span>
-            : <span className="warn-text small">brain plans dir not found</span>}
+          {msg ? <span className={`small ${/failed|timed out|expired|cancelled|could not/.test(msg) ? 'status-error' : 'muted'}`}>{msg}</span> : null}
+          {busy ? <button className="btn" onClick={cancel}>Cancel</button> : null}
+          <button className="btn primary" disabled={busy} onClick={() => setShowNew((v) => !v)}>{showNew ? '− Cancel' : '+ Request a plan'}</button>
         </div>
-        {brain.plans.length === 0 ? (
-          <p className="muted small">{brain.dir ? 'No plans in the brain index yet.' : 'Could not locate the brain plans directory (projects root not detected — set it in Projects).'}</p>
-        ) : organizedBrain.length === 0 ? (
-          <p className="muted center pad">No brain plans match the filter.</p>
-        ) : groupBy ? (
-          group(organizedBrain, (p) => brainStatusKey(p.status), BRAIN_BUCKETS).map((g) => (
-            <div key={g.key}>
-              <div className="muted small b" style={{ margin: '8px 0 4px' }}>{g.label} · {g.items.length}</div>
-              <div className="skill-catalog">{g.items.map(brainCard)}</div>
-            </div>
-          ))
-        ) : (
-          <div className="skill-catalog">{organizedBrain.map(brainCard)}</div>
-        )}
+        <div className="row-actions" style={{ gap: 10, flexWrap: 'wrap', alignItems: 'center', marginTop: 8 }}>
+          <span className="muted small">brain:</span>
+          {statusChips(BRAIN_BUCKETS.map((b) => b.key), brainStatus, (id) => toggle(setBrainStatus, id), (k) => BRAIN_BUCKETS.find((b) => b.key === k)?.label ?? k, (k) => BRAIN_KEY_CLASS[k])}
+          <span className="muted small" style={{ marginLeft: 6 }}>drafts:</span>
+          {statusChips(STATUSES, draftStatus, (id) => toggle(setDraftStatus, id), (s) => s, (s) => STATUS_CLASS[s as PlanStatus])}
+          {allDraftTags.length ? (
+            <>
+              <span className="muted small" style={{ marginLeft: 6 }}>tags:</span>
+              <span className="chips">
+                {allDraftTags.map((t) => (
+                  <button key={t} className={`chip${tagFilter.has(t) ? ' on' : ''}`} onClick={() => toggle(setTagFilter, t)}>{tagFilter.has(t) ? '✓ ' : ''}{t}</button>
+                ))}
+              </span>
+            </>
+          ) : null}
+          {(brainStatus.size || draftStatus.size || tagFilter.size) ? <button className="btn small" onClick={() => { setBrainStatus(new Set()); setDraftStatus(new Set()); setTagFilter(new Set()); }}>clear filters</button> : null}
+        </div>
       </section>
-
-      <div className="row-actions" style={{ margin: '14px 0 4px', alignItems: 'center', flexWrap: 'wrap', gap: 8 }}>
-        <h3 style={{ margin: 0 }}>Your drafts</h3>
-        <span className="muted small">· {organizedDrafts.length}/{plans.length}</span>
-        {statusChips(STATUSES, draftStatus, (id) => toggle(setDraftStatus, id), (s) => s, (s) => STATUS_CLASS[s as PlanStatus])}
-        <span className="grow" />
-        <button className="btn primary" disabled={busy} onClick={() => setShowNew((v) => !v)}>{showNew ? '− Cancel' : '+ Request a plan'}</button>
-      </div>
-      {allDraftTags.length ? (
-        <div className="chips" style={{ marginBottom: 8 }}>
-          <span className="muted small" style={{ marginRight: 4 }}>tags:</span>
-          {allDraftTags.map((t) => (
-            <button key={t} className={`chip${tagFilter.has(t) ? ' on' : ''}`} onClick={() => toggle(setTagFilter, t)}>{tagFilter.has(t) ? '✓ ' : ''}{t}</button>
-          ))}
-          {tagFilter.size ? <button className="btn small" onClick={() => setTagFilter(new Set())}>clear</button> : null}
-        </div>
-      ) : null}
 
       {showNew ? (
         <section className="card">
-          <h3>Request a plan</h3>
+          <h3 style={{ marginTop: 0 }}>Request a plan</h3>
           <div className="kv" style={{ gridTemplateColumns: '90px 1fr', gap: '8px 12px' }}>
             <span>agent</span>
             <b>
@@ -458,7 +499,7 @@ export function Plans({ store }: { store: FleetStore }) {
               </select>
             </b>
             <span>request</span>
-            <b><textarea style={{ width: '100%', minHeight: 70 }} placeholder="what should the plan accomplish? e.g. “migrate the brain to the self-improving facts model (Plan 22) in phases”" value={req} disabled={busy} onChange={(e) => setReq(e.target.value)} /></b>
+            <b><textarea style={{ width: '100%', minHeight: 70 }} placeholder="what should the plan accomplish?" value={req} disabled={busy} onChange={(e) => setReq(e.target.value)} /></b>
           </div>
           <div className="row-actions" style={{ marginTop: 10 }}>
             <span className="grow" />
@@ -467,20 +508,53 @@ export function Plans({ store }: { store: FleetStore }) {
         </section>
       ) : null}
 
-      {plans.length === 0 ? (
-        <p className="muted center pad">No plans yet. <b>+ Request a plan</b> and an agent will draft one — then update it anytime and it keeps a changelog.</p>
-      ) : organizedDrafts.length === 0 ? (
-        <p className="muted center pad">No drafts match the filter.</p>
-      ) : groupBy ? (
-        group(organizedDrafts, (p) => p.status, STATUSES.map((s) => ({ key: s, label: s }))).map((g) => (
-          <div key={g.key}>
-            <div className="muted small b" style={{ margin: '8px 0 4px' }}>{g.label} · {g.items.length}</div>
-            <div className="skill-catalog">{g.items.map(draftCard)}</div>
-          </div>
-        ))
-      ) : (
-        <div className="skill-catalog">{organizedDrafts.map(draftCard)}</div>
-      )}
+      <section className="card">
+        <div className="row-actions" style={{ alignItems: 'center', marginBottom: 6 }}>
+          <h3 style={{ margin: 0 }}>Brain plans</h3>
+          <span className="muted small">· {brainActive.length} active{brainArchived.length ? ` · ${brainArchived.length} done` : ''} · ⟳ live</span>
+          <span className="grow" />
+          {brain.dir
+            ? <span className="muted small mono" title={brain.dir}>{brain.dir.replace(/^.*\/projects\//, '…/')}</span>
+            : <span className="warn-text small">brain plans dir not found</span>}
+        </div>
+        {brain.plans.length === 0 ? (
+          <p className="muted small">{brain.dir ? 'No plans in the brain index yet.' : 'Could not locate the brain plans directory (projects root not detected — set it in Projects).'}</p>
+        ) : brainActive.length === 0 && !showArchived ? (
+          <p className="muted center pad">No active brain plans match the filter.{brainArchived.length ? ' (Done plans are archived — toggle “show archived”.)' : ''}</p>
+        ) : (
+          <>
+            {renderList(brainActive, brainCard as (x: never) => JSX.Element, ((p: BrainPlan) => brainStatusKey(p.status)) as (x: never) => string, BRAIN_BUCKETS.filter((b) => b.key !== 'done'))}
+            {showArchived && brainArchived.length ? (
+              <div>
+                <div className="muted small b" style={{ margin: '10px 0 4px' }}>Archived · Done ({brainArchived.length})</div>
+                <div className="skill-catalog">{brainArchived.map(brainCard)}</div>
+              </div>
+            ) : null}
+          </>
+        )}
+      </section>
+
+      <section className="card">
+        <div className="row-actions" style={{ alignItems: 'center', marginBottom: 6 }}>
+          <h3 style={{ margin: 0 }}>Your drafts</h3>
+          <span className="muted small">· {draftActive.length} active{draftArchived.length ? ` · ${draftArchived.length} archived` : ''}</span>
+        </div>
+        {plans.length === 0 ? (
+          <p className="muted center pad">No plans yet. <b>+ Request a plan</b> and an agent will draft one — then update it anytime and it keeps a changelog.</p>
+        ) : draftActive.length === 0 && !showArchived ? (
+          <p className="muted center pad">No active drafts match the filter.{draftArchived.length ? ' (Toggle “show archived”.)' : ''}</p>
+        ) : (
+          <>
+            {renderList(draftActive, draftCard as (x: never) => JSX.Element, ((p: PlanSummary) => p.status) as (x: never) => string, STATUSES.map((s) => ({ key: s, label: s })))}
+            {showArchived && draftArchived.length ? (
+              <div>
+                <div className="muted small b" style={{ margin: '10px 0 4px' }}>Archived ({draftArchived.length})</div>
+                <div className="skill-catalog">{draftArchived.map(draftCard)}</div>
+              </div>
+            ) : null}
+          </>
+        )}
+      </section>
     </>
   );
 }

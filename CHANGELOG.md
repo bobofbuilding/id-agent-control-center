@@ -8,6 +8,19 @@ Every change pushed or merged to `main` carries its version number in the commit
 subject (`vX.Y.Z: …`), stamped automatically by the `commit-msg` hook — see
 [CONTRIBUTING.md](CONTRIBUTING.md).
 
+## [0.1.106] — 2026-06-24
+- **Three clearly-labeled per-plan actions** on each brain plan: **✦ Audit status**
+  (verify vs codebase + write back), **⚠ Find blockers** (agent lists what's blocking
+  it, shown inline), and **⤳ Compile to tasks** (decompose the plan into tasks and
+  create them for the team — see the Tasks tab). Plus a **⏳ Set pending** button to
+  reset a plan's status.
+- **Auto-archive done plans.** Marking a draft "done" now auto-moves it to archived;
+  done/archived plans (and brain DONE plans) collapse out of the active list into an
+  **Archived** section, revealed with the **show archived** toggle.
+- **Unified organizer bar at the top** — search, sort, group-by-status, show-archived,
+  the **+ Request a plan** button (moved up), and all the status + tag filters (brain
+  and drafts) now live in one bar covering both sets.
+
 ## [0.1.105] — 2026-06-24
 - **Auto-check a brain plan's real status (the “why is everything PARTIAL?” fix).**
   The brain README hand-marks status, so it drifts — 33 of 60 plans sat at 🔄 PARTIAL,
