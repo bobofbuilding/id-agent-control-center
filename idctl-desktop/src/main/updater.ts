@@ -120,13 +120,29 @@ async function readManifest(url: string): Promise<UpdateManifest> {
 async function fetchLatest(s: UpdateSettings): Promise<UpdateManifest | null> {
   if (s.updateManifestUrl) return readManifest(s.updateManifestUrl);
   if (s.updateRepo) {
+    // PRIMARY: resolve the latest release via the github.com redirect
+    // (github.com/<repo>/releases/latest → /releases/tag/<tag>). This avoids the
+    // api.github.com 60-requests/hour UNAUTHENTICATED rate limit that surfaces as
+    // intermittent "github 403" errors when the app polls often.
+    try {
+      const r = await fetch(`https://github.com/${s.updateRepo}/releases/latest`, { headers: { 'User-Agent': 'idctl-updater' } });
+      const m = r.url.match(/\/releases\/tag\/(v?[^/?#]+)/);
+      if (m) {
+        const tag = m[1];
+        const version = tag.replace(/^v/, '');
+        // Asset name convention for this app's releases.
+        const zipUrl = `https://github.com/${s.updateRepo}/releases/download/${tag}/ID-Agents-Control-Center-${version}-arm64.zip`;
+        return { version, zipUrl };
+      }
+      // Redirect landed on /releases (no tag) → no published release yet.
+      if (/\/releases\/?($|[?#])/.test(r.url)) return null;
+    } catch { /* network hiccup on the redirect — fall back to the API below */ }
+    // FALLBACK: the rate-limited API. 404 = no releases; 403 = rate-limited right now —
+    // both are "nothing to do this cycle", NOT a hard error (so no scary red banner).
     const res = await fetch(`https://api.github.com/repos/${s.updateRepo}/releases/latest`, {
-      headers: { Accept: 'application/vnd.github+json' },
+      headers: { Accept: 'application/vnd.github+json', 'User-Agent': 'idctl-updater' },
     });
-    // 404 = the repo has no published Releases yet (or is private/unknown to an
-    // unauthenticated call). That's a normal "nothing to update to", not an
-    // error — return null so the UI shows "up to date" instead of a red error.
-    if (res.status === 404) return null;
+    if (res.status === 404 || res.status === 403) return null;
     if (!res.ok) throw new Error(`github ${res.status}`);
     const rel = (await res.json()) as { tag_name?: string; body?: string; assets?: { name: string; browser_download_url: string }[] };
     const asset = (rel.assets ?? []).find((a) => /\.zip$/i.test(a.name));

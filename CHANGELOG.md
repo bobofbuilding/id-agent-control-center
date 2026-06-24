@@ -8,6 +8,13 @@ Every change pushed or merged to `main` carries its version number in the commit
 subject (`vX.Y.Z: …`), stamped automatically by the `commit-msg` hook — see
 [CONTRIBUTING.md](CONTRIBUTING.md).
 
+## [0.1.134] — 2026-06-24
+- **Fix self-update "github 403".** The updater no longer hits the rate-limited
+  `api.github.com` (60 unauthenticated requests/hour) for the version check — it resolves the
+  latest release via the `github.com/<repo>/releases/latest` redirect (no such limit) and
+  downloads the asset by direct URL. The API is only a fallback, and a 403/404 there is now
+  treated as "nothing to update this cycle" instead of a red error.
+
 ## [0.1.133] — 2026-06-24
 - **All-teams is now global — no view toggle.** Removed the status-bar view selector; the whole
   app (Dashboard, Health, Work board, HR graph, status counts) is permanently holistic across
