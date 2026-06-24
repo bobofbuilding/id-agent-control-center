@@ -91,6 +91,17 @@ export function Schedule({ store }: { store: FleetStore }) {
     return heartbeats.find((s) => s.targets.includes(agent));
   }
 
+  // Cleaner: open check-ins still watching a finished OR removed task — safe to close in bulk.
+  const staleCheckins = checkins.filter(
+    (c) => /(active|snoozed)/i.test(String(c.status)) && (isTerminalTask(c.linkedTask?.status) || c.linkedTask?.gone),
+  );
+  async function cleanUp() {
+    if (!staleCheckins.length) return;
+    await act(`cleaning up ${staleCheckins.length} stale check-in${staleCheckins.length === 1 ? '' : 's'}`, async () => {
+      for (const c of staleCheckins) await call('checkins:close', c.id);
+    });
+  }
+
   async function setHeartbeat(agent: string) {
     const seconds = hbInterval[agent] ?? hbFor(agent)?.intervalSeconds ?? 3600;
     const existing = heartbeats.filter((h) => h.targets.includes(agent));
@@ -178,7 +189,11 @@ export function Schedule({ store }: { store: FleetStore }) {
                 <h3 style={{ margin: 0 }}>Supervision check-ins</h3>
                 <span className="muted small">· {openCount} active{ranked.length - openCount ? ` · ${ranked.length - openCount} closed` : ''}</span>
                 <span className="grow" />
-                {stale > 0 ? <span className="warn-text small">⚠ {stale} watching finished work</span> : null}
+                {staleCheckins.length > 0 ? (
+                  <button className="btn small" disabled={busy} title="Close all check-ins still watching finished or removed tasks" onClick={() => void cleanUp()}>
+                    🧹 Clean up {staleCheckins.length}
+                  </button>
+                ) : stale > 0 ? <span className="warn-text small">⚠ {stale} watching finished work</span> : null}
               </div>
               <p className="muted small" style={{ marginTop: 0 }}>
                 A check-in watches a delegated task and pings the agent that delegated it on a cadence, auto-closing when the task is done.

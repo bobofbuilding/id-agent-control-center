@@ -14,8 +14,8 @@ type CreatePlanResult = { created: CreatedTask[]; dispatched: number; deferred: 
 
 type Tab = 'tasks' | 'plans' | 'schedule' | 'loops';
 const TABS: { id: Tab; label: string }[] = [
-  { id: 'tasks', label: 'Tasks' },
   { id: 'plans', label: 'Plans' },
+  { id: 'tasks', label: 'Tasks' },
   { id: 'schedule', label: 'Schedule' },
   { id: 'loops', label: 'Loops' },
 ];
@@ -30,10 +30,17 @@ function isDone(t: Task): boolean {
 function isRoutine(t: Task): boolean {
   return /heartbeat/i.test(t.title) || /heartbeat/i.test(t.name ?? '');
 }
-function statusClass(s: string): string {
-  if (/done|complete/i.test(s)) return 'ok-text';
-  if (/doing|claim|progress|start/i.test(s)) return 'warn-text';
-  return 'muted';
+// Kanban columns mirror the manager's task statuses (validStatuses = todo|doing|done).
+type Col = 'todo' | 'doing' | 'done';
+const COLUMNS: { id: Col; label: string }[] = [
+  { id: 'todo', label: 'To do' },
+  { id: 'doing', label: 'Doing' },
+  { id: 'done', label: 'Done' },
+];
+function colOf(status: string): Col {
+  if (/done|complete/i.test(status)) return 'done';
+  if (/doing|claim|progress|start|active/i.test(status)) return 'doing';
+  return 'todo';
 }
 /** Relative age. createdAt comes from the manager in SECONDS; normalize to ms. */
 function ago(ts?: number): string {
@@ -51,9 +58,9 @@ function ago(ts?: number): string {
 export function Tasks({ store, initialTab }: { store: FleetStore; initialTab?: Tab }) {
   const [tab, setTab] = useState<Tab>(() => {
     try {
-      const t = (initialTab || localStorage.getItem('idctl.tasks.tab') || 'tasks') as Tab;
-      return TABS.some((x) => x.id === t) ? t : 'tasks'; // ignore stale/garbage values
-    } catch { return 'tasks'; }
+      const t = (initialTab || localStorage.getItem('idctl.tasks.tab') || 'plans') as Tab;
+      return TABS.some((x) => x.id === t) ? t : 'plans'; // ignore stale/garbage values
+    } catch { return 'plans'; }
   });
   function pick(t: Tab) { setTab(t); try { localStorage.setItem('idctl.tasks.tab', t); } catch { /* ignore */ } }
 
@@ -78,8 +85,8 @@ function TasksPanel({ store }: { store: FleetStore }) {
   const [busy, setBusy] = useState(false);
   const [note, setNote] = useState('');
   const [q, setQ] = useState('');
-  const [statusFilter, setStatusFilter] = useState<'all' | 'open' | 'done'>('open');
   const [hideRoutine, setHideRoutine] = useState(true);
+  const [dragRef, setDragRef] = useState<string | null>(null); // task being dragged across columns
   const [confirmDel, setConfirmDel] = useState<string | null>(null);
   const [confirmClear, setConfirmClear] = useState(false);
   // Auto-decompose: describe an objective → lead splits it → create + farm out.
@@ -106,6 +113,18 @@ function TasksPanel({ store }: { store: FleetStore }) {
     reload();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [store.team, store.lastUpdated]);
+  // Auto-refresh the board so it stays live as agents claim/complete work.
+  useEffect(() => {
+    const id = setInterval(() => { void reload(); }, 5000);
+    return () => clearInterval(id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [store.team]);
+
+  // Drag a card to another column → set the manager status (todo|doing|done).
+  function moveTo(t: Task, col: Col) {
+    if (colOf(t.status) === col) return;
+    void run(`/task status ${ref(t)} ${col}`, `move ${ref(t)} → ${col}`);
+  }
 
   async function run(cmd: string, label: string) {
     setBusy(true);
@@ -128,8 +147,6 @@ function TasksPanel({ store }: { store: FleetStore }) {
   function assign(t: Task, agent: string) {
     if (agent) void run(`/task assign ${ref(t)} ${agent}`, `assign ${ref(t)} → ${agent}`);
   }
-  function markDone(t: Task) { void run(`/task done ${ref(t)}`, `complete ${ref(t)}`); }
-  function reopen(t: Task) { void run(`/task status ${ref(t)} todo`, `reopen ${ref(t)}`); }
   async function del(t: Task) { setConfirmDel(null); await run(`/task remove ${ref(t)}`, `delete ${ref(t)}`); }
   async function clearDone() {
     const done = tasks.filter(isDone);
@@ -198,8 +215,6 @@ function TasksPanel({ store }: { store: FleetStore }) {
   const doneCount = tasks.filter(isDone).length;
   const filtered = tasks.filter((t) => {
     if (hideRoutine && isRoutine(t)) return false;
-    if (statusFilter === 'open' && isDone(t)) return false;
-    if (statusFilter === 'done' && !isDone(t)) return false;
     const s = q.trim().toLowerCase();
     return !s || t.title.toLowerCase().includes(s) || (t.ownerName ?? '').toLowerCase().includes(s) || ref(t).toLowerCase().includes(s);
   });
@@ -270,68 +285,75 @@ function TasksPanel({ store }: { store: FleetStore }) {
       ) : null}
 
       <section className="card grow">
-        <div className="row-actions" style={{ flexWrap: 'wrap', gap: 8, marginBottom: 10 }}>
+        <div className="row-actions" style={{ flexWrap: 'wrap', gap: 8, marginBottom: 10, alignItems: 'center' }}>
           <input className="catalog-search" placeholder="search tasks…" value={q} onChange={(e) => setQ(e.target.value)} />
-          <span className="chips">
-            {(['all', 'open', 'done'] as const).map((s) => (
-              <button key={s} className={`chip${statusFilter === s ? ' on' : ''}`} onClick={() => setStatusFilter(s)}>{s}</button>
-            ))}
-          </span>
           <label className="muted small" style={{ display: 'inline-flex', alignItems: 'center', gap: 6, cursor: 'pointer' }}>
             <input type="checkbox" checked={hideRoutine} onChange={(e) => setHideRoutine(e.target.checked)} />
             hide routine{routineCount ? ` (${routineCount})` : ''}
           </label>
+          <span className="muted small" title="The board re-fetches every 5s; drag a card between columns to change its status">⟳ live · drag to move</span>
           <span className="grow" />
           {note ? <span className={`small ${/failed/.test(note) ? 'status-error' : 'muted'}`}>{note}</span> : null}
         </div>
 
-        <table className="grid">
-          <thead>
-            <tr><th>Task</th><th>Status</th><th>Owner</th><th>Age</th><th></th></tr>
-          </thead>
-          <tbody>
-            {filtered.map((t) => (
-              <tr key={ref(t)}>
-                <td>
-                  <div className="b">{t.title}</div>
-                  <div className="muted small mono">{t.shortId ?? ref(t)}{isRoutine(t) ? ' · routine' : ''}</div>
-                </td>
-                <td className={`small ${statusClass(t.status)}`}>{t.status}</td>
-                <td>
-                  {t.ownerName ? (
-                    <span className="muted small">{t.ownerName}</span>
-                  ) : isDone(t) ? (
-                    <span className="muted small">—</span>
-                  ) : (
-                    <select className="cell-select" defaultValue="" disabled={busy} onChange={(e) => assign(t, e.target.value)}>
-                      <option value="">assign…</option>
-                      {store.agents.map((a) => <option key={a.id} value={a.name}>{a.name}</option>)}
-                    </select>
-                  )}
-                </td>
-                <td className="muted small" title={t.createdAt ? new Date((t.createdAt < 1e12 ? t.createdAt * 1000 : t.createdAt)).toLocaleString() : undefined}>{ago(t.createdAt)}</td>
-                <td className="row-actions">
-                  {isDone(t) ? (
-                    <button className="btn" disabled={busy} onClick={() => reopen(t)}>Reopen</button>
-                  ) : (
-                    <button className="btn" disabled={busy} onClick={() => markDone(t)}>Done</button>
-                  )}
-                  {confirmDel === ref(t) ? (
-                    <>
-                      <button className="btn icon-danger" disabled={busy} onClick={() => void del(t)}>Delete?</button>
-                      <button className="btn" disabled={busy} onClick={() => setConfirmDel(null)}>Cancel</button>
-                    </>
-                  ) : (
-                    <button className="btn icon-danger" disabled={busy} title="Delete task" onClick={() => setConfirmDel(ref(t))}>✕</button>
-                  )}
-                </td>
-              </tr>
-            ))}
-            {filtered.length === 0 ? (
-              <tr><td colSpan={5} className="muted center pad">{tasks.length === 0 ? 'No tasks. Create one with “+ New task”.' : 'No tasks match the current filter.'}</td></tr>
-            ) : null}
-          </tbody>
-        </table>
+        <div className="kanban" style={{ display: 'flex', gap: 10, alignItems: 'flex-start', overflowX: 'auto' }}>
+          {COLUMNS.map((col) => {
+            const items = filtered.filter((t) => colOf(t.status) === col.id);
+            const headClass = col.id === 'done' ? 'ok-text' : col.id === 'doing' ? 'warn-text' : '';
+            const isDrop = dragRef != null;
+            return (
+              <div
+                key={col.id}
+                className="kanban-col"
+                style={{ flex: '1 1 0', minWidth: 240, background: 'var(--panel, #1b1b1b)', border: `1px solid ${isDrop ? 'var(--accent, #6aa8ff)' : 'var(--border, #2a2a2a)'}`, borderRadius: 8, padding: 8 }}
+                onDragOver={(e) => { if (dragRef) e.preventDefault(); }}
+                onDrop={(e) => { e.preventDefault(); const r = dragRef || e.dataTransfer.getData('text/plain'); const t = tasks.find((x) => ref(x) === r); if (t) moveTo(t, col.id); setDragRef(null); }}
+              >
+                <div className="row-actions" style={{ justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
+                  <b className={headClass}>{col.label}</b>
+                  <span className="muted small">{items.length}</span>
+                </div>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 6, minHeight: 48 }}>
+                  {items.map((t) => (
+                    <div
+                      key={ref(t)}
+                      draggable={!busy}
+                      onDragStart={(e) => { setDragRef(ref(t)); e.dataTransfer.setData('text/plain', ref(t)); e.dataTransfer.effectAllowed = 'move'; }}
+                      onDragEnd={() => setDragRef(null)}
+                      className="kanban-card"
+                      style={{ border: '1px solid var(--border, #2a2a2a)', borderRadius: 6, padding: '6px 8px', background: 'var(--bg, #141414)', cursor: busy ? 'default' : 'grab' }}
+                    >
+                      <div className="b" style={{ fontSize: 13 }}>{t.title}</div>
+                      <div className="muted small mono">{t.shortId ?? ref(t)}{isRoutine(t) ? ' · routine' : ''}</div>
+                      <div className="row-actions" style={{ marginTop: 4, alignItems: 'center', gap: 6 }}>
+                        {t.ownerName ? (
+                          <span className="muted small">{t.ownerName}</span>
+                        ) : col.id !== 'done' ? (
+                          <select className="cell-select" style={{ fontSize: 11 }} defaultValue="" disabled={busy} onChange={(e) => assign(t, e.target.value)}>
+                            <option value="">assign…</option>
+                            {store.agents.map((a) => <option key={a.id} value={a.name}>{a.name}</option>)}
+                          </select>
+                        ) : <span className="muted small">—</span>}
+                        <span className="grow" />
+                        <span className="muted small" title={t.createdAt ? new Date((t.createdAt < 1e12 ? t.createdAt * 1000 : t.createdAt)).toLocaleString() : undefined}>{ago(t.createdAt)}</span>
+                        {confirmDel === ref(t) ? (
+                          <>
+                            <button className="btn icon-danger small" disabled={busy} onClick={() => void del(t)}>Delete?</button>
+                            <button className="btn small" disabled={busy} onClick={() => setConfirmDel(null)}>×</button>
+                          </>
+                        ) : (
+                          <button className="btn icon-danger small" disabled={busy} title="Delete task" onClick={() => setConfirmDel(ref(t))}>✕</button>
+                        )}
+                      </div>
+                    </div>
+                  ))}
+                  {items.length === 0 ? <div className="muted small center" style={{ padding: '10px 0' }}>—</div> : null}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+        {tasks.length === 0 ? <p className="muted center pad">No tasks. Create one with “+ New task”, or “⚡ Assign work to fleet”.</p> : null}
       </section>
     </>
   );

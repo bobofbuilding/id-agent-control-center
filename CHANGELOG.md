@@ -8,6 +8,18 @@ Every change pushed or merged to `main` carries its version number in the commit
 subject (`vX.Y.Z: …`), stamped automatically by the `commit-msg` hook — see
 [CONTRIBUTING.md](CONTRIBUTING.md).
 
+## [0.1.98] — 2026-06-24
+- **Work page, part 1 of an overhaul:**
+  - **Tasks is now a live Kanban board.** Three columns matching the manager's task
+    states (To do / Doing / Done); **drag a card between columns** to change its status,
+    and the board **auto-refreshes every 5s** so it stays current as agents claim and
+    complete work. Search + hide-routine carry over; per-card assign and delete remain.
+  - **Plans is now the first tab** of the Work page (and the default landing tab).
+  - **Schedule has a one-click cleaner** — a **🧹 Clean up** button closes every
+    supervision check-in still watching a finished or removed task, in bulk.
+- *(Coming next in this overhaul: Plans live from the brain, AI-assisted multi-agent
+  loops, and a Dream tab.)*
+
 ## [0.1.97] — 2026-06-24
 - **The lead/coordinator preset now prioritizes orchestration over doing the work.**
   Applied to a lead (via the Coordinator preset button, the Team Builder's auto-wiring,
