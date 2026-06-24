@@ -28,6 +28,8 @@ type SubTask = { title: string; description: string; agent: string; dependsOn: n
 type DecomposeResult = { ok: boolean; subtasks: SubTask[]; raw: string; error?: string };
 type CreatedTask = { ok: boolean };
 type CreatePlanResult = { created: CreatedTask[]; dispatched: number; deferred: number };
+type TeamLead = { team: string; lead: string | null; activeCount: number; totalCount: number };
+type FanoutResult = { team: string; lead?: string; status: 'dispatched' | 'no-active-agent' | 'failed'; queryId?: string; detail?: string };
 
 const STATUSES: PlanStatus[] = ['draft', 'active', 'done', 'archived'];
 const STATUS_CLASS: Record<PlanStatus, string> = { draft: 'st-paused', active: 'st-active', done: 'st-done', archived: 'st-blocked' };
@@ -132,6 +134,42 @@ export function Plans({ store }: { store: FleetStore }) {
   const [compileFor, setCompileFor] = useState<string | null>(null); // plan file showing the lane picker
   const [compileLane, setCompileLane] = useState('doing');
   const COMPILE_LANES = [{ id: 'backlog', label: 'Backlog' }, { id: 'holding', label: 'Holding' }, { id: 'todo', label: 'To Do' }, { id: 'doing', label: 'Doing (work now)' }];
+  const [fanFor, setFanFor] = useState<string | null>(null);          // plan file showing the team fan-out picker
+  const [fanPick, setFanPick] = useState<Set<string>>(new Set());     // teams chosen for this plan
+  const [fanInfo, setFanInfo] = useState<TeamLead[]>([]);             // active-lead + running counts per team
+  const allTeams = useMemo(() => store.teams.map((t) => t.name).filter(Boolean), [store.teams]);
+
+  // Load active-lead info for every team when a fan-out picker opens.
+  useEffect(() => {
+    if (!fanFor || !allTeams.length) return;
+    let live = true;
+    call<TeamLead[]>('work:teamLeads', allTeams).then((r) => { if (live) setFanInfo(r); }).catch(() => { if (live) setFanInfo([]); });
+    return () => { live = false; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [fanFor, store.teams.length]);
+
+  /** Fan a brain plan out to several teams' ACTIVE leads — each runs it independently. */
+  async function fanOutPlan(p: BrainPlan) {
+    const teams = [...fanPick];
+    if (!teams.length) return;
+    setFanFor(null); setBusyFile(p.file);
+    setMsg(`fanning “${p.title}” out to ${teams.length} team${teams.length > 1 ? 's' : ''}…`);
+    try {
+      const got = await call<{ file: string; content: string } | null>('brain:plan', p.file).catch(() => null);
+      const obj = `Implement this plan for your team, end to end:\n\n# ${p.title}\n\n${got?.content ?? ''}`;
+      const res = await call<FanoutResult[]>('work:fanout', obj, teams);
+      const ok = res.filter((r) => r.status === 'dispatched');
+      const bad = res.filter((r) => r.status !== 'dispatched');
+      const parts = [
+        ok.length ? `dispatched to ${ok.map((r) => `${r.team}/${r.lead}`).join(', ')}` : '',
+        bad.length ? `skipped ${bad.map((r) => `${r.team} (${r.status === 'no-active-agent' ? 'no active agent' : 'failed'})`).join(', ')}` : '',
+      ].filter(Boolean);
+      if (aliveRef.current) setMsg(parts.join(' · ') || 'nothing dispatched');
+      if (ok.length) setFanPick(new Set());
+    } catch (err) {
+      if (aliveRef.current) setMsg(`fan-out failed: ${err instanceof Error ? err.message : String(err)}`);
+    } finally { if (aliveRef.current) setBusyFile(null); }
+  }
   type StatusWrite = { ok: boolean; from?: string; to?: string; error?: string };
 
   async function auditPlan(p: BrainPlan) {
@@ -372,7 +410,29 @@ export function Plans({ store }: { store: FleetStore }) {
               <button className="btn small" disabled={busyFile !== null} onClick={() => setCompileFor(null)}>×</button>
             </span>
           ) : (
-            <button className="btn small" disabled={busyFile !== null} title="Decompose this plan into tasks for the team — pick a lane; Doing dispatches the lead to work them" onClick={() => setCompileFor(p.file)}>⤳ Compile to tasks</button>
+            <button className="btn small" disabled={busyFile !== null} title="Decompose this plan into tasks for the active team — pick a lane; Doing dispatches the lead to work them" onClick={() => setCompileFor(p.file)}>⤳ Compile to tasks</button>
+          )}
+          {fanFor === p.file ? (
+            <span className="row-actions" style={{ gap: 6, alignItems: 'center', flexWrap: 'wrap' }}>
+              <span className="muted small">to teams:</span>
+              {allTeams.map((name) => {
+                const info = fanInfo.find((t) => t.team === name);
+                const canTake = (info?.activeCount ?? 0) > 0 && !!info?.lead;
+                return (
+                  <label key={name} className="small" title={!info ? 'checking…' : canTake ? `lead: ${info.lead} · ${info.activeCount}/${info.totalCount} running` : `${info.totalCount} agent(s), none running`}
+                    style={{ display: 'inline-flex', alignItems: 'center', gap: 4, opacity: canTake ? 1 : 0.5, cursor: canTake && busyFile === null ? 'pointer' : 'not-allowed' }}>
+                    <input type="checkbox" disabled={!canTake || busyFile !== null} checked={fanPick.has(name)}
+                      onChange={(e) => setFanPick((prev) => { const n = new Set(prev); if (e.target.checked) n.add(name); else n.delete(name); return n; })} />
+                    <span style={{ width: 6, height: 6, borderRadius: '50%', background: canTake ? '#3ccb78' : '#888', display: 'inline-block' }} />
+                    {name}
+                  </label>
+                );
+              })}
+              <button className="btn small" disabled={busyFile !== null || !fanPick.size} onClick={() => void fanOutPlan(p)}>Go</button>
+              <button className="btn small" disabled={busyFile !== null} onClick={() => { setFanFor(null); setFanPick(new Set()); }}>×</button>
+            </span>
+          ) : (
+            <button className="btn small" disabled={busyFile !== null} title="Hand this plan to other teams' active leads — each team runs it independently (/ask <team>/<lead>)" onClick={() => { setFanFor(p.file); setFanPick(new Set()); }}>⇄ Fan out to teams</button>
           )}
           <span className="grow" />
           {brainStatusKey(p.status) !== 'pending' ? <button className="btn small" disabled={busyFile !== null} title="Reset this plan's status to ⏳ PENDING" onClick={() => void setBrainPending(p)}>⏳ Set pending</button> : null}

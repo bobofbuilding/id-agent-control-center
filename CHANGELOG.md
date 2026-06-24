@@ -8,8 +8,19 @@ Every change pushed or merged to `main` carries its version number in the commit
 subject (`vX.Y.Z: …`), stamped automatically by the `commit-msg` hook — see
 [CONTRIBUTING.md](CONTRIBUTING.md).
 
-## [0.1.112] — 2026-06-24
-- **Board proportions.** Below the full-width Adjustment Loop band, the **Waiting Areas**
+## [0.1.113] — 2026-06-24
+- **Cross-team fan-out.** Hand one objective to several teams at once: in **Assign work
+  to fleet** (Tasks) pick other teams to fan it out to, and on any **brain plan** use the
+  new **⇄ Fan out to teams** button. Each chosen team's **active lead** gets the objective
+  scoped to its own team (`/ask <team>/<lead>`) and runs it independently, in parallel —
+  so you can drive ops-team, research, technology-security, etc. from one action, not just
+  the active team.
+- **Auto-route to active agents.** Assignment and decomposition now route only to agents
+  that are actually **running** — the lead is told never to assign a `[STOPPED]` agent,
+  stopped owners are auto-reassigned to a live one at dispatch, and teams with no running
+  agent are reported and skipped (never dispatched into the void). Owner dropdowns mark
+  stopped agents `· stopped`; the fan-out picker shows each team's live agent count and
+  greys out teams that can't take work (e.g. skillmesh — 0/38 running). Below the full-width Adjustment Loop band, the **Waiting Areas**
   group is now ⅓ width and **Main Flow** ⅔ width (a 1:2 split that mirrors the
   Adjustment band on top). Lanes compress further before the row starts scrolling.
 - **Richer task cards.** Each card now shows an **● working** pulse when an agent has

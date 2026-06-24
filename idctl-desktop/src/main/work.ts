@@ -9,6 +9,7 @@
  */
 
 import type { ManagerClient } from '../../../idctl/src/api/client.ts';
+import type { Agent } from '../../../idctl/src/api/types.ts';
 import { setTaskLane } from '../../../idctl/src/settings/store.ts';
 
 export interface SubTask { title: string; description: string; agent: string; dependsOn: number[] }
@@ -21,6 +22,26 @@ function qArg(s: string): string { return `"${s.replace(/\\/g, '\\\\').replace(/
 function clip(s: string, n: number): string { const t = (s || '').replace(/\s+/g, ' ').trim(); return t.length > n ? t.slice(0, n) + '…' : t; }
 
 const MAX_SUBTASKS = 12;
+
+/** An agent is routable only when it's actually running. Anything clearly
+ *  stopped/offline/errored is skipped so work never dispatches into the void. */
+export function isActiveStatus(status?: string): boolean {
+  const s = String(status || '').toLowerCase();
+  if (!s) return false;
+  return !/stop|offline|dead|exit|error|crash|down|disabled|sleep/.test(s);
+}
+/** Pick a team's coordinator among its ACTIVE agents: prefer a *-lead / manager
+ *  name, else the first running agent. null when nothing is active. */
+function pickActiveLead(agents: { name: string; status?: string }[]): string | null {
+  const active = agents.filter((a) => isActiveStatus(a.status));
+  if (!active.length) return null;
+  return (
+    active.find((a) => /(^|[-_ ])lead$/i.test(a.name)) ??
+    active.find((a) => /lead/i.test(a.name)) ??
+    active.find((a) => /manager|coordinator/i.test(a.name)) ??
+    active[0]
+  ).name;
+}
 
 /** Pull the first JSON array out of a model reply (tolerates code fences / surrounding prose). */
 function extractJsonArray(text: string): unknown[] | null {
@@ -50,6 +71,7 @@ Return ONLY a JSON array (no prose, no markdown fence) of up to ${MAX_SUBTASKS} 
 [{"title":"short imperative task","description":"1-2 sentences: what to do and the expected output","agent":"<one of the agent names above>","dependsOn":[<0-based indices of prerequisite tasks in THIS array; empty when it can start immediately>]}]
 
 Rules:
+- Assign work ONLY to agents that are running; never assign a task to one marked [STOPPED — do not assign].
 - Maximize parallelism: use an empty dependsOn whenever a task does not truly need another task's output.
 - Only add a dependency when a task genuinely needs a prior task's result.
 - Keep titles short and imperative; assign realistic owners chosen from the agent names above.`;
@@ -59,14 +81,18 @@ export async function decomposeWork(
   client: ManagerClient,
   objective: string,
   lead: string,
-  agents: { name: string; runtime?: string; skills?: string[] }[],
+  agents: { name: string; runtime?: string; skills?: string[]; status?: string }[],
 ): Promise<DecomposeResult> {
   const obj = (objective || '').trim();
   if (!obj) return { ok: false, subtasks: [], raw: '', error: 'describe the work first' };
   const names = new Set(agents.map((a) => a.name));
-  const fallback = names.has(lead) ? lead : (agents[0]?.name ?? lead);
+  const activeNames = new Set(agents.filter((a) => isActiveStatus(a.status)).map((a) => a.name));
+  const firstActive = agents.find((a) => isActiveStatus(a.status))?.name;
+  // Prefer routing to an agent that's actually running; fall back to anything only
+  // if the whole roster is stopped.
+  const fallback = (activeNames.has(lead) ? lead : firstActive) ?? (names.has(lead) ? lead : agents[0]?.name ?? lead);
   const agentLines =
-    agents.map((a) => `- ${a.name}${a.runtime ? ` (${a.runtime})` : ''}${a.skills?.length ? ` — skills: ${a.skills.slice(0, 6).join(', ')}` : ''}`).join('\n') ||
+    agents.map((a) => `- ${a.name}${a.runtime ? ` (${a.runtime})` : ''}${isActiveStatus(a.status) ? '' : ' [STOPPED — do not assign]'}${a.skills?.length ? ` — skills: ${a.skills.slice(0, 6).join(', ')}` : ''}`).join('\n') ||
     `- ${fallback}`;
 
   let raw = '';
@@ -87,7 +113,8 @@ export async function decomposeWork(
     const title = clip(String(o.title ?? o.task ?? `Task ${i + 1}`), 120) || `Task ${i + 1}`;
     const description = clip(String(o.description ?? o.detail ?? ''), 400);
     let agent = String(o.agent ?? o.owner ?? '').trim();
-    if (!names.has(agent)) agent = fallback;
+    // Coerce unknown OR stopped owners to an active agent (auto-route to who's running).
+    if (!(activeNames.size ? activeNames.has(agent) : names.has(agent))) agent = fallback;
     const deps = Array.isArray(o.dependsOn) ? o.dependsOn : Array.isArray(o.depends_on) ? o.depends_on : [];
     const dependsOn = (deps as unknown[])
       .map((d) => Number(d))
@@ -125,9 +152,14 @@ export async function createAndDispatchPlan(
   // Defense-in-depth: never trust the renderer's owner names for an outward-facing
   // fleet dispatch. Re-validate every owner against the live roster and coerce an
   // unknown one to a real agent (the first available). Also clamp deps in-range.
-  const roster = await client.agents().catch(() => [] as { name: string }[]);
-  const names = new Set(roster.map((a) => a.name));
-  const fallback = roster[0]?.name ?? '';
+  const roster = (await client.agents().catch(() => [])) as Agent[];
+  // Auto-route to ACTIVE agents only: a stopped agent can't pick up work, so the
+  // owner pool (and the coerce-to-fallback target) is the running roster whenever
+  // any agent is running; degrade to the full roster only if nothing is active.
+  const activePool = roster.filter((a) => isActiveStatus(a.status));
+  const pool = activePool.length ? activePool : roster;
+  const names = new Set(pool.map((a) => a.name));
+  const fallback = pool[0]?.name ?? '';
   const list = subtasks.slice(0, MAX_SUBTASKS).map((st, i, arr) => ({
     title: clip(String(st?.title ?? `Task ${i + 1}`), 120) || `Task ${i + 1}`,
     description: clip(String(st?.description ?? ''), 400),
@@ -182,4 +214,63 @@ export async function createAndDispatchPlan(
   const ok = created.filter((c) => c.ok);
   const ready = ok.filter((c) => list[c.idx].dependsOn.filter((d) => d < c.idx).length === 0);
   return { created, dispatched: ready.length, deferred: ok.length - ready.length };
+}
+
+// ---- Cross-team fan-out -------------------------------------------------
+
+export interface TeamLead { team: string; lead: string | null; activeCount: number; totalCount: number }
+export interface FanoutResult { team: string; lead?: string; status: 'dispatched' | 'no-active-agent' | 'failed'; queryId?: string; detail?: string }
+
+/** For each team, report its active lead + how many agents are running. Drives the
+ *  fan-out picker so the UI can show which teams can actually take work right now. */
+export async function teamLeads(client: ManagerClient, teams: string[]): Promise<TeamLead[]> {
+  const uniq = [...new Set((teams || []).map((t) => String(t).trim()).filter(Boolean))];
+  return Promise.all(
+    uniq.map(async (team): Promise<TeamLead> => {
+      const agents = (await client.withTeam(team).agents().catch(() => [])) as Agent[];
+      const activeCount = agents.filter((a) => isActiveStatus(a.status)).length;
+      return { team, lead: pickActiveLead(agents), activeCount, totalCount: agents.length };
+    }),
+  );
+}
+
+const FANOUT_PROMPT = (objective: string, team: string) =>
+  `You are the lead of the "${team}" team. Take ownership of this objective for your team and drive it to completion:
+
+${objective}
+
+How to run it:
+1. Break it into concrete, independently-actionable tasks for your ACTIVE teammates (skip anyone stopped).
+2. Create each as a real task: /task create "<short title>" --owner <teammate> --description "<what to do + expected output>".
+3. Dispatch the work, coordinate, and keep task status updated as things progress.
+4. Other teams are handling their own slices in parallel — own yours end to end.
+
+Reply with a short summary of the tasks you created and who you assigned each to.`;
+
+/**
+ * Fan a single objective out across multiple teams. For each team we resolve its
+ * ACTIVE lead and hand the objective to that lead scoped to its own team (so the
+ * teams work in parallel). We confirm the manager accepted each dispatch (queryId)
+ * but DON'T poll to completion — the leads run in the background, like
+ * createAndDispatchPlan. Teams with no running agent are reported 'no-active-agent'
+ * and never dispatched into the void.
+ */
+export async function fanOutObjective(client: ManagerClient, objective: string, teams: string[]): Promise<FanoutResult[]> {
+  const obj = (objective || '').trim();
+  const uniq = [...new Set((teams || []).map((t) => String(t).trim()).filter(Boolean))];
+  if (!obj) return uniq.map((team) => ({ team, status: 'failed' as const, detail: 'describe the work first' }));
+  return Promise.all(
+    uniq.map(async (team): Promise<FanoutResult> => {
+      try {
+        const tc = client.withTeam(team);
+        const agents = (await tc.agents().catch(() => [])) as Agent[];
+        const lead = pickActiveLead(agents);
+        if (!lead) return { team, status: 'no-active-agent', detail: agents.length ? `${agents.length} agent(s), none running` : 'no agents' };
+        const env = await tc.remote<{ queryId?: string }>(`/ask ${lead} ${qArg(FANOUT_PROMPT(obj, team))}`);
+        return { team, lead, status: 'dispatched', queryId: env.result?.queryId };
+      } catch (e) {
+        return { team, status: 'failed', detail: e instanceof Error ? e.message : String(e) };
+      }
+    }),
+  );
 }

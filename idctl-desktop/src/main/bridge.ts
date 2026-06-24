@@ -38,7 +38,7 @@ import { discoverLocalServers, type DiscoveredServer } from '../../../idctl/src/
 import { kindNeedsKey, type ProviderProfile, type McpServerProfile, type ProjectEntry } from '../../../idctl/src/settings/schema.ts';
 import { buildRuntimeCatalog } from '../../../idctl/src/settings/runtimeCatalog.ts';
 import { testMcpServer } from './mcpTest.ts';
-import { decomposeWork, createAndDispatchPlan, type SubTask } from './work.ts';
+import { decomposeWork, createAndDispatchPlan, fanOutObjective, teamLeads, type SubTask } from './work.ts';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { homedir } from 'node:os';
@@ -179,6 +179,7 @@ const METHODS: Record<string, (...a: any[]) => Promise<unknown>> = {
     const list = agents.map((a) => ({
       name: a.name,
       runtime: a.runtime,
+      status: a.status,
       skills: Array.isArray(a.metadata?.skills) ? (a.metadata!.skills as string[]) : [],
     }));
     return decomposeWork(client, String(objective), String(lead), list);
@@ -187,6 +188,10 @@ const METHODS: Record<string, (...a: any[]) => Promise<unknown>> = {
   // sets the Kanban lane; opts.dispatch=false queues them unowned instead of dispatching.
   'work:createPlan': (objective: string, subtasks: SubTask[], opts?: { dispatch?: boolean; lane?: string }) =>
     createAndDispatchPlan(client, String(objective), Array.isArray(subtasks) ? subtasks : [], opts ?? {}),
+  // Cross-team fan-out: hand one objective to several teams' ACTIVE leads at once.
+  'work:teamLeads': (teams: string[]) => teamLeads(client, Array.isArray(teams) ? teams.map(String) : []),
+  'work:fanout': (objective: string, teams: string[]) =>
+    fanOutObjective(client, String(objective), Array.isArray(teams) ? teams.map(String) : []),
 
   // health probes
   probeAll: () => client.probeAll(),

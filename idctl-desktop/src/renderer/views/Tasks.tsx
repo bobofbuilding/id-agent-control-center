@@ -12,6 +12,8 @@ type SubTask = { title: string; description: string; agent: string; dependsOn: n
 type DecomposeResult = { ok: boolean; subtasks: SubTask[]; raw: string; error?: string };
 type CreatedTask = { idx: number; ref: string; title: string; agent: string; ok: boolean; error?: string; dependsOn: number[]; dispatched: boolean };
 type CreatePlanResult = { created: CreatedTask[]; dispatched: number; deferred: number };
+type TeamLead = { team: string; lead: string | null; activeCount: number; totalCount: number };
+type FanoutResult = { team: string; lead?: string; status: 'dispatched' | 'no-active-agent' | 'failed'; queryId?: string; detail?: string };
 
 type Tab = 'tasks' | 'plans' | 'schedule' | 'loops' | 'dream';
 const TABS: { id: Tab; label: string }[] = [
@@ -77,6 +79,11 @@ function absTime(ts?: number): string | undefined {
   if (!ts) return undefined;
   return new Date(ts < 1e12 ? ts * 1000 : ts).toLocaleString();
 }
+/** Is an agent running (routable)? Mirrors isActiveStatus() in main/work.ts. */
+function liveAgent(status?: string): boolean {
+  const s = String(status || '').toLowerCase();
+  return !!s && !/stop|offline|dead|exit|error|crash|down|disabled|sleep/.test(s);
+}
 
 /** Tabbed wrapper: Tasks + Schedule + Loops in one page. */
 export function Tasks({ store, initialTab }: { store: FleetStore; initialTab?: Tab }) {
@@ -123,10 +130,43 @@ function TasksPanel({ store }: { store: FleetStore }) {
   const [proposing, setProposing] = useState(false);
   const [proposal, setProposal] = useState<SubTask[] | null>(null);
   const [assignNote, setAssignNote] = useState('');
+  const [fanTeams, setFanTeams] = useState<Set<string>>(new Set()); // other teams to fan the objective out to
+  const [teamInfo, setTeamInfo] = useState<TeamLead[]>([]);          // active-lead + running counts per team
   const prompt = usePrompt();
 
   const coordinator = resolveCoordinator(store.agents, store.coordinator) ?? store.agents[0]?.name ?? '';
   const leadName = lead && store.agents.some((a) => a.name === lead) ? lead : coordinator;
+  const activeTeam = store.team ?? 'default';
+  const otherTeams = store.teams.map((t) => t.name).filter((n) => n && n !== activeTeam);
+
+  // When the panel opens, fetch which other teams have an active lead (who can take work now).
+  useEffect(() => {
+    if (!showAssign || !otherTeams.length) { setTeamInfo([]); return; }
+    let live = true;
+    call<TeamLead[]>('work:teamLeads', otherTeams).then((r) => { if (live) setTeamInfo(r); }).catch(() => { if (live) setTeamInfo([]); });
+    return () => { live = false; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [showAssign, store.team, store.teams.length]);
+
+  async function fanOut() {
+    const obj = objective.trim();
+    const teams = [...fanTeams];
+    if (!obj || !teams.length) return;
+    setProposing(true); setAssignNote(`fanning out to ${teams.length} team${teams.length > 1 ? 's' : ''}…`);
+    try {
+      const res = await call<FanoutResult[]>('work:fanout', obj, teams);
+      const ok = res.filter((r) => r.status === 'dispatched');
+      const bad = res.filter((r) => r.status !== 'dispatched');
+      const parts = [
+        ok.length ? `dispatched to ${ok.map((r) => `${r.team}/${r.lead}`).join(', ')}` : '',
+        bad.length ? `skipped ${bad.map((r) => `${r.team} (${r.status === 'no-active-agent' ? 'no active agent' : 'failed'})`).join(', ')}` : '',
+      ].filter(Boolean);
+      setAssignNote(parts.join(' · ') || 'nothing dispatched');
+      if (ok.length) { setFanTeams(new Set()); store.refresh(); }
+    } catch (e) {
+      setAssignNote(`fan-out failed: ${e instanceof Error ? e.message : String(e)}`);
+    } finally { setProposing(false); }
+  }
 
   async function reload() {
     try {
@@ -327,18 +367,45 @@ function TasksPanel({ store }: { store: FleetStore }) {
             <span>lead</span>
             <b>
               <select className="cell-select" value={leadName} disabled={proposing} onChange={(e) => setLead(e.target.value)}>
-                {store.agents.map((a) => <option key={a.id} value={a.name}>{a.name}</option>)}
+                {store.agents.map((a) => <option key={a.id} value={a.name}>{a.name}{liveAgent(a.status) ? '' : ' · stopped'}</option>)}
               </select>
             </b>
             <span>objective</span>
             <b><textarea style={{ width: '100%', minHeight: 64 }} placeholder="e.g. “Ship a /status page: API endpoint, React widget, tests, and docs.”" value={objective} disabled={proposing} onChange={(e) => setObjective(e.target.value)} /></b>
           </div>
+
+          {!proposal && otherTeams.length ? (
+            <div style={{ marginTop: 10 }}>
+              <div className="muted small" style={{ marginBottom: 5 }}>⇄ Or fan this objective out to other teams — each team's <b>active lead</b> runs it independently (◷ teams with no running agent can't take work):</div>
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 7 }}>
+                {otherTeams.map((name) => {
+                  const info = teamInfo.find((t) => t.team === name);
+                  const loaded = !!info;
+                  const canTake = (info?.activeCount ?? 0) > 0 && !!info?.lead;
+                  return (
+                    <label key={name} className="small"
+                      title={!loaded ? 'checking…' : canTake ? `lead: ${info!.lead} · ${info!.activeCount}/${info!.totalCount} running` : `${info!.totalCount} agent(s), none running — cannot take work`}
+                      style={{ display: 'inline-flex', alignItems: 'center', gap: 5, border: '1px solid var(--border, #2a2a2a)', borderRadius: 6, padding: '2px 8px', opacity: canTake ? 1 : 0.5, cursor: canTake && !proposing ? 'pointer' : 'not-allowed' }}>
+                      <input type="checkbox" disabled={!canTake || proposing} checked={fanTeams.has(name)}
+                        onChange={(e) => setFanTeams((prev) => { const n = new Set(prev); if (e.target.checked) n.add(name); else n.delete(name); return n; })} />
+                      <span style={{ width: 7, height: 7, borderRadius: '50%', background: canTake ? '#3ccb78' : '#888', display: 'inline-block' }} />
+                      {name} <span className="muted">{loaded ? `${info!.activeCount}/${info!.totalCount}` : '…'}</span>
+                    </label>
+                  );
+                })}
+              </div>
+            </div>
+          ) : null}
+
           <div className="row-actions" style={{ marginTop: 10, alignItems: 'center' }}>
             {assignNote ? <span className={`small ${/failed|could not|no agent/.test(assignNote) ? 'status-error' : 'muted'}`}>{assignNote}</span> : null}
             <span className="grow" />
             {proposal ? <button className="btn" disabled={proposing} onClick={() => { setProposal(null); setAssignNote(''); }}>Discard</button> : null}
+            {!proposal && fanTeams.size ? (
+              <button className="btn primary" disabled={proposing || !objective.trim()} onClick={() => void fanOut()}>{proposing ? 'Fanning out…' : `⇄ Fan out to ${fanTeams.size} team${fanTeams.size > 1 ? 's' : ''}`}</button>
+            ) : null}
             {!proposal ? (
-              <button className="btn primary" disabled={proposing || !objective.trim()} onClick={() => void decompose()}>{proposing ? 'Planning…' : 'Decompose into tasks'}</button>
+              <button className="btn primary" disabled={proposing || !objective.trim()} onClick={() => void decompose()}>{proposing ? 'Planning…' : `Decompose for ${activeTeam}`}</button>
             ) : (
               <button className="btn primary" disabled={proposing} onClick={() => void createPlan()}>{proposing ? 'Dispatching…' : `Create ${proposal.length} & dispatch`}</button>
             )}
@@ -355,7 +422,7 @@ function TasksPanel({ store }: { store: FleetStore }) {
                     {s.dependsOn.length ? <div className="small warn-text">⇢ after {s.dependsOn.map((d) => `#${d + 1}`).join(', ')}</div> : <div className="small ok-text">▶ starts immediately</div>}
                   </div>
                   <select className="cell-select" value={s.agent} disabled={proposing} onChange={(e) => editSubAgent(i, e.target.value)} title="owner">
-                    {store.agents.map((a) => <option key={a.id} value={a.name}>{a.name}</option>)}
+                    {store.agents.map((a) => <option key={a.id} value={a.name}>{a.name}{liveAgent(a.status) ? '' : ' · stopped'}</option>)}
                   </select>
                   <button className="btn icon-danger small" disabled={proposing} title="Remove this sub-task" onClick={() => removeSub(i)}>✕</button>
                 </div>
@@ -411,7 +478,7 @@ function TasksPanel({ store }: { store: FleetStore }) {
                 ) : !isDone(t) ? (
                   <select className="cell-select" style={{ fontSize: 11 }} defaultValue="" disabled={busy} onChange={(e) => assign(t, e.target.value)}>
                     <option value="">assign…</option>
-                    {store.agents.map((a) => <option key={a.id} value={a.name}>{a.name}</option>)}
+                    {store.agents.map((a) => <option key={a.id} value={a.name}>{a.name}{liveAgent(a.status) ? '' : ' · stopped'}</option>)}
                   </select>
                 ) : <span className="muted small">—</span>}
                 <span className="grow" />
