@@ -8,6 +8,14 @@ Every change pushed or merged to `main` carries its version number in the commit
 subject (`vX.Y.Z: …`), stamped automatically by the `commit-msg` hook — see
 [CONTRIBUTING.md](CONTRIBUTING.md).
 
+## [0.1.140] — 2026-06-24
+- **Dashboard activity feed now truly spans all teams (and is live, not stale).** Two bugs in
+  the holistic `events:multi` aggregator: it fetched each team's **oldest** events (`since=0`
+  returns the start of the log → every row was hours old), and a single hyperactive team could
+  fill all 80 slots. Now it **probes each team's latest seq and fetches its newest events**, with
+  a **per-team cap** (`max(8, ⌈limit/teams⌉)`) so every team is represented; the union is then
+  time-sorted. Verified live: feed shows a fair mix across teams with recent timestamps.
+
 ## [0.1.139] — 2026-06-24
 - **Cleanup:** removed the dead `CreateTeamModal` (~200 lines) left over from the Build-page
   consolidation — the unified inline `TeamBuilder` replaced it. No behavior change.

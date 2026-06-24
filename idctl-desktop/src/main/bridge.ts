@@ -134,12 +134,27 @@ const METHODS: Record<string, (...a: any[]) => Promise<unknown>> = {
     const lim = Math.min(Number(limit) || 80, 120);
     const teams = await client.teams().catch(() => []);
     const names = teams.length ? teams.map((t) => t.name) : [cfg.team ?? 'default'];
+    // Per-team cap so one hyperactive team can't flood the holistic feed — every
+    // team contributes its NEWEST events; the union is then time-sorted. `since=0`
+    // on the manager returns the OLDEST events, so we first probe each team's tail
+    // (a `since` past the end makes the manager echo back its latest seq) and then
+    // fetch the most recent `perTeam` events from there.
+    const perTeam = Math.max(8, Math.ceil(lim / Math.max(1, names.length)));
     const per = await Promise.all(
       names.map(async (name) => {
-        const r = await client.withTeam(name).events(0, { wait: 0, limit: lim }).catch(() => ({ events: [], next_seq: 0 }));
-        return (r.events ?? []).map((e) => ({ ...e, team: e.team ?? name, timestamp: e.timestamp ?? e.occurred_at }));
+        const tc = client.withTeam(name);
+        try {
+          const head = await tc.events(Number.MAX_SAFE_INTEGER, { wait: 0, limit: 1 });
+          const latest = Number(head?.next_seq) || 0;
+          if (!latest) return [];
+          const r = await tc.events(Math.max(0, latest - perTeam), { wait: 0, limit: perTeam });
+          return (r.events ?? []).map((e) => ({ ...e, team: e.team ?? name, timestamp: e.timestamp ?? e.occurred_at }));
+        } catch {
+          return [];
+        }
       }),
     );
+    // Oldest→newest (the Dashboard reverses to show newest first); keep the newest `lim`.
     return per.flat().sort((a, b) => (a.timestamp ?? 0) - (b.timestamp ?? 0)).slice(-lim);
   },
   // Live agent activity (tool/file steps) for the chat "what they're doing" feed.
