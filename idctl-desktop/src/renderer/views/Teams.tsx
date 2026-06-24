@@ -443,6 +443,14 @@ export function Teams({ store }: { store: FleetStore }) {
                   <span className="muted small">· {selectedAgent.team} · {runtimeLabel(selectedAgent.agent.runtime ?? '')} · {selectedAgent.agent.status}</span>
                 </h4>
                 <span className="row-actions" style={{ gap: 6 }}>
+                  {(() => {
+                    const isLead = hier.coordinators[selectedAgent.team] === selectedAgent.agent.name;
+                    return (
+                      <button className={`star${isLead ? ' on' : ''}`} disabled={busy || isLead}
+                        title={isLead ? `${selectedAgent.agent.name} is ${selectedAgent.team}'s lead (coordinator)` : `Make ${selectedAgent.agent.name} the lead of ${selectedAgent.team}`}
+                        onClick={() => void setTeamCoordinator(selectedAgent!.team, selectedAgent!.agent.name)}>{isLead ? '★ lead' : '☆ make lead'}</button>
+                    );
+                  })()}
                   <select className="cell-select" disabled={busy || selectedAgent.reassignTargets.length === 0} value="" title="Reassign to another team"
                     onChange={(e) => { const to = e.target.value; e.currentTarget.value = ''; if (to) void moveAgentToTeam(selectedAgent!.agent.id, selectedAgent!.agent.name, to); }}>
                     <option value="">{selectedAgent.reassignTargets.length === 0 ? 'no other teams' : 'reassign to…'}</option>

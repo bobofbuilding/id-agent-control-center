@@ -8,6 +8,11 @@ Every change pushed or merged to `main` carries its version number in the commit
 subject (`vX.Y.Z: …`), stamped automatically by the `commit-msg` hook — see
 [CONTRIBUTING.md](CONTRIBUTING.md).
 
+## [0.1.132] — 2026-06-24
+- **Set the lead from HR Manager → Structure.** Selecting an agent in the team graph now shows a
+  **★ make lead** button in its panel (★ when it's already the team's coordinator) — set any
+  team's lead right from the structure view, same as the ★ in the Health fleet grid.
+
 ## [0.1.131] — 2026-06-24
 - **Capabilities: apply across all teams / all leads.** The apply-to picker now has a **scope**
   selector — **This team / All teams / All team leads** — so you can attach an MCP server or
