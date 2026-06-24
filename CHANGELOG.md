@@ -8,6 +8,15 @@ Every change pushed or merged to `main` carries its version number in the commit
 subject (`vX.Y.Z: …`), stamped automatically by the `commit-msg` hook — see
 [CONTRIBUTING.md](CONTRIBUTING.md).
 
+## [0.1.99] — 2026-06-24
+- **Plans now shows the brain's live plan set.** The Plans tab leads with a **Brain
+  plans** section read straight from the brain's `plans/` directory (its `README.md`
+  status index — DONE / PARTIAL / PENDING / ON HOLD — plus each plan file), **self-
+  updating every 10s** as the brain edits its files on disk. Click any plan to read it
+  inline. It's strictly read-only (the brain owns those files); your own AI-generated
+  drafts live below under "Your drafts." The directory is auto-located from your
+  projects root.
+
 ## [0.1.98] — 2026-06-24
 - **Work page, part 1 of an overhaul:**
   - **Tasks is now a live Kanban board.** Three columns matching the manager's task

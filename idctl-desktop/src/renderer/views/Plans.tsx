@@ -16,6 +16,17 @@ interface Plan {
 }
 type PlanSummary = { id: string; title: string; status: PlanStatus; version: number; agent?: string; team: string; updatedAt: number };
 
+// Brain plans: the LIVE, read-only plan set the brain maintains on disk.
+type BrainPlan = { num?: string; title: string; file: string; status?: string; effort?: string; notes?: string };
+type BrainPlansResp = { dir: string | null; plans: BrainPlan[] };
+function brainStatusClass(s?: string): string {
+  const t = (s || '').toLowerCase();
+  if (/done|✅/.test(t)) return 'st-done';
+  if (/partial|🔄|progress/.test(t)) return 'st-active';
+  if (/hold|🛑|block/.test(t)) return 'st-blocked';
+  return 'st-paused'; // pending / unknown
+}
+
 const STATUSES: PlanStatus[] = ['draft', 'active', 'done', 'archived'];
 const STATUS_CLASS: Record<PlanStatus, string> = { draft: 'st-paused', active: 'st-active', done: 'st-done', archived: 'st-blocked' };
 
@@ -57,6 +68,24 @@ export function Plans({ store }: { store: FleetStore }) {
 
   async function reload() { setPlans(await call<PlanSummary[]>('plans:list', team).catch(() => [])); }
   useEffect(() => { void reload(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [team, store.lastUpdated]);
+
+  // Brain plans: live, self-updating from <projectsRoot>/brain/plans (read-only).
+  const [brain, setBrain] = useState<BrainPlansResp>({ dir: null, plans: [] });
+  const [brainOpen, setBrainOpen] = useState<string | null>(null);
+  const [brainContent, setBrainContent] = useState('');
+  async function reloadBrain() { setBrain(await call<BrainPlansResp>('brain:plans').catch(() => ({ dir: null, plans: [] }))); }
+  useEffect(() => {
+    void reloadBrain();
+    const id = setInterval(() => { void reloadBrain(); }, 10000); // self-update as the brain edits its files
+    return () => clearInterval(id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [team, store.lastUpdated]);
+  async function openBrain(file: string) {
+    if (brainOpen === file) { setBrainOpen(null); setBrainContent(''); return; }
+    setBrainOpen(file); setBrainContent('loading…');
+    const r = await call<{ file: string; content: string } | null>('brain:plan', file).catch(() => null);
+    if (aliveRef.current) setBrainContent(r?.content ?? '(could not read this plan)');
+  }
 
   async function open(id: string) {
     if (detail?.id === id) { setDetail(null); return; } // toggle closed
@@ -138,6 +167,41 @@ export function Plans({ store }: { store: FleetStore }) {
 
   return (
     <>
+      <section className="card">
+        <div className="row-actions" style={{ alignItems: 'center', marginBottom: 6 }}>
+          <h3 style={{ margin: 0 }}>Brain plans</h3>
+          <span className="muted small">· {brain.plans.length} · ⟳ live</span>
+          <span className="grow" />
+          {brain.dir
+            ? <span className="muted small mono" title={brain.dir}>{brain.dir.replace(/^.*\/projects\//, '…/')}</span>
+            : <span className="warn-text small">brain plans dir not found</span>}
+        </div>
+        {brain.plans.length === 0 ? (
+          <p className="muted small">{brain.dir ? 'No plans in the brain index yet.' : 'Could not locate the brain plans directory (projects root not detected — set it in Projects).'}</p>
+        ) : (
+          <div className="skill-catalog">
+            {brain.plans.map((p) => {
+              const isOpen = brainOpen === p.file;
+              return (
+                <div className={`skill-card${isOpen ? ' editing' : ''}`} key={p.file}>
+                  <div className="skill-card-head" style={{ cursor: 'pointer' }} onClick={() => void openBrain(p.file)}>
+                    {p.status ? <span className={`st-badge ${brainStatusClass(p.status)}`}>{p.status}</span> : null}
+                    {p.num ? <span className="mono small muted">{p.num}</span> : null}
+                    <span className="b">{p.title}</span>
+                    {p.effort ? <span className="muted small">· {p.effort}</span> : null}
+                    <span className="grow" />
+                    {p.notes ? <span className="muted small" style={{ maxWidth: 300, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={p.notes}>{p.notes}</span> : null}
+                    <span className="muted">{isOpen ? '▾' : '▸'}</span>
+                  </div>
+                  {isOpen ? <pre className="plan-content">{brainContent}</pre> : null}
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </section>
+
+      <h3 style={{ margin: '14px 0 4px' }}>Your drafts</h3>
       <div className="row-actions" style={{ marginBottom: 8, alignItems: 'center' }}>
         <span className="muted small">{plans.length} plan{plans.length === 1 ? '' : 's'}</span>
         <span className="grow" />

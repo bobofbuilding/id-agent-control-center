@@ -15,6 +15,7 @@ import { pickProjectFolder, openProjectFolder, projectReadme, projectGit, projec
 import { pickChatFiles, saveChatFiles, savePastedFile } from './chatfiles.ts';
 import { listChats, listInflightChats, getChat, saveChat, renameChat, removeChat, genTitle, unreadChatCount, markChatRead, patchChat, type ChatSession, type ChatPatch } from './chatstore.ts';
 import { listPlans, getPlan, savePlan, removePlan, type Plan } from './planstore.ts';
+import { listBrainPlans, getBrainPlan } from './brainplans.ts';
 import { generateImage, readImage, imageModels, getImageServer, detectImageServer } from './images.ts';
 import { loadSettings, setUpdateSettings, setImageServer } from '../../../idctl/src/settings/store.ts';
 import type { ImageServerConfig } from '../../../idctl/src/settings/schema.ts';
@@ -252,6 +253,11 @@ async function appCall(method: string, args: unknown[]): Promise<unknown> {
       return savePlan(args[0] as Plan);
     case 'plans:remove':
       return removePlan(args[0] as string);
+    // Brain plans: read-only LIVE view of <projectsRoot>/brain/plans (README index + files).
+    case 'brain:plans':
+      return listBrainPlans(args[0] as string | undefined);
+    case 'brain:plan':
+      return getBrainPlan(args[0] as string, args[1] as string | undefined);
     case 'image:generate':
       return generateImage(args[0] as string, args[1] as string | undefined);
     case 'image:read':
