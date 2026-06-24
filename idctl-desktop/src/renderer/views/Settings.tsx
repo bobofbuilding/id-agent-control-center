@@ -554,7 +554,19 @@ export function Settings({ store }: { store: FleetStore }) {
           ) : (
             <span className="chips grow">
               {ollamaModels.map((m) => (
-                <span className="chip" key={m.name} title={m.parameterSize ? `${m.parameterSize}` : undefined}>{m.name}</span>
+                <span className="chip" key={m.name} title={m.parameterSize ? `${m.parameterSize}` : undefined} style={{ display: 'inline-flex', alignItems: 'center', gap: 5 }}>
+                  {m.name}
+                  {confirmRemove === m.name ? (
+                    <>
+                      <button disabled={removing === m.name} title={`Uninstall ${m.name}`} onClick={() => void removeModel(m.name)}
+                        style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#e5534b', fontWeight: 600, padding: 0, fontSize: 11 }}>{removing === m.name ? '…' : 'remove?'}</button>
+                      <button title="Cancel" onClick={() => setConfirmRemove(null)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--muted, #888)', padding: 0 }}>×</button>
+                    </>
+                  ) : (
+                    <button title={`Uninstall ${m.name}`} onClick={() => setConfirmRemove(m.name)}
+                      style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--muted, #888)', padding: 0, fontSize: 11, lineHeight: 1 }}>✕</button>
+                  )}
+                </span>
               ))}
             </span>
           )}

@@ -514,7 +514,12 @@ function TasksPanel({ store }: { store: FleetStore }) {
         {(() => {
           const card = (t: Task) => {
             const phase = colOf(t.status);                       // todo | doing | done
-            const working = phase === 'doing' && !!t.ownerName;  // an agent has claimed it and is on it
+            const owned = phase === 'doing' && !!t.ownerName;    // assigned + in the doing state
+            // updatedAt only changes on a status change, so "long in doing with no update" is a
+            // strong stall signal — don't claim "working" when a task has sat untouched for 30m+.
+            const upMs = t.updatedAt ? (t.updatedAt < 1e12 ? t.updatedAt * 1000 : t.updatedAt) : 0;
+            const stale = owned && upMs > 0 && Date.now() - upMs > 30 * 60 * 1000;
+            const working = owned && !stale;                     // recently moved to doing → plausibly active
             const cAbs = absTime(t.createdAt);
             const uAbs = absTime(t.updatedAt);
             const dAbs = absTime(t.completedAt ?? t.updatedAt);
@@ -525,16 +530,21 @@ function TasksPanel({ store }: { store: FleetStore }) {
               onDragStart={(e) => { setDragRef(ref(t)); e.dataTransfer.setData('text/plain', ref(t)); e.dataTransfer.effectAllowed = 'move'; }}
               onDragEnd={() => setDragRef(null)}
               className="kanban-card"
-              style={{ border: `1px solid ${working ? 'rgba(60,203,120,0.55)' : 'var(--border, #2a2a2a)'}`, borderRadius: 6, padding: '6px 8px', background: 'var(--bg, #141414)', cursor: busy ? 'default' : 'grab' }}
+              style={{ border: `1px solid ${working ? 'rgba(60,203,120,0.55)' : stale ? 'rgba(224,163,60,0.55)' : 'var(--border, #2a2a2a)'}`, borderRadius: 6, padding: '6px 8px', background: 'var(--bg, #141414)', cursor: busy ? 'default' : 'grab' }}
             >
               <div className="b" style={{ fontSize: 13 }}>{t.title}</div>
               <div className="muted small mono">{t.shortId ?? ref(t)}{isRoutine(t) ? ' · routine' : ''}</div>
               <div className="row-actions" style={{ marginTop: 4, alignItems: 'center', gap: 6 }}>
                 {working ? (
-                  <span className="small" title={`${t.ownerName} is actively working on this${uAbs ? ` — active since ${uAbs}` : ''}`}
+                  <span className="small" title={`${t.ownerName} recently picked this up${uAbs ? ` — moved to Doing ${uAbs}` : ''}`}
                     style={{ display: 'inline-flex', alignItems: 'center', gap: 5, color: '#3ccb78', background: 'rgba(60,203,120,0.13)', borderRadius: 10, padding: '1px 7px', fontWeight: 600 }}>
                     <span className="idctl-pulse" style={{ width: 7, height: 7, borderRadius: '50%', background: '#3ccb78', display: 'inline-block' }} />
                     {t.ownerName} · working
+                  </span>
+                ) : stale ? (
+                  <span className="small" title={`${t.ownerName} has held this in Doing for ${ago(t.updatedAt)} with no status change — it may be stalled. Re-assign it, or drag it to Rework/To Do to re-dispatch.`}
+                    style={{ display: 'inline-flex', alignItems: 'center', gap: 5, color: '#e0a33c', background: 'rgba(224,163,60,0.13)', borderRadius: 10, padding: '1px 7px', fontWeight: 600 }}>
+                    ⏳ {t.ownerName} · stalled {ago(t.updatedAt)}
                   </span>
                 ) : t.ownerName ? (
                   <span className="muted small" title={phase === 'done' ? 'completed by this agent' : 'assigned, not yet started'}>{phase === 'done' ? '✓' : '◴'} {t.ownerName}</span>
@@ -556,7 +566,8 @@ function TasksPanel({ store }: { store: FleetStore }) {
               </div>
               <div className="muted" style={{ marginTop: 3, display: 'flex', gap: 9, flexWrap: 'wrap', fontSize: 10.5, opacity: 0.85 }}>
                 <span title={cAbs ? `created ${cAbs}` : undefined}>⊕ created {ago(t.createdAt)} ago</span>
-                {working && t.updatedAt ? <span style={{ color: '#3ccb78' }} title={uAbs ? `active since ${uAbs}` : undefined}>▶ working {ago(t.updatedAt)}</span> : null}
+                {working && t.updatedAt ? <span style={{ color: '#3ccb78' }} title={uAbs ? `moved to Doing ${uAbs}` : undefined}>▶ in Doing {ago(t.updatedAt)}</span> : null}
+                {stale ? <span style={{ color: '#e0a33c' }} title={uAbs ? `no status change since ${uAbs} — may be stalled` : undefined}>⏳ no update {ago(t.updatedAt)}</span> : null}
                 {phase === 'done' && (t.completedAt || t.updatedAt) ? <span title={dAbs ? `completed ${dAbs}` : undefined}>✓ done {ago(t.completedAt ?? t.updatedAt)} ago</span> : null}
                 {phase === 'todo' && t.ownerName ? <span title="assigned but not started yet">◴ queued</span> : null}
               </div>

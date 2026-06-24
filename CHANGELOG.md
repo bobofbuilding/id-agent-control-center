@@ -8,6 +8,14 @@ Every change pushed or merged to `main` carries its version number in the commit
 subject (`vX.Y.Z: …`), stamped automatically by the `commit-msg` hook — see
 [CONTRIBUTING.md](CONTRIBUTING.md).
 
+## [0.1.121] — 2026-06-24
+- **Honest task status (no more false "working").** A task card only shows the green
+  **● working** pulse when it *recently* entered Doing. A task left in Doing 30m+ with no
+  status change now shows an amber **⏳ stalled Nh** badge (and "no update Nh") instead —
+  so an agent that was handed work but stopped progressing reads as stalled, not "working."
+- **Uninstall local models from the chip list.** Each installed Ollama model chip now has a
+  ✕ (two-step confirm) to uninstall it, not just the catalog rows.
+
 ## [0.1.120] — 2026-06-24
 - **HR Manager reorganized.** Team-creation (**+ From template** / **✦ Build a team**) moved
   from the page header into the **Build** tab; the **teams table** (switch/manage/delete) moved
