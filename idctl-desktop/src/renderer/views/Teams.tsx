@@ -124,6 +124,11 @@ export function Teams({ store }: { store: FleetStore }) {
 
   // Cross-team relay policy (delegates_to) for the active team.
   const activeTeam = store.team ?? 'default';
+  // Teams with at least one RUNNING agent — used to keep team pickers to active teams only.
+  const activeTeamNames = useMemo(
+    () => store.teams.map((t) => t.name).filter((n) => store.allAgents.some((a) => a.team === n && !!a.status && !/stop|offline|dead|exit|error|crash|down|disabled|sleep/i.test(a.status))),
+    [store.teams, store.allAgents],
+  );
   const [delegates, setDelegates] = useState<string[] | null>(null);
   const [savedDelegates, setSavedDelegates] = useState<string[] | null>(null); // last persisted value
   const [mode, setMode] = useState<RelayMode>('permissive');
@@ -522,6 +527,7 @@ export function Teams({ store }: { store: FleetStore }) {
           inline
           team=""
           existingTeams={store.teams.map((t) => t.name)}
+          activeTeams={activeTeamNames}
           providers={providers}
           modelCatalog={modelCatalog}
           skillCatalog={skillCatalog}
@@ -933,6 +939,7 @@ function CreateTeamModal({
 function TeamBuilder({
   team,
   existingTeams,
+  activeTeams,
   providers,
   modelCatalog,
   skillCatalog,
@@ -944,6 +951,7 @@ function TeamBuilder({
 }: {
   team: string;
   existingTeams: string[];
+  activeTeams: string[];
   providers: ProviderRow[];
   modelCatalog: Record<string, string[]>;
   skillCatalog: string[];
@@ -974,7 +982,9 @@ function TeamBuilder({
   };
 
   // ---- target team (existing or new) ----
-  const teamOptions = useMemo(() => existingTeams.filter(Boolean), [existingTeams]);
+  // Existing-team picker lists only ACTIVE teams (those with running agents); collision-check
+  // below still uses the full `existingTeams` so a new-team name can't clash with an idle one.
+  const teamOptions = useMemo(() => activeTeams.filter(Boolean), [activeTeams]);
   const [teamSel, setTeamSel] = useState<string>(team && existingTeams.includes(team) ? team : '__new__');
   const [newTeam, setNewTeam] = useState(team && !existingTeams.includes(team) ? cleanTeamName(team) : '');
   const [teamTouched, setTeamTouched] = useState(false);

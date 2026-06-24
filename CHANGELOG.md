@@ -8,6 +8,11 @@ Every change pushed or merged to `main` carries its version number in the commit
 subject (`vX.Y.Z: …`), stamped automatically by the `commit-msg` hook — see
 [CONTRIBUTING.md](CONTRIBUTING.md).
 
+## [0.1.137] — 2026-06-24
+- **Team pickers list only active teams.** The Build form's existing-team selector and the
+  Capabilities team dropdown now show only teams with **running agents** (idle teams hidden) —
+  matching "only track active teams." (New-team name collision-checks still consider every team.)
+
 ## [0.1.136] — 2026-06-24
 - **HR Manager → Build is one inline form (no popouts).** The Build tab now renders the team
   builder inline: pick a team (**new or existing**), **start from** a library template/saved

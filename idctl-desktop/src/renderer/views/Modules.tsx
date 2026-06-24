@@ -389,7 +389,7 @@ export function Modules({ store }: { store: FleetStore }) {
           <>
           <span className="muted small">team</span>
           <select className="cell-select" value={activeTeam} onChange={(e) => void store.setTeam(e.target.value)}>
-            {store.teams.map((t) => (
+            {store.teams.filter((t) => t.name === activeTeam || store.allAgents.some((a) => a.team === t.name && !!a.status && !/stop|offline|dead|exit|error|crash|down|disabled|sleep/i.test(a.status))).map((t) => (
               <option key={t.id} value={t.name}>{t.name}</option>
             ))}
           </select>
