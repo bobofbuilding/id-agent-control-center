@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useFleet, call } from './store.ts';
 import { PromptProvider } from './components/prompt.tsx';
+import { ToastProvider } from './components/toast.tsx';
 import { Dashboard } from './views/Dashboard.tsx';
 import { Chat } from './views/Chat.tsx';
 import { Teams } from './views/Teams.tsx';
@@ -76,6 +77,7 @@ export function App() {
   }
 
   return (
+    <ToastProvider>
     <PromptProvider>
     <div className="app">
       <div className="titlebar">
@@ -117,6 +119,7 @@ export function App() {
       </div>
     </div>
     </PromptProvider>
+    </ToastProvider>
   );
 }
 

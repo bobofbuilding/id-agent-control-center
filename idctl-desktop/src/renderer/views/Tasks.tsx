@@ -1,6 +1,7 @@
 import { useEffect, useState, type CSSProperties } from 'react';
 import { call, resolveCoordinator, type FleetStore } from '../store.ts';
 import { usePrompt } from '../components/prompt.tsx';
+import { useToast } from '../components/toast.tsx';
 import type { Task } from '../../../../idctl/src/api/types.ts';
 import { Schedule } from './Schedule.tsx';
 import { Loops } from './Loops.tsx';
@@ -133,6 +134,7 @@ function TasksPanel({ store }: { store: FleetStore }) {
   const [fanTeams, setFanTeams] = useState<Set<string>>(new Set()); // other teams to fan the objective out to
   const [teamInfo, setTeamInfo] = useState<TeamLead[]>([]);          // active-lead + running counts per team
   const prompt = usePrompt();
+  const toast = useToast();
 
   const coordinator = resolveCoordinator(store.agents, store.coordinator) ?? store.agents[0]?.name ?? '';
   const leadName = lead && store.agents.some((a) => a.name === lead) ? lead : coordinator;
@@ -153,6 +155,8 @@ function TasksPanel({ store }: { store: FleetStore }) {
     const teams = [...fanTeams];
     if (!obj || !teams.length) return;
     setProposing(true); setAssignNote(`fanning out to ${teams.length} team${teams.length > 1 ? 's' : ''}…`);
+    // Global toast: survives leaving this page; the dispatch runs in the main process.
+    const t = toast({ kind: 'progress', text: `Fanning work out to ${teams.length} team${teams.length > 1 ? 's' : ''}…` });
     try {
       const res = await call<FanoutResult[]>('work:fanout', obj, teams);
       const ok = res.filter((r) => r.status === 'dispatched');
@@ -161,10 +165,14 @@ function TasksPanel({ store }: { store: FleetStore }) {
         ok.length ? `dispatched to ${ok.map((r) => `${r.team}/${r.lead}`).join(', ')}` : '',
         bad.length ? `skipped ${bad.map((r) => `${r.team} (${r.status === 'no-active-agent' ? 'no active agent' : 'failed'})`).join(', ')}` : '',
       ].filter(Boolean);
-      setAssignNote(parts.join(' · ') || 'nothing dispatched');
+      const summary = parts.join(' · ') || 'nothing dispatched';
+      t.update({ kind: ok.length ? 'success' : 'error', text: `Fan-out — ${summary}` });
+      setAssignNote(summary);
       if (ok.length) { setFanTeams(new Set()); store.refresh(); }
     } catch (e) {
-      setAssignNote(`fan-out failed: ${e instanceof Error ? e.message : String(e)}`);
+      const m = e instanceof Error ? e.message : String(e);
+      t.update({ kind: 'error', text: `Fan-out failed: ${m}` });
+      setAssignNote(`fan-out failed: ${m}`);
     } finally { setProposing(false); }
   }
 
@@ -312,15 +320,22 @@ function TasksPanel({ store }: { store: FleetStore }) {
   async function createPlan() {
     if (!proposal || !proposal.length) return;
     setProposing(true); setAssignNote('creating tasks & dispatching to the fleet…');
+    const n = proposal.length;
+    // Global toast: persists after the panel closes / you switch pages.
+    const t = toast({ kind: 'progress', text: `Creating ${n} task${n === 1 ? '' : 's'} & dispatching to ${activeTeam}…` });
     try {
       const res = await call<CreatePlanResult>('work:createPlan', objective.trim(), proposal);
       const okCount = res.created.filter((c) => c.ok).length;
       const failed = res.created.length - okCount;
-      setAssignNote(`created ${okCount} task${okCount === 1 ? '' : 's'} · dispatched ${res.dispatched} now${res.deferred ? ` · ${res.deferred} queued on deps` : ''}${failed ? ` · ${failed} failed` : ''} ✓`);
+      const summary = `created ${okCount} task${okCount === 1 ? '' : 's'} · dispatched ${res.dispatched} now${res.deferred ? ` · ${res.deferred} queued on deps` : ''}${failed ? ` · ${failed} failed` : ''}`;
+      t.update({ kind: failed && !okCount ? 'error' : 'success', text: `${activeTeam}: ${summary}` });
+      setAssignNote(`${summary} ✓`);
       setProposal(null); setObjective(''); setShowAssign(false);
       await reload();
     } catch (err) {
-      setAssignNote(`dispatch failed: ${err instanceof Error ? err.message : String(err)}`);
+      const m = err instanceof Error ? err.message : String(err);
+      t.update({ kind: 'error', text: `Dispatch failed: ${m}` });
+      setAssignNote(`dispatch failed: ${m}`);
     } finally {
       setProposing(false);
     }

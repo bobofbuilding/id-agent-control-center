@@ -8,6 +8,15 @@ Every change pushed or merged to `main` carries its version number in the commit
 subject (`vX.Y.Z: …`), stamped automatically by the `commit-msg` hook — see
 [CONTRIBUTING.md](CONTRIBUTING.md).
 
+## [0.1.115] — 2026-06-24
+- **Dispatch notifications you can't miss + leave the page freely.** Compile & dispatch,
+  fan-out, and "Assign work to fleet" now raise a global toast that shows a spinner while
+  working and updates to **✓ created N tasks / dispatched to <team>/<lead>** (or an error)
+  when done. The toast lives above page routing, so the confirmation **persists even if you
+  navigate to another page** — and the work itself was always running in the background
+  (it's done in the manager process; switching pages never stopped it). Toasts auto-dismiss
+  after a few seconds or on click.
+
 ## [0.1.114] — 2026-06-24
 - **One compile/dispatch step.** Merged "Compile to tasks" and "Fan out to teams" on
   brain plans into a single **⤳ Compile & dispatch** picker. Check the **active team**

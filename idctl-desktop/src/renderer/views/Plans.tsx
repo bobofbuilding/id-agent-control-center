@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { call, resolveCoordinator, type FleetStore } from '../store.ts';
+import { useToast } from '../components/toast.tsx';
 
 /**
  * Plans tab (under Work). Two sets, one shared organizer (search / sort / group /
@@ -88,6 +89,7 @@ export function Plans({ store }: { store: FleetStore }) {
   const [confirmDel, setConfirmDel] = useState(false);
   const aliveRef = useRef(true);
   const genTok = useRef(0);
+  const toast = useToast();
   useEffect(() => () => { aliveRef.current = false; }, []);
   function cancel() { genTok.current++; setBusy(false); setMsg('cancelled'); }
 
@@ -200,6 +202,9 @@ export function Plans({ store }: { store: FleetStore }) {
     if (compileActive && !who) { setMsg('no agent available to compile tasks'); return; }
     setCompileFor(null); setBusyFile(p.file);
     setMsg(`dispatching “${p.title}”…`);
+    // A global toast carries progress → result; it survives leaving this page (the work
+    // runs in the main process and keeps going regardless of which view is open).
+    const t = toast({ kind: 'progress', text: `Compiling & dispatching “${p.title}”…` });
     try {
       const got = await call<{ file: string; content: string } | null>('brain:plan', p.file).catch(() => null);
       const obj = `Implement this plan, end to end:\n\n# ${p.title}\n\n${got?.content ?? ''}`;
@@ -221,9 +226,13 @@ export function Plans({ store }: { store: FleetStore }) {
         const fr = await call<FanoutResult[]>('work:fanout', obj, teams);
         for (const r of fr) parts.push(`${r.team}: ${r.status === 'dispatched' ? `→ ${r.lead}` : r.status === 'no-active-agent' ? 'no active agent' : 'failed'}`);
       }
-      if (aliveRef.current) { setMsg(parts.join(' · ') || 'nothing dispatched'); setFanPick(new Set()); }
+      const summary = parts.join(' · ') || 'nothing dispatched';
+      t.update({ kind: 'success', text: `“${p.title}” dispatched — ${summary}` }); // shows even if you've navigated away
+      if (aliveRef.current) { setMsg(summary); setFanPick(new Set()); }
     } catch (err) {
-      if (aliveRef.current) setMsg(`dispatch failed: ${err instanceof Error ? err.message : String(err)}`);
+      const m = err instanceof Error ? err.message : String(err);
+      t.update({ kind: 'error', text: `“${p.title}” dispatch failed: ${m}` });
+      if (aliveRef.current) setMsg(`dispatch failed: ${m}`);
     } finally { if (aliveRef.current) setBusyFile(null); }
   }
 
