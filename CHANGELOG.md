@@ -31,6 +31,18 @@ subject (`vX.Y.Z: …`), stamped automatically by the `commit-msg` hook — see
     rebuild calls are team‑scoped so wiring a brand‑new team works even when it isn’t
     the active one.
 
+## [0.1.92] — 2026-06-24
+- **Tune local‑model parallelism + fix a local‑agent deadlock.** Local (`ollama`)
+  agents share one model server, so the manager runs them through a concurrency gate
+  (cloud runtimes like codex/claude always parallelize). Two changes:
+  - **Settings → Local models** now has a **“parallel local inferences”** control —
+    raise how many ollama agents run at once (1–16, applies live) when your hardware
+    can handle it, with a live `running · queued` readout. *(Needs a manager that
+    exposes the control.)*
+  - **Deadlock fix:** an ollama agent that's *blocked delegating* to another ollama
+    agent now frees its slot while it waits, so a local coordinator can hand work to a
+    local teammate instead of the two wedging on the single slot until a timeout.
+
 ## [0.1.91] — 2026-06-23
 - **Start, stop, probe, and rebuild whole teams.** In HR Manager → Structure, click
   a team (in the graph or **Manage** in the team list) to open its panel, then act on

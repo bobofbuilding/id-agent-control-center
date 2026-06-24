@@ -240,6 +240,30 @@ export function Settings({ store }: { store: FleetStore }) {
   const [removing, setRemoving] = useState<string | null>(null);
   const [stackConfirm, setStackConfirm] = useState<string | null>(null);
 
+  // How many local-model (ollama) queries the manager runs at once. Cloud runtimes
+  // (codex/claude) parallelize freely; local agents share one server, so this caps
+  // concurrent local inference (raise it only if your machine can handle it).
+  const [localConc, setLocalConc] = useState<{ concurrency: number; active: number; queued: number } | null>(null);
+  const [concInput, setConcInput] = useState('');
+  const [concBusy, setConcBusy] = useState(false);
+  const [concMsg, setConcMsg] = useState('');
+  async function loadConc() {
+    const r = await call<{ concurrency: number; active: number; queued: number }>('manager:localConcurrency').catch(() => null);
+    setLocalConc(r);
+    if (r) setConcInput(String(r.concurrency));
+  }
+  async function saveConc() {
+    const n = Number(concInput);
+    if (!Number.isFinite(n) || n < 1 || n > 16) { setConcMsg('enter a number 1–16'); return; }
+    setConcBusy(true); setConcMsg('');
+    try {
+      const r = await call<{ concurrency: number }>('manager:setLocalConcurrency', n);
+      setConcMsg(`now ${r.concurrency} concurrent ✓`);
+      await loadConc();
+    } catch (e) { setConcMsg(`failed: ${e instanceof Error ? e.message : String(e)}`); }
+    finally { setConcBusy(false); }
+  }
+
   // Local image generator (preferred over the cloud provider for image creation).
   type ImgServer = { url: string; type: 'auto1111' | 'openai'; model?: string };
   const [imgServer, setImgServer] = useState<ImgServer | null>(null);
@@ -356,6 +380,7 @@ export function Settings({ store }: { store: FleetStore }) {
   }
   useEffect(() => {
     void loadOllama();
+    void loadConc();
     void loadImgServer();
     void call<HardwareInfo>('app:hardware').then(setHardware).catch(() => {});
     const idagents = (window as { idagents?: { onOllamaPull?: (cb: (p: unknown) => void) => () => void } }).idagents;
@@ -508,6 +533,19 @@ export function Settings({ store }: { store: FleetStore }) {
         <h3>Local models (Ollama)</h3>
         <p className="muted small" style={{ marginTop: -4 }}>
           Download a model to run locally via Ollama (<span className="mono">127.0.0.1:11434</span>) — these power the <span className="mono">ollama</span> runtime with no API key, fully offline. Size warnings are checked against your hardware (shown at the top).
+        </p>
+        <div className="row-actions" style={{ gap: 8, alignItems: 'center', flexWrap: 'wrap', marginBottom: 4 }}>
+          <span className="muted small">parallel local inferences:</span>
+          <input type="number" min={1} max={16} style={{ width: 64 }} value={concInput} disabled={concBusy || !localConc}
+            onChange={(e) => setConcInput(e.target.value)} />
+          <button className="btn small primary" disabled={concBusy || !localConc || concInput === String(localConc?.concurrency)} onClick={() => void saveConc()}>
+            {concBusy ? '…' : 'Apply'}
+          </button>
+          {localConc ? <span className="muted small">running {localConc.active}{localConc.queued ? ` · ${localConc.queued} queued` : ''}</span> : <span className="muted small">manager unreachable</span>}
+          {concMsg ? <span className={`small ${/fail|1–16/.test(concMsg) ? 'status-error' : 'ok-text'}`}>{concMsg}</span> : null}
+        </div>
+        <p className="muted small" style={{ marginTop: -2 }}>
+          How many <span className="mono">ollama</span> agents run at the same time. Cloud runtimes (codex, claude) always run in parallel; local agents share one model server, so this caps concurrent local inference — raise it only if your machine can handle it. Applies live (set <span className="mono">LOCAL_MODEL_CONCURRENCY</span> for a persistent default).
         </p>
         <div className="row-actions" style={{ flexWrap: 'wrap', gap: 6 }}>
           <span className="muted small">installed:</span>

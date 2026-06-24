@@ -514,6 +514,15 @@ export class ManagerClient {
     return this.withTeam(team).probeAll(signal);
   }
 
+  /** Read how many local-model (ollama) queries the manager runs at once + live stats. */
+  async localConcurrency(signal?: AbortSignal): Promise<{ concurrency: number; active: number; queued: number }> {
+    return this.requireRoute('Local-model concurrency', () => this.get('/manager/local-concurrency', signal));
+  }
+  /** Set the local-model concurrency (1–16). Applies live; not persisted across manager restarts. */
+  async setLocalConcurrency(n: number, signal?: AbortSignal): Promise<{ concurrency: number }> {
+    return this.requireRoute('Local-model concurrency', () => this.post('/manager/local-concurrency', { concurrency: n }, signal));
+  }
+
   /**
    * Resolve an agent to handle a meta-task (AI team design / spec parse). These are
    * one-shot LLM calls that don't need to belong to the target team — any running

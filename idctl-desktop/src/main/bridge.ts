@@ -211,6 +211,9 @@ const METHODS: Record<string, (...a: any[]) => Promise<unknown>> = {
   'team:lifecycle': (team: string, op: string) =>
     client.teamLifecycle(String(team), op === 'stop' ? 'stop' : op === 'rebuild' ? 'rebuild' : 'start'),
   'team:probe': (team: string) => client.probeTeam(String(team)),
+  // Local-model (ollama) concurrency — how many local inferences run at once.
+  'manager:localConcurrency': () => client.localConcurrency(),
+  'manager:setLocalConcurrency': (n: number) => client.setLocalConcurrency(Number(n)),
   // AI-assisted parse of a free-form spec → { team, agents }. Dispatches to the
   // team's designated coordinator (★) when set, else any running agent.
   'team:parseSpecAI': (spec: string) =>
