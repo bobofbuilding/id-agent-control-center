@@ -269,6 +269,24 @@ export function Chat({ store, embedded = false, lockTarget, teamOverride }: { st
   }, [running]);
 
   const activeKey = `idctl.chat.session.${team}`;
+  const draftKey = (sid: string) => `idctl.chat.draft.${sid}`;
+  const attachKey = (sid: string) => `idctl.chat.attach.${sid}`;
+  function readDraft(sid: string): string {
+    try { return localStorage.getItem(draftKey(sid)) ?? ''; } catch { return ''; }
+  }
+  function readDraftAttachments(sid: string): PickedFile[] {
+    try {
+      const raw = JSON.parse(localStorage.getItem(attachKey(sid)) ?? '[]') as unknown;
+      if (!Array.isArray(raw)) return [];
+      return raw.flatMap((x) => {
+        if (!x || typeof x !== 'object') return [];
+        const f = x as Partial<PickedFile>;
+        return typeof f.path === 'string' && typeof f.name === 'string' && typeof f.size === 'number' && typeof f.isImage === 'boolean'
+          ? [{ path: f.path, name: f.name, size: f.size, isImage: f.isImage }]
+          : [];
+      });
+    } catch { return []; }
+  }
   function blankSession(): Session {
     // Auto-named so it's never "untitled"; the first message refines it and the
     // user can rename anytime (which locks it via `named`).
@@ -284,6 +302,8 @@ export function Chat({ store, embedded = false, lockTarget, teamOverride }: { st
     // Viewing it clears unread — in memory (so a later save doesn't re-flag it)
     // and on disk (the badge reads the file).
     setSession(s.unread ? { ...s, unread: false } : s);
+    setInput(readDraft(s.id));
+    setAttachments(readDraftAttachments(s.id));
     if (s.unread) markRead(s.id);
     try { localStorage.setItem(activeKey, s.id); } catch { /* ignore */ }
     // Resume an in-flight dispatch for this session (survives navigation / app
@@ -365,6 +385,22 @@ export function Chat({ store, embedded = false, lockTarget, teamOverride }: { st
   // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => { stickRef.current = true; scrollToBottom(false); }, [session?.id]);
   useEffect(() => { sessionRef.current = session; }, [session]);
+  useEffect(() => {
+    const sid = session?.id;
+    if (!sid) return;
+    try {
+      if (input) localStorage.setItem(draftKey(sid), input);
+      else localStorage.removeItem(draftKey(sid));
+    } catch { /* ignore */ }
+  }, [input, session?.id]);
+  useEffect(() => {
+    const sid = session?.id;
+    if (!sid) return;
+    try {
+      if (attachments.length) localStorage.setItem(attachKey(sid), JSON.stringify(attachments.map((f) => ({ path: f.path, name: f.name, size: f.size, isImage: f.isImage }))));
+      else localStorage.removeItem(attachKey(sid));
+    } catch { /* ignore */ }
+  }, [attachments, session?.id]);
 
   const msgs = session?.messages ?? [];
   const target = lockTarget ?? (session && teamAgents.some((a) => a.name === session.target) ? session.target : defaultTarget);
@@ -616,6 +652,7 @@ export function Chat({ store, embedded = false, lockTarget, teamOverride }: { st
     const which = sessions.find((s) => s.id === id)?.title || session?.title || 'this chat';
     if (!window.confirm(`Delete “${which}”? This can't be undone.`)) return;
     deletedRef.current.add(id); // drop any in-flight reply destined for this chat
+    try { localStorage.removeItem(draftKey(id)); localStorage.removeItem(attachKey(id)); } catch { /* ignore */ }
     await call('chats:remove', id).catch(() => {});
     void store.refreshChatUnread(); // removing an unread chat must drop the badge now
     const list = await call<ChatSummary[]>('chats:list', team).catch(() => []);
