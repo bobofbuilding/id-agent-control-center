@@ -8,6 +8,15 @@ Every change pushed or merged to `main` carries its version number in the commit
 subject (`vX.Y.Z: …`), stamped automatically by the `commit-msg` hook — see
 [CONTRIBUTING.md](CONTRIBUTING.md).
 
+## [0.1.163] — 2026-06-25
+- **The secrets-gitignore standard now commits itself — no more “uncommitted in every project.”**
+  `ensureSecretGitignore` added a managed `.gitignore` block to every project but never committed it,
+  so all 12 projects sat perpetually dirty. The standard now **commits** the block the moment it adds
+  it (scoped to only `.gitignore`, never sweeping in unrelated work) and best-effort pushes it to the
+  current branch — a protected branch / offline / no-upstream just leaves it committed for the next
+  sync. Idempotent: it self-heals each repo exactly once. (Existing dirty `.gitignore`s were committed
+  and pushed manually as part of this fix.)
+
 ## [0.1.162] — 2026-06-25
 - **Dependencies are now ENFORCED at dispatch, not just drawn on the board.** The Work pipeline's
   wave-dispatch used to release a dependent task as soon as its prerequisite was *handed out* — so the
