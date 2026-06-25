@@ -8,6 +8,18 @@ Every change pushed or merged to `main` carries its version number in the commit
 subject (`vX.Y.Z: …`), stamped automatically by the `commit-msg` hook — see
 [CONTRIBUTING.md](CONTRIBUTING.md).
 
+## [0.1.162] — 2026-06-25
+- **Dependencies are now ENFORCED at dispatch, not just drawn on the board.** The Work pipeline's
+  wave-dispatch used to release a dependent task as soon as its prerequisite was *handed out* — so the
+  manager (which has no deps field) could complete an aggregation task before its inputs existed. A
+  dependent now waits for each prerequisite to actually **complete** (the manager reports it done)
+  before it runs. This also serializes each owner's tasks by completion — one agent finishes a task
+  before its next is dispatched, which keeps local-model agents from thrashing a single GPU. A
+  generous per-task safety deadline prevents a wedged prerequisite from deadlocking the chain.
+- **Out-of-order completions are surfaced.** A task that finished while a prerequisite is still
+  pending now shows a red **“⚠ ran before #…”** badge (instead of a muted line), so a dependency that
+  was bypassed before this fix is visible and can be re-verified.
+
 ## [0.1.161] — 2026-06-25
 - **Per-agent reasoning effort, to stop burning subscription tokens.** New **Effort** column in the
   fleet grid lets you set `low` / `medium` / `high` (or `default`) per agent. The choice is stored on

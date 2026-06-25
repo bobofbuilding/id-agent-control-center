@@ -19,6 +19,15 @@ export interface CreatePlanResult { created: CreatedTask[]; dispatched: number; 
 
 /** Quote a free-text argument as ONE token for the manager tokenizer (matches client qArg). */
 function qArg(s: string): string { return `"${s.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`; }
+
+/** A task is complete once the manager reports a done/complete status. */
+function isTaskDone(status?: string): boolean { return /done|complete/i.test(status ?? ''); }
+
+/** Every identifier a created task might be keyed by, so a dependent's stored ref
+ *  matches the prerequisite regardless of which field the create call returned. */
+function taskKeys(t: Task): string[] {
+  return [t.shortId, t.name, t.uuid, t.title].filter(Boolean) as string[];
+}
 function clip(s: string, n: number): string { const t = (s || '').replace(/\s+/g, ' ').trim(); return t.length > n ? t.slice(0, n) + '…' : t; }
 
 const MAX_SUBTASKS = 12;
@@ -224,27 +233,58 @@ export async function createAndDispatchPlan(
   // Queue-only: tasks created in the lane, not farmed out — the lead works them later.
   if (!dispatch) return { created, dispatched: 0, deferred: created.filter((c) => c.ok).length };
 
-  // 2) Background wave-dispatch. Each task waits on its backward deps' dispatches.
-  // Only BACKWARD deps (index < self) chain → guaranteed DAG (no deadlock). If a
-  // prerequisite failed to be created, its dependents are NOT released — they'd
-  // otherwise run against output that never got produced.
+  // 2) Background wave-dispatch. A dependent waits for its prerequisites to actually
+  // COMPLETE (not merely be dispatched) before it runs — otherwise the manager, which
+  // has no deps field, happily completes an aggregation task before its inputs exist.
+  // Only BACKWARD deps (index < self) chain → guaranteed DAG (no deadlock). A prereq
+  // that failed to be created never releases its dependents (they'd run against output
+  // that never got produced).
+  //
+  // Shared completion poller (per-dispatch, self-cleaning): one tasks() snapshot per tick
+  // resolves every waiter whose task reached done. A generous per-task safety deadline
+  // releases a waiter even if its prereq never completes, so a wedged agent can't deadlock
+  // the chain forever (the auto-pilot re-dispatches stalled prereqs in the meantime).
+  const COMPLETION_POLL_MS = 5000;
+  const COMPLETION_TIMEOUT_MS = 20 * 60 * 1000;
+  const waiters: { ref: string; resolve: () => void; deadline: number }[] = [];
+  let pollTimer: ReturnType<typeof setInterval> | undefined;
+  const tickPoll = async (): Promise<void> => {
+    if (!waiters.length) { if (pollTimer) { clearInterval(pollTimer); pollTimer = undefined; } return; }
+    const snap = await client.tasks().catch(() => [] as Task[]);
+    const doneKeys = new Set<string>();
+    for (const t of snap) if (isTaskDone(t.status)) for (const k of taskKeys(t)) doneKeys.add(k);
+    const now = Date.now();
+    for (let k = waiters.length - 1; k >= 0; k--) {
+      const w = waiters[k];
+      if (doneKeys.has(w.ref) || now >= w.deadline) { waiters.splice(k, 1); w.resolve(); }
+    }
+  };
+  const waitForTaskDone = (ref: string): Promise<void> => new Promise((resolve) => {
+    waiters.push({ ref, resolve, deadline: Date.now() + COMPLETION_TIMEOUT_MS });
+    if (!pollTimer) { pollTimer = setInterval(() => void tickPoll(), COMPLETION_POLL_MS); (pollTimer as { unref?: () => void }).unref?.(); }
+  });
+
+  // done[i] resolves only AFTER task i completes, so dependents wait for OUTPUT, not dispatch.
   const done: Promise<void>[] = new Array(list.length);
-  // One in-flight dispatch per OWNER: an agent works its tasks one at a time so we never fire
-  // N concurrent /ask at a single agent (the cause of the stalled pile-up).
+  // One in-flight task per OWNER: an agent works (and finishes) its tasks one at a time. This
+  // also serializes local-model agents so they never thrash a single GPU with concurrent runs.
   const ownerChain: Record<string, Promise<void> | undefined> = {};
   const startSub = (i: number): Promise<void> => {
     const c = created[i];
     if (!c.ok) return Promise.resolve();
     const backDeps = (list[i].dependsOn || []).filter((d) => d >= 0 && d < i);
     if (backDeps.some((d) => !created[d]?.ok)) { c.dispatched = false; return Promise.resolve(); } // prereq never created
-    const deps = backDeps.map((d) => done[d]).filter(Boolean);
+    const deps = backDeps.map((d) => done[d]).filter(Boolean); // each resolves on prereq COMPLETION
     const prevForOwner = ownerChain[c.agent];
     const waits = prevForOwner ? [...deps, prevForOwner] : deps;
-    const p = Promise.allSettled(waits).then(() => {
+    const p = Promise.allSettled(waits).then(async () => {
       c.dispatched = true;
-      return client.dispatch(`/ask ${c.agent} ${qArg(WORK_PROMPT(objective, list[i], c.ref))}`).then(() => {}, () => {});
+      await client.dispatch(`/ask ${c.agent} ${qArg(WORK_PROMPT(objective, list[i], c.ref))}`).then(() => {}, () => {});
+      // Hold this task's done-promise open until the task itself finishes — that's what gates
+      // its dependents (and its owner's next task).
+      await waitForTaskDone(c.ref);
     });
-    ownerChain[c.agent] = p; // the owner's next task waits on this one
+    ownerChain[c.agent] = p; // the owner's next task waits for THIS one to complete
     return p;
   };
   for (let i = 0; i < list.length; i++) done[i] = startSub(i);

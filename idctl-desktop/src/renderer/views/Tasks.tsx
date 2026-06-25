@@ -864,11 +864,16 @@ function TasksPanel({ store }: { store: FleetStore }) {
               {(() => {
                 const pre = prereqsOf(t);
                 if (!pre.length) return null;
-                const blocked = !isDone(t) && pre.some((p) => !p.done);
+                const pending = pre.some((p) => !p.done);
+                const blocked = !isDone(t) && pending;
+                // A task that's DONE while prerequisites are still unfinished ran out of
+                // dependency order — its output may rest on inputs that never got produced.
+                const outOfOrder = isDone(t) && pending;
+                const color = blocked ? '#e0a33c' : outOfOrder ? '#ef6a6a' : 'var(--muted, #8a8a8a)';
                 return (
-                  <div className="small" style={{ marginTop: 2, color: blocked ? '#e0a33c' : 'var(--muted, #8a8a8a)' }}
-                    title={`Depends on:\n${pre.map((p) => `${p.ref}${p.task ? ` · ${p.task.title}` : ' (removed)'} — ${p.done ? 'done' : 'pending'}`).join('\n')}${blocked ? '\n\nBlocked until the pending prerequisite(s) finish.' : ''}`}>
-                    <span style={{ fontWeight: blocked ? 600 : 400 }}>{blocked ? '🔒 blocked · after ' : '⇢ after '}</span>
+                  <div className="small" style={{ marginTop: 2, color }}
+                    title={`Depends on:\n${pre.map((p) => `${p.ref}${p.task ? ` · ${p.task.title}` : ' (removed)'} — ${p.done ? 'done' : 'pending'}`).join('\n')}${blocked ? '\n\nBlocked until the pending prerequisite(s) finish.' : outOfOrder ? '\n\n⚠ Completed before its prerequisite(s) finished — re-verify once they’re done.' : ''}`}>
+                    <span style={{ fontWeight: blocked || outOfOrder ? 600 : 400 }}>{blocked ? '🔒 blocked · after ' : outOfOrder ? '⚠ ran before ' : '⇢ after '}</span>
                     {pre.map((p, i) => (
                       <span key={p.ref}>{i ? ', ' : ''}<span className="mono">{p.ref}</span>{p.done ? ' ✓' : ' ⏳'}</span>
                     ))}
