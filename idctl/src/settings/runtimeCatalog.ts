@@ -95,6 +95,33 @@ export function offerableRuntimes(providers: ProviderForRuntime[], keep?: string
   return RUNTIMES.filter((r) => r !== 'claude-agent-sdk' || sdkOk || r === keep);
 }
 
+/**
+ * Reasoning-effort options PER RUNTIME. Only the subscription runtimes that read
+ * ID_AGENT_EFFORT honor this, and each accepts a different scale:
+ *   codex (`-c model_reasoning_effort`) → minimal | low | medium | high  (its ceiling is
+ *      high; the harness maps a requested xhigh back down to high, so we don't offer it)
+ *   claude-code-cli / -local (`--effort`) → low | medium | high | xhigh  (the harness maps
+ *      minimal → low, so we start the scale at low)
+ * Every other runtime (ollama, cursor-cli, claude-agent-sdk, remote) has no effort knob → [].
+ * Passing an out-of-range value is SAFE — both harnesses validate against their own regex and
+ * silently ignore anything else — but offering the runtime's real scale keeps the UI honest.
+ */
+export const RUNTIME_EFFORTS: Record<string, string[]> = {
+  codex: ['minimal', 'low', 'medium', 'high'],
+  'claude-code-cli': ['low', 'medium', 'high', 'xhigh'],
+  'claude-code-local': ['low', 'medium', 'high', 'xhigh'],
+};
+
+/** The effort scale this runtime honors (empty if it has no reasoning-effort knob). */
+export function effortOptions(runtime?: string): string[] {
+  return RUNTIME_EFFORTS[runtime ?? ''] ?? [];
+}
+
+/** Does this runtime have a reasoning-effort knob at all? */
+export function runtimeHasEffort(runtime?: string): boolean {
+  return effortOptions(runtime).length > 0;
+}
+
 /** Current known models per runtime, used when no probeable provider is configured. */
 export const RUNTIME_CURATED: Record<string, string[]> = {
   'claude-agent-sdk': ['claude-opus-4-8', 'claude-sonnet-4-6', 'claude-haiku-4-5'],

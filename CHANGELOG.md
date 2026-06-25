@@ -8,6 +8,43 @@ Every change pushed or merged to `main` carries its version number in the commit
 subject (`vX.Y.Z: …`), stamped automatically by the `commit-msg` hook — see
 [CONTRIBUTING.md](CONTRIBUTING.md).
 
+## [0.1.174] — 2026-06-25
+- **Dashboard activity feed now shows live data.** The holistic feed fetched `/events?since=0`, which
+  returns the manager's *oldest* retained events (the head of the ring) — so it showed days-old activity
+  even as the fleet worked. It now reads each team's head (`next_seq`) first and fetches the recent tail,
+  so the newest events across every team actually surface.
+- **Plans: mark a brain plan done + decluttered rows.** Brain plans get a **✓ Mark done** action
+  (alongside ▶ Work / ⏳ Set pending) that writes the status and moves the plan to *Archived · Done*. The
+  verbose status badge that crowded the Work button is now a compact label (Done / Partial / Pending /
+  On hold) with the full status on hover.
+- **Schedule: archive closed check-ins + every heartbeat is visible.** Closed (archived) supervision
+  check-ins collapse behind a *“N closed ▸ show”* toggle so the list stays focused on what's live. The
+  Heartbeats tab now also lists **heartbeats on other teams / agents not in the current roster** — previously
+  a heartbeat whose target wasn't a current-team agent was invisible. Added a plain-English note on what a
+  heartbeat actually does (a periodic internal self-check nudge, not a health ping).
+- **New loop = agent chains, merged.** The old single-agent **New loop** and the separate **Agent chains**
+  builder are now one **New loop**: describe a goal → AI-draft an ordered multi-agent sequence → edit the
+  steps → **Run now** (in-app, precise per-step routing, passing each step's output to the next) **or**
+  **Schedule loop** to run it on a cadence 24/7 (a multi-step chain is handed to the first agent as a
+  checklist). Single-step loops behave exactly as before.
+- **Dream: AI drafting assist.** A **✦ Suggest focus** button asks the agent to propose the highest-value
+  thing to reflect on (grounded in its recent work + the brain) and fills the focus field — edit it, then Dream.
+- **Per-runtime model freshness + auto-refresh.** HR Manager → Fleet has a **Models** panel showing each
+  runtime's model list, where it comes from (codex CLI cache · live provider sync · curated fallback) and
+  when it was last refreshed. A background checker re-probes the backing providers on boot + every 6h so the
+  lists stay current; codex models are read live from its cache.
+- **Effort is now runtime-specific.** The per-agent Effort dropdown offers each runtime's real scale —
+  codex: minimal / low / medium / high · Claude CLI & local: low / medium / high / xhigh — instead of one
+  generic list. (Local and cursor runtimes still have no effort knob.)
+- **Health: removed the bottom Probe-result tile.** A probe now just exercises the agent; the result shows
+  in the live roster status + throughput gauge.
+- **HR Manager — Build tab speaks agentic routing.** The coordination option explains the lead-driven model:
+  new work is handed to the ★ lead, which checks what's already done, decomposes only the remaining work, and
+  delegates to teammates (and other teams via relay).
+- **HR Manager — Route page: more fidelity & optionality.** A new **Routing overview** lists every team's
+  outbound relay (with its lead + agent count) at a glance, and **Edit** jumps the editor to any team — so you
+  can manage the whole routing topology, not just the active team.
+
 ## [0.1.173] — 2026-06-25
 - **Phase 5: codex session hygiene + fleet spend.** New **Reset session** agent action (HR Manager →
   agent ⋯ menu) starts a fresh conversation — drops a bloated codex context (the multi-million-token

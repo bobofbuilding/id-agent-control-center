@@ -56,7 +56,7 @@ const DRAFT_PROMPT = (goal: string, names: string[]) =>
   'Order matters: each step builds on the previous step\'s output. Use ONLY these agents: ' +
   (names.join(', ') || '(none)') + '.\n\nGOAL: ' + goal;
 
-function ChainBuilder({ store }: { store: FleetStore }) {
+function LoopBuilder({ store, onScheduled }: { store: FleetStore; onScheduled?: () => void }) {
   const team = store.team ?? 'default';
   const names = store.agents.map((a) => a.name);
   const coordinator = resolveCoordinator(store.agents, store.coordinator) ?? names[0] ?? '';
@@ -71,6 +71,10 @@ function ChainBuilder({ store }: { store: FleetStore }) {
   const [running, setRunning] = useState(false);
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState('');
+  // Optional schedule — turns the chain into a manager-run loop (24/7, even when the app is closed).
+  const [scheduleOn, setScheduleOn] = useState(false);
+  const [days, setDays] = useState('mon,tue,wed,thu,fri');
+  const [time, setTime] = useState('09:00');
   const designer = draftAgent && names.includes(draftAgent) ? draftAgent : coordinator;
   const locked = drafting || running || busy;
 
@@ -156,10 +160,42 @@ function ChainBuilder({ store }: { store: FleetStore }) {
   }
   async function removeSaved(id: string) { setBusy(true); try { await call('loops:remove', id); if (editingId === id) newChain(); await reload(); } finally { setBusy(false); } }
 
+  /** Compose the chain into one objective the manager can fire on a cadence. A single step is
+   *  its own objective; a multi-step chain becomes an ordered checklist the lead runs/delegates. */
+  function composeObjective(valid: LoopStep[]): string {
+    if (valid.length === 1) return valid[0].task;
+    return (
+      `Run this ${valid.length}-step sequence in order, passing each step's result into the next:\n` +
+      valid.map((s, i) => `${i + 1}. (${s.agent}) ${s.task}`).join('\n') +
+      `\n\nDelegate each step to the named agent where you can; then summarize the final result.`
+    );
+  }
+  /** Schedule the chain as a recurring manager loop (calendar check-in). Multi-step chains are
+   *  handed to the first step's agent as a composed checklist (precise per-step routing happens
+   *  via Run now, in-app). */
+  async function createSchedule() {
+    const valid = steps.map(fix).filter((s) => s.task);
+    if (!valid.length) { setMsg('add at least one step first'); return; }
+    const d = days.replace(/\s+/g, '');
+    if (!/^(mon|tue|wed|thu|fri|sat|sun)(,(mon|tue|wed|thu|fri|sat|sun))*$/.test(d)) { setMsg('pick a cadence'); return; }
+    if (!/^([01]\d|2[0-3]):[0-5]\d$/.test(time.trim())) { setMsg('time must be HH:MM (24h), e.g. 09:00'); return; }
+    const target = valid[0].agent;
+    setBusy(true); setMsg(`scheduling loop for ${target}…`);
+    try {
+      // Persist the loop first so the steps + schedule are saved, then create the manager check-in.
+      try { const loop = buildLoop({ steps: valid }); await call('loops:save', loop); setEditingId(loop.id); } catch { /* non-fatal */ }
+      await call('addCalendarCheckin', target, time.trim(), d, composeObjective(valid), { delivery: 'talk' });
+      setMsg(`scheduled ✓ — runs on cadence (see Scheduled objectives below)`);
+      await reload();
+      onScheduled?.();
+    } catch (e) { setMsg(`schedule failed: ${e instanceof Error ? e.message : String(e)}`); }
+    finally { setBusy(false); }
+  }
+
   return (
     <section className="card">
       <div className="row-actions" style={{ alignItems: 'baseline', marginBottom: 6 }}>
-        <h3 className="grow" style={{ margin: 0 }}>Agent chains <span className="muted small">· string agents + tasks into a sequential loop, AI-drafted</span></h3>
+        <h3 className="grow" style={{ margin: 0 }}>New loop <span className="muted small">· string one or more agents + tasks into a sequence (AI-drafted) — run it now or schedule it 24/7</span></h3>
         {msg ? <span className={`small ${/failed|could not|stopped/.test(msg) ? 'status-error' : 'muted'}`}>{msg}</span> : null}
       </div>
 
@@ -216,14 +252,37 @@ function ChainBuilder({ store }: { store: FleetStore }) {
         </div>
       ) : null}
 
+      {steps.length ? (
+        <div className="kv" style={{ gridTemplateColumns: '90px 1fr', gap: '8px 10px', alignItems: 'center', marginTop: 10 }}>
+          <span>schedule</span>
+          <span style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+            <label className="muted small" style={{ display: 'inline-flex', alignItems: 'center', gap: 5, cursor: 'pointer' }} title="Run this loop automatically on a cadence (the manager runs it 24/7, even when this app is closed)">
+              <input type="checkbox" checked={scheduleOn} disabled={locked} onChange={(e) => setScheduleOn(e.target.checked)} /> run on a cadence
+            </label>
+            {scheduleOn ? (
+              <>
+                <select className="cell-select" value={days} disabled={locked} onChange={(e) => setDays(e.target.value)}>
+                  {CADENCES.map((c) => <option key={c.days} value={c.days}>{c.label}</option>)}
+                </select>
+                <span className="muted small">at</span>
+                <input style={{ width: 70 }} disabled={locked} value={time} onChange={(e) => setTime(e.target.value)} placeholder="09:00" />
+                <span className="muted small">local time</span>
+              </>
+            ) : null}
+          </span>
+        </div>
+      ) : null}
+
       <div className="row-actions" style={{ marginTop: 10, alignItems: 'center' }}>
         <button className="btn small" disabled={locked} onClick={addStep}>+ add step</button>
         <span className="grow" />
         {steps.length ? <button className="btn" disabled={locked} onClick={() => void save()}>Save</button> : null}
-        {steps.length ? <button className="btn primary" disabled={locked} onClick={() => void run()}>{running ? 'Running…' : `Run ${steps.length}-step chain`}</button> : null}
+        {steps.length ? <button className="btn" disabled={locked} title="Run the sequence now, in-app (precise per-step routing; passes each step's output to the next)" onClick={() => void run()}>{running ? 'Running…' : `▶ Run ${steps.length === 1 ? 'now' : `${steps.length}-step chain`}`}</button> : null}
+        {steps.length && scheduleOn ? <button className="btn primary" disabled={locked} title="Schedule this loop to run on the chosen cadence (manager-run, 24/7)" onClick={() => void createSchedule()}>Schedule loop</button> : null}
       </div>
       <p className="muted small" style={{ marginTop: 6 }}>
-        Each step runs in order via <span className="mono">/ask</span>; the output of each step is passed to the next as context. Saved chains can be re-run anytime. (Runs happen while the app is open.)
+        <b>Run now</b> executes the steps in order in-app via <span className="mono">/ask</span>, passing each step's output to the next as context (precise per-step routing; app must be open).
+        <b> Schedule loop</b> hands it to the manager to run on the cadence 24/7 — a single step runs as-is; a multi-step chain is handed to the first agent as an ordered checklist to run &amp; delegate. Saved loops can be re-run or scheduled anytime.
       </p>
     </section>
   );
@@ -234,10 +293,6 @@ export function Loops({ store }: { store: FleetStore }) {
   const [busy, setBusy] = useState(false);
   const [running, setRunning] = useState<string | null>(null);
   const [msg, setMsg] = useState('');
-  const [agent, setAgent] = useState('');
-  const [objective, setObjective] = useState('');
-  const [time, setTime] = useState('09:00');
-  const [days, setDays] = useState('mon,tue,wed,thu,fri');
 
   async function reload() { setSchedules(await call<ScheduleEntry[]>('schedules').catch(() => [])); }
   useEffect(() => { void reload(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [store.team, store.lastUpdated]);
@@ -249,15 +304,6 @@ export function Loops({ store }: { store: FleetStore }) {
     try { await fn(); await reload(); setMsg(`${label} ✓`); }
     catch (err) { setMsg(`${label} failed: ${err instanceof Error ? err.message : String(err)}`); }
     finally { setBusy(false); }
-  }
-
-  async function addLoop() {
-    if (!agent || !objective.trim()) { setMsg('pick an agent and write an objective'); return; }
-    const d = days.replace(/\s+/g, '');
-    if (!/^(mon|tue|wed|thu|fri|sat|sun)(,(mon|tue|wed|thu|fri|sat|sun))*$/.test(d)) { setMsg('pick a cadence'); return; }
-    if (!/^([01]\d|2[0-3]):[0-5]\d$/.test(time.trim())) { setMsg('time must be HH:MM (24h), e.g. 09:00'); return; }
-    await act(`loop for ${agent}`, () => call('addCalendarCheckin', agent, time.trim(), d, objective.trim(), { delivery: 'talk' }));
-    setObjective('');
   }
 
   /** Fire the loop's objective once, right now (doesn't change the schedule). */
@@ -272,15 +318,13 @@ export function Loops({ store }: { store: FleetStore }) {
     finally { setRunning(null); }
   }
 
-  const names = store.agents.map((a) => a.name);
-
   return (
     <>
-      <ChainBuilder store={store} />
+      <LoopBuilder store={store} onScheduled={reload} />
 
       <section className="card">
         <div className="row-actions" style={{ alignItems: 'baseline' }}>
-          <h3 className="grow">Scheduled objectives <span className="muted small">· a single agent runs an objective on a cadence (24/7, even when this app is closed)</span></h3>
+          <h3 className="grow">Scheduled objectives <span className="muted small">· loops the manager runs on a cadence (24/7, even when this app is closed)</span></h3>
           {msg ? <span className={`small ${/failed/.test(msg) ? 'status-error' : 'muted'}`}>{msg}</span> : null}
         </div>
         <table className="grid">
@@ -304,39 +348,11 @@ export function Loops({ store }: { store: FleetStore }) {
                 </td>
               </tr>
             ))}
-            {loops.length === 0 ? <tr><td colSpan={6} className="muted center pad">No loops yet. Build one below — e.g. weekdays 09:00 → “review the SkillMesh queue and report blockers”.</td></tr> : null}
+            {loops.length === 0 ? <tr><td colSpan={6} className="muted center pad">No scheduled loops yet. Build one above with <b>New loop</b>, tick <b>run on a cadence</b>, and <b>Schedule loop</b> — e.g. weekdays 09:00 → “review the SkillMesh queue and report blockers”.</td></tr> : null}
           </tbody>
         </table>
-      </section>
-
-      <section className="card">
-        <h3>New loop</h3>
-        <div className="kv" style={{ gridTemplateColumns: '110px 1fr', gap: '8px 12px' }}>
-          <span>agent</span>
-          <b>
-            <select className="cell-select" value={agent} disabled={busy} onChange={(e) => setAgent(e.target.value)}>
-              <option value="">choose an agent…</option>
-              {names.map((n) => <option key={n} value={n}>{n}</option>)}
-            </select>
-          </b>
-          <span>objective</span>
-          <b><textarea style={{ width: '100%', minHeight: 44 }} placeholder="what the agent should do each run, e.g. “check open PRs and summarize what needs review”" value={objective} disabled={busy} onChange={(e) => setObjective(e.target.value)} /></b>
-          <span>cadence</span>
-          <b style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}>
-            <select className="cell-select" value={days} disabled={busy} onChange={(e) => setDays(e.target.value)}>
-              {CADENCES.map((c) => <option key={c.days} value={c.days}>{c.label}</option>)}
-            </select>
-            <span className="muted small">at</span>
-            <input style={{ width: 70 }} disabled={busy} value={time} onChange={(e) => setTime(e.target.value)} placeholder="09:00" />
-            <span className="muted small">local time</span>
-          </b>
-        </div>
-        <div className="row-actions" style={{ marginTop: 10 }}>
-          <span className="grow" />
-          <button className="btn primary" disabled={busy || !agent || !objective.trim()} onClick={() => void addLoop()}>Create loop</button>
-        </div>
         <p className="muted small" style={{ marginTop: 6 }}>
-          Loops are dispatched by the manager on the cadence (they keep running when this app is closed). Use <b>Run now</b> to fire one immediately. Status reflects the last scheduled run.
+          Scheduled loops are dispatched by the manager on their cadence (they keep running when this app is closed). Use <b>Run now</b> to fire one immediately. Status reflects the last scheduled run.
         </p>
       </section>
     </>

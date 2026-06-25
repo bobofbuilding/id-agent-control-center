@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { call, agentsLeadFirst, type FleetStore, type TeamAgent } from '../store.ts';
 import type { Agent } from '../../../../idctl/src/api/types.ts';
-import { RUNTIMES, offerableRuntimes } from '../../../../idctl/src/settings/runtimeCatalog.ts';
+import { RUNTIMES, offerableRuntimes, effortOptions, runtimeHasEffort } from '../../../../idctl/src/settings/runtimeCatalog.ts';
 
 /**
  * The fleet agent grid — per-agent runtime/model switching + lifecycle actions, with a
@@ -11,6 +11,18 @@ import { RUNTIMES, offerableRuntimes } from '../../../../idctl/src/settings/runt
  */
 
 type ProviderRow = { kind: string; enabled?: boolean; keySource?: string; lastSync?: { status?: string } };
+type RuntimeFreshness = { runtime: string; count: number; source: 'codex-cache' | 'provider' | 'curated' | 'none'; provider?: string; lastCheckedMs: number | null };
+const SOURCE_LABEL: Record<RuntimeFreshness['source'], string> = {
+  'codex-cache': 'codex CLI cache', provider: 'live provider sync', curated: 'curated fallback', none: 'no models',
+};
+function agoMs(ms: number | null): string {
+  if (!ms) return 'never';
+  const s = Math.max(0, Math.round((Date.now() - ms) / 1000));
+  if (s < 60) return `${s}s ago`;
+  if (s < 3600) return `${Math.round(s / 60)}m ago`;
+  if (s < 86400) return `${Math.round(s / 3600)}h ago`;
+  return `${Math.round(s / 86400)}d ago`;
+}
 
 function runtimeLabel(r: string): string {
   return r.replace('claude-code-', 'claude-').replace('claude-agent-sdk', 'claude-sdk').replace('-cli', '');
@@ -44,13 +56,9 @@ function short(s?: string): string {
   if (!s) return '—';
   return s.replace('claude-code-cli', 'claude').replace(/^claude-/, '').replace(/-cli$/, '');
 }
-// Reasoning effort only applies to the subscription runtimes that read ID_AGENT_EFFORT:
-// codex (-c model_reasoning_effort) and the Claude Code CLI harness (--effort, also serves
-// claude-code-local). Local servers (ollama) and cursor-cli have no reasoning-effort knob.
-const EFFORT_RUNTIMES = new Set(['codex', 'claude-code-cli', 'claude-code-local']);
-function effortSupports(runtime?: string): boolean {
-  return EFFORT_RUNTIMES.has(runtime ?? '');
-}
+// Reasoning effort only applies to the subscription runtimes that read ID_AGENT_EFFORT, and
+// each accepts a DIFFERENT scale (codex: minimal–high · claude CLI/local: low–xhigh) — see
+// effortOptions() in runtimeCatalog. Local servers (ollama) and cursor-cli have no knob.
 function effortOf(a: Agent): string {
   const e = a.metadata?.effort;
   return typeof e === 'string' ? e : '';
@@ -68,6 +76,8 @@ export function AgentTable({ store, onProbe, probeBusy }: { store: FleetStore; o
   const [providers, setProviders] = useState<ProviderRow[]>([]);
   const [coords, setCoords] = useState<Record<string, string>>({}); // team → coordinator (lead) name
   const [showStopped, setShowStopped] = useState(false); // by default the grid shows only running agents
+  const [freshness, setFreshness] = useState<RuntimeFreshness[]>([]);
+  const [showModels, setShowModels] = useState(false);
   const modelRefs = useRef<Record<string, HTMLSelectElement | null>>({});
   const viewAll = store.viewAll;
   const orderedAgents = agentsLeadFirst(store.agents, store.coordinator);
@@ -95,6 +105,7 @@ export function AgentTable({ store, onProbe, probeBusy }: { store: FleetStore; o
     call<Record<string, string[]>>('runtime:models').then(setCatalog).catch(() => setCatalog({}));
     call<ProviderRow[]>('providers:list').then(setProviders).catch(() => setProviders([]));
     call<{ coordinators?: Record<string, string> }>('coordinator:hierarchy').then((h) => setCoords(h.coordinators ?? {})).catch(() => {});
+    call<RuntimeFreshness[]>('runtime:freshness').then(setFreshness).catch(() => setFreshness([]));
   }, [store.lastUpdated]);
 
   // ★ set an agent as its team's coordinator (lead) — works per-team in the holistic view.
@@ -112,7 +123,11 @@ export function AgentTable({ store, onProbe, probeBusy }: { store: FleetStore; o
 
   async function probeRuntimes() {
     setBusy('probe runtimes');
-    try { setCatalog(await call<Record<string, string[]>>('runtime:probe')); }
+    try {
+      setCatalog(await call<Record<string, string[]>>('runtime:probe'));
+      setFreshness(await call<RuntimeFreshness[]>('runtime:freshness').catch(() => freshness));
+      setShowModels(true);
+    }
     catch (err) { window.alert(`probe failed: ${err instanceof Error ? err.message : String(err)}`); }
     finally { setBusy(null); }
   }
@@ -204,13 +219,11 @@ export function AgentTable({ store, onProbe, probeBusy }: { store: FleetStore; o
           {mismatch ? <span className="warn-text" title={mismatch} style={{ marginLeft: 4, cursor: 'help' }}>⚠</span> : null}
         </td>
         <td onClick={(e) => e.stopPropagation()}>
-          {effortSupports(a.runtime) ? (
+          {runtimeHasEffort(a.runtime) ? (
             <select className="cell-select" value={effortOf(a)} onChange={(e) => void setEffort(a, e.target.value)}
-              title="Reasoning effort — lower spends fewer subscription tokens per turn">
+              title={`Reasoning effort for the ${runtimeLabel(a.runtime ?? '')} runtime — lower spends fewer subscription tokens per turn`}>
               <option value="">default</option>
-              <option value="low">low</option>
-              <option value="medium">medium</option>
-              <option value="high">high</option>
+              {effortOptions(a.runtime).map((eff) => <option key={eff} value={eff}>{eff}</option>)}
             </select>
           ) : (
             <span className="muted" title="local & cursor runtimes have no reasoning-effort setting">—</span>
@@ -248,8 +261,30 @@ export function AgentTable({ store, onProbe, probeBusy }: { store: FleetStore; o
               <input type="checkbox" checked={showStopped} onChange={(e) => setShowStopped(e.target.checked)} /> show stopped ({stoppedCount})
             </label>
           ) : null}
-          <button className="btn" disabled={!!busy} onClick={() => void probeRuntimes()} title="Probe each runtime's backing inference provider for its available models">Probe runtimes</button>
+          <button className="btn small" onClick={() => setShowModels((v) => !v)} title="Show each runtime's model list, where it comes from, and when it was last refreshed">
+            {showModels ? 'Hide models' : `Models${freshness.length ? ` (${freshness.filter((f) => f.count).length})` : ''}`}
+          </button>
+          <button className="btn" disabled={!!busy} onClick={() => void probeRuntimes()} title="Probe each runtime's backing inference provider for its newest available models (also auto-refreshes every 6h)">Probe runtimes</button>
         </div>
+        {showModels ? (
+          <div className="card" style={{ background: 'var(--bg-2)', margin: '0 0 8px', padding: '6px 10px' }}>
+            <div className="muted small" style={{ marginBottom: 4 }}>
+              Per-runtime models &amp; freshness — auto-refreshed on boot + every 6h, or hit <b>Probe runtimes</b> now.
+            </div>
+            {freshness.filter((f) => f.count || f.source !== 'none').map((f) => (
+              <div key={f.runtime} className="row-actions" style={{ gap: 8, alignItems: 'baseline', padding: '2px 0' }}>
+                <b style={{ minWidth: 130 }}>{runtimeLabel(f.runtime)}</b>
+                <span className="muted small" style={{ minWidth: 64 }}>{f.count} model{f.count === 1 ? '' : 's'}</span>
+                <span className={`small ${f.source === 'curated' || f.source === 'none' ? 'warn-text' : 'ok-text'}`} style={{ minWidth: 140 }}
+                  title={f.source === 'curated' ? 'No live model API for this runtime — using a curated fallback list (subscription runtimes have no /models endpoint).' : SOURCE_LABEL[f.source]}>
+                  {SOURCE_LABEL[f.source]}{f.provider ? ` · ${f.provider}` : ''}
+                </span>
+                <span className="muted small">{f.lastCheckedMs ? `checked ${agoMs(f.lastCheckedMs)}` : ''}</span>
+              </div>
+            ))}
+            {freshness.length === 0 ? <div className="muted small">Loading model freshness…</div> : null}
+          </div>
+        ) : null}
         <table className="grid">
           <thead>
             <tr><th>Agent</th><th>Status</th><th>Runtime</th><th>Model</th><th title="Reasoning effort — lower spends fewer subscription tokens (codex & Claude CLI only)">Effort</th><th>Port</th><th>Actions</th>{onProbe ? <th>Probe</th> : null}</tr>

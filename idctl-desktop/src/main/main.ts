@@ -6,7 +6,7 @@
 import { app, BrowserWindow, ipcMain, shell, Menu, MenuItem, globalShortcut, screen } from 'electron';
 import { join } from 'node:path';
 import { readFileSync, writeFileSync } from 'node:fs';
-import { call, startOrgSync } from './bridge.ts';
+import { call, startOrgSync, startModelRefreshLoop } from './bridge.ts';
 import { startUpdater, stopUpdater, checkForUpdate, getStatus, applyStagedAndRelaunch } from './updater.ts';
 import { subsStatus, subsSignin, subsSignout, subsInstall, type SubProvider } from './subscriptions.ts';
 import { ollamaTags, ollamaPull, ollamaRemove } from './ollama.ts';
@@ -431,6 +431,8 @@ if (cuSelftest) { /* handled above */ } else if (driverProbe) {
     // Reactive org-sync: keep every agent's goals & instructions file composed from the lead
     // hierarchy + brain team-instructions (first pass ~15s after boot, then every 5 min).
     try { startOrgSync(); } catch (e) { console.warn('[org-sync] failed to start:', e); }
+    // Keep each runtime's model list current: re-probe backing providers on boot + every 6h.
+    try { startModelRefreshLoop(); } catch (e) { console.warn('[model-refresh] failed to start:', e); }
     // Computer Use broker: loopback controller + live frame pump + approval prompts → the renderer.
     void startBroker(
       (frame) => { try { win?.webContents.send('computeruse:frame', frame); } catch { /* window gone */ } },

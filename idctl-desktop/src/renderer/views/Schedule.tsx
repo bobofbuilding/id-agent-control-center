@@ -56,15 +56,20 @@ function isMissed(s: ScheduleEntry): boolean {
   return Date.now() / 1000 - s.lastRunAt > s.intervalSeconds * 2;
 }
 
+type TeamSchedule = ScheduleEntry & { team?: string };
+
 export function Schedule({ store }: { store: FleetStore }) {
   const [schedules, setSchedules] = useState<ScheduleEntry[]>([]);
+  const [allSchedules, setAllSchedules] = useState<TeamSchedule[]>([]);
   const [checkins, setCheckins] = useState<CheckIn[]>([]);
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState('');
   const [hbInterval, setHbInterval] = useState<Record<string, number>>({});
+  const [showClosed, setShowClosed] = useState(false);
 
   async function reload() {
     setSchedules(await call<ScheduleEntry[]>('schedules').catch(() => []));
+    setAllSchedules(await call<TeamSchedule[]>('schedules:allTeams').catch(() => []));
     setCheckins(await call<CheckIn[]>('checkins').catch(() => []));
   }
   useEffect(() => {
@@ -90,6 +95,14 @@ export function Schedule({ store }: { store: FleetStore }) {
   function hbFor(agent: string): ScheduleEntry | undefined {
     return heartbeats.find((s) => s.targets.includes(agent));
   }
+
+  // Heartbeats whose target ISN'T an agent in the current team's roster — they'd otherwise be
+  // invisible (the per-agent table only iterates this team's agents), so a cross-team or
+  // manager-level heartbeat (e.g. a "task-master") never showed up. Surface them all here.
+  const rosterNames = new Set(store.agents.map((a) => a.name));
+  const otherHeartbeats = allSchedules.filter(
+    (s) => s.kind === 'heartbeat' && (Array.isArray(s.targets) ? s.targets : []).some((t) => !rosterNames.has(t) || s.team !== store.team),
+  );
 
   // Cleaner: open check-ins still watching a finished OR removed task — safe to close in bulk.
   const staleCheckins = checkins.filter(
@@ -119,7 +132,11 @@ export function Schedule({ store }: { store: FleetStore }) {
       {msg ? <div className="muted small" style={{ marginBottom: 8 }}>{msg}</div> : null}
 
       <section className="card">
-        <h3>Heartbeats — periodic agent self-checks</h3>
+        <h3 style={{ marginBottom: 2 }}>Heartbeats — periodic agent self-checks</h3>
+        <p className="muted small" style={{ marginTop: 0 }}>
+          On its interval, a heartbeat delivers the agent an internal nudge — <i>“review your checklist and act on anything that needs attention”</i> —
+          so it wakes up, re-checks its open tasks &amp; supervision check-ins, and acts even when nothing new was dispatched. It’s a keep-alive + self-audit, not a health ping. <b>Missed</b> = no run in ~2 intervals; <b>last run failed</b> = the agent errored on its last nudge.
+        </p>
         <table className="grid">
           <thead>
             <tr>
@@ -173,6 +190,44 @@ export function Schedule({ store }: { store: FleetStore }) {
             ) : null}
           </tbody>
         </table>
+
+        {otherHeartbeats.length ? (
+          <div style={{ marginTop: 12 }}>
+            <div className="muted small b" style={{ marginBottom: 4 }}>
+              Other heartbeats <span className="muted small">· {otherHeartbeats.length} on other teams / agents not in “{store.team}” (shown so none are hidden)</span>
+            </div>
+            <table className="grid">
+              <thead>
+                <tr><th>Target</th><th>Team</th><th>Interval</th><th>Status</th><th>Last run</th><th></th></tr>
+              </thead>
+              <tbody>
+                {[...otherHeartbeats]
+                  .sort((a, b) => String(a.team).localeCompare(String(b.team)) || String(a.targets?.[0]).localeCompare(String(b.targets?.[0])))
+                  .map((s) => {
+                    const missed = isMissed(s);
+                    const failed = !!s.active && s.lastStatus === 'failed';
+                    return (
+                      <tr key={`${s.team}-${s.id}`}>
+                        <td className="b">{(Array.isArray(s.targets) ? s.targets : []).join(', ') || '—'}</td>
+                        <td className="muted small">{s.team ?? '—'}</td>
+                        <td className="muted">{fmtInterval(s.intervalSeconds)}</td>
+                        <td className={missed || failed ? 'status-error' : s.active ? 'ok-text' : 'muted'}>
+                          {missed ? '⚠ missed' : failed ? '⚠ last run failed' : s.active ? '♥ on' : 'paused'}
+                        </td>
+                        <td className="muted small">{relTime(s.lastRunAt)}</td>
+                        <td className="row-actions">
+                          <button className="btn" disabled={busy} onClick={() => void act(`${s.active ? 'pause' : 'resume'} ${s.targets?.[0]}`, () => call(s.active ? 'pauseSchedule' : 'resumeSchedule', s.id, s.team))}>
+                            {s.active ? 'Pause' : 'Resume'}
+                          </button>
+                          <button className="btn" disabled={busy} title="Remove this heartbeat" onClick={() => void act(`remove ${s.targets?.[0]}`, () => call('removeSchedule', s.id, s.team))}>✕</button>
+                        </td>
+                      </tr>
+                    );
+                  })}
+              </tbody>
+            </table>
+          </div>
+        ) : null}
       </section>
 
       <section className="card grow">
@@ -182,12 +237,20 @@ export function Schedule({ store }: { store: FleetStore }) {
             return open(a) - open(b) || (a.nextFireAt ?? Infinity) - (b.nextFireAt ?? Infinity);
           });
           const openCount = ranked.filter((c) => /(active|snoozed)/i.test(String(c.status))).length;
+          const closedCount = ranked.length - openCount;
           const stale = ranked.filter((c) => /(active|snoozed)/i.test(String(c.status)) && isTerminalTask(c.linkedTask?.status)).length;
+          // Closed check-ins are archived (hidden) by default so the list stays focused on what's live.
+          const visible = showClosed ? ranked : ranked.filter((c) => /(active|snoozed)/i.test(String(c.status)));
           return (
             <>
               <div className="row-actions" style={{ alignItems: 'center', marginBottom: 4 }}>
                 <h3 style={{ margin: 0 }}>Supervision check-ins</h3>
-                <span className="muted small">· {openCount} active{ranked.length - openCount ? ` · ${ranked.length - openCount} closed` : ''}</span>
+                <span className="muted small">· {openCount} active</span>
+                {closedCount ? (
+                  <button className="link-btn small muted" title={showClosed ? 'Hide closed (archived) check-ins' : 'Show closed (archived) check-ins'} onClick={() => setShowClosed((v) => !v)}>
+                    · {closedCount} closed {showClosed ? '▾ hide' : '▸ show'}
+                  </button>
+                ) : null}
                 <span className="grow" />
                 {staleCheckins.length > 0 ? (
                   <button className="btn small" disabled={busy} title="Close all check-ins still watching finished or removed tasks" onClick={() => void cleanUp()}>
@@ -200,9 +263,11 @@ export function Schedule({ store }: { store: FleetStore }) {
               </p>
               {ranked.length === 0 ? (
                 <p className="muted center pad">No supervision check-ins — these appear when an agent delegates tracked work to a teammate.</p>
+              ) : visible.length === 0 ? (
+                <p className="muted center pad">No active check-ins. {closedCount} closed — <button className="link-btn" onClick={() => setShowClosed(true)}>show archived</button>.</p>
               ) : (
                 <div className="ci-list">
-                  {ranked.map((c, i) => {
+                  {visible.map((c, i) => {
                     const open = /(active|snoozed)/i.test(String(c.status));
                     const lt = c.linkedTask;
                     const title = lt?.gone ? 'a removed task' : (lt?.title || 'a delegated task');

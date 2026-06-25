@@ -282,6 +282,16 @@ export function Plans({ store }: { store: FleetStore }) {
       await reloadBrain();
     } finally { if (aliveRef.current) setBusyFile(null); }
   }
+  // Mark a brain plan DONE directly (writes the status back to the plan file + index). Done
+  // plans auto-move to the "Archived · Done" group below.
+  async function setBrainDone(p: BrainPlan) {
+    setBusyFile(p.file); setMsg(`marking “${p.title}” done…`);
+    try {
+      const res = await call<StatusWrite>('brain:setPlanStatus', p.file, 'DONE').catch((): StatusWrite => ({ ok: false, error: 'write failed' }));
+      if (aliveRef.current) setMsg(res.ok ? `“${p.title}” → ✅ DONE ✓` : `failed: ${res.error ?? 'n/a'}`);
+      await reloadBrain();
+    } finally { if (aliveRef.current) setBusyFile(null); }
+  }
 
   async function open(id: string) {
     if (detail?.id === id) { setDetail(null); return; }
@@ -432,7 +442,7 @@ export function Plans({ store }: { store: FleetStore }) {
     return (
       <div className={`skill-card${isOpen ? ' editing' : ''}`} key={p.file}>
         <div className="skill-card-head" style={{ cursor: 'pointer' }} onClick={() => void openBrain(p.file)}>
-          {p.status ? <span className={`st-badge ${BRAIN_KEY_CLASS[brainStatusKey(p.status)]}`}>{p.status}</span> : null}
+          {p.status ? <span className={`st-badge ${BRAIN_KEY_CLASS[brainStatusKey(p.status)]}`} title={p.status}>{BRAIN_BUCKETS.find((b) => b.key === brainStatusKey(p.status))?.label ?? p.status}</span> : null}
           {p.num ? <span className="mono small muted">{p.num}</span> : null}
           <span className="b">{p.title}</span>
           {p.effort ? <span className="muted small">· {p.effort}</span> : null}
@@ -446,6 +456,7 @@ export function Plans({ store }: { store: FleetStore }) {
             title="Work this plan end-to-end, automatically: ① audit its real status → ② scan for blockers → ③ compile into tasks and dispatch to EVERY active team & agent (no team picking — work is delegated and assigned as needed)."
             onClick={() => void runWork(p)}>{acting ? '⏳ Working…' : '▶ Work'}</button>
           <span className="grow" />
+          {brainStatusKey(p.status) !== 'done' ? <button className="btn small" disabled={busyFile !== null} title="Mark this plan ✅ DONE (it moves to Archived · Done)" onClick={() => void setBrainDone(p)}>✓ Mark done</button> : null}
           {brainStatusKey(p.status) !== 'pending' ? <button className="btn small" disabled={busyFile !== null} title="Reset this plan's status to ⏳ PENDING" onClick={() => void setBrainPending(p)}>⏳ Set pending</button> : null}
         </div>
         {audit[p.file] ? (

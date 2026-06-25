@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
 import { call, type FleetStore } from '../store.ts';
-import type { ProbeResult } from '../../../../idctl/src/api/types.ts';
 import type { UsageReport, UsageWindow } from '../../../../idctl/src/api/client.ts';
 import { AgentTable } from './AgentTable.tsx';
 
@@ -46,7 +45,6 @@ function WindowCard({ title, w }: { title: string; w: UsageWindow }) {
 }
 
 export function Health({ store }: { store: FleetStore }) {
-  const [result, setResult] = useState<ProbeResult | null>(null);
   const [probing, setProbing] = useState<string | null>(null);
   const [usage, setUsage] = useState<UsageReport | null | undefined>(undefined); // undefined = loading
   const [usageAt, setUsageAt] = useState<number>(0); // when usage was last refreshed
@@ -71,15 +69,14 @@ export function Health({ store }: { store: FleetStore }) {
   const agoStr = (ms: number) => { if (!ms) return ''; const s = Math.max(0, Math.round((Date.now() - ms) / 1000)); return s < 60 ? `${s}s ago` : s < 3600 ? `${Math.round(s / 60)}m ago` : `${Math.round(s / 3600)}h ago`; };
 
   // The fleet roster is the shared, live AgentTable below. Probing routes to the agent's
-  // own team (holistic) or the active team.
+  // own team (holistic) or the active team — it exercises the dispatch path; the agent's
+  // live status (in the roster) and the throughput gauge reflect the result.
   async function probe(which: 'all' | string, team?: string) {
     setProbing(which);
-    setResult(null);
     try {
-      const r = await call<ProbeResult>(which === 'all' ? 'probeAll' : 'probeOne', ...(which === 'all' ? [] : [which, team]));
-      setResult(r);
+      await call(which === 'all' ? 'probeAll' : 'probeOne', ...(which === 'all' ? [] : [which, team]));
     } catch (err) {
-      setResult({ team: store.team ?? '', probed: 0, passed: 0, failed: 1, results: [{ name: which, status: 'failed', error: err instanceof Error ? err.message : String(err) }] });
+      window.alert(`probe failed: ${err instanceof Error ? err.message : String(err)}`);
     } finally {
       setProbing(null);
       void loadUsage(); // refresh throughput after exercising agents
@@ -159,25 +156,6 @@ export function Health({ store }: { store: FleetStore }) {
       {/* The fleet roster is the shared AgentTable — runtime/model dropdowns + lifecycle
           actions + per-row Probe, live & holistic (all teams grouped in "All teams" view). */}
       <AgentTable store={store} onProbe={(a) => void probe(a.name, store.viewAll ? a.team : undefined)} probeBusy={probing} />
-
-      <section className="card feed">
-        <h3>Probe result</h3>
-        {result ? (
-          <div>
-            <p className={result.failed > 0 ? 'status-error' : 'ok-text'}>{result.passed}/{result.probed} ok</p>
-            {result.results.map((r) => (
-              <div className="feed-row" key={r.name}>
-                <span className={`dot ${r.status === 'ok' ? 'ok' : 'err'}`} />
-                <span>{r.name}</span>
-                <span className="muted t">{r.duration_ms != null ? `${r.duration_ms}ms` : ''}</span>
-                {r.error ? <div className="muted small">{r.error}</div> : null}
-              </div>
-            ))}
-          </div>
-        ) : (
-          <p className="muted">Run a probe (per-row or “Probe all”) to verify each agent responds on its dispatch path.</p>
-        )}
-      </section>
     </div>
   );
 }

@@ -41,13 +41,14 @@ import { createHash } from 'node:crypto';
 import { ProviderClient } from '../../../idctl/src/settings/ProviderClient.ts';
 import { discoverLocalServers, type DiscoveredServer } from '../../../idctl/src/settings/localDiscovery.ts';
 import { kindNeedsKey, type ProviderProfile, type McpServerProfile, type ProjectEntry } from '../../../idctl/src/settings/schema.ts';
-import { buildRuntimeCatalog } from '../../../idctl/src/settings/runtimeCatalog.ts';
+import { buildRuntimeCatalog, RUNTIMES, providerKindToRuntimes, isLocalProvider } from '../../../idctl/src/settings/runtimeCatalog.ts';
 import { testMcpServer } from './mcpTest.ts';
 import { decomposeWork, createAndDispatchPlan, fanOutObjective, teamLeads, triageUnassigned, type SubTask } from './work.ts';
 import { buildOrgHierarchy, syncOrg, startOrgSyncLoop } from './orgSync.ts';
-import { readFileSync } from 'node:fs';
+import { readFileSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { homedir } from 'node:os';
+import type { ProviderKind } from '../../../idctl/src/settings/schema.ts';
 
 /**
  * The codex runtime's real model list lives in the codex CLI's own cache
@@ -93,6 +94,75 @@ function runtimeCatalogWithCodex(): Record<string, string[]> {
   const codex = codexModelsFromCache();
   if (codex.length) cat.codex = Array.from(new Set([...codex, ...(cat.codex ?? [])]));
   return cat;
+}
+
+/**
+ * Per-runtime model freshness: the live list + where it came from + when it was last
+ * refreshed. Feeds the UI so the operator can see each runtime's models really are current
+ * (and which ones are curated fallbacks with no live source). codex reads its own CLI cache
+ * (mtime = freshness); the claude and ollama runtimes read their backing provider's last sync;
+ * cursor-cli is curated-only (no public model API).
+ */
+type RuntimeFreshness = {
+  runtime: string;
+  models: string[];
+  count: number;
+  source: 'codex-cache' | 'provider' | 'curated' | 'none';
+  provider?: string;
+  lastCheckedMs: number | null;
+};
+function runtimeFreshness(): RuntimeFreshness[] {
+  const providers = loadSettings().providers;
+  const cat = runtimeCatalogWithCodex();
+  // Newest enabled provider that has synced models AND backs this runtime.
+  const providerFor = (rt: string): ProviderProfile | undefined =>
+    providers
+      .filter(
+        (p) =>
+          p.enabled !== false &&
+          (p.lastSync?.models?.length ?? 0) > 0 &&
+          providerKindToRuntimes(p.kind as ProviderKind).includes(rt) &&
+          (rt !== 'ollama' || isLocalProvider(p)),
+      )
+      .sort((a, b) => (b.lastSync?.at ?? 0) - (a.lastSync?.at ?? 0))[0];
+  return RUNTIMES.map((rt): RuntimeFreshness => {
+    const models = cat[rt] ?? [];
+    if (rt === 'codex') {
+      let mt: number | null = null;
+      try { mt = statSync(join(homedir(), '.codex', 'models_cache.json')).mtimeMs; } catch { mt = null; }
+      const live = codexModelsFromCache().length > 0;
+      return { runtime: rt, models, count: models.length, source: live ? 'codex-cache' : 'curated', lastCheckedMs: live ? mt : null };
+    }
+    const p = providerFor(rt);
+    if (p) return { runtime: rt, models, count: models.length, source: 'provider', provider: p.name, lastCheckedMs: p.lastSync?.at ?? null };
+    return { runtime: rt, models, count: models.length, source: models.length ? 'curated' : 'none', lastCheckedMs: null };
+  });
+}
+
+/** Probe every enabled provider that backs a runtime, refresh its synced model list, and
+ *  return the rebuilt per-runtime catalog. Shared by the manual `runtime:probe` method and
+ *  the background model-refresh loop ("the checker that stays up to date"). */
+async function probeAllRuntimes(): Promise<Record<string, string[]>> {
+  const providers = loadSettings().providers;
+  await Promise.all(
+    providers
+      .filter((p) => p.enabled !== false)
+      .map(async (p) => {
+        try {
+          const outcome = await new ProviderClient(p, resolveProviderKey(p)).probe();
+          recordProviderSync(p.name, {
+            at: Date.now(),
+            status: outcome.status,
+            modelCount: outcome.models.length,
+            models: outcome.models.slice(0, 200).map((m) => m.id),
+            keySource: keySourceOf(p),
+          });
+        } catch {
+          /* leave the provider's last sync as-is on probe failure */
+        }
+      }),
+  );
+  return runtimeCatalogWithCodex();
 }
 
 /** Where a provider's API key resolves from, without exposing the value. */
@@ -141,25 +211,37 @@ const METHODS: Record<string, (...a: any[]) => Promise<unknown>> = {
     const teams = await client.teams().catch(() => []);
     const names = teams.length ? teams.map((t) => t.name) : [cfg.team ?? 'default'];
     // Per-team cap so one hyperactive team can't flood the holistic feed — every team
-    // contributes its NEWEST events; the union is then time-sorted. The manager's
-    // `/events?since=0` already returns each team's newest `limit` events (next_seq is the
-    // head), so fetch the tail directly. (The old code probed with `since=MAX_SAFE_INTEGER`
-    // expecting the manager to echo back its latest seq — it echoes back the huge `since`
-    // instead, so the follow-up fetch landed past the end and the feed stayed empty.)
+    // contributes its NEWEST events; the union is then time-sorted.
+    //
+    // CRITICAL: the manager's `/events?since=N` returns events with seq > N, OLDEST-first,
+    // so `since=0` returns the OLDEST retained events (the head of the ring), NOT the live
+    // tail. Reading `since=0` directly showed days-old events ("activity not live"). To get
+    // the live tail we must first learn the head seq (`next_seq`), then fetch a recent
+    // window ending there and keep its newest slice.
     const perTeam = Math.max(8, Math.ceil(lim / Math.max(1, names.length)));
+    const win = Math.max(perTeam * 4, 200);
     const per = await Promise.all(
       names.map(async (name) => {
         const tc = client.withTeam(name);
         try {
-          const r = await tc.events(0, { wait: 0, limit: perTeam });
-          return (r.events ?? []).map((e) => ({ ...e, team: e.team ?? name, timestamp: e.timestamp ?? e.occurred_at }));
+          const head = await tc.events(0, { wait: 0, limit: 1 }); // cheap: just read next_seq (the head)
+          const next = Number(head.next_seq) || 0;
+          const since = Math.max(0, next - win);
+          const r = await tc.events(since, { wait: 0, limit: win });
+          const evs = (r.events ?? []).map((e) => ({ ...e, team: e.team ?? name, timestamp: e.timestamp ?? e.occurred_at }));
+          // This team's NEWEST perTeam by seq (seq is monotonic within a team).
+          return evs.sort((a, b) => (Number(a.seq) || 0) - (Number(b.seq) || 0)).slice(-perTeam);
         } catch {
           return [];
         }
       }),
     );
-    // Oldest→newest (the Dashboard reverses to show newest first); keep the newest `lim`.
-    return per.flat().sort((a, b) => (a.timestamp ?? 0) - (b.timestamp ?? 0)).slice(-lim);
+    // Merge every team; order newest-LAST by timestamp then seq (the Dashboard reverses to
+    // show newest first); keep the newest `lim`.
+    return per
+      .flat()
+      .sort((a, b) => ((a.timestamp ?? 0) - (b.timestamp ?? 0)) || ((Number(a.seq) || 0) - (Number(b.seq) || 0)))
+      .slice(-lim);
   },
   // Live agent activity (tool/file steps) for the chat "what they're doing" feed.
   // Team-scoped so a same-named agent in another team can't bleed in; an optional
@@ -264,15 +346,28 @@ const METHODS: Record<string, (...a: any[]) => Promise<unknown>> = {
   checkins: () => client.checkins(),
   'checkins:close': (id: string) => client.closeCheckin(String(id)),
   schedules: () => client.schedules(),
+  // Every team's schedules, each tagged with its team — so the Schedule tab can surface
+  // heartbeats whose target isn't in the CURRENT team's roster (e.g. a cross-team or
+  // manager-level "task-master" heartbeat) instead of silently hiding them.
+  'schedules:allTeams': async () => {
+    const teams = await client.teams().catch(() => []);
+    const names = teams.length ? teams.map((t) => t.name) : [cfg.team ?? 'default'];
+    const per = await Promise.all(
+      names.map(async (name) => (await client.withTeam(name).schedules().catch(() => [])).map((s) => ({ ...s, team: name }))),
+    );
+    return per.flat();
+  },
   // team (optional, trailing) routes the schedule to an agent in a specific team —
   // used by the Work fold-out's Schedule/Loop/Dream modes (decoupled from active team).
   addHeartbeat: (agent: string, seconds: number, message: string, delivery?: 'internal' | 'talk', team?: string) =>
     (team ? client.withTeam(String(team)) : client).addHeartbeat(String(agent), Number(seconds), String(message), delivery),
   addCalendarCheckin: (agent: string, time: string, when: string, message: string, opts?: { timezone?: string; delivery?: 'internal' | 'talk' }, team?: string) =>
     (team ? client.withTeam(String(team)) : client).addCalendarCheckin(String(agent), String(time), String(when), String(message), opts ?? {}),
-  pauseSchedule: (id: string) => client.pauseSchedule(String(id)),
-  resumeSchedule: (id: string) => client.resumeSchedule(String(id)),
-  removeSchedule: (id: string) => client.removeSchedule(String(id)),
+  // Optional trailing `team` routes the op to the schedule's own team (the Schedule tab's
+  // cross-team heartbeat list controls heartbeats that live on other teams).
+  pauseSchedule: (id: string, team?: string) => (team ? client.withTeam(String(team)) : client).pauseSchedule(String(id)),
+  resumeSchedule: (id: string, team?: string) => (team ? client.withTeam(String(team)) : client).resumeSchedule(String(id)),
+  removeSchedule: (id: string, team?: string) => (team ? client.withTeam(String(team)) : client).removeSchedule(String(id)),
 
   // teams / library
   libraryTeams: () => client.libraryTeams(),
@@ -314,6 +409,22 @@ const METHODS: Record<string, (...a: any[]) => Promise<unknown>> = {
 
   // team relay (cross-team delegation allow-list) + per-agent override
   teamConfig: (name: string) => client.teamConfig(String(name)),
+  // Whole-fleet relay topology: every team's outbound delegate policy (delegates_to), for the
+  // Route tab's routing overview. null = permissive (any team) · ['*'] = all · [] = blocked.
+  'relay:matrix': async () => {
+    const teams = await client.teams().catch(() => []);
+    const names = teams.length ? teams.map((t) => t.name) : [cfg.team ?? 'default'];
+    return Promise.all(
+      names.map(async (name) => {
+        try {
+          const c = await client.teamConfig(name);
+          return { team: name, delegates: (c?.delegates_to ?? null) as string[] | null };
+        } catch {
+          return { team: name, delegates: null as string[] | null };
+        }
+      }),
+    );
+  },
   setTeamDelegates: (name: string, delegates: string[] | null) => client.setTeamDelegates(String(name), delegates ?? null),
   setAgentDelegates: (id: string, delegates: string[] | null) => client.setAgentDelegates(String(id), delegates ?? null),
 
@@ -342,28 +453,10 @@ const METHODS: Record<string, (...a: any[]) => Promise<unknown>> = {
   'runtime:models': async () => runtimeCatalogWithCodex(),
   // Probe every enabled provider that backs a runtime, refresh its model list,
   // then return the rebuilt per-runtime catalog. This is "probe each runtime".
-  'runtime:probe': async () => {
-    const providers = loadSettings().providers;
-    await Promise.all(
-      providers
-        .filter((p) => p.enabled !== false)
-        .map(async (p) => {
-          try {
-            const outcome = await new ProviderClient(p, resolveProviderKey(p)).probe();
-            recordProviderSync(p.name, {
-              at: Date.now(),
-              status: outcome.status,
-              modelCount: outcome.models.length,
-              models: outcome.models.slice(0, 200).map((m) => m.id),
-              keySource: keySourceOf(p),
-            });
-          } catch {
-            /* leave the provider's last sync as-is on probe failure */
-          }
-        }),
-    );
-    return runtimeCatalogWithCodex();
-  },
+  'runtime:probe': async () => probeAllRuntimes(),
+  // Per-runtime model freshness (live list + source + when last refreshed) for the
+  // "models stay up to date" panel.
+  'runtime:freshness': async () => runtimeFreshness(),
 
   // modules: skills + plugins catalog, install, MCP attach + rebuild
   librarySkills: () => client.librarySkills(),
@@ -627,4 +720,18 @@ export function info() {
 /** Start the reactive org-sync loop, always reading the live (possibly-reassigned) client. */
 export function startOrgSync(): () => void {
   return startOrgSyncLoop(() => client);
+}
+
+/**
+ * Background model-refresh — the "checker that stays up to date". Re-probes every runtime's
+ * backing provider on boot (after a short settle) and every 6h, so the per-runtime model
+ * lists keep current as providers add/drop models. codex models are read live from its CLI
+ * cache on every catalog read, so they need no probe; this keeps the API-backed runtimes fresh.
+ */
+export function startModelRefreshLoop(): () => void {
+  let stopped = false;
+  const tick = () => { if (!stopped) void probeAllRuntimes().catch(() => {}); };
+  const t0 = setTimeout(tick, 30_000);
+  const iv = setInterval(tick, 6 * 60 * 60 * 1000);
+  return () => { stopped = true; clearTimeout(t0); clearInterval(iv); };
 }

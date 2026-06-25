@@ -36,6 +36,11 @@ const NIGHTLY_OBJECTIVE =
   'Nightly dream: reflect over your recent work and the shared brain, then post a Dream Report ' +
   '(Consolidation / Insights / Ideas / Simulations). Ideas and Simulations are proposals only — do not act on them.';
 
+const SUGGEST_FOCUS_PROMPT =
+  'Based on your recent work and the team\'s shared brain/memory, what is the SINGLE most valuable thing to ' +
+  'focus a reflection "dream" on right now? Reply with ONE short focus phrase ONLY — no preamble, no quotes, ' +
+  'no markdown — e.g. "SkillMesh mainnet readiness blockers" or "where the org keeps duplicating work".';
+
 export function Dream({ store }: { store: FleetStore }) {
   const team = store.team ?? 'default';
   const names = store.agents.map((a) => a.name);
@@ -46,6 +51,7 @@ export function Dream({ store }: { store: FleetStore }) {
   const [agentSel, setAgentSel] = useState('');
   const [focus, setFocus] = useState('');
   const [dreaming, setDreaming] = useState(false);
+  const [suggesting, setSuggesting] = useState(false);
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState('');
   const alive = useRef(true);
@@ -84,6 +90,25 @@ export function Dream({ store }: { store: FleetStore }) {
     }
   }
 
+  /** AI drafting assist: ask the agent to propose a high-value focus, grounded in its recent
+   *  work + the brain, and fill the focus field with it (the user can edit before dreaming). */
+  async function suggestFocus() {
+    if (!agent) { setMsg('no agent available to suggest a focus'); return; }
+    setSuggesting(true); setMsg(`${agent} is suggesting a focus…`);
+    try {
+      const out = okText(await call<string>('dispatch', `/ask ${agent} ${qArg(SUGGEST_FOCUS_PROMPT)}`));
+      if (!alive.current) return;
+      const line = out.split('\n').map((l) => l.trim()).find(Boolean) ?? '';
+      const clean = line.replace(/^["'`]+|["'`]+$/g, '').replace(/^[-*\d.\s]+/, '').slice(0, 160);
+      if (!clean) { setMsg('no suggestion returned — try again or type your own'); return; }
+      setFocus(clean); setMsg('focus suggested — edit it or ✦ Dream now');
+    } catch (e) {
+      if (alive.current) setMsg(`suggest failed: ${e instanceof Error ? e.message : String(e)}`);
+    } finally {
+      if (alive.current) setSuggesting(false);
+    }
+  }
+
   async function scheduleNightly() {
     if (!agent) return;
     setBusy(true); setMsg(`scheduling nightly dream for ${agent}…`);
@@ -100,7 +125,7 @@ export function Dream({ store }: { store: FleetStore }) {
     finally { setBusy(false); }
   }
 
-  const locked = dreaming || busy;
+  const locked = dreaming || busy || suggesting;
   return (
     <>
       <section className="card">
@@ -121,7 +146,8 @@ export function Dream({ store }: { store: FleetStore }) {
             <select className="cell-select" value={agent} disabled={locked} onChange={(e) => setAgentSel(e.target.value)}>
               {names.map((n) => <option key={n} value={n}>{n}</option>)}
             </select>
-            <input style={{ flex: '1 1 260px' }} placeholder="optional focus — e.g. “the SkillMesh mainnet readiness”" value={focus} disabled={locked} onChange={(e) => setFocus(e.target.value)} />
+            <input style={{ flex: '1 1 260px' }} placeholder="optional focus — e.g. “the SkillMesh mainnet readiness”, or ✦ Suggest" value={focus} disabled={locked} onChange={(e) => setFocus(e.target.value)} />
+            <button className="btn" disabled={locked || !agent} title="Let the agent propose a high-value focus from its recent work + the brain" onClick={() => void suggestFocus()}>{suggesting ? 'Suggesting…' : '✦ Suggest focus'}</button>
             <button className="btn primary" disabled={locked || !agent} onClick={() => void dreamNow()}>{dreaming ? 'Dreaming…' : '✦ Dream now'}</button>
             <button className="btn" disabled={locked || !agent} title="Run this dream automatically every night at 03:00 (manage under Loops → Scheduled objectives)" onClick={() => void scheduleNightly()}>Schedule nightly</button>
           </span>

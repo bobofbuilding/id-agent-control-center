@@ -227,6 +227,14 @@ export function Teams({ store }: { store: FleetStore }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeTeam, store.teams.length]);
 
+  // Whole-fleet relay topology — every team's outbound delegate policy, for the Route overview.
+  const [relayMatrix, setRelayMatrix] = useState<{ team: string; delegates: string[] | null }[]>([]);
+  useEffect(() => {
+    if (tab !== 'route') return;
+    void call<{ team: string; delegates: string[] | null }[]>('relay:matrix').then(setRelayMatrix).catch(() => setRelayMatrix([]));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tab, activeTeam, savedDelegates, store.lastUpdated]);
+
   function pickMode(m: RelayMode) {
     setRelayMsg('');
     setMode(m);
@@ -561,6 +569,44 @@ export function Teams({ store }: { store: FleetStore }) {
           onMessage={setMsg}
           onDone={(createdTeam) => { if (createdTeam) void store.setTeam(createdTeam); store.refresh(); }}
         />
+      ) : null}
+
+      {tab === 'route' ? (
+      <section className="card">
+        <h3>Routing overview <span className="muted small">· every team's outbound relay, at a glance</span></h3>
+        <p className="muted small" style={{ marginTop: -4 }}>
+          Who each team may delegate work to (via <span className="mono">/ask &lt;team&gt;/&lt;agent&gt;</span>). <b>Edit</b> jumps the editor below to that team.
+        </p>
+        <table className="grid">
+          <thead>
+            <tr><th>Team</th><th>Lead</th><th>Relays to</th><th>Agents</th><th></th></tr>
+          </thead>
+          <tbody>
+            {(relayMatrix.length ? relayMatrix : store.teams.map((t) => ({ team: t.name, delegates: null as string[] | null })))
+              .slice()
+              .sort((a, b) => (a.team === activeTeam ? -1 : b.team === activeTeam ? 1 : a.team.localeCompare(b.team)))
+              .map((row) => {
+                const ags = graphGroups.find((g) => g.team === row.team)?.agents ?? [];
+                const lead = hier.coordinators[row.team] || (hier.primary?.team === row.team ? hier.primary.agent : '');
+                const m = modeOf(row.delegates);
+                const cls = m === 'none' ? 'status-error' : m === 'all' || m === 'permissive' ? 'ok-text' : '';
+                return (
+                  <tr key={row.team} className={row.team === activeTeam ? 'sel' : ''}>
+                    <td className="b">{hier.primary?.team === row.team ? '⭑ ' : ''}{row.team === activeTeam ? '● ' : ''}{row.team}</td>
+                    <td className="muted small">{lead || '—'}</td>
+                    <td className={`small ${cls}`}>{describeRelay(row.delegates)}</td>
+                    <td className="muted small">{ags.length}</td>
+                    <td>
+                      {row.team === activeTeam ? <span className="muted small">editing ↓</span> : (
+                        <button className="btn small" disabled={busy} title={`Edit ${row.team}'s relay policy below`} onClick={() => void store.setTeam(row.team)}>Edit</button>
+                      )}
+                    </td>
+                  </tr>
+                );
+              })}
+          </tbody>
+        </table>
+      </section>
       ) : null}
 
       {tab === 'route' ? (
@@ -1112,11 +1158,16 @@ function TeamBuilder({
               </span>
             </div>
 
-            <div className="muted small" style={{ margin: '14px 0 4px' }}>coordination</div>
+            <div className="muted small" style={{ margin: '14px 0 4px' }}>coordination &amp; routing</div>
             <label className="muted small" style={{ display: 'block' }}>
               <input type="checkbox" checked={coordinate} disabled={locked} onChange={(e) => setCoordinate(e.target.checked)} />{' '}
-              Make the ★ lead the primary coordinator and apply the delegate-to-teammates preset
+              Wire agentic routing — make the ★ lead this team's coordinator and apply the delegate-to-teammates preset
             </label>
+            <p className="muted small" style={{ marginTop: 4, marginBottom: 0 }}>
+              With this on, new work is handed to the <b>lead</b>, which checks what's already done, decomposes only the
+              <b> remaining</b> work, and delegates to its teammates (and other teams via the relay below) — rather than every
+              agent acting on its own. Leave it on so this team plugs into the fleet's lead-driven routing.
+            </p>
 
             <div className="muted small" style={{ margin: '14px 0 4px' }}>cross-team relay for <span className="mono">{targetTeam || '…'}</span></div>
             <div className="relay-modes">
