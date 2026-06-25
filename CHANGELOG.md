@@ -8,6 +8,18 @@ Every change pushed or merged to `main` carries its version number in the commit
 subject (`vX.Y.Z: …`), stamped automatically by the `commit-msg` hook — see
 [CONTRIBUTING.md](CONTRIBUTING.md).
 
+## [0.1.170] — 2026-06-25
+- **Refactor groundwork: the board no longer auto-orchestrates (cuts redundant token spend).** Phase 2
+  of the CC refactor (brain/control-center/cc-refactor-plan.md). The Work board's auto-pilot — which
+  re-dispatched stalled tasks on every poll and was a major source of duplicate dispatches — is gone.
+  Stalled work is now supervised by the **manager** (its native auto check-ins + the stalled-task
+  sweeper, which now defers to check-ins so it isn't a second poker). Triage / re-dispatch /
+  surface-blockers run **only when you click ⟳ Reconcile** — you initiate, the manager supervises.
+  Nothing visual was removed; the per-card ↻ re-dispatch stays.
+- **Manager capability discovery.** New `GET /capabilities` (+ a `control-center/` manifest module) lets
+  the GUI feature-detect which Control-Center-only routes a manager supports and degrade gracefully on
+  stock/older managers instead of hard-failing.
+
 ## [0.1.169] — 2026-06-25
 - **Activity feed works again (“waiting for events…” fixed).** The All-Teams feed probed each team's
   tail with `since=MAX_SAFE_INTEGER`, which the manager echoes back verbatim — so the follow-up fetch

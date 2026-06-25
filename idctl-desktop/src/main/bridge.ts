@@ -253,6 +253,8 @@ const METHODS: Record<string, (...a: any[]) => Promise<unknown>> = {
   'work:triage': (lead: string, team?: string) => triageUnassigned(team ? client.withTeam(String(team)) : client, String(lead)),
   // Per-task token spend (keyed by task shortId) for the board cards.
   'tasks:usage': (team?: string) => (team ? client.withTeam(String(team)) : client).usageByTask(),
+  // Control Center capability discovery (feature-detect CC-only manager routes).
+  'manager:capabilities': () => client.capabilities(),
 
   // health probes
   probeAll: () => client.probeAll(),

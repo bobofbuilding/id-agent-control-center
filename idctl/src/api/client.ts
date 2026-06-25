@@ -412,6 +412,16 @@ export class ManagerClient {
     return env.result?.tasks ?? [];
   }
 
+  /** Control Center capability discovery — which CC-only routes this manager supports.
+   *  Returns null on a stock/older manager (no /capabilities), so the GUI can degrade. */
+  async capabilities(signal?: AbortSignal): Promise<{ cc_api_version?: number; features?: string[]; routes?: { method: string; path: string; group: string }[] } | null> {
+    try {
+      return await this.get('/capabilities', signal);
+    } catch {
+      return null;
+    }
+  }
+
   /** Per-task token spend, keyed by task shortId ("#abc12345"). Empty on older managers. */
   async usageByTask(signal?: AbortSignal): Promise<Record<string, TaskUsage>> {
     try {

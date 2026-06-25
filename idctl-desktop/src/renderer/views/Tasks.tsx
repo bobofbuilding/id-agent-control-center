@@ -412,27 +412,20 @@ function TasksPanel({ store }: { store: FleetStore }) {
     } finally { setTriaging(false); }
   }
 
-  // Auto-pilot: triage, re-dispatch-stalled, and surface-blockers run automatically on
-  // the poll. A single-flight lock + per-action cooldowns keep it from hammering the
-  // fleet. Escalation: triage (90s) → re-dispatch stalled (6m) → if still stuck, surface
-  // blocker decisions to the Inbox (30m).
-  useEffect(() => {
+  // Phase 2 of the CC refactor: the GUI no longer autonomously orchestrates. Stalled tasks are
+  // supervised by the MANAGER (auto check-ins + the stalled-task sweeper) — one supervisor, not
+  // three — so the board's old auto-pilot (which re-dispatched on every poll and was a major
+  // source of redundant token spend) is gone. Triage / re-dispatch / surface-blockers now run
+  // ONLY when you click "Reconcile" (you initiate); the per-card ↻ stays for one-off re-dispatch.
+  async function reconcileNow() {
     if (autoRef.current) return;
-    const now = Date.now();
-    const needTriage = now - lastTriageRef.current > 90_000 && tasks.some((t) => !t.ownerName && laneOf(t) === 'todo');
-    const needRedispatch = stalledTasks.length > 0 && now - lastRedispatchRef.current > 6 * 60_000;
-    const needBlockers = stalledTasks.length > 0 && now - lastBlockersRef.current > 30 * 60_000;
-    if (!needTriage && !needRedispatch && !needBlockers) return;
-    void (async () => {
-      autoRef.current = true;
-      try {
-        if (needTriage) await triage(true);
-        if (needRedispatch) { lastRedispatchRef.current = Date.now(); await redispatchAll(true); }
-        if (needBlockers) { lastBlockersRef.current = Date.now(); await surfaceBlockers(true); }
-      } finally { autoRef.current = false; }
-    })();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [tasks]);
+    autoRef.current = true;
+    try {
+      await triage(false);
+      if (stalledTasks.length) await redispatchAll(false);
+      await surfaceBlockers(false);
+    } finally { autoRef.current = false; }
+  }
 
   // Re-send a stalled task to its owner (reassigning to an active agent first if the owner is
   // stopped) so a stuck "doing" task gets picked back up. Returns false if nothing's active.
@@ -659,11 +652,12 @@ function TasksPanel({ store }: { store: FleetStore }) {
       <style>{`@keyframes idctlPulse{0%,100%{opacity:1;transform:scale(1)}50%{opacity:.35;transform:scale(.8)}}.idctl-pulse{animation:idctlPulse 1.2s ease-in-out infinite}`}</style>
       <div className="row-actions" style={{ marginBottom: 8, alignItems: 'center' }}>
         <span className="muted small">{openCount} open · {doneCount} done</span>
-        {/* Auto-pilot: triage, re-dispatch-stalled and blocker-surfacing all run on their own. */}
-        <span className="muted small" title="This board runs on auto-pilot: unassigned To-Do tasks are triaged to active agents (~90s), stalled tasks are re-dispatched (~6m), and if work stays stuck, blocker decisions are surfaced to your Inbox (~30m).">
-          · ⚙ auto-pilot{triaging ? ' · triaging…' : unassignedTodo ? ` · ${unassignedTodo} to triage` : ''}{stalledTasks.length ? ` · ${stalledTasks.length} stalled` : ''}
+        {/* The MANAGER supervises stalled work now (auto check-ins + sweeper) — the board just shows it. */}
+        <span className="muted small" title="The manager supervises stalled tasks (auto check-ins + the stalled-task sweeper). Use Reconcile to triage unassigned work, re-dispatch stalled tasks, and surface blocker decisions on demand.">
+          · ⛭ manager-supervised{triaging ? ' · triaging…' : unassignedTodo ? ` · ${unassignedTodo} unassigned` : ''}{stalledTasks.length ? ` · ${stalledTasks.length} stalled` : ''}
         </span>
         <span className="grow" />
+        <button className="btn" disabled={busy || triaging} title="Triage unassigned work, re-dispatch stalled tasks, and surface blocker decisions — on demand (no longer automatic)" onClick={() => void reconcileNow()}>⟳ Reconcile</button>
         <button className="btn" disabled={busy || proposing} title="Create work: auto-plan, direct assignment, schedule, loop, or dream" onClick={() => { setShowAssign((v) => !v); setAssignNote(''); setProposal(null); }}>{showAssign ? '− Close' : '⚡ Create work'}</button>
         <button className="btn primary" disabled={busy} onClick={() => void newTask()}>+ New task</button>
       </div>
