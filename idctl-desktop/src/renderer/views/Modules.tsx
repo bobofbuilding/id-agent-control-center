@@ -37,6 +37,26 @@ function TestCell({ r }: { r?: TestResult }) {
   return <span className="status-error" title={r.error}>✕ {(r.error ?? 'failed').slice(0, 44)}</span>;
 }
 
+function LinkedDescription({ text }: { text?: string | null }) {
+  if (!text) return null;
+  const parts: JSX.Element[] = [];
+  const linkRe = /\[([^\]\n]+)\]\((https?:\/\/[^)\s]+)\)/g;
+  let last = 0;
+  let match: RegExpExecArray | null;
+  while ((match = linkRe.exec(text)) !== null) {
+    if (match.index > last) parts.push(<Fragment key={`t-${last}`}>{text.slice(last, match.index)}</Fragment>);
+    const [, label, href] = match;
+    parts.push(
+      <a key={`a-${match.index}`} className="ext-link" href={href} target="_blank" rel="noreferrer">
+        {label}
+      </a>,
+    );
+    last = match.index + match[0].length;
+  }
+  if (last < text.length) parts.push(<Fragment key={`t-${last}`}>{text.slice(last)}</Fragment>);
+  return <>{parts}</>;
+}
+
 // agentskills.io `name` rule: 1–64 chars, lowercase alphanumerics + single
 // hyphens, no leading/trailing/consecutive hyphens. (Folder name == skill name.)
 const SKILL_NAME_RE = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
@@ -677,7 +697,7 @@ export function Modules({ store }: { store: FleetStore }) {
                     <button className="btn icon-danger" disabled={busy} title="Delete from library" onClick={() => setConfirmDel(s.name)}>✕</button>
                   )}
                 </div>
-                {s.description ? <p className="muted small skill-desc">{s.description}</p> : null}
+                {s.description ? <p className="muted small skill-desc"><LinkedDescription text={s.description} /></p> : null}
                 {(() => {
                   const fm = new Set(s.tags ?? []);
                   const tags = [...new Set([...(s.tags ?? []), ...(autoTags[s.name] ?? [])])];
@@ -736,7 +756,7 @@ export function Modules({ store }: { store: FleetStore }) {
                       </a>
                     ) : provider}
                   </td>
-                  <td className="muted">{p.description ?? ''}</td>
+                  <td className="muted"><LinkedDescription text={p.description} /></td>
                 </tr>
               );
             })}
