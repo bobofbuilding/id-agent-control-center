@@ -8,6 +8,18 @@ Every change pushed or merged to `main` carries its version number in the commit
 subject (`vX.Y.Z: …`), stamped automatically by the `commit-msg` hook — see
 [CONTRIBUTING.md](CONTRIBUTING.md).
 
+## [0.1.158] — 2026-06-25
+- **Local-model token usage: accuracy fix + all local models.**
+  - **Accuracy:** the per-agent "total tokens" was **output-only**, so it didn't sum to the 24h/7d
+    window total (which is input+output). Now per-agent (and per-model) totals are **input+output**
+    and **reconcile exactly** with the window total (verified live: 6 agents summed to 72,190 =
+    the 24h total). New per-agent `input`/`total` fields.
+  - **All local models:** added a **By model · 24h** breakdown — the `ollama` runtime is the umbrella
+    for Ollama / LM Studio / any OpenAI-compatible local server, so this already covers every local
+    model (e.g. qwen3:4b / qwen3:1.7b). Panel relabeled accordingly.
+  - Manager-side (`/usage`) now tracks per-agent input and emits a per-model breakdown (patch saved
+    under `brain/control-center/patches/`; reapply after an id-agents reinstall).
+
 ## [0.1.157] — 2026-06-25
 - **Inbox decisions are ordered by dependency** — a prerequisite task's decision now sorts before
   any decision that depends on it (depth over the `taskDeps` graph, stable for unrelated items), so

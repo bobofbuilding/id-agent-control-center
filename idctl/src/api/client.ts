@@ -1063,7 +1063,20 @@ export interface InstallSkillResult {
 export interface UsageAgent {
   agent: string;
   count: number;
+  input?: number;
   output: number;
+  /** input + output (preferred for "total tokens"); falls back to output on old managers. */
+  total?: number;
+  avgTps: number;
+}
+
+/** Per-local-model usage (any OpenAI-compatible local server: Ollama / LM Studio / …). */
+export interface UsageModel {
+  model: string;
+  count: number;
+  input?: number;
+  output: number;
+  total?: number;
   avgTps: number;
 }
 
@@ -1077,6 +1090,8 @@ export interface UsageWindow {
   /** Token-weighted average throughput (output tokens / generation seconds). */
   avgTps: number;
   agents: UsageAgent[];
+  /** Per-model breakdown (added by newer managers; may be absent on older ones). */
+  models?: UsageModel[];
 }
 
 export interface UsageReport {

@@ -79,6 +79,7 @@ export function Health({ store }: { store: FleetStore }) {
   const gaugeVal = usage ? (usage.recent?.tps ?? usage.day.avgTps ?? 0) : 0;
   const gaugeMax = usage ? niceMax(Math.max(gaugeVal, usage.day.avgTps, usage.week.avgTps)) : 100;
   const localAgents = usage?.day.agents ?? [];
+  const localModels = usage?.day.models ?? [];
 
   return (
     <div className="view">
@@ -91,7 +92,7 @@ export function Health({ store }: { store: FleetStore }) {
 
       <section className="card">
         <div className="row-actions" style={{ alignItems: 'baseline' }}>
-          <h3 className="grow">Local-model token usage (Ollama)</h3>
+          <h3 className="grow">Local-model token usage <span className="muted small">· all local models (Ollama · LM Studio · OpenAI-compatible)</span></h3>
           <button className="btn small" onClick={() => void loadUsage()}>Refresh</button>
         </div>
         {usage === undefined ? (
@@ -100,7 +101,7 @@ export function Health({ store }: { store: FleetStore }) {
           <p className="muted small">Token usage isn't available on this manager (no <span className="mono">/usage</span> route).</p>
         ) : usage.week.count === 0 ? (
           <p className="muted small">
-            No local-model activity recorded yet. Token usage is captured from <b>Ollama</b> (local) agents only — probe or message one and this fills in. (Cloud API runtimes are intentionally excluded.)
+            No local-model activity recorded yet. Token usage is captured from every <b>local-model</b> agent (Ollama, LM Studio, or any OpenAI-compatible local server) — probe or message one and this fills in. (Cloud API runtimes are intentionally excluded.)
           </p>
         ) : (
           <div className="usage-grid">
@@ -116,13 +117,25 @@ export function Health({ store }: { store: FleetStore }) {
             </div>
             <WindowCard title="Last 24 hours" w={usage.day} />
             <WindowCard title="Last 7 days" w={usage.week} />
+            {localModels.length > 0 ? (
+              <div className="usage-card grow">
+                <div className="usage-card-title">By model · 24h <span className="muted small">(total tokens · rate)</span></div>
+                {localModels.slice(0, 8).map((m) => (
+                  <div className="usage-agent-row" key={m.model}>
+                    <span className="b mono">{m.model}</span>
+                    <span className="muted small grow">{fmt(m.total ?? m.output)} tokens · {m.count}q</span>
+                    <span className="ok-text small" title="average throughput rate (not a total)">{fmtTps(m.avgTps)} tok/s avg</span>
+                  </div>
+                ))}
+              </div>
+            ) : null}
             {localAgents.length > 0 ? (
               <div className="usage-card grow">
                 <div className="usage-card-title">By agent · 24h <span className="muted small">(total tokens · rate)</span></div>
-                {localAgents.slice(0, 6).map((a) => (
+                {localAgents.slice(0, 8).map((a) => (
                   <div className="usage-agent-row" key={a.agent}>
                     <span className="b">{a.agent}</span>
-                    <span className="muted small grow">{fmt(a.output)} tokens · {a.count}q</span>
+                    <span className="muted small grow">{fmt(a.total ?? a.output)} tokens · {a.count}q</span>
                     <span className="ok-text small" title="average throughput rate (not a total)">{fmtTps(a.avgTps)} tok/s avg</span>
                   </div>
                 ))}
