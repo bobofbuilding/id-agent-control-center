@@ -412,6 +412,16 @@ export class ManagerClient {
     return env.result?.tasks ?? [];
   }
 
+  /** Per-task token spend, keyed by task shortId ("#abc12345"). Empty on older managers. */
+  async usageByTask(signal?: AbortSignal): Promise<Record<string, TaskUsage>> {
+    try {
+      const d = await this.get<{ tasks?: Record<string, TaskUsage> }>('/usage/by-task', signal);
+      return d.tasks ?? {};
+    } catch {
+      return {};
+    }
+  }
+
   // ---- Manager inbox (questions awaiting a human) -----------------------
 
   async inboxPending(signal?: AbortSignal): Promise<InboxItem[]> {
@@ -1077,6 +1087,16 @@ export interface UsageAgent {
   /** input + output (preferred for "total tokens"); falls back to output on old managers. */
   total?: number;
   avgTps: number;
+}
+
+/** Per-task token spend (tokens = input + output across the task's turns). */
+export interface TaskUsage {
+  tokens: number;
+  input: number;
+  output: number;
+  /** Total generation time across the task's turns, ms. */
+  ms: number;
+  turns: number;
 }
 
 /** Per-local-model usage (any OpenAI-compatible local server: Ollama / LM Studio / …). */

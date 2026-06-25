@@ -8,6 +8,16 @@ Every change pushed or merged to `main` carries its version number in the commit
 subject (`vX.Y.Z: …`), stamped automatically by the `commit-msg` hook — see
 [CONTRIBUTING.md](CONTRIBUTING.md).
 
+## [0.1.167] — 2026-06-25
+- **Per-task token spend on the board.** Each task card now shows `Nm Ns · N tokens` (the generation
+  time + tokens spent working it), like a turn summary. This required new backend plumbing: the Claude
+  Code CLI and Codex harnesses now report per-turn token usage to the manager **with the query_id**
+  (Ollama already reported), the manager attributes each turn to the task its query worked (via the task
+  ref in the dispatch prompt, with a query-window fallback), and a new `/usage/by-task` endpoint sums it.
+  Verified end-to-end live (a Claude turn correctly attributed 120,932 tokens / 20s to its task).
+  Hover the badge for the input/output split and turn count. Numbers populate going forward as agents
+  run on the updated harness — it can't reconstruct spend for work already completed.
+
 ## [0.1.166] — 2026-06-25
 - **"Blocks N" badges are now reactive — stale blockers clear automatically.** The prerequisite-side
   badge counted *every* downstream task that depended on it, including ones already **done**, so a task

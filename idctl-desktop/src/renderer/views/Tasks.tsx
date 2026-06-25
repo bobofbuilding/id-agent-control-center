@@ -44,6 +44,19 @@ function isDone(t: Task): boolean {
 function isRoutine(t: Task): boolean {
   return /heartbeat/i.test(t.title) || /heartbeat/i.test(t.name ?? '');
 }
+function fmtTokens(n: number): string {
+  if (n >= 1_000_000) return `${(n / 1e6).toFixed(1)}M`;
+  if (n >= 10_000) return `${Math.round(n / 1000)}k`;
+  if (n >= 1_000) return `${(n / 1000).toFixed(1)}k`;
+  return String(n);
+}
+function fmtDur(ms: number): string {
+  const s = Math.round(ms / 1000);
+  if (s < 60) return `${s}s`;
+  const m = Math.floor(s / 60);
+  if (m < 60) return s % 60 ? `${m}m ${s % 60}s` : `${m}m`;
+  return `${Math.floor(m / 60)}h ${m % 60}m`;
+}
 // The manager only stores 3 task statuses; the Kanban refines them into lanes with an
 // app-side overlay. Each lane maps onto one real status (validStatuses = todo|doing|done).
 type Col = 'todo' | 'doing' | 'done';
@@ -125,6 +138,7 @@ function TasksPanel({ store }: { store: FleetStore }) {
   const [laneOverlay, setLaneOverlay] = useState<Record<string, string>>({}); // ref → fine-grained lane
   const [depsOverlay, setDepsOverlay] = useState<Record<string, string[]>>({}); // ref → prerequisite refs (app-side; manager has no deps)
   const [reviewOverlay, setReviewOverlay] = useState<Record<string, { state: string; at: number }>>({}); // ref → adjustment-loop state + when-set
+  const [taskUsage, setTaskUsage] = useState<Record<string, { tokens: number; input: number; output: number; ms: number; turns: number }>>({}); // ref → token spend
   const [confirmDel, setConfirmDel] = useState<string | null>(null);
   // Auto-decompose: describe an objective → lead splits it → create + farm out.
   const [showAssign, setShowAssign] = useState(false);
@@ -226,6 +240,14 @@ function TasksPanel({ store }: { store: FleetStore }) {
     setLaneOverlay(await call<Record<string, string>>('tasks:lanes').catch(() => ({})));
     setDepsOverlay(await call<Record<string, string[]>>('tasks:deps').catch(() => ({})));
     setReviewOverlay(await call<Record<string, { state: string; at: number }>>('tasks:review').catch(() => ({})));
+    // Per-task token spend — fetch per displayed team (the endpoint is team-scoped) and merge.
+    try {
+      const teamsShown = store.viewAll
+        ? [...new Set(store.allAgents.map((a) => a.team).filter(Boolean) as string[])]
+        : [store.team ?? 'default'];
+      const maps = await Promise.all(teamsShown.map((tm) => call<Record<string, { tokens: number; input: number; output: number; ms: number; turns: number }>>('tasks:usage', tm).catch(() => ({}))));
+      setTaskUsage(Object.assign({}, ...maps));
+    } catch { /* usage is best-effort */ }
   }
   useEffect(() => {
     reload();
@@ -869,6 +891,17 @@ function TasksPanel({ store }: { store: FleetStore }) {
             >
               <div className="b" style={{ fontSize: 13 }}>{t.title}</div>
               <div className="muted small mono">{t.shortId ?? ref(t)}{isRoutine(t) ? ' · routine' : ''}{store.viewAll && t.teamName ? ` · ${t.teamName}` : ''}{(() => { const n = blocksCount(t); return n ? ` · blocks ${n}` : ''; })()}</div>
+              {(() => {
+                const u = taskUsage[ref(t)];
+                if (!u || !u.tokens) return null;
+                return (
+                  <div className="muted small" style={{ marginTop: 2, display: 'flex', alignItems: 'center', gap: 5 }}
+                    title={`${u.input.toLocaleString()} in + ${u.output.toLocaleString()} out across ${u.turns} turn${u.turns === 1 ? '' : 's'}`}>
+                    <span style={{ color: '#c98a3c' }}>✳</span>
+                    {u.ms > 0 ? `${fmtDur(u.ms)} · ` : ''}{fmtTokens(u.tokens)} tokens
+                  </div>
+                );
+              })()}
               {(() => {
                 const pre = prereqsOf(t);
                 if (!pre.length) return null;

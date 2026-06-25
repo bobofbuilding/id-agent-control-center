@@ -253,6 +253,8 @@ const METHODS: Record<string, (...a: any[]) => Promise<unknown>> = {
     fanOutObjective(client, String(objective), Array.isArray(teams) ? teams.map(String) : []),
   // Lead triages unassigned To-Do tasks: assign each to the best active agent + dispatch.
   'work:triage': (lead: string, team?: string) => triageUnassigned(team ? client.withTeam(String(team)) : client, String(lead)),
+  // Per-task token spend (keyed by task shortId) for the board cards.
+  'tasks:usage': (team?: string) => (team ? client.withTeam(String(team)) : client).usageByTask(),
 
   // health probes
   probeAll: () => client.probeAll(),
