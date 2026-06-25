@@ -8,6 +8,17 @@ Every change pushed or merged to `main` carries its version number in the commit
 subject (`vX.Y.Z: …`), stamped automatically by the `commit-msg` hook — see
 [CONTRIBUTING.md](CONTRIBUTING.md).
 
+## [0.1.154] — 2026-06-25
+- **Secrets are gitignored as a standard, everywhere.** New `ensureSecretGitignore` appends a managed
+  block (`.env`/`.env.*` keeping `.env.example`, `*.pem`/`*.key`/private keys, `*.keystore`,
+  `service-account*.json`, `.netrc`, `.pgpass`, …) — applied automatically on **link**, **create
+  repo**, and **before every commit request**. The commit instruction also teaches git-manager to
+  gitignore + `git rm --cached` any tracked secret and **never commit one**.
+- **GitHub token lookup is now resilient to naming.** `githubToken()` matches any MCP server whose
+  name contains "github" (e.g. `github pat`, `github-mcp`) or that carries a
+  `GITHUB_PERSONAL_ACCESS_TOKEN`, then falls back to the env — so a server-name quirk can't silently
+  break GitHub auth (which is exactly what caused the earlier "API 404" link failure).
+
 ## [0.1.153] — 2026-06-25
 - **🔗 Link existing repo no longer fails on a missing/expired GitHub API token.** It now confirms
   reachability via **SSH/HTTPS `ls-remote`** (the transport git actually uses) when the API can't —

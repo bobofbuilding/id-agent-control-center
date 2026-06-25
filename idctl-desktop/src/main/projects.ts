@@ -15,7 +15,7 @@
 import { BrowserWindow, dialog, shell } from 'electron';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
-import { existsSync, readFileSync, readdirSync, realpathSync, statSync, rmSync } from 'node:fs';
+import { existsSync, readFileSync, writeFileSync, readdirSync, realpathSync, statSync, rmSync } from 'node:fs';
 import { join, basename } from 'node:path';
 import { homedir } from 'node:os';
 import { loadSettings } from '../../../idctl/src/settings/store.ts';
@@ -104,12 +104,56 @@ function repoSlug(url: string): string | null {
 /** The user's GitHub PAT, read from the configured github MCP server. */
 function githubToken(): string | undefined {
   try {
-    const cfg = loadSettings().mcpServers?.find((s) => s.name === 'github')?.env?.GITHUB_PERSONAL_ACCESS_TOKEN;
-    // Fall back to the environment so the API still works if the token lives there
-    // (or was rotated onto agents but not re-added to the top-level MCP config).
+    const servers = loadSettings().mcpServers ?? [];
+    // Match a github MCP server FLEXIBLY (name 'github', 'github pat', 'github-mcp', …)
+    // or ANY server carrying a GITHUB_PERSONAL_ACCESS_TOKEN — a naming quirk must never
+    // silently break GitHub auth. Then fall back to the environment.
+    const cfg = servers.find((s) => /github/i.test(s.name ?? '') && s.env?.GITHUB_PERSONAL_ACCESS_TOKEN)?.env?.GITHUB_PERSONAL_ACCESS_TOKEN
+      ?? servers.find((s) => s.env?.GITHUB_PERSONAL_ACCESS_TOKEN)?.env?.GITHUB_PERSONAL_ACCESS_TOKEN;
     return cfg || process.env.GITHUB_PERSONAL_ACCESS_TOKEN || process.env.GH_TOKEN || undefined;
   } catch {
     return process.env.GITHUB_PERSONAL_ACCESS_TOKEN || process.env.GH_TOKEN || undefined;
+  }
+}
+
+// Standard secret patterns every repo should ignore so credentials never get committed.
+const SECRET_GITIGNORE_BLOCK = [
+  '# --- secrets (managed by ID Agents Control Center) ---',
+  '.env',
+  '.env.*',
+  '!.env.example',
+  '!.env.sample',
+  '!.env.template',
+  '*.pem',
+  '*.key',
+  '*.p12',
+  '*.pfx',
+  '*.keystore',
+  'id_rsa',
+  'id_ed25519',
+  '*.secret',
+  'secrets.json',
+  'service-account*.json',
+  'gha-creds-*.json',
+  '.netrc',
+  '.pgpass',
+  '# --- end secrets ---',
+].join('\n');
+const SECRET_GITIGNORE_MARKER = '# --- secrets (managed by ID Agents Control Center) ---';
+
+/** Ensure a repo's .gitignore covers common secret files (idempotent, additive). Makes
+ *  "secrets are gitignored" the standard for every repo the app links/creates/commits. */
+export function ensureSecretGitignore(path: string): { ok: boolean; added: boolean; error?: string } {
+  try {
+    if (!path || !existsSync(path)) return { ok: false, added: false, error: 'folder not found' };
+    const gi = join(path, '.gitignore');
+    const existing = existsSync(gi) ? readFileSync(gi, 'utf8') : '';
+    if (existing.includes(SECRET_GITIGNORE_MARKER)) return { ok: true, added: false };
+    const sep = existing ? (existing.endsWith('\n') ? '\n' : '\n\n') : '';
+    writeFileSync(gi, `${existing}${sep}${SECRET_GITIGNORE_BLOCK}\n`, { mode: 0o644 });
+    return { ok: true, added: true };
+  } catch (e) {
+    return { ok: false, added: false, error: e instanceof Error ? e.message : String(e) };
   }
 }
 
@@ -247,6 +291,7 @@ export async function createGithubRepo(path: string, opts: { name?: string; desc
     const sshUrl = String(repo.ssh_url ?? `git@github.com:${slug}.git`);
     const htmlUrl = String(repo.html_url ?? `https://github.com/${slug}`);
     await git(path, ['remote', 'add', 'origin', sshUrl]); // SSH — never embed the token in the remote
+    ensureSecretGitignore(path); // standardize: secrets gitignored before any first push
     return { ok: true, slug, sshUrl, htmlUrl };
   } catch (e) {
     const err = e as { stderr?: string; message?: string };
@@ -285,6 +330,7 @@ export async function linkGithubRepo(path: string, url: string): Promise<{ ok: b
     }
     await git(path, ['remote', 'add', 'origin', sshUrl]); // SSH — never embed a token
     await git(path, ['fetch', 'origin'], 120000).catch(() => {}); // pull down refs; ignore auth hiccups
+    ensureSecretGitignore(path); // standardize: secrets gitignored so they never get committed
     return { ok: true, slug, remoteUrl: sshUrl };
   } catch (e) {
     const err = e as { stderr?: string; message?: string };
