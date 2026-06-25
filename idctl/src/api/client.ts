@@ -462,6 +462,15 @@ export class ManagerClient {
   }
 
   /**
+   * Set an agent's reasoning EFFORT (minimal|low|medium|high|xhigh, '' = default) via
+   * its metadata. Lower effort = fewer reasoning tokens for codex / claude-code-cli
+   * runtimes (n/a for ollama). Needs a rebuild to apply.
+   */
+  async setAgentEffort(agentId: string, effort: string, signal?: AbortSignal): Promise<{ metadata?: Record<string, unknown> }> {
+    return this.post(`/agents/${encodeURIComponent(agentId)}/metadata`, { metadata: { effort } }, signal);
+  }
+
+  /**
    * Switch an agent's runtime (harness) by id. Writes the DB and flips status
    * to `pending`; the agent must be rebuilt to apply. Rejects (400) for
    * non-local agents or unknown runtimes.

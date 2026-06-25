@@ -44,13 +44,24 @@ function short(s?: string): string {
   if (!s) return '—';
   return s.replace('claude-code-cli', 'claude').replace(/^claude-/, '').replace(/-cli$/, '');
 }
+// Reasoning effort only applies to the subscription runtimes that read ID_AGENT_EFFORT:
+// codex (-c model_reasoning_effort) and the Claude Code CLI harness (--effort, also serves
+// claude-code-local). Local servers (ollama) and cursor-cli have no reasoning-effort knob.
+const EFFORT_RUNTIMES = new Set(['codex', 'claude-code-cli', 'claude-code-local']);
+function effortSupports(runtime?: string): boolean {
+  return EFFORT_RUNTIMES.has(runtime ?? '');
+}
+function effortOf(a: Agent): string {
+  const e = a.metadata?.effort;
+  return typeof e === 'string' ? e : '';
+}
 function skillsOf(a: Agent): string[] {
   const s = a.metadata?.skills;
   return Array.isArray(s) ? (s as string[]) : [];
 }
 
 export function AgentTable({ store, onProbe, probeBusy }: { store: FleetStore; onProbe?: (a: TeamAgent) => void; probeBusy?: string | null }) {
-  const cols = onProbe ? 7 : 6;
+  const cols = onProbe ? 8 : 7;
   const [selected, setSelected] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [catalog, setCatalog] = useState<Record<string, string[]>>({});
@@ -130,6 +141,17 @@ export function AgentTable({ store, onProbe, probeBusy }: { store: FleetStore; o
     }
     void run(`${act} ${a.name}`, `/agent ${a.name} ${act.toLowerCase()}`, team);
   }
+  async function setEffort(a: TeamAgent, effort: string) {
+    if (effort === effortOf(a)) return;
+    const team = teamOf(a);
+    setBusy(`effort ${a.name}`);
+    try {
+      await call('setAgentEffort', a.id, effort, team);
+      // Rebuild so the agent's harness picks up the new ID_AGENT_EFFORT on its next launch.
+      await call('remote', `/agent ${a.name} rebuild`, undefined, team);
+      store.refresh(); setBusy(null);
+    } catch (err) { setBusy(`effort change failed — ${err instanceof Error ? err.message : String(err)}`); setTimeout(() => setBusy(null), 4000); }
+  }
   async function setRuntime(a: TeamAgent, runtime: string) {
     if (!runtime || runtime === a.runtime) return;
     const team = teamOf(a);
@@ -175,6 +197,19 @@ export function AgentTable({ store, onProbe, probeBusy }: { store: FleetStore; o
           </select>
           {mismatch ? <span className="warn-text" title={mismatch} style={{ marginLeft: 4, cursor: 'help' }}>⚠</span> : null}
         </td>
+        <td onClick={(e) => e.stopPropagation()}>
+          {effortSupports(a.runtime) ? (
+            <select className="cell-select" value={effortOf(a)} onChange={(e) => void setEffort(a, e.target.value)}
+              title="Reasoning effort — lower spends fewer subscription tokens per turn">
+              <option value="">default</option>
+              <option value="low">low</option>
+              <option value="medium">medium</option>
+              <option value="high">high</option>
+            </select>
+          ) : (
+            <span className="muted" title="local & cursor runtimes have no reasoning-effort setting">—</span>
+          )}
+        </td>
         <td className="muted" title="port is assigned by the manager">{a.port || '—'}</td>
         <td onClick={(e) => e.stopPropagation()}>
           <select className="cell-select" value="" onChange={(e) => { action(a, e.target.value); e.target.value = ''; }}>
@@ -210,7 +245,7 @@ export function AgentTable({ store, onProbe, probeBusy }: { store: FleetStore; o
         </div>
         <table className="grid">
           <thead>
-            <tr><th>Agent</th><th>Status</th><th>Runtime</th><th>Model</th><th>Port</th><th>Actions</th>{onProbe ? <th>Probe</th> : null}</tr>
+            <tr><th>Agent</th><th>Status</th><th>Runtime</th><th>Model</th><th title="Reasoning effort — lower spends fewer subscription tokens (codex & Claude CLI only)">Effort</th><th>Port</th><th>Actions</th>{onProbe ? <th>Probe</th> : null}</tr>
           </thead>
           <tbody>
             {groups.flatMap((g) => {

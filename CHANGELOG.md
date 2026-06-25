@@ -8,6 +8,14 @@ Every change pushed or merged to `main` carries its version number in the commit
 subject (`vX.Y.Z: …`), stamped automatically by the `commit-msg` hook — see
 [CONTRIBUTING.md](CONTRIBUTING.md).
 
+## [0.1.161] — 2026-06-25
+- **Per-agent reasoning effort, to stop burning subscription tokens.** New **Effort** column in the
+  fleet grid lets you set `low` / `medium` / `high` (or `default`) per agent. The choice is stored on
+  the agent (`metadata.effort`), injected as `ID_AGENT_EFFORT`, and applied on rebuild: codex passes
+  `-c model_reasoning_effort`, the Claude Code CLI passes `--effort`. Lower effort = fewer tokens spent
+  per turn. The control shows **—** for `ollama`/`cursor-cli`, which have no reasoning-effort knob —
+  local models don't consume subscription tokens, so effort isn't relevant there.
+
 ## [0.1.160] — 2026-06-25
 - **The team lead floats to the top of its group** in the HR-Manager / Health fleet grid. The
   actual ★ coordinator (even a custom one like `researcher`) now sorts first within its team, not

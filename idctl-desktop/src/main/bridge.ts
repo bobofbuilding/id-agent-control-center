@@ -314,6 +314,8 @@ const METHODS: Record<string, (...a: any[]) => Promise<unknown>> = {
   // dashboard: switch runtime (rebuild required to apply)
   setAgentRuntime: (id: string, runtime: string, team?: string) =>
     (team ? client.withTeam(String(team)) : client).setAgentRuntime(String(id), String(runtime)),
+  setAgentEffort: (id: string, effort: string, team?: string) =>
+    (team ? client.withTeam(String(team)) : client).setAgentEffort(String(id), String(effort ?? '')),
   // reassign a local agent to another team (rebuilds it there)
   'agent:move': (id: string, team: string) => client.moveAgent(String(id), String(team)),
 
