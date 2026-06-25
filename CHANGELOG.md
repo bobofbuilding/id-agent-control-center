@@ -8,6 +8,13 @@ Every change pushed or merged to `main` carries its version number in the commit
 subject (`vX.Y.Z: …`), stamped automatically by the `commit-msg` hook — see
 [CONTRIBUTING.md](CONTRIBUTING.md).
 
+## [0.1.153] — 2026-06-25
+- **🔗 Link existing repo no longer fails on a missing/expired GitHub API token.** It now confirms
+  reachability via **SSH/HTTPS `ls-remote`** (the transport git actually uses) when the API can't —
+  so a reachable private repo links even with no API token. Fixes "Link failed: GitHub API 404" for
+  repos you can reach over SSH. `githubToken()` also falls back to `GITHUB_PERSONAL_ACCESS_TOKEN` /
+  `GH_TOKEN` env vars. (Create-repo and Fork still need a real API token — those are API-only.)
+
 ## [0.1.152] — 2026-06-25
 - **▶ Work now PARTITIONS the plan across teams instead of duplicating it.** The compile step
   decomposes the plan **once**, groups the sub-tasks into **dependency clusters** (interdependent

@@ -104,10 +104,25 @@ function repoSlug(url: string): string | null {
 /** The user's GitHub PAT, read from the configured github MCP server. */
 function githubToken(): string | undefined {
   try {
-    return loadSettings().mcpServers?.find((s) => s.name === 'github')?.env?.GITHUB_PERSONAL_ACCESS_TOKEN;
+    const cfg = loadSettings().mcpServers?.find((s) => s.name === 'github')?.env?.GITHUB_PERSONAL_ACCESS_TOKEN;
+    // Fall back to the environment so the API still works if the token lives there
+    // (or was rotated onto agents but not re-added to the top-level MCP config).
+    return cfg || process.env.GITHUB_PERSONAL_ACCESS_TOKEN || process.env.GH_TOKEN || undefined;
   } catch {
-    return undefined;
+    return process.env.GITHUB_PERSONAL_ACCESS_TOKEN || process.env.GH_TOKEN || undefined;
   }
+}
+
+/** Can git actually reach this repo over SSH (the user's key) or HTTPS? This is the
+ *  transport git uses, so it's the real "do I have access" test — independent of the
+ *  GitHub API token (which may be absent/expired even when the repo is reachable). */
+async function remoteReachable(slug: string): Promise<boolean> {
+  const env = { ...process.env, GIT_SSH_COMMAND: 'ssh -o BatchMode=yes -o ConnectTimeout=12', GIT_TERMINAL_PROMPT: '0' };
+  for (const remote of [`git@github.com:${slug}.git`, `https://github.com/${slug}.git`]) {
+    try { await execFileP('git', ['ls-remote', remote, 'HEAD'], { timeout: 25000, env }); return true; }
+    catch { /* try next transport */ }
+  }
+  return false;
 }
 
 export interface GithubMeta {
@@ -247,13 +262,18 @@ export async function linkGithubRepo(path: string, url: string): Promise<{ ok: b
   if (!path || !existsSync(path)) return { ok: false, error: 'folder not found' };
   const slug = repoSlug(url);
   if (!slug) return { ok: false, error: 'not a GitHub repo URL' };
-  // Confirm the repo exists / is reachable before wiring it up (token-optional).
+  // Confirm the repo is reachable before wiring it up. Prefer the API (gives the default
+  // branch), but FALL BACK to an SSH/HTTPS reachability check — git uses SSH (the user's
+  // key), so a missing/expired API token must NOT block a repo that's actually reachable.
   const meta = await githubMeta(url);
-  if (!meta.ok) return { ok: false, error: `can't reach ${slug} on GitHub (${meta.error}) — check the URL/access` };
+  const defBranch = (meta.ok && meta.defaultBranch) || 'main';
+  if (!meta.ok && !(await remoteReachable(slug))) {
+    return { ok: false, error: `can't reach ${slug} — not found via the GitHub API (${meta.error}) or over SSH/HTTPS. Check the URL and that you have access.` };
+  }
   try {
     if (!(await isOwnRepoRoot(path))) {
       await git(path, ['init']);
-      await git(path, ['symbolic-ref', 'HEAD', `refs/heads/${meta.defaultBranch || 'main'}`]).catch(() => {});
+      await git(path, ['symbolic-ref', 'HEAD', `refs/heads/${defBranch}`]).catch(() => {});
     }
     const remotes = (await git(path, ['remote']).catch(() => '')).split('\n').filter(Boolean);
     const sshUrl = `git@github.com:${slug}.git`;
