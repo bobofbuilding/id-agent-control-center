@@ -54,6 +54,14 @@ export function listQuestions(team?: string): BlockerQuestion[] {
 }
 
 export function addQuestion(q: BlockerQuestion): { ok: boolean; id: string } {
+  // Idempotent: the blocker scan / auto-pilot can re-raise the same decision repeatedly.
+  // If an open question with the same task + question text already exists, reuse it instead
+  // of writing a duplicate file (the cause of the same decision appearing twice in the Inbox).
+  const incomingQuestion = String(q.question || '').slice(0, 600);
+  if (q.taskRef && incomingQuestion) {
+    const dup = listQuestions().find((e) => e.taskRef === q.taskRef && e.question === incomingQuestion);
+    if (dup) return { ok: true, id: dup.id };
+  }
   const id = q?.id || `q_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 7)}`;
   const payload: BlockerQuestion = {
     id,

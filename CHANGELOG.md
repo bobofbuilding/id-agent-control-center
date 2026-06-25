@@ -8,6 +8,15 @@ Every change pushed or merged to `main` carries its version number in the commit
 subject (`vX.Y.Z: …`), stamped automatically by the `commit-msg` hook — see
 [CONTRIBUTING.md](CONTRIBUTING.md).
 
+## [0.1.169] — 2026-06-25
+- **Activity feed works again (“waiting for events…” fixed).** The All-Teams feed probed each team's
+  tail with `since=MAX_SAFE_INTEGER`, which the manager echoes back verbatim — so the follow-up fetch
+  landed past the end and the feed stayed empty. The manager's `/events?since=0` already returns each
+  team's newest events, so the feed now fetches that directly (verified: 70 events across 6 teams).
+- **No more duplicate Inbox decisions.** A blocker question is keyed by task + question text now, so the
+  auto-pilot/blocker scan re-raising the same decision reuses the existing one instead of writing a
+  second copy. (Existing dupes were cleared.)
+
 ## [0.1.168] — 2026-06-25
 - **“Request commit” now commits directly — no more stalled commits.** It used to create a task and
   ask an agent to do the git work, which could be marked “done” without the commit ever landing (and
