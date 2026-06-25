@@ -436,8 +436,11 @@ const METHODS: Record<string, (...a: any[]) => Promise<unknown>> = {
   // reassign a local agent to another team (rebuilds it there)
   'agent:move': (id: string, team: string) => client.moveAgent(String(id), String(team)),
 
-  // per-agent persistent instructions (system-prompt addendum, e.g. coordinator role)
-  'agent:getInstructions': (idOrName: string) => client.agentInstructions(String(idOrName)),
+  // per-agent persistent instructions (system-prompt addendum, e.g. coordinator role).
+  // Optional `team` scopes the read to a specific team (so the HR structure editor can load a
+  // cross-team agent's goals without switching the active team).
+  'agent:getInstructions': (idOrName: string, team?: string) =>
+    (team ? client.withTeam(String(team)) : client).agentInstructions(String(idOrName)),
   // Optional `team` scopes the call to a specific team (e.g. the Team Builder
   // wiring a lead in a freshly-created team that isn't the active one yet).
   'agent:setInstructions': (idOrName: string, instructions: string, team?: string) =>

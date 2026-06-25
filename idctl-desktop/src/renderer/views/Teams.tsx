@@ -129,6 +129,19 @@ export function Teams({ store }: { store: FleetStore }) {
     () => store.teams.map((t) => t.name).filter((n) => store.allAgents.some((a) => a.team === n && !!a.status && !/stop|offline|dead|exit|error|crash|down|disabled|sleep/i.test(a.status))),
     [store.teams, store.allAgents],
   );
+  // team → its current agent names (live roster) — lets the Build tab skip agents that
+  // already exist instead of hard-erroring the whole batch.
+  const existingAgentsByTeam = useMemo(() => {
+    const m: Record<string, string[]> = {};
+    for (const a of store.allAgents) (m[a.team ?? ''] ??= []).push(a.name);
+    return m;
+  }, [store.allAgents]);
+  // Structure + Routing only visualize ACTIVE teams (≥1 running agent); inactive teams are
+  // managed (and turned on) from the Manage tab so the graphs stay focused on what's live.
+  const structureGroups = useMemo(
+    () => graphGroups.filter((g) => g.agents.length > 0 && activeTeamNames.includes(g.team)),
+    [graphGroups, activeTeamNames],
+  );
   const [delegates, setDelegates] = useState<string[] | null>(null);
   const [savedDelegates, setSavedDelegates] = useState<string[] | null>(null); // last persisted value
   const [mode, setMode] = useState<RelayMode>('permissive');
@@ -187,17 +200,11 @@ export function Teams({ store }: { store: FleetStore }) {
     } finally { setInstrBusy(false); }
   }
 
-  /** A node (or team title) was clicked in the structure graph: select it, focus
-   *  that team, and point the instructions editor at the chosen agent. */
+  /** A node (or team title) was clicked in the structure graph: just select it. We do NOT
+   *  switch the active team — the side editor loads/saves the selected agent by name+team
+   *  directly, so browsing the structure never hijacks your active-team context. */
   function onGraphSelect(sel: GraphSelection) {
-    if (sel.kind === 'agent') {
-      setSelectedKey(`agent:${sel.team}:${sel.agent.name}`);
-      if (sel.team !== activeTeam) void store.setTeam(sel.team);
-      setInstrAgent(sel.agent.name);
-    } else {
-      setSelectedKey(`team:${sel.team}`);
-      if (sel.team !== activeTeam) void store.setTeam(sel.team);
-    }
+    setSelectedKey(sel.kind === 'agent' ? `agent:${sel.team}:${sel.agent.name}` : `team:${sel.team}`);
   }
   // The agent currently selected in the graph (for the structure-tab side panel).
   const selectedAgent = (() => {
@@ -208,6 +215,55 @@ export function Teams({ store }: { store: FleetStore }) {
     const a = graphGroups.find((g) => g.team === team)?.agents.find((x) => x.name === name);
     return a ? { team, agent: a, reassignTargets: store.teams.map((t) => t.name).filter((n) => n !== team) } : null;
   })();
+  // The team currently selected in the graph (team-title click) — and its agents — resolved
+  // from the all-teams roster, so the team panel shows the SELECTED team without switching.
+  const selectedTeamName = selectedKey?.startsWith('team:') ? selectedKey.slice('team:'.length) : null;
+  const selectedTeamAgents = selectedTeamName ? (graphGroups.find((g) => g.team === selectedTeamName)?.agents ?? []) : [];
+
+  // ── Structure-tab agent editor — isolated from the active team. Loads/saves the SELECTED
+  //    agent's goals by name+team directly (no active-team switch). Separate from the Manage
+  //    tab's shared instruction editor (which stays active-team scoped). ──
+  const [sgInstr, setSgInstr] = useState('');
+  const [sgSaved, setSgSaved] = useState('');
+  const [sgBusy, setSgBusy] = useState(false);
+  const [sgMsg, setSgMsg] = useState('');
+  const selAgentName = selectedAgent?.agent.name ?? '';
+  const selAgentTeam = selectedAgent?.team ?? '';
+  useEffect(() => {
+    if (!selAgentName) { setSgInstr(''); setSgSaved(''); setSgMsg(''); return; }
+    let live = true;
+    setSgMsg('');
+    call<string>('agent:getInstructions', selAgentName, selAgentTeam).then((t) => {
+      if (live) { setSgInstr(t || ''); setSgSaved(t || ''); }
+    }).catch(() => { if (live) { setSgInstr(''); setSgSaved(''); } });
+    return () => { live = false; };
+  }, [selAgentName, selAgentTeam]);
+  async function saveSgInstr() {
+    if (!selAgentName) return;
+    setSgBusy(true); setSgMsg('saving…');
+    try {
+      await call('agent:setInstructions', selAgentName, sgInstr, selAgentTeam);
+      setSgSaved(sgInstr);
+      await call('rebuildAgent', selAgentName, selAgentTeam).catch(() => {});
+      setSgMsg(sgInstr.trim() ? `saved ✓ — ${selAgentName} rebuilt` : `cleared ✓ — ${selAgentName} rebuilt`);
+      store.refresh();
+    } catch (e) { setSgMsg(`save failed: ${e instanceof Error ? e.message : String(e)}`); }
+    finally { setSgBusy(false); }
+  }
+  async function aiDraftSgInstr() {
+    if (!selAgentName) return;
+    setSgBusy(true); setSgMsg('asking AI to draft…');
+    try {
+      const meta =
+        'Write a concise operating directive (a system-prompt addendum, 2-6 sentences, imperative voice, ' +
+        'NO preamble, NO markdown headers, NO code fences) for an AI agent named "' + selAgentName + '"' +
+        (sgInstr.trim() ? ' whose goal is: ' + sgInstr.trim() : ' — infer a sensible role from its name') +
+        '. Output ONLY the directive text.';
+      const txt = await call<string>('ai:draft', meta);
+      setSgInstr(txt.trim()); setSgMsg('drafted ✓ — review, then Save & rebuild');
+    } catch (e) { setSgMsg(`AI draft failed: ${e instanceof Error ? e.message : String(e)}`); }
+    finally { setSgBusy(false); }
+  }
 
   async function loadRelay() {
     try {
@@ -435,10 +491,11 @@ export function Teams({ store }: { store: FleetStore }) {
             </button>
           </div>
           <p className="muted small" style={{ marginTop: -2 }}>
-            Click an agent or team to select it, then edit its goals/instructions, runtime &amp; routing below.
+            Live structure of the <b>active</b> teams — click an agent or team to edit its goals/instructions, runtime &amp; routing below.
+            {graphGroups.length - structureGroups.length > 0 ? <> {graphGroups.length - structureGroups.length} inactive team(s) hidden — turn them on in the <b>Manage</b> tab.</> : null}
           </p>
           <TeamGraph
-            groups={graphGroups}
+            groups={structureGroups}
             hier={hier}
             leadOf={(t, ag) => hier.coordinators[t] ?? resolveCoordinator(ag, undefined) ?? ag[0]?.name}
             selectedKey={selectedKey}
@@ -464,48 +521,33 @@ export function Teams({ store }: { store: FleetStore }) {
                     <option value="">{selectedAgent.reassignTargets.length === 0 ? 'no other teams' : 'reassign to…'}</option>
                     {selectedAgent.reassignTargets.map((n) => <option key={n} value={n}>{n}</option>)}
                   </select>
-                  <button className="btn small" disabled={busy} onClick={() => setTab('route')}>⇄ Routing</button>
+                  <button className="btn small" disabled={busy} title="Edit this agent's team relay (switches to its team — a team-wide setting)" onClick={() => { if (selectedAgent!.team !== store.team) void store.setTeam(selectedAgent!.team); setTab('route'); }}>⇄ Routing</button>
                   <button className="btn small" disabled={busy} onClick={() => void call('rebuildAgent', selectedAgent!.agent.name, selectedAgent!.team).then(() => setMsg(`rebuilding ${selectedAgent!.agent.name}…`)).catch(() => {})}>Rebuild</button>
                 </span>
               </div>
               <div className="muted small" style={{ margin: '8px 0 4px' }}>goals &amp; instructions — appended to this agent’s system prompt</div>
               <div className="row-actions" style={{ gap: 8, marginBottom: 6, alignItems: 'center' }}>
-                <button className="btn small" disabled={instrBusy} onClick={() => void aiDraftInstr()}>✦ AI draft</button>
-                {instrText.trim() ? <button className="btn small" disabled={instrBusy} onClick={() => setInstrText('')}>Clear</button> : null}
+                <button className="btn small" disabled={sgBusy} onClick={() => void aiDraftSgInstr()}>✦ AI draft</button>
+                {sgInstr.trim() ? <button className="btn small" disabled={sgBusy} onClick={() => setSgInstr('')}>Clear</button> : null}
                 <span className="grow" />
-                {instrMsg ? <span className={`small ${/failed/.test(instrMsg) ? 'status-error' : 'ok-text'}`}>{instrMsg}</span> : null}
-                <button className="btn primary small" disabled={instrBusy || instrText === instrSaved} onClick={() => void saveInstr(selectedAgent!.team)}>{instrBusy ? '…' : 'Save & rebuild'}</button>
+                {sgMsg ? <span className={`small ${/failed/.test(sgMsg) ? 'status-error' : 'ok-text'}`}>{sgMsg}</span> : null}
+                <button className="btn primary small" disabled={sgBusy || sgInstr === sgSaved} onClick={() => void saveSgInstr()}>{sgBusy ? '…' : 'Save & rebuild'}</button>
               </div>
               <textarea style={{ width: '100%', minHeight: 100, fontFamily: 'var(--mono, ui-monospace, monospace)', fontSize: 12 }}
-                placeholder={`Goals / instructions for ${instrTarget} — type a brief and hit ✦ AI draft, or write your own.`}
-                value={instrText} disabled={instrBusy} onChange={(e) => setInstrText(e.target.value)} />
+                placeholder={`Goals / instructions for ${selectedAgent.agent.name} — type a brief and hit ✦ AI draft, or write your own.`}
+                value={sgInstr} disabled={sgBusy} onChange={(e) => setSgInstr(e.target.value)} />
             </div>
-          ) : selectedKey?.startsWith('team:') ? (
+          ) : selectedTeamName ? (
             <div className="card" style={{ marginTop: 10, background: 'var(--bg-2)' }}>
               <div className="row-actions" style={{ justifyContent: 'space-between', alignItems: 'center' }}>
-                <h4 style={{ margin: 0 }}>{activeTeam} <span className="muted small">· {store.agents.length} agents</span></h4>
+                <h4 style={{ margin: 0 }}>{hier.primary?.team === selectedTeamName ? '⭑ ' : ''}{selectedTeamName} <span className="muted small">· {selectedTeamAgents.length} agents</span></h4>
                 <span className="row-actions" style={{ gap: 6 }}>
                   <button className="btn small primary" onClick={() => setTab('build')}>✦ Build / add agents</button>
-                  <button className="btn small" onClick={() => setTab('route')}>⇄ Relay</button>
+                  <button className="btn small" title="Edit this team's relay (switches to it — a team-wide setting)" onClick={() => { if (selectedTeamName !== store.team) void store.setTeam(selectedTeamName); setTab('route'); }}>⇄ Relay</button>
+                  <button className="btn small" title="Start / stop this team in the Manage tab" onClick={() => setTab('manage')}>⏻ Start / stop</button>
                 </span>
               </div>
-              <div className="row-actions" style={{ gap: 6, marginTop: 8, flexWrap: 'wrap', alignItems: 'center' }}>
-                <span className="muted small">whole team:</span>
-                <button className="btn small" disabled={teamOpBusy} title={`Start every agent in ${activeTeam}`} onClick={() => void runTeamOp(activeTeam, 'start')}>▶ Start all</button>
-                <button className={`btn small${pendingTeamOp === 'stop' ? ' danger' : ''}`} disabled={teamOpBusy}
-                  title={`Stop every agent in ${activeTeam}`}
-                  onClick={() => (pendingTeamOp === 'stop' ? void runTeamOp(activeTeam, 'stop') : setPendingTeamOp('stop'))}>
-                  {pendingTeamOp === 'stop' ? '⚠ confirm — stop all' : '■ Stop all'}
-                </button>
-                <button className="btn small" disabled={teamOpBusy} title={`Health-probe ${activeTeam}`} onClick={() => void runTeamOp(activeTeam, 'probe')}>◇ Probe</button>
-                <button className={`btn small${pendingTeamOp === 'rebuild' ? ' danger' : ''}`} disabled={teamOpBusy}
-                  title={`Rebuild (restart) every agent in ${activeTeam}`}
-                  onClick={() => (pendingTeamOp === 'rebuild' ? void runTeamOp(activeTeam, 'rebuild') : setPendingTeamOp('rebuild'))}>
-                  {pendingTeamOp === 'rebuild' ? '⚠ confirm — rebuild all' : '↻ Rebuild all'}
-                </button>
-                {teamOpBusy ? <span className="muted small">working…</span> : teamOpMsg ? <span className={`small ${/fail/.test(teamOpMsg) ? 'status-error' : 'ok-text'}`}>{teamOpMsg}</span> : null}
-              </div>
-              <p className="muted small" style={{ marginTop: 6 }}>Click an agent in the graph to edit its goals &amp; instructions. The team’s goals live on its lead (the ⭑ coordinator).</p>
+              <p className="muted small" style={{ marginTop: 8 }}>Click an agent in the graph to edit its goals &amp; instructions (no team switch). Turn this team on/off in the <b>Manage</b> tab. The team’s goals live on its lead (the ⭑ coordinator).</p>
             </div>
           ) : (
             <p className="muted small" style={{ marginTop: 8 }}>Select an agent or team in the graph to manage it.</p>
@@ -515,39 +557,46 @@ export function Teams({ store }: { store: FleetStore }) {
 
       {tab === 'manage' ? (
       <section className="card">
+        <div className="row-actions" style={{ alignItems: 'baseline', marginBottom: 4 }}>
+          <h3 style={{ margin: 0 }}>Teams — turn on / off</h3>
+          <span className="muted small">· start or stop every agent in a team. This is the single place to toggle teams — it doesn't change your active team.</span>
+          <span className="grow" />
+          {teamOpBusy ? <span className="muted small">working…</span> : teamOpMsg ? <span className={`small ${/fail/.test(teamOpMsg) ? 'status-error' : 'ok-text'}`}>{teamOpMsg}</span> : null}
+        </div>
         <table className="grid">
           <thead>
-            <tr>
-              <th>Team</th>
-              <th>Agents</th>
-              <th></th>
-            </tr>
+            <tr><th>Team</th><th>Running</th><th>Lifecycle</th><th></th></tr>
           </thead>
           <tbody>
-            {store.teams.map((t) => (
-              <tr key={t.id} className={t.name === store.team ? 'sel' : ''}>
-                <td className="b">{t.name === store.team ? '● ' : ''}{t.name}</td>
-                <td className="muted">{t.agentCount}</td>
-                <td>
-                  {t.name !== store.team ? (
-                    <button className="btn" disabled={busy} onClick={() => void store.setTeam(t.name)}>
-                      Switch
+            {store.teams.map((t) => {
+              const teamAgents = store.allAgents.filter((a) => a.team === t.name);
+              const running = teamAgents.filter((a) => !!a.status && !/stop|offline|dead|exit|error|crash|down|disabled|sleep/i.test(a.status)).length;
+              const total = teamAgents.length || Number(t.agentCount) || 0;
+              const isPrimary = hier.primary?.team === t.name;
+              return (
+                <tr key={t.id} className={t.name === store.team ? 'sel' : ''}>
+                  <td className="b">{isPrimary ? '⭑ ' : ''}{t.name === store.team ? '● ' : ''}{t.name}</td>
+                  <td className={running ? 'ok-text' : 'muted'}>{running}/{total}</td>
+                  <td className="row-actions">
+                    <button className="btn small" disabled={teamOpBusy} title={`Start every agent in ${t.name}`} onClick={() => void runTeamOp(t.name, 'start')}>▶ Start all</button>
+                    <button className={`btn small${pendingTeamOp === `${t.name}:stop` ? ' danger' : ''}`} disabled={teamOpBusy} title={`Stop every agent in ${t.name}`}
+                      onClick={() => (pendingTeamOp === `${t.name}:stop` ? void runTeamOp(t.name, 'stop') : setPendingTeamOp(`${t.name}:stop`))}>
+                      {pendingTeamOp === `${t.name}:stop` ? '⚠ confirm — stop all' : '■ Stop all'}
                     </button>
-                  ) : (
-                    <span className="muted">active</span>
-                  )}{' '}
-                  <button className="btn" disabled={busy} title={`Open ${t.name}'s team actions (start/stop/probe/rebuild)`}
-                    onClick={() => { setSelectedKey(`team:${t.name}`); if (t.name !== store.team) void store.setTeam(t.name); }}>
-                    Manage
-                  </button>
-                  {t.name !== 'default' && Number(t.agentCount) === 0 ? (
-                    <button className="btn" disabled={busy} style={{ marginLeft: 6, color: 'var(--danger, #e5534b)' }} title={`Delete the empty "${t.name}" team`} onClick={() => void removeTeam(t.name)}>
-                      Delete
+                    <button className="btn small" disabled={teamOpBusy} title={`Health-probe ${t.name}`} onClick={() => void runTeamOp(t.name, 'probe')}>◇ Probe</button>
+                    <button className={`btn small${pendingTeamOp === `${t.name}:rebuild` ? ' danger' : ''}`} disabled={teamOpBusy} title={`Rebuild (restart) every agent in ${t.name}`}
+                      onClick={() => (pendingTeamOp === `${t.name}:rebuild` ? void runTeamOp(t.name, 'rebuild') : setPendingTeamOp(`${t.name}:rebuild`))}>
+                      {pendingTeamOp === `${t.name}:rebuild` ? '⚠ confirm — rebuild' : '↻ Rebuild'}
                     </button>
-                  ) : null}
-                </td>
-              </tr>
-            ))}
+                  </td>
+                  <td>
+                    {t.name !== 'default' && total === 0 ? (
+                      <button className="btn small" disabled={busy} style={{ color: 'var(--danger, #e5534b)' }} title={`Delete the empty "${t.name}" team`} onClick={() => void removeTeam(t.name)}>Delete</button>
+                    ) : null}
+                  </td>
+                </tr>
+              );
+            })}
           </tbody>
         </table>
       </section>
@@ -561,6 +610,7 @@ export function Teams({ store }: { store: FleetStore }) {
           team=""
           existingTeams={store.teams.map((t) => t.name)}
           activeTeams={activeTeamNames}
+          existingAgents={existingAgentsByTeam}
           providers={providers}
           modelCatalog={modelCatalog}
           skillCatalog={skillCatalog}
@@ -583,7 +633,7 @@ export function Teams({ store }: { store: FleetStore }) {
           </thead>
           <tbody>
             {(relayMatrix.length ? relayMatrix : store.teams.map((t) => ({ team: t.name, delegates: null as string[] | null })))
-              .slice()
+              .filter((row) => activeTeamNames.includes(row.team))
               .sort((a, b) => (a.team === activeTeam ? -1 : b.team === activeTeam ? 1 : a.team.localeCompare(b.team)))
               .map((row) => {
                 const ags = graphGroups.find((g) => g.team === row.team)?.agents ?? [];
@@ -842,6 +892,7 @@ function TeamBuilder({
   team,
   existingTeams,
   activeTeams,
+  existingAgents,
   providers,
   modelCatalog,
   skillCatalog,
@@ -854,6 +905,9 @@ function TeamBuilder({
   team: string;
   existingTeams: string[];
   activeTeams: string[];
+  /** team → its current agent names, so the builder can skip agents that already exist
+   *  instead of hard-erroring the whole batch. */
+  existingAgents: Record<string, string[]>;
   providers: ProviderRow[];
   modelCatalog: Record<string, string[]>;
   skillCatalog: string[];
@@ -929,7 +983,7 @@ function TeamBuilder({
   const relayTargets = existingTeams.filter((n) => n !== targetTeam);
 
   // ---- build progress ----
-  type ResultEntry = { name: string; team: string; plan: OnboardPlan; result?: OnboardResult; error?: string; running?: boolean };
+  type ResultEntry = { name: string; team: string; plan: OnboardPlan; result?: OnboardResult; error?: string; running?: boolean; skipped?: boolean };
   const [building, setBuilding] = useState(false);
   const [error, setError] = useState('');
   const [results, setResults] = useState<ResultEntry[]>([]);
@@ -939,8 +993,12 @@ function TeamBuilder({
   const named = rows.map((r) => ({ ...r, slug: slugName(r.name) })).filter((r) => r.slug);
   const reserved = [...new Set(named.filter((r) => isReservedName(r.slug)).map((r) => r.slug))];
   const dupes = [...new Set(named.map((r) => r.slug).filter((s, i, a) => a.indexOf(s) !== i))];
+  // Agents already in the target team — skip them on build instead of hard-erroring the batch.
+  const existingInTeam = useMemo(() => new Set((existingAgents[targetTeam] ?? []).map((n) => slugName(n))), [existingAgents, targetTeam]);
+  const alreadyThere = named.filter((r) => existingInTeam.has(r.slug));
+  const toCreate = named.filter((r) => !existingInTeam.has(r.slug));
   const locked = building || aiBusy;
-  const canBuild = !locked && Boolean(targetTeam) && !isReservedName(targetTeam) && named.length > 0 && reserved.length === 0 && dupes.length === 0;
+  const canBuild = !locked && Boolean(targetTeam) && !isReservedName(targetTeam) && toCreate.length > 0 && reserved.length === 0 && dupes.length === 0;
 
   // Live deterministic parse as the user types a spec — until they hand-edit or AI runs.
   useEffect(() => {
@@ -1022,32 +1080,44 @@ function TeamBuilder({
     if (isReservedName(targetTeam)) { setError(`“${targetTeam}” is a reserved word — choose another team name.`); return; }
     if (reserved.length) { setError(`Reserved agent name(s): ${reserved.join(', ')} — rename.`); return; }
     if (dupes.length) { setError(`Duplicate agent name(s): ${dupes.join(', ')}.`); return; }
-    const batch = named;
-    if (!batch.length) { setError('Add at least one named agent.'); return; }
+    // Build only the agents that DON'T already exist in the team; the rest are shown as
+    // "already in <team>" (informational), not errors. No-op if everything already exists.
+    const batch = toCreate;
+    if (!batch.length) {
+      setError(alreadyThere.length ? `All ${alreadyThere.length} agent${alreadyThere.length === 1 ? '' : 's'} already in ${targetTeam} — nothing to add.` : 'Add at least one named agent.');
+      return;
+    }
     setBuilding(true); onBusy(true); setError(''); setPost({});
-    onMessage(`building ${batch.length} agent(s) into ${targetTeam}…`);
+    onMessage(`adding ${batch.length} new agent(s) to ${targetTeam}${alreadyThere.length ? ` (${alreadyThere.length} already there)` : ''}…`);
     // Freeze a plan per agent so a later "retry" re-runs the exact same spec.
     const plans = batch.map(planFor);
-    setResults(batch.map((r, i) => ({ name: r.slug, team: targetTeam, plan: plans[i] })));
+    // Results: existing agents first (skipped, no-op), then the ones we're building. Updates
+    // below are keyed by NAME (not index) so the skipped rows don't shift the targets.
+    setResults([
+      ...alreadyThere.map((r) => ({ name: r.slug, team: targetTeam, plan: planFor(r), skipped: true })),
+      ...batch.map((r, i) => ({ name: r.slug, team: targetTeam, plan: plans[i] })),
+    ]);
     let anyOk = false;
     // Sequential — the manager serializes local-model spawns anyway, and it keeps
     // the per-agent status readable as each one lands.
     for (let i = 0; i < batch.length; i++) {
-      setResults((rs) => rs.map((x, j) => (j === i ? { ...x, running: true } : x)));
+      const nm = batch[i].slug;
+      setResults((rs) => rs.map((x) => (x.name === nm ? { ...x, running: true } : x)));
       try {
         const res = await call<OnboardResult>('onboard:run', plans[i]);
         if (res.ok) anyOk = true;
-        setResults((rs) => rs.map((x, j) => (j === i ? { ...x, running: false, result: res } : x)));
+        setResults((rs) => rs.map((x) => (x.name === nm ? { ...x, running: false, result: res } : x)));
       } catch (err) {
-        setResults((rs) => rs.map((x, j) => (j === i ? { ...x, running: false, error: err instanceof Error ? err.message : String(err) } : x)));
+        setResults((rs) => rs.map((x) => (x.name === nm ? { ...x, running: false, error: err instanceof Error ? err.message : String(err) } : x)));
       }
     }
-    // Auto-coordination: promote the ★ lead to primary coordinator + apply the preset.
-    const leadRow = batch.find((r) => r.lead) ?? batch[0];
+    // Auto-coordination: promote the ★ lead to primary coordinator + apply the preset. Resolve
+    // the lead from the FULL roster (it may be an agent that already existed).
+    const leadRow = named.find((r) => r.lead) ?? named[0];
     if (anyOk && coordinate && leadRow) {
       const leadName = leadRow.slug;
-      // Tell the lead to delegate to the teammates that were ACTUALLY created.
-      const teammates = batch.filter((r) => r.slug !== leadName).map((r) => ({ name: r.slug, role: r.role.trim() }));
+      // Tell the lead to delegate to ALL its teammates in the roster (existing + newly added).
+      const teammates = named.filter((r) => r.slug !== leadName).map((r) => ({ name: r.slug, role: r.role.trim() }));
       const preset = coordinatorPresetFor(teammates);
       setPost((p) => ({ ...p, coord: 'running', leadName }));
       try {
@@ -1229,6 +1299,7 @@ function TeamBuilder({
             <div style={{ maxHeight: 340, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 6 }}>
               {rows.map((r, i) => {
                 const rowReserved = isReservedName(slugName(r.name));
+                const rowExists = !!slugName(r.name) && existingInTeam.has(slugName(r.name));
                 return (
                   <div key={i} style={{ border: '1px solid var(--border, #2a2a2a)', borderRadius: 6, padding: '6px 6px 8px' }}>
                     <div className="kv" style={{ gridTemplateColumns: '26px 1.2fr 1fr 1fr 24px 24px', gap: 6, alignItems: 'center' }}>
@@ -1254,6 +1325,7 @@ function TeamBuilder({
                       <button className="uv-x" title="Remove" disabled={locked || rows.length <= 1} onClick={() => removeRow(i)}>✕</button>
                     </div>
                     <input style={{ fontSize: 12, width: '100%', marginTop: 4 }} placeholder="role (one line)" value={r.role} disabled={locked} maxLength={200} onChange={(e) => updateRow(i, { role: e.target.value })} />
+                    {rowExists ? <div className="muted small" style={{ marginTop: 3 }} title={`An agent named ${slugName(r.name)} already exists in ${targetTeam} — it will be left as-is on build.`}>● already in {targetTeam} — will be left as-is</div> : null}
                     {r.open ? (
                       <>
                         <textarea
@@ -1293,17 +1365,18 @@ function TeamBuilder({
         {results.length ? (
           <div className="onboard-checklist" style={{ marginTop: 12 }}>
             {results.map((r, i) => {
-              const failed = Boolean(r.error) || Boolean(r.result?.steps.some((s) => s.status === 'failed'));
-              const mark = r.running ? '…' : r.error ? '✗' : r.result?.ok ? '✓' : failed ? '!' : '·';
-              const detail = r.error ? r.error
+              const failed = !r.skipped && (Boolean(r.error) || Boolean(r.result?.steps.some((s) => s.status === 'failed')));
+              const mark = r.skipped ? '•' : r.running ? '…' : r.error ? '✗' : r.result?.ok ? '✓' : failed ? '!' : '·';
+              const detail = r.skipped ? `already in ${r.team} — left as-is`
+                : r.error ? r.error
                 : r.result ? (r.result.ok ? `built into ${r.team}` : (r.result.steps.filter((s) => s.status === 'failed').map((s) => `${s.label}: ${s.error || 'failed'}`).join('; ') || 'finished with issues'))
                 : (r.running ? 'building…' : 'queued');
-              const cls = r.error || failed ? 'failed' : r.result?.ok ? 'ok' : r.running ? 'running' : 'pending';
+              const cls = r.skipped ? 'pending' : failed ? 'failed' : r.result?.ok ? 'ok' : r.running ? 'running' : 'pending';
               return (
                 <div key={r.name} className="onboard-step" style={{ gridTemplateColumns: '26px minmax(140px, 1fr) minmax(0, 2fr) auto' }}>
                   <span className={`step-dot ${cls}`}>{mark}</span>
                   <span className="step-label mono">{r.name}</span>
-                  <span className={`small ${r.error || failed ? 'status-error' : 'muted'}`}>{detail}</span>
+                  <span className={`small ${failed ? 'status-error' : 'muted'}`}>{detail}</span>
                   {failed ? (
                     <button className="btn small" disabled={building} title="Retry this agent" onClick={() => void runRetry(i, r)}>↻ retry</button>
                   ) : <span />}
@@ -1334,8 +1407,9 @@ function TeamBuilder({
           ) : null}
           <button className="btn primary" disabled={!canBuild} onClick={() => void build()}>
             {building ? 'Building…'
-              : teamExists ? `Add ${named.length} agent${named.length === 1 ? '' : 's'} to ${targetTeam || '…'}`
-              : `Build ${targetTeam || 'team'} + ${named.length} agent${named.length === 1 ? '' : 's'}`}
+              : toCreate.length === 0 && named.length > 0 ? `All ${named.length} already in ${targetTeam || '…'}`
+              : teamExists ? `Add ${toCreate.length} new agent${toCreate.length === 1 ? '' : 's'} to ${targetTeam || '…'}${alreadyThere.length ? ` (${alreadyThere.length} already there)` : ''}`
+              : `Build ${targetTeam || 'team'} + ${toCreate.length} agent${toCreate.length === 1 ? '' : 's'}`}
           </button>
         </div>
       </div>

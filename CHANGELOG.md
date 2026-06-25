@@ -8,6 +8,25 @@ Every change pushed or merged to `main` carries its version number in the commit
 subject (`vX.Y.Z: …`), stamped automatically by the `commit-msg` hook — see
 [CONTRIBUTING.md](CONTRIBUTING.md).
 
+## [0.1.175] — 2026-06-25
+- **HR Manager — Build tab no longer hard-errors on existing agents.** Building a roster that includes
+  agents (or a team) that already exist now **skips** them as *“already in &lt;team&gt;”* and builds only the
+  new ones, instead of a wall of red “already exists” errors. The roster flags existing agents inline and
+  the button reads *“Add N new agents”* (or *“All N already in &lt;team&gt;”* when there's nothing to add).
+- **Inactive teams hidden from Structure + Routing.** The structure graph and the routing overview now show
+  only **active** teams (≥1 running agent); idle teams are managed from the Manage tab (with a hidden-count
+  note). Keeps the visualizations focused on what's actually live.
+- **Team on/off moved to the Manage tab.** Manage is now the single place to **turn teams on/off** — per-team
+  ▶ Start all · ■ Stop all · ◇ Probe · ↻ Rebuild, with a live running/total count. It operates on each team
+  directly and **does not change your active team**.
+- **Browsing no longer hijacks your active team.** Selecting an agent or team in the structure graph no longer
+  switches your active-team context — the side editor loads/saves the selected agent's goals by name+team
+  directly. The active team now changes only when you deliberately apply a **team-wide setting** (edit a team's
+  relay, or build into it). Removed the Manage “Switch” button.
+- **Better live structure display.** The structure graph now puts the **⭑ primary team first**, draws
+  **coordination arcs** from the primary lead to every other team's lead (so the live hierarchy is visible),
+  shows **running/total** per team, and marks each worker's live (●) / stopped (○) state.
+
 ## [0.1.174] — 2026-06-25
 - **Dashboard activity feed now shows live data.** The holistic feed fetched `/events?since=0`, which
   returns the manager's *oldest* retained events (the head of the ring) — so it showed days-old activity
