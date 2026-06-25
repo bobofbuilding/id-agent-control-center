@@ -8,6 +8,14 @@ Every change pushed or merged to `main` carries its version number in the commit
 subject (`vX.Y.Z: …`), stamped automatically by the `commit-msg` hook — see
 [CONTRIBUTING.md](CONTRIBUTING.md).
 
+## [0.1.159] — 2026-06-25
+- **Blocked tasks now actually auto-move to Holding Pattern.** Fix: a dispatched task carries a
+  stored `doing` lane overlay, and `laneOf` was checking that overlay *before* the blocked check —
+  so a task that became blocked stayed in **Doing** (showing 🔒 blocked / ⏸ waiting but in the wrong
+  column). Blocked states now take precedence over a stored lane: dependency-blocked → **Holding
+  Pattern**, decision-blocked → **Adjustment Loop**, and a manual placement only applies once the
+  task is unblocked. So a task transitioning to blocked drops into Holding automatically.
+
 ## [0.1.158] — 2026-06-25
 - **Local-model token usage: accuracy fix + all local models.**
   - **Accuracy:** the per-agent "total tokens" was **output-only**, so it didn't sum to the 24h/7d

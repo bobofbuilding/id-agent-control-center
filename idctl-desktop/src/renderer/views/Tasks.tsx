@@ -268,15 +268,18 @@ function TasksPanel({ store }: { store: FleetStore }) {
     const s = reviewOverlay[ref(t)]?.state;
     return (s === 'needs-adjustment' || s === 'under-review' || s === 'rework') ? s : '';
   }
-  // A task's effective lane. Precedence: a manual drag (overlay matching the status column)
-  // wins; then the Adjustment Loop if it's blocked on a USER decision (needs-adjustment →
-  // under-review → rework); then Holding if it's dependency-blocked; then the default lane.
+  // A task's effective lane. Blocked states WIN over a stored lane overlay so a task that
+  // becomes blocked auto-moves out of Doing — even though dispatch stamped it as 'doing':
+  //   1) blocked on a USER decision → the Adjustment Loop (needs-adjustment/under-review/rework)
+  //   2) dependency-blocked → Holding Pattern
+  //   3) else honor a manual drag (overlay matching the status column)
+  //   4) else the default lane for the status.
   function laneOf(t: Task): Lane {
-    const ov = laneOverlay[ref(t)] as Lane | undefined;
-    if (ov && LANE_STATUS[ov] === colOf(t.status)) return ov;
     const rv = reviewOf(t);
     if (rv) return rv;
     if (isBlocked(t)) return 'holding';
+    const ov = laneOverlay[ref(t)] as Lane | undefined;
+    if (ov && LANE_STATUS[ov] === colOf(t.status)) return ov;
     return DEFAULT_LANE[colOf(t.status)];
   }
   // Auto-resolve the adjustment loop once a block has PASSED: a reviewed task that
