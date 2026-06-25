@@ -8,6 +8,15 @@ Every change pushed or merged to `main` carries its version number in the commit
 subject (`vX.Y.Z: …`), stamped automatically by the `commit-msg` hook — see
 [CONTRIBUTING.md](CONTRIBUTING.md).
 
+## [0.1.171] — 2026-06-25
+- **Phase 3 of the CC refactor: the lead drives, the app stops.** Working a plan (the ▶ Work button)
+  now **hands the plan to the primary lead** to decompose, **prune already-done work**, and delegate
+  through its secondary leads (researcher / coder) to the right teams — instead of the app mechanically
+  decomposing and dispatching it. The lead pruning completed work before dispatch is what stops the
+  redundant "re-verify what we already built" tasks at the source. The old mechanical partition/dispatch
+  stays only as a fallback when no primary lead is online. Hand-off is fire-and-forget (the lead works
+  in the background).
+
 ## [0.1.170] — 2026-06-25
 - **Refactor groundwork: the board no longer auto-orchestrates (cuts redundant token spend).** Phase 2
   of the CC refactor (brain/control-center/cc-refactor-plan.md). The Work board's auto-pilot — which

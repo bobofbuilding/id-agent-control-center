@@ -192,6 +192,21 @@ export function Plans({ store }: { store: FleetStore }) {
   // own agents. Result: one plan, split across the whole active fleet — never duplicated.
   async function dispatchCore(p: BrainPlan): Promise<string> {
     const got = await call<{ file: string; content: string } | null>('brain:plan', p.file).catch(() => null);
+    // Phase 3 (CC refactor): hand the plan to the PRIMARY LEAD to decompose, prune already-done
+    // work, and delegate through its secondary leads — instead of the app mechanically partitioning
+    // and dispatching it (which re-created completed work and burned tokens). Mechanical path below
+    // is the fallback only when no primary lead is online.
+    const hier = await call<{ primary: { team: string; agent: string } | null }>('coordinator:hierarchy').catch(() => ({ primary: null }));
+    const lead = hier.primary?.agent;
+    const leadOnline = !!lead && store.allAgents.some((a) => a.name === lead && !!a.status && !/stop|offline|dead|exit|error|crash|down|disabled|sleep/i.test(a.status));
+    if (lead && leadOnline) {
+      const prompt = `You are the primary lead. Work this plan end to end by DELEGATING through your secondary leads (researcher, coder) to the right teams — don't do it all yourself.\n\n# ${p.title}\n\n${got?.content ?? ''}\n\nHow to run it:\n1. FIRST check what is ALREADY DONE (inspect the codebase / brain). Do NOT create tasks to re-build or re-verify completed work — skip anything already shipped.\n2. Decompose only the REMAINING work into concrete tasks with clear owners + dependencies.\n3. Delegate: research/analysis → researcher, build/ops → coder; they assign to their team leads/agents. Create real tasks (\`/task create "<title>" --owner <agent> --description "<what + expected output>"\`) and dispatch.\n4. Keep it lean — one task per real piece of work, no duplicate verify-passes.\n\nReply with a short summary of what you delegated and to whom.`;
+      // Fire-and-forget — the lead decomposes + delegates in the BACKGROUND (don't block the UI
+      // waiting up to 15 min for its full reply).
+      await call('dispatch:start', `/ask ${lead} ${qArg(prompt)}`).catch(() => {});
+      return `handed to ${lead} to decompose + delegate (working in background)`;
+    }
+    // ---- fallback: mechanical decompose + partition + dispatch (no primary lead online) ----
     const obj = `Implement this plan, end to end:\n\n# ${p.title}\n\n${got?.content ?? ''}`;
     const who = genAgent;
     if (!who) return 'no agent to compile';
@@ -248,7 +263,7 @@ export function Plans({ store }: { store: FleetStore }) {
       const a = await auditCore(p);
       t.update({ kind: 'progress', text: `Working “${p.title}” — scanning for blockers… (${a})` });
       const b = await blockersCore(p);
-      t.update({ kind: 'progress', text: `Working “${p.title}” — compiling & dispatching to active teams…` });
+      t.update({ kind: 'progress', text: `Working “${p.title}” — handing to the lead to decompose & delegate…` });
       const d = await dispatchCore(p);
       t.update({ kind: 'success', text: `“${p.title}” ✓ audited (${a}) · ${b} · ${d}` });
       if (aliveRef.current) setMsg(`audited (${a}) · ${b} · ${d}`);
