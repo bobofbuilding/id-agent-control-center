@@ -214,7 +214,9 @@ export function AgentTable({ store, onProbe, probeBusy }: { store: FleetStore; o
           </thead>
           <tbody>
             {groups.flatMap((g) => {
-              const rows = agentsLeadFirst(g.agents).filter((a) => showStopped || isActive(a as TeamAgent));
+              // The team's actual ★ lead floats to the top of its group (not just a "lead"-named agent).
+              const teamLead = coords[g.team] ?? (g.team === store.team ? store.coordinator : undefined);
+              const rows = agentsLeadFirst(g.agents, teamLead).filter((a) => showStopped || isActive(a as TeamAgent));
               if (!rows.length) return [];
               return [
                 <tr key={`hdr-${g.team}`} className="group-row">

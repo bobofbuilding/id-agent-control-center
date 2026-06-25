@@ -49,15 +49,26 @@ export function Health({ store }: { store: FleetStore }) {
   const [result, setResult] = useState<ProbeResult | null>(null);
   const [probing, setProbing] = useState<string | null>(null);
   const [usage, setUsage] = useState<UsageReport | null | undefined>(undefined); // undefined = loading
+  const [usageAt, setUsageAt] = useState<number>(0); // when usage was last refreshed
+  const [, setTick] = useState(0); // 1 Hz re-render so "updated Ns ago" stays live
 
   const loadUsage = useCallback(async () => {
     try {
       setUsage(await call<UsageReport | null>('usage'));
+      setUsageAt(Date.now());
     } catch {
       setUsage(null);
     }
   }, []);
+  // Auto-refresh: on the fleet poll AND on a 15s timer, so new agents/models (and fresh
+  // generations) show up on their own — no manual refresh needed.
   useEffect(() => { void loadUsage(); }, [loadUsage, store.lastUpdated]);
+  useEffect(() => {
+    const iv = setInterval(() => void loadUsage(), 15000);
+    const t = setInterval(() => setTick((n) => n + 1), 1000);
+    return () => { clearInterval(iv); clearInterval(t); };
+  }, [loadUsage]);
+  const agoStr = (ms: number) => { if (!ms) return ''; const s = Math.max(0, Math.round((Date.now() - ms) / 1000)); return s < 60 ? `${s}s ago` : s < 3600 ? `${Math.round(s / 60)}m ago` : `${Math.round(s / 3600)}h ago`; };
 
   // The fleet roster is the shared, live AgentTable below. Probing routes to the agent's
   // own team (holistic) or the active team.
@@ -93,7 +104,7 @@ export function Health({ store }: { store: FleetStore }) {
       <section className="card">
         <div className="row-actions" style={{ alignItems: 'baseline' }}>
           <h3 className="grow">Local-model token usage <span className="muted small">· all local models (Ollama · LM Studio · OpenAI-compatible)</span></h3>
-          <button className="btn small" onClick={() => void loadUsage()}>Refresh</button>
+          <span className="muted small" title="auto-refreshes on the fleet poll + every 15s">{usageAt ? `updated ${agoStr(usageAt)}` : usage === undefined ? 'loading…' : ''}</span>
         </div>
         {usage === undefined ? (
           <p className="muted small">Loading…</p>

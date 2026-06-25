@@ -8,6 +8,14 @@ Every change pushed or merged to `main` carries its version number in the commit
 subject (`vX.Y.Z: …`), stamped automatically by the `commit-msg` hook — see
 [CONTRIBUTING.md](CONTRIBUTING.md).
 
+## [0.1.160] — 2026-06-25
+- **The team lead floats to the top of its group** in the HR-Manager / Health fleet grid. The
+  actual ★ coordinator (even a custom one like `researcher`) now sorts first within its team, not
+  just an agent literally named "lead".
+- **Local-model token usage is now self-refreshing.** Removed the Refresh button; it auto-updates on
+  the fleet poll and every 15s (so new agents/models and fresh generations appear on their own), with
+  a live **“updated Ns ago”** timestamp in its place.
+
 ## [0.1.159] — 2026-06-25
 - **Blocked tasks now actually auto-move to Holding Pattern.** Fix: a dispatched task carries a
   stored `doing` lane overlay, and `laneOf` was checking that overlay *before* the blocked check —
