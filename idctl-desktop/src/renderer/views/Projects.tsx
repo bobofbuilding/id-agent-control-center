@@ -6,7 +6,13 @@ import type { ProjectEntry, ProjectStatus } from '../../../../idctl/src/settings
 const STATUSES: ProjectStatus[] = ['active', 'paused', 'blocked', 'done'];
 const STATUS_LABEL: Record<ProjectStatus, string> = { active: 'active', paused: 'paused', blocked: 'blocked', done: 'done' };
 const STATUS_CLASS: Record<ProjectStatus, string> = { active: 'st-active', paused: 'st-paused', blocked: 'st-blocked', done: 'st-done' };
-const GIT_ACTIONS = ['fetch', 'pull', 'status', 'log', 'diff'] as const;
+const GIT_ACTIONS = [
+  { id: 'fetch', label: '⤓ Fetch', title: 'git fetch --all --prune — download new commits/branches from GitHub WITHOUT changing your files or branch' },
+  { id: 'pull', label: '⇩ Pull', title: 'git pull --ff-only — fast-forward your branch up to GitHub (only works if you have no diverging local commits)' },
+  { id: 'status', label: '◔ Status', title: 'git status -sb — current branch + which files are modified / staged / untracked' },
+  { id: 'log', label: '☰ Log', title: 'git log --oneline -15 — the 15 most recent commits' },
+  { id: 'diff', label: '± Diff', title: 'git diff --stat — files changed (with +/- line counts) since your last commit' },
+] as const;
 
 /** Git state of a project folder (computed in the main process). */
 type GitInfo = {
@@ -78,8 +84,19 @@ export function Projects({ store }: { store: FleetStore }) {
   const [repoFor, setRepoFor] = useState<string | null>(null);    // project whose "create GitHub repo" form is open
   const [repoName, setRepoName] = useState('');
   const [repoPrivate, setRepoPrivate] = useState(true);
+  const [linkFor, setLinkFor] = useState<string | null>(null);    // project whose "link existing repo" form is open
+  const [linkUrl, setLinkUrl] = useState('');
 
   const lead = resolveCoordinator(store.agents, store.coordinator);
+  // How many duplicate entries exist (same folder, or same primary repo) — drives the
+  // "Combine duplicates" button. Each group of N counts N-1 extras.
+  const dupCount = useMemo(() => {
+    const norm = (s?: string) => (s || '').trim().replace(/\/+$/, '').toLowerCase();
+    const keyOf = (p: ProjectEntry) => norm(p.path) || norm((p.links ?? [])[0]) || `name:${norm(p.name)}`;
+    const seen = new Map<string, number>();
+    for (const p of projects) seen.set(keyOf(p), (seen.get(keyOf(p)) ?? 0) + 1);
+    return [...seen.values()].reduce((n, c) => n + Math.max(0, c - 1), 0);
+  }, [projects]);
 
   async function loadGit(list: ProjectEntry[]) {
     const withPath = list.filter((p) => p.path);
@@ -284,7 +301,7 @@ export function Projects({ store }: { store: FleetStore }) {
     const t = toast({ kind: 'progress', text: `Requesting ops-lead to commit & push “${p.name}”…` });
     try {
       const title = `Commit & push: ${p.name}`;
-      const body = `Project “${p.name}”${p.path ? ` at ${p.path}` : ''}. Review the working changes, commit them with a clear message, and push to the remote (init/create the GitHub repo if it doesn't exist yet). Requested change / suggested commit message:\n${desc.trim()}`;
+      const body = `Project “${p.name}”${p.path ? ` at ${p.path}` : ''}. FIRST bring the local checkout up to date with the remote (git fetch, then git pull --ff-only; if it can't fast-forward, rebase your local changes on top of the remote) so you never commit on a stale base. THEN review the working changes, commit them with a clear message, and push to origin (init/create the GitHub repo if it doesn't exist yet). Requested change / suggested commit message:\n${desc.trim()}`;
       await call('remote', `/task create ${q(title)} --owner ops-lead --description ${q(body)}`, undefined, 'ops-team');
       void call('remote', `/ask ops-lead ${q(`New change request — ${title}. ${body} Delegate to git-manager/deployer and mark the task done when pushed.`)}`, undefined, 'ops-team').catch(() => {});
       t.update({ kind: 'success', text: `Requested ops-lead to commit & push “${p.name}” ✓` });
@@ -331,6 +348,68 @@ export function Projects({ store }: { store: FleetStore }) {
       setCommitFor(p.id); setCommitMsg(''); // open the composer so they can push content right away
     } catch (e) {
       t.update({ kind: 'error', text: `Create repo failed: ${e instanceof Error ? e.message : String(e)}` });
+    } finally { setBusy(false); }
+  }
+  // Link a folder-only project to an EXISTING GitHub repo: connect origin + fetch.
+  async function linkRepo(p: ProjectEntry) {
+    if (!p.path) return;
+    const url = linkUrl.trim();
+    if (!/github\.com[/:][^/\s]+\/[^/\s]+/i.test(url)) { setNote('paste an existing GitHub repo URL'); return; }
+    setBusy(true);
+    const t = toast({ kind: 'progress', text: `Linking “${p.name}” to ${url}…` });
+    try {
+      const r = await call<{ ok: boolean; slug?: string; remoteUrl?: string; error?: string }>('project:linkRepo', p.path, url);
+      if (!r.ok) { t.update({ kind: 'error', text: `Link failed: ${r.error}` }); setNote(`link failed: ${r.error}`); return; }
+      const link = (r.slug ? `github.com/${r.slug}` : url.replace(/^https?:\/\//i, '').replace(/\.git$/i, ''));
+      const links = [link, ...((p.links ?? []) as string[])].filter(Boolean).filter((v, i, a) => a.indexOf(v) === i);
+      const list = await call<ProjectEntry[]>('projects:save', { ...p, links });
+      setProjects(list); void loadGit(list);
+      t.update({ kind: 'success', text: `Linked ${r.slug} ✓ — origin connected + fetched. Pull to sync, then ⤴ Request commit.` });
+      setLinkFor(null); setLinkUrl('');
+    } catch (e) {
+      t.update({ kind: 'error', text: `Link failed: ${e instanceof Error ? e.message : String(e)}` });
+    } finally { setBusy(false); }
+  }
+  // Combine duplicate projects: group entries that point at the SAME folder (or same
+  // primary repo link), keep the richest one, merge the others' metadata in, drop them.
+  async function combineDuplicates() {
+    const norm = (s?: string) => (s || '').trim().replace(/\/+$/, '').toLowerCase();
+    const keyOf = (p: ProjectEntry) => norm(p.path) || norm((p.links ?? [])[0]) || `name:${norm(p.name)}`;
+    const groups = new Map<string, ProjectEntry[]>();
+    for (const p of projects) {
+      const k = keyOf(p);
+      if (!k) continue;
+      (groups.get(k) ?? groups.set(k, []).get(k)!).push(p);
+    }
+    const dups = [...groups.values()].filter((g) => g.length > 1);
+    if (!dups.length) { setNote('no duplicate projects found (same folder or repo)'); return; }
+    const total = dups.reduce((n, g) => n + g.length - 1, 0);
+    if (!window.confirm(`Combine ${dups.length} duplicate group(s) — merge ${total} extra entr${total === 1 ? 'y' : 'ies'} into their primary and remove the duplicates? Folders are left untouched.`)) return;
+    setBusy(true);
+    const t = toast({ kind: 'progress', text: `Combining ${total} duplicate${total === 1 ? '' : 's'}…` });
+    try {
+      const score = (p: ProjectEntry) => (p.path ? 4 : 0) + (p.description ? 2 : 0) + (p.team ? 1 : 0) + (p.links ?? []).length + (p.tags ?? []).length + (p.notes ? 1 : 0);
+      let list = projects;
+      for (const g of dups) {
+        const keep = [...g].sort((a, b) => score(b) - score(a) || (a.createdAt ?? 0) - (b.createdAt ?? 0))[0];
+        const drop = g.filter((p) => p.id !== keep.id);
+        const uniq = (arr: string[]) => arr.filter((v, i, a) => v && a.indexOf(v) === i);
+        const merged: ProjectEntry = {
+          ...keep,
+          description: keep.description || drop.find((d) => d.description)?.description || '',
+          team: keep.team || drop.find((d) => d.team)?.team,
+          path: keep.path || drop.find((d) => d.path)?.path,
+          tags: uniq([...(keep.tags ?? []), ...drop.flatMap((d) => d.tags ?? [])]),
+          links: uniq([...(keep.links ?? []), ...drop.flatMap((d) => d.links ?? [])]),
+          notes: [keep.notes, ...drop.map((d) => d.notes)].filter(Boolean).join('\n').trim() || undefined,
+        };
+        list = await call<ProjectEntry[]>('projects:save', merged);
+        for (const d of drop) list = await call<ProjectEntry[]>('projects:remove', d.id);
+      }
+      setProjects(list); void loadGit(list);
+      t.update({ kind: 'success', text: `Combined ${total} duplicate${total === 1 ? '' : 's'} ✓` });
+    } catch (e) {
+      t.update({ kind: 'error', text: `Combine failed: ${e instanceof Error ? e.message : String(e)}` });
     } finally { setBusy(false); }
   }
 
@@ -403,6 +482,7 @@ export function Projects({ store }: { store: FleetStore }) {
         <h1>Projects</h1>
         <div className="row-actions">
           <button className="btn" disabled={busy || syncing} title={root ? `Scan ${root} and track each subfolder` : 'Find the id-agents workspace projects folder and track its subfolders'} onClick={() => void doSync()}>{syncing ? 'Syncing…' : '⟳ Sync workspace'}</button>
+          {dupCount > 0 ? <button className="btn" disabled={busy} title="Merge projects that point at the same folder or repo into one (folders left untouched)" onClick={() => void combineDuplicates()}>⧉ Combine duplicates ({dupCount})</button> : null}
           <button className="btn" disabled={busy} onClick={() => { setGhOpen((v) => !v); setNote(''); }}>{ghOpen ? '− Cancel' : '⤓ Add from GitHub'}</button>
           <button className="btn" disabled={busy} onClick={() => void importFolder()}>Import folder…</button>
           <button className="btn primary" disabled={busy} onClick={() => (editing === 'new' ? setEditing(null) : openNew())}>
@@ -491,13 +571,23 @@ export function Projects({ store }: { store: FleetStore }) {
                   <div className="row-actions" style={{ gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
                     <GitStatus g={g} />
                     <span className="grow" />
-                    {g && !g.remoteUrl ? (
-                      <button className="btn small" title="Create a GitHub repo for this folder and connect it as origin (SSH)" onClick={() => { setRepoFor(repoFor === p.id ? null : p.id); setRepoName(p.name || ''); setNote(''); }}>{repoFor === p.id ? '− Cancel' : '＋ Create GitHub repo'}</button>
-                    ) : null}
+                    {g && !g.remoteUrl ? (<>
+                      <button className="btn small" title="Connect this folder to a GitHub repo that ALREADY exists — sets it as origin (SSH) and fetches" onClick={() => { setLinkFor(linkFor === p.id ? null : p.id); setLinkUrl((p.links ?? []).find((l) => /github\.com/i.test(l)) ?? ''); setRepoFor(null); setNote(''); }}>{linkFor === p.id ? '− Cancel' : '🔗 Link existing repo'}</button>
+                      <button className="btn small" title="Create a NEW GitHub repo for this folder and connect it as origin (SSH)" onClick={() => { setRepoFor(repoFor === p.id ? null : p.id); setRepoName(p.name || ''); setLinkFor(null); setNote(''); }}>{repoFor === p.id ? '− Cancel' : '＋ Create GitHub repo'}</button>
+                    </>) : null}
                     <button className="btn small primary" title="Commit & push this project's changes — optionally let AI draft the message (routes the task to ops-lead)" onClick={() => { setCommitFor(commitFor === p.id ? null : p.id); setCommitMsg(''); setNote(''); }}>{commitFor === p.id ? '− Cancel' : '⤴ Request commit'}</button>
                     <button className="btn small" title="Open folder" onClick={() => void call('project:openFolder', p.path)}>open ↗</button>
                   </div>
                   <div className="muted small mono project-path" title={p.path}>{p.path}</div>
+
+                  {linkFor === p.id ? (
+                    <div className="row-actions" style={{ gap: 8, marginTop: 6, flexWrap: 'wrap', alignItems: 'center', border: '1px solid var(--border, #2a2a2a)', borderRadius: 6, padding: 8 }}>
+                      <span className="muted small">existing repo</span>
+                      <input className="mono" style={{ flex: 1, minWidth: 280 }} value={linkUrl} disabled={busy} placeholder="https://github.com/owner/repo" onChange={(e) => setLinkUrl(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') void linkRepo(p); }} />
+                      <span className="grow" />
+                      <button className="btn small primary" disabled={busy || !linkUrl.trim()} onClick={() => void linkRepo(p)}>{busy ? 'Linking…' : 'Link & fetch'}</button>
+                    </div>
+                  ) : null}
 
                   {repoFor === p.id ? (
                     <div className="row-actions" style={{ gap: 8, marginTop: 6, flexWrap: 'wrap', alignItems: 'center', border: '1px solid var(--border, #2a2a2a)', borderRadius: 6, padding: 8 }}>
@@ -527,10 +617,10 @@ export function Projects({ store }: { store: FleetStore }) {
                   ) : null}
 
                   {g?.isRepo ? (
-                    <div className="row-actions" style={{ gap: 6, marginTop: 6, flexWrap: 'wrap' }}>
+                    <div className="row-actions" style={{ gap: 6, marginTop: 6, flexWrap: 'wrap', alignItems: 'center' }}>
                       {GIT_ACTIONS.map((act) => (
-                        <button key={act} className="btn small" disabled={gitBusy === `${p.id}:${act}`} onClick={() => void runGit(p, act)}>
-                          {gitBusy === `${p.id}:${act}` ? '…' : act}
+                        <button key={act.id} className="btn small" title={act.title} disabled={gitBusy === `${p.id}:${act.id}`} onClick={() => void runGit(p, act.id)}>
+                          {gitBusy === `${p.id}:${act.id}` ? '…' : act.label}
                         </button>
                       ))}
                       {g.remoteUrl ? <a className="ext-link small" href={g.remoteUrl.replace(/\.git$/, '').replace(/^git@github\.com:/, 'https://github.com/')} target="_blank" rel="noreferrer" style={{ marginLeft: 'auto' }}>remote ↗</a> : null}

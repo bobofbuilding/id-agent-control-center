@@ -239,6 +239,39 @@ export async function createGithubRepo(path: string, opts: { name?: string; desc
   }
 }
 
+/** Link a local folder to an EXISTING GitHub repo: connect it as `origin` (SSH) and
+ *  fetch the remote refs (so the project is up to date). Inits git if the folder
+ *  isn't a repo yet. Idempotent if already linked to the same repo. Does not merge
+ *  histories — the user pulls when ready (the buttons + the commit flow handle that). */
+export async function linkGithubRepo(path: string, url: string): Promise<{ ok: boolean; slug?: string; remoteUrl?: string; error?: string }> {
+  if (!path || !existsSync(path)) return { ok: false, error: 'folder not found' };
+  const slug = repoSlug(url);
+  if (!slug) return { ok: false, error: 'not a GitHub repo URL' };
+  // Confirm the repo exists / is reachable before wiring it up (token-optional).
+  const meta = await githubMeta(url);
+  if (!meta.ok) return { ok: false, error: `can't reach ${slug} on GitHub (${meta.error}) — check the URL/access` };
+  try {
+    if (!(await isOwnRepoRoot(path))) {
+      await git(path, ['init']);
+      await git(path, ['symbolic-ref', 'HEAD', `refs/heads/${meta.defaultBranch || 'main'}`]).catch(() => {});
+    }
+    const remotes = (await git(path, ['remote']).catch(() => '')).split('\n').filter(Boolean);
+    const sshUrl = `git@github.com:${slug}.git`;
+    if (remotes.includes('origin')) {
+      const existing = await git(path, ['remote', 'get-url', 'origin']).catch(() => '');
+      if (repoSlug(existing) !== slug) return { ok: false, error: `already linked to a different origin (${existing}) — remove it first` };
+      await git(path, ['fetch', 'origin'], 120000).catch(() => {}); // idempotent: refresh refs
+      return { ok: true, slug, remoteUrl: existing || sshUrl };
+    }
+    await git(path, ['remote', 'add', 'origin', sshUrl]); // SSH — never embed a token
+    await git(path, ['fetch', 'origin'], 120000).catch(() => {}); // pull down refs; ignore auth hiccups
+    return { ok: true, slug, remoteUrl: sshUrl };
+  } catch (e) {
+    const err = e as { stderr?: string; message?: string };
+    return { ok: false, error: (err.stderr || err.message || 'failed to link repo').trim() };
+  }
+}
+
 /** Fork a GitHub repo to the authenticated user, clone the fork into parentDir, and
  *  wire `upstream` to the original (so projectGit reports it as a fork). */
 export async function forkGithub(url: string, parentDir: string): Promise<{ ok: boolean; path?: string; name?: string; slug?: string; error?: string }> {

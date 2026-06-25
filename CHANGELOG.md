@@ -8,6 +8,19 @@ Every change pushed or merged to `main` carries its version number in the commit
 subject (`vX.Y.Z: …`), stamped automatically by the `commit-msg` hook — see
 [CONTRIBUTING.md](CONTRIBUTING.md).
 
+## [0.1.146] — 2026-06-25
+- **Projects: link an existing repo, clearer git buttons, combine duplicates, pull-before-commit.**
+  - **🔗 Link existing repo** (on folder-only projects): connect a folder to a repo that ALREADY
+    exists on GitHub — verifies it, sets `origin` (SSH), and fetches. (Sits beside ＋ Create repo.)
+  - **Git buttons relabeled** for clarity: **⤓ Fetch**, **⇩ Pull**, **◔ Status**, **☰ Log**, **± Diff**,
+    each with a tooltip spelling out the exact `git` command and what it does.
+  - **⧉ Combine duplicates** (header, shown only when dupes exist): merges projects that point at the
+    same folder/repo into one — keeps the richest entry, unions tags/links/notes, drops the rest
+    (folders untouched). Resolves same-name/same-repo doubles like NFTFactory ⊕ nftfactory.
+  - **Up-to-date before commit:** the Request-commit instruction now tells ops-lead to fetch + pull
+    (or rebase) onto the latest remote BEFORE committing, so changes never land on a stale base.
+  - New bridge: `project:linkRepo`.
+
 ## [0.1.145] — 2026-06-25
 - **Projects: AI-assisted commit requests + create/fork GitHub repos.**
   - **⤴ Request commit** is now an inline composer with **✨ Draft with AI** — the team lead reads
