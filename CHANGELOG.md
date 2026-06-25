@@ -8,6 +8,13 @@ Every change pushed or merged to `main` carries its version number in the commit
 subject (`vX.Y.Z: …`), stamped automatically by the `commit-msg` hook — see
 [CONTRIBUTING.md](CONTRIBUTING.md).
 
+## [0.1.157] — 2026-06-25
+- **Inbox decisions are ordered by dependency** — a prerequisite task's decision now sorts before
+  any decision that depends on it (depth over the `taskDeps` graph, stable for unrelated items), so
+  you answer them in the order that actually unblocks the chain.
+- **Decision layout reflows:** the agent's options are listed **top-to-bottom, left-aligned**, with
+  **✎ Comment · 🛠 I'll handle it · Skip** underneath them (instead of all in one wrapped row).
+
 ## [0.1.156] — 2026-06-25
 - **Adjustment-loop state machine for tasks blocked on a USER decision.** A task moves through the
   board automatically as its Inbox decision is handled:

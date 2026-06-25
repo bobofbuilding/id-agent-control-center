@@ -1,15 +1,41 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { call, type FleetStore } from '../store.ts';
 import type { InboxItem } from '../../../../idctl/src/api/types.ts';
 
 type BlockerQuestion = { id: string; question: string; options: string[]; agent: string; taskRef?: string; taskTitle?: string; team: string; createdAt: number };
 function qArg(s: string): string { return `"${s.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`; }
 
+/** Order decisions so a prerequisite task's decision comes BEFORE a dependent's.
+ *  depth(ref) = 0 with no prereqs, else 1 + max(depth(prereq)). Sort by depth, then
+ *  original order (stable) for ties / decisions not tied to a task. Cycle-safe. */
+function orderByDeps(qs: BlockerQuestion[], deps: Record<string, string[]>): BlockerQuestion[] {
+  const memo = new Map<string, number>();
+  const onStack = new Set<string>();
+  const depth = (ref: string): number => {
+    if (memo.has(ref)) return memo.get(ref)!;
+    if (onStack.has(ref)) return 0; // cycle guard
+    onStack.add(ref);
+    let d = 0;
+    for (const p of (deps[ref] ?? [])) d = Math.max(d, 1 + depth(p));
+    onStack.delete(ref);
+    memo.set(ref, d);
+    return d;
+  };
+  return qs.map((q, i) => ({ q, i, d: q.taskRef ? depth(q.taskRef) : 0 }))
+    .sort((a, b) => a.d - b.d || a.i - b.i)
+    .map((x) => x.q);
+}
+
 export function Inbox({ store }: { store: FleetStore }) {
   const team = store.team ?? 'default';
   const [questions, setQuestions] = useState<BlockerQuestion[]>([]);
-  async function reloadQuestions() { setQuestions(await call<BlockerQuestion[]>('questions:list', team).catch(() => [])); }
+  const [deps, setDeps] = useState<Record<string, string[]>>({});
+  async function reloadQuestions() {
+    setQuestions(await call<BlockerQuestion[]>('questions:list', team).catch(() => []));
+    setDeps(await call<Record<string, string[]>>('tasks:deps').catch(() => ({})));
+  }
   useEffect(() => { void reloadQuestions(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [team, store.lastUpdated]);
+  const ordered = useMemo(() => orderByDeps(questions, deps), [questions, deps]);
 
   const total = store.inbox.length + questions.length;
   return (
@@ -21,8 +47,8 @@ export function Inbox({ store }: { store: FleetStore }) {
 
       {questions.length ? (
         <section className="card">
-          <h3>Decisions needed <span className="muted small">· blocker questions from tasks — pick an option to unblock</span></h3>
-          {questions.map((q) => <QuestionRow key={q.id} q={q} onDone={() => void reloadQuestions()} />)}
+          <h3>Decisions needed <span className="muted small">· in dependency order — answer prerequisites first to unblock what follows</span></h3>
+          {ordered.map((q) => <QuestionRow key={q.id} q={q} onDone={() => void reloadQuestions()} />)}
         </section>
       ) : null}
 
@@ -75,13 +101,18 @@ function QuestionRow({ q, onDone }: { q: BlockerQuestion; onDone: () => void }) 
     <div className="inbox-row">
       <div className="inbox-from">{q.agent || 'agent'}{subject ? ` · ${subject}` : ''}</div>
       <div className="inbox-msg b">{q.question}</div>
+      {/* Options stacked top-to-bottom, hugging the left. */}
+      {q.options.length ? (
+        <div style={{ marginTop: 8, display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: 4 }}>
+          {q.options.map((o) => (
+            <button key={o} className="btn" style={{ textAlign: 'left' }} disabled={busy} onClick={() => void chooseOption(o)} title={`Answer “${o}” and reply to ${q.agent || 'the agent'}`}>{o}</button>
+          ))}
+        </div>
+      ) : null}
+      {/* Then the secondary actions, underneath the options. */}
       <div className="row-actions" style={{ marginTop: 8, gap: 6, flexWrap: 'wrap', alignItems: 'center' }}>
-        {q.options.map((o) => (
-          <button key={o} className="btn" disabled={busy} onClick={() => void chooseOption(o)} title={`Answer “${o}” and reply to ${q.agent || 'the agent'}`}>{o}</button>
-        ))}
         <button className="btn small" disabled={busy} onClick={() => setShowComment((v) => !v)} title="Write your own response instead of picking an option">✎ Comment</button>
         <button className="btn small" disabled={busy} onClick={() => void handleManually()} title="You'll handle this yourself — the agent sets it aside and won't re-raise it">🛠 I'll handle it</button>
-        <span className="grow" />
         <button className="btn small" disabled={busy} onClick={() => void skip()} title="Dismiss without answering">Skip</button>
       </div>
       {showComment ? (
