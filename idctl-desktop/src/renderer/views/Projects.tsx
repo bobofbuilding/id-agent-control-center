@@ -89,9 +89,11 @@ export function Projects({ store }: { store: FleetStore }) {
   const [linkUrl, setLinkUrl] = useState('');
 
   const lead = resolveCoordinator(store.agents, store.coordinator);
-  // New projects default to the ops team (it holds git-manager, so they can be
-  // committed/pushed + checkpoint-auto-committed). Falls back to blank if absent.
-  const opsDefault = useMemo(() => (store.teams.some((t) => t.name === 'ops-team') ? 'ops-team' : ''), [store.teams]);
+  // New projects default to the DEFAULT team, which delegates git work to the
+  // responsible agent (git-manager). Falls back to the first team if absent.
+  const defaultTeamName = useMemo(() => (store.teams.some((t) => t.name === 'default') ? 'default' : (store.teams[0]?.name ?? '')), [store.teams]);
+  // Resolve a team's lead/coordinator (who owns + delegates the commit).
+  const teamLeadOf = (team?: string) => resolveCoordinator(store.allAgents.filter((a) => a.team === (team || defaultTeamName)), undefined) || 'lead';
   // Per-project checkpoint state: completed-task refs seen so far (baseline) + last
   // auto-commit time (throttle). A ref so the 45s watcher doesn't trigger re-renders.
   const autoSeenRef = useRef<Record<string, { seen: Set<string>; lastFire: number }>>({});
@@ -193,7 +195,7 @@ export function Projects({ store }: { store: FleetStore }) {
     return c;
   }, [projects]);
 
-  function openNew() { setForm({ ...BLANK, team: opsDefault }); setEditing('new'); setNote(''); }
+  function openNew() { setForm({ ...BLANK, team: defaultTeamName }); setEditing('new'); setNote(''); }
   function openEdit(p: ProjectEntry) {
     setForm({ name: p.name, status: p.status, description: p.description ?? '', team: p.team ?? '', tags: (p.tags ?? []).join(', '), links: (p.links ?? []).join('\n'), path: p.path ?? '', notes: p.notes ?? '' });
     setEditing(p.id); setNote('');
@@ -216,7 +218,7 @@ export function Projects({ store }: { store: FleetStore }) {
     const p = await call<string | null>('project:pickFolder').catch(() => null);
     if (!p) return;
     const r = await call<Readme>('project:readme', p).catch((): Readme => ({ found: false }));
-    setForm({ ...BLANK, team: opsDefault, path: p, name: r?.name || '', description: r?.description || '' });
+    setForm({ ...BLANK, team: defaultTeamName, path: p, name: r?.name || '', description: r?.description || '' });
     setEditing('new');
     setNote(r?.found ? 'imported folder — README read; review and Save' : 'imported folder (no README found)');
   }
@@ -243,7 +245,7 @@ export function Projects({ store }: { store: FleetStore }) {
       const tags = [...(meta.language ? [meta.language] : []), ...(meta.topics ?? []), ...(ghMode === 'fork' ? ['fork'] : [])];
       setForm({
         ...BLANK,
-        team: opsDefault,
+        team: defaultTeamName,
         name: meta.name || readme.name || c.name || '',
         description: meta.description || readme.description || '',
         tags: tags.join(', '),
@@ -334,17 +336,21 @@ export function Projects({ store }: { store: FleetStore }) {
     }
   }
   const q = (s: string) => `"${s.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`;
-  // Publish a change per project: route a GitHub-commit task to ops-lead (who holds the
+  // Publish a change: the project's owning team (default) owns the task and delegates the
   // creds) rather than committing from here. This is the standard "request for change" flow.
   async function submitCommit(p: ProjectEntry, desc: string) {
     if (!desc.trim()) { setNote('describe the change (or use ✨ Draft with AI)'); return; }
-    const t = toast({ kind: 'progress', text: `Requesting ops-lead to commit & push “${p.name}”…` });
+    // The project's OWNING team (default by default) owns the task and DELEGATES the
+    // actual git work to git-manager — the responsible agent for commits/pushes.
+    const ownTeam = p.team || defaultTeamName || 'default';
+    const ownLead = teamLeadOf(ownTeam);
+    const t = toast({ kind: 'progress', text: `Requesting ${ownTeam}/${ownLead} to commit & push “${p.name}” (via git-manager)…` });
     try {
       const title = `Commit & push: ${p.name}`;
-      const body = `Project “${p.name}”${p.path ? ` at ${p.path}` : ''}. FIRST bring the local checkout up to date with the remote (git fetch, then git pull --ff-only; if it can't fast-forward, rebase your local changes on top of the remote) so you never commit on a stale base. THEN review the working changes, commit them with a clear message, and push to origin (init/create the GitHub repo if it doesn't exist yet). Requested change / suggested commit message:\n${desc.trim()}`;
-      await call('remote', `/task create ${q(title)} --owner ops-lead --description ${q(body)}`, undefined, 'ops-team');
-      void call('remote', `/ask ops-lead ${q(`New change request — ${title}. ${body} Delegate to git-manager/deployer and mark the task done when pushed.`)}`, undefined, 'ops-team').catch(() => {});
-      t.update({ kind: 'success', text: `Requested ops-lead to commit & push “${p.name}” ✓` });
+      const body = `Project “${p.name}”${p.path ? ` at ${p.path}` : ''}. You (${ownLead}, ${ownTeam}) own this — DELEGATE the actual git work to git-manager (the responsible git agent: use the cross-team form \`/ask ops-team/git-manager …\` if git-manager isn't in your team). git-manager must: (1) FIRST bring the local checkout up to date with the remote (git fetch, then git pull --ff-only; if it can't fast-forward, rebase local changes on top of the remote) so it never commits on a stale base; (2) review the working changes and commit with a clear message; (3) push to origin (init/create the GitHub repo if it doesn't exist yet). Coordinate and mark this task done once git-manager confirms the push. Requested change / suggested commit message:\n${desc.trim()}`;
+      await call('remote', `/task create ${q(title)} --owner ${ownLead} --description ${q(body)}`, undefined, ownTeam);
+      void call('remote', `/ask ${ownLead} ${q(`New change request — ${title}. ${body}`)}`, undefined, ownTeam).catch(() => {});
+      t.update({ kind: 'success', text: `${ownTeam}/${ownLead} will commit & push “${p.name}” via git-manager ✓` });
       setCommitFor(null); setCommitMsg('');
     } catch (e) {
       t.update({ kind: 'error', text: `Request failed: ${e instanceof Error ? e.message : String(e)}` });
@@ -461,7 +467,7 @@ export function Projects({ store }: { store: FleetStore }) {
     setNote(val === 'off' ? `auto-commit off for ${p.name}` : `auto-commit on (${val === 'plan' ? 'plan validation' : 'any task'}) for ${p.name} — needs a team + uncommitted changes`);
   }
   // Fire a checkpoint commit: AI-draft a message from the diff (best-effort), then
-  // route the commit & push to ops-lead via the normal request flow.
+  // route the commit & push via the owning team → git-manager (normal request flow).
   async function autoCommitNow(p: ProjectEntry, triggerRef: string, kind: 'task' | 'plan') {
     let msg = '';
     try {
@@ -474,7 +480,7 @@ export function Projects({ store }: { store: FleetStore }) {
     } catch { /* fall back to a generic message */ }
     if (!msg) msg = `Checkpoint commit for ${p.name}.`;
     msg = `${msg}\n\n(auto-commit checkpoint — triggered by completed ${kind === 'plan' ? 'plan-validation ' : ''}task ${triggerRef})`;
-    toast({ kind: 'info', text: `⟳ Auto-commit checkpoint for “${p.name}” (task ${triggerRef} done) → routing to ops-lead` });
+    toast({ kind: 'info', text: `⟳ Auto-commit checkpoint for “${p.name}” (task ${triggerRef} done) → ${p.team || defaultTeamName} delegates to git-manager` });
     await submitCommit(p, msg);
   }
 
@@ -640,7 +646,7 @@ export function Projects({ store }: { store: FleetStore }) {
                       <button className="btn small" title="Connect this folder to a GitHub repo that ALREADY exists — sets it as origin (SSH) and fetches" onClick={() => { setLinkFor(linkFor === p.id ? null : p.id); setLinkUrl((p.links ?? []).find((l) => /github\.com/i.test(l)) ?? ''); setRepoFor(null); setNote(''); }}>{linkFor === p.id ? '− Cancel' : '🔗 Link existing repo'}</button>
                       <button className="btn small" title="Create a NEW GitHub repo for this folder and connect it as origin (SSH)" onClick={() => { setRepoFor(repoFor === p.id ? null : p.id); setRepoName(p.name || ''); setLinkFor(null); setNote(''); }}>{repoFor === p.id ? '− Cancel' : '＋ Create GitHub repo'}</button>
                     </>) : null}
-                    <button className="btn small primary" title="Commit & push this project's changes — optionally let AI draft the message (routes the task to ops-lead)" onClick={() => { setCommitFor(commitFor === p.id ? null : p.id); setCommitMsg(''); setNote(''); }}>{commitFor === p.id ? '− Cancel' : '⤴ Request commit'}</button>
+                    <button className="btn small primary" title="Commit & push this project's changes — optionally let AI draft the message (the owning team delegates the push to git-manager)" onClick={() => { setCommitFor(commitFor === p.id ? null : p.id); setCommitMsg(''); setNote(''); }}>{commitFor === p.id ? '− Cancel' : '⤴ Request commit'}</button>
                     <button className="btn small" title="Open folder" onClick={() => void call('project:openFolder', p.path)}>open ↗</button>
                   </div>
                   <div className="muted small mono project-path" title={p.path}>{p.path}</div>

@@ -8,6 +8,14 @@ Every change pushed or merged to `main` carries its version number in the commit
 subject (`vX.Y.Z: …`), stamped automatically by the `commit-msg` hook — see
 [CONTRIBUTING.md](CONTRIBUTING.md).
 
+## [0.1.149] — 2026-06-25
+- **Projects are owned by the DEFAULT team, which delegates git work to git-manager.** New projects
+  (New / Import / clone / fork / Sync) now default to **`default`** (was ops-team). Commit requests —
+  manual **and** checkpoint auto-commit — route to the **project's team lead**, who DELEGATES the
+  actual commit & push to **git-manager** (cross-team `/ask ops-team/git-manager` when needed), with
+  the pull-first-then-commit instruction preserved. So the owning team coordinates and the
+  responsible agent executes.
+
 ## [0.1.148] — 2026-06-25
 - **New projects default to the ops team** (holds git-manager) — New project, Import folder, Add
   from GitHub (clone/fork), and Sync workspace all assign `ops-team` by default (editable). So every

@@ -484,7 +484,7 @@ const METHODS: Record<string, (...a: any[]) => Promise<unknown>> = {
         name: d.name,
         status: 'active',
         description: d.description,
-        team: 'ops-team', // default new projects to the ops team (holds git-manager)
+        team: 'default', // default new projects to the default team (it delegates git work to git-manager)
         tags: ['workspace'],
         links: link ? [link] : [],
         path: d.path,
