@@ -5,7 +5,8 @@
  * write here (the brain owns these files).
  */
 import { existsSync, readFileSync, readdirSync, writeFileSync, renameSync, rmSync, statSync } from 'node:fs';
-import { join, basename, resolve } from 'node:path';
+import { join, basename, resolve, dirname } from 'node:path';
+import { execFileSync } from 'node:child_process';
 import { detectProjectsRoot } from './projects.ts';
 import { loadSettings } from '../../../idctl/src/settings/store.ts';
 
@@ -106,6 +107,65 @@ function normStatusLabel(s: string): string | null {
  * dir, only touches the matched row's status column, atomic write. Returns the
  * previous + new label so the UI can show the change.
  */
+/** kebab-case slug for a plan filename (bounded, filesystem-safe). */
+function slugify(s: string): string {
+  return (s || '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 60) || 'plan';
+}
+
+/**
+ * Promote a draft into the brain's LIVING plan set: write a new `NN-slug.md` plan file with
+ * the draft content and insert a README row at status ⏳ PENDING (so it enters the
+ * pending → partial → done lifecycle the rest of the Plans tab drives). Best-effort `git add`
+ * + commit in the brain repo so the new plan isn't left as an uncommitted file. Returns the
+ * created filename + number.
+ */
+export function createBrainPlan(title: string, content: string, configured?: string): { ok: boolean; file?: string; num?: string; committed?: boolean; error?: string } {
+  const dir = brainPlansDir(configured);
+  if (!dir) return { ok: false, error: 'brain plans dir not found' };
+  const readmePath = join(dir, 'README.md');
+  if (!existsSync(readmePath)) return { ok: false, error: 'README not found' };
+  const cleanTitle = (title || 'Untitled plan').trim().slice(0, 120);
+  try {
+    // Next plan number = max existing numeric prefix + 1, zero-padded to 2.
+    const nums = readdirSync(dir)
+      .map((f) => /^(\d+)/.exec(f)?.[1])
+      .filter(Boolean)
+      .map((n) => Number(n));
+    const next = (nums.length ? Math.max(...nums) : 0) + 1;
+    const numStr = String(next).padStart(2, '0');
+    const fname = `${numStr}-${slugify(cleanTitle)}.md`;
+    const full = resolve(dir, fname);
+    if (!full.startsWith(resolve(dir))) return { ok: false, error: 'bad path' };
+    if (existsSync(full)) return { ok: false, error: `${fname} already exists` };
+    // File body: a single "# Plan NN - Title" heading (drop the draft's own leading H1), then content.
+    const body = (content || '').trim().replace(/^#\s+.*(\r?\n)+/, '');
+    const fileContent = `# Plan ${next} - ${cleanTitle}\n\n${body}\n`;
+    const tmpF = `${full}.${process.pid}.tmp`;
+    writeFileSync(tmpF, fileContent);
+    renameSync(tmpF, full);
+    // Insert a README row right after the last numbered table row.
+    const lines = readFileSync(readmePath, 'utf8').split(/\r?\n/);
+    let lastRow = -1;
+    for (let i = 0; i < lines.length; i++) if (/^\|\s*\d+\s*\|/.test(lines[i])) lastRow = i;
+    const row = `| ${numStr} | [${cleanTitle}](${fname}) | ⏳ PENDING | planning+build | Promoted from a Control Center draft. |`;
+    if (lastRow >= 0) lines.splice(lastRow + 1, 0, row); else lines.push(row);
+    const tmpR = `${readmePath}.${process.pid}.tmp`;
+    writeFileSync(tmpR, lines.join('\n'));
+    renameSync(tmpR, readmePath);
+    // Best-effort commit so the new plan isn't left uncommitted in the brain repo.
+    let committed = false;
+    try {
+      const root = dirname(dir); // …/brain
+      execFileSync('git', ['-C', root, 'add', join('plans', fname), join('plans', 'README.md')], { stdio: 'ignore' });
+      execFileSync('git', ['-C', root, 'commit', '-m', `Plan ${next}: ${cleanTitle} (⏳ PENDING — promoted from a Control Center draft)`], { stdio: 'ignore' });
+      committed = true;
+    } catch { /* not a repo / nothing to commit / hooks — leave the files in place */ }
+    return { ok: true, file: fname, num: numStr, committed };
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : String(e) };
+  }
+}
+
 export function setBrainPlanStatus(file: string, status: string, configured?: string): { ok: boolean; from?: string; to?: string; error?: string } {
   const dir = brainPlansDir(configured);
   if (!dir) return { ok: false, error: 'brain plans dir not found' };

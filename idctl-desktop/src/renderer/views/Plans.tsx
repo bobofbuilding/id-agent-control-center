@@ -8,8 +8,9 @@ import { useToast } from '../components/toast.tsx';
  *  - Brain plans — the LIVE plan set the brain maintains on disk. Read-only content,
  *    but per-plan actions can AUDIT the real status (and write it back), find BLOCKERS,
  *    COMPILE the plan into tasks, or set it PENDING.
- *  - Your drafts — local AI-generated plans you can edit, version, organize, tag, and
- *    revise with AI. Marking a draft "done" auto-archives it.
+ *  - Your drafts — local AI-generated plans you draft + finalize, then PROMOTE into the
+ *    living brain plans. Lifecycle: draft (AI-assisted) → active (human edits) → done
+ *    (finalized) → ↑ Promote → a brain plan at ⏳ pending → 🔄 partial → ✅ done.
  */
 
 type PlanStatus = 'draft' | 'active' | 'done' | 'archived';
@@ -374,15 +375,38 @@ export function Plans({ store }: { store: FleetStore }) {
     }
   }
 
-  /** Field edit (title/status/tags). Setting status to "done" auto-archives the draft. */
+  /** Field edit (title/status/tags). "done" no longer auto-archives — a done draft stays
+   *  visible so you can finalize it and Promote it into the live brain plans (→ ⏳ pending). */
   async function patchPlan(p: Partial<Plan>) {
     if (!detail) return;
     const cur = (await call<Plan | null>('plans:get', detail.id).catch(() => null)) ?? detail;
     const next: Plan = { ...cur, ...p, updatedAt: Date.now() };
-    if (p.status === 'done') next.status = 'archived'; // auto-archive on done
     setDetail(next);
     await call('plans:save', next).catch(() => {});
     if (aliveRef.current) await reload();
+  }
+
+  // Promote a finalized draft into the brain's LIVING plan set: writes a new plan file at
+  // ⏳ PENDING (so it enters pending → partial → done), then files the draft (archived) with a
+  // note linking the new plan. This is the draft → "active plan (pending)" handoff.
+  async function promoteDraft() {
+    if (!detail) return;
+    setBusy(true); setMsg(`promoting “${clip(detail.title, 40)}” to a live plan…`);
+    try {
+      const res = await call<{ ok: boolean; file?: string; num?: string; committed?: boolean; error?: string }>('brain:createPlan', detail.title, detail.content);
+      if (!res?.ok) { if (aliveRef.current) setMsg(`promote failed: ${res?.error ?? 'could not write the brain plan'}`); return; }
+      // Keep the draft VISIBLE as a finalized, promoted record (status done) + tag it with the
+      // brain plan number so it links to its live counterpart (and can't be re-promoted into a dupe).
+      const tag = `→ plan ${res.num}`;
+      const filed: Plan = { ...detail, status: 'done', tags: [...new Set([...(detail.tags ?? []), tag])], updatedAt: Date.now() };
+      await call('plans:save', filed).catch(() => {});
+      setDetail(filed);
+      await reloadBrain();
+      await reload();
+      if (aliveRef.current) setMsg(`promoted → live plan ${res.num} (⏳ pending)${res.committed ? ' · committed' : ' · written'} — it's now in Plans above`);
+    } catch (e) {
+      if (aliveRef.current) setMsg(`promote failed: ${e instanceof Error ? e.message : String(e)}`);
+    } finally { if (aliveRef.current) setBusy(false); }
   }
   async function remove() {
     if (!detail) return;
@@ -419,11 +443,12 @@ export function Plans({ store }: { store: FleetStore }) {
     return list;
   }, [plans, q, draftStatus, tagFilter, sort]);
 
-  // active vs archived (auto-archive: brain DONE + draft done/archived are "archived")
+  // active vs archived. Brain DONE plans archive; for drafts only the explicit "archived"
+  // status hides — a "done" draft stays VISIBLE so it can be finalized + promoted to a live plan.
   const brainActive = organizedBrain.filter((p) => brainStatusKey(p.status) !== 'done');
   const brainArchived = organizedBrain.filter((p) => brainStatusKey(p.status) === 'done');
-  const draftActive = organizedDrafts.filter((p) => p.status !== 'archived' && p.status !== 'done');
-  const draftArchived = organizedDrafts.filter((p) => p.status === 'archived' || p.status === 'done');
+  const draftActive = organizedDrafts.filter((p) => p.status !== 'archived');
+  const draftArchived = organizedDrafts.filter((p) => p.status === 'archived');
   const archivedCount = brainArchived.length + draftArchived.length;
 
   const statusChips = (ids: string[], active: Set<string>, onToggle: (id: string) => void, labelOf: (id: string) => string, classOf: (id: string) => string) => (
@@ -498,6 +523,13 @@ export function Plans({ store }: { store: FleetStore }) {
               <select className="cell-select small" value={detail.status} disabled={busy} onChange={(e) => void patchPlan({ status: e.target.value as PlanStatus })}>
                 {STATUSES.map((s) => <option key={s} value={s}>{s}</option>)}
               </select>
+              {(detail.tags ?? []).some((t) => /^→ plan /.test(t)) ? (
+                <span className="ok-text small" title="This draft has been promoted into the live brain plans.">✓ promoted ({(detail.tags ?? []).find((t) => /^→ plan /.test(t))})</span>
+              ) : detail.status === 'done' || detail.status === 'active' ? (
+                <button className={`btn small${detail.status === 'done' ? ' primary' : ''}`} disabled={busy}
+                  title="Promote this finalized draft into the live brain plans at ⏳ PENDING — from there it runs pending → partial → done."
+                  onClick={() => void promoteDraft()}>↑ Promote to live plan</button>
+              ) : null}
               <input style={{ flex: '0 1 200px', fontSize: 12 }} placeholder="tags (comma-separated)" value={tagInput} disabled={busy} onChange={(e) => setTagInput(e.target.value)} onBlur={() => void patchPlan({ tags: splitTags(tagInput) })} title="categorize this plan" />
               <span className="grow" />
               <button className="btn small" disabled={busy} onClick={() => setShowLog((v) => !v)}>{showLog ? 'Hide changelog' : `Changelog (${detail.revisions.length})`}</button>
@@ -646,7 +678,9 @@ export function Plans({ store }: { store: FleetStore }) {
       <section className="card">
         <div className="row-actions" style={{ alignItems: 'center', marginBottom: 6 }}>
           <h3 style={{ margin: 0 }}>Your drafts</h3>
-          <span className="muted small">· {draftActive.length} active{draftArchived.length ? ` · ${draftArchived.length} archived` : ''}</span>
+          <span className="muted small">· {draftActive.length} active{draftArchived.length ? ` · ${draftArchived.length} filed` : ''}</span>
+          <span className="grow" />
+          <span className="muted small">draft → active → done → <b>↑ Promote</b> → live plan (⏳ pending)</span>
         </div>
         {plans.length === 0 ? (
           <p className="muted center pad">No plans yet. <b>+ Request a plan</b> and an agent will draft one — then update it anytime and it keeps a changelog.</p>

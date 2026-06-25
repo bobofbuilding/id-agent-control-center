@@ -8,6 +8,18 @@ Every change pushed or merged to `main` carries its version number in the commit
 subject (`vX.Y.Z: …`), stamped automatically by the `commit-msg` hook — see
 [CONTRIBUTING.md](CONTRIBUTING.md).
 
+## [0.1.176] — 2026-06-25
+- **Plan lifecycle: drafts now flow into the living brain plans.** Marking a draft **done no longer
+  hides it** — a done draft stays visible so you can finalize it. New **↑ Promote to live plan** button
+  (on active/done drafts) writes the draft into the brain's plan set as a real plan at **⏳ PENDING** (and
+  commits it), then keeps the draft as a *done* record tagged `→ plan NN`. The full flow is now
+  **draft (AI-assisted) → active (human edits) → done (finalized) → ↑ Promote → ⏳ pending → 🔄 partial →
+  ✅ done** — drafts feed the same pending→partial→done pipeline the brain plans already use. Only the
+  explicit *archived* status hides a draft now (resurface via **show archived**).
+- **New `brain:createPlan`** capability backs the promotion (next-numbered `NN-slug.md` + README row at
+  ⏳ PENDING, with a best-effort commit so it isn't left uncommitted).
+- Promoted the **Brain 3D Knowledge Graph** draft into the live plan set as **Plan 67 (⏳ pending)**.
+
 ## [0.1.175] — 2026-06-25
 - **HR Manager — Build tab no longer hard-errors on existing agents.** Building a roster that includes
   agents (or a team) that already exist now **skips** them as *“already in &lt;team&gt;”* and builds only the
