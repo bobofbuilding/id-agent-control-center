@@ -8,6 +8,14 @@ Every change pushed or merged to `main` carries its version number in the commit
 subject (`vX.Y.Z: …`), stamped automatically by the `commit-msg` hook — see
 [CONTRIBUTING.md](CONTRIBUTING.md).
 
+## [0.1.147] — 2026-06-25
+- **Projects: checkpoint auto-commit.** Per-project **⟳ Auto-commit** dropdown — **off / on any task
+  done / on plan validation**. When a (matching) task completes in the project's team and the repo
+  has uncommitted changes, the app auto-drafts a commit message (lead reads the diff) and routes a
+  commit & push to ops-lead — the same pull-then-commit flow as the manual button. Baselines on
+  enable (existing done-tasks don't fire), only fires when dirty, throttled to once / 10 min per
+  project, needs a `team` + `path`. New `autoCommit` field on projects.
+
 ## [0.1.146] — 2026-06-25
 - **Projects: link an existing repo, clearer git buttons, combine duplicates, pull-before-commit.**
   - **🔗 Link existing repo** (on folder-only projects): connect a folder to a repo that ALREADY

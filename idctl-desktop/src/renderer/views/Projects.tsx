@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { call, resolveCoordinator, type FleetStore } from '../store.ts';
 import { useToast } from '../components/toast.tsx';
 import type { ProjectEntry, ProjectStatus } from '../../../../idctl/src/settings/schema.ts';
@@ -28,6 +28,7 @@ type GitInfo = {
   error?: string;
 };
 type Readme = { found: boolean; name?: string; description?: string };
+type TaskLite = { shortId?: string; uuid?: string; title: string; status: string; teamName?: string };
 /** GitHub repo metadata (from the main process via the GitHub API). */
 type GithubMeta = { ok: boolean; name?: string; description?: string; topics?: string[]; language?: string; isPrivate?: boolean; error?: string };
 type CloneResult = { ok: boolean; path?: string; name?: string; error?: string };
@@ -88,6 +89,9 @@ export function Projects({ store }: { store: FleetStore }) {
   const [linkUrl, setLinkUrl] = useState('');
 
   const lead = resolveCoordinator(store.agents, store.coordinator);
+  // Per-project checkpoint state: completed-task refs seen so far (baseline) + last
+  // auto-commit time (throttle). A ref so the 45s watcher doesn't trigger re-renders.
+  const autoSeenRef = useRef<Record<string, { seen: Set<string>; lastFire: number }>>({});
   // How many duplicate entries exist (same folder, or same primary repo) — drives the
   // "Combine duplicates" button. Each group of N counts N-1 extras.
   const dupCount = useMemo(() => {
@@ -96,6 +100,38 @@ export function Projects({ store }: { store: FleetStore }) {
     const seen = new Map<string, number>();
     for (const p of projects) seen.set(keyOf(p), (seen.get(keyOf(p)) ?? 0) + 1);
     return [...seen.values()].reduce((n, c) => n + Math.max(0, c - 1), 0);
+  }, [projects]);
+
+  // Checkpoint auto-commit watcher: poll every team's tasks; when a NEW matching
+  // completion appears for an auto-enabled project AND its repo is dirty, request a
+  // commit. Baselines on first sight (existing done-tasks don't fire); throttled 10m.
+  useEffect(() => {
+    const autos = projects.filter((p) => p.path && p.team && (p.autoCommit === 'task' || p.autoCommit === 'plan'));
+    for (const id of Object.keys(autoSeenRef.current)) if (!autos.some((p) => p.id === id)) delete autoSeenRef.current[id];
+    if (!autos.length) return;
+    let alive = true;
+    const tick = async () => {
+      const all = await call<TaskLite[]>('tasks:allTeams').catch(() => [] as TaskLite[]);
+      if (!alive || !all.length) return;
+      for (const p of autos) {
+        const done = all.filter((t) => t.teamName === p.team && /done|complete/i.test(t.status));
+        const matched = p.autoCommit === 'plan' ? done.filter((t) => /validat|verif|\bplan\b|review|approv|sign.?off/i.test(t.title)) : done;
+        const refs = new Set(matched.map((t) => t.shortId || t.uuid || t.title));
+        const st = autoSeenRef.current[p.id];
+        if (!st) { autoSeenRef.current[p.id] = { seen: refs, lastFire: 0 }; continue; } // baseline only
+        const fresh = [...refs].filter((r) => !st.seen.has(r));
+        st.seen = refs;
+        if (!fresh.length || Date.now() - st.lastFire < 10 * 60 * 1000) continue; // nothing new / throttled
+        const g = await call<GitInfo>('project:git', p.path!).catch(() => null);
+        if (!g?.dirty) continue; // nothing to commit
+        st.lastFire = Date.now();
+        void autoCommitNow(p, fresh[0], p.autoCommit as 'task' | 'plan');
+      }
+    };
+    void tick();
+    const iv = setInterval(tick, 45000);
+    return () => { alive = false; clearInterval(iv); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [projects]);
 
   async function loadGit(list: ProjectEntry[]) {
@@ -412,6 +448,31 @@ export function Projects({ store }: { store: FleetStore }) {
       t.update({ kind: 'error', text: `Combine failed: ${e instanceof Error ? e.message : String(e)}` });
     } finally { setBusy(false); }
   }
+  // Set a project's checkpoint auto-commit mode; resets its baseline so we don't
+  // immediately fire on tasks that were already complete.
+  async function setAutoCommitMode(p: ProjectEntry, val: 'off' | 'task' | 'plan') {
+    const list = await call<ProjectEntry[]>('projects:save', { ...p, autoCommit: val }).catch(() => projects);
+    setProjects(list);
+    delete autoSeenRef.current[p.id]; // re-baseline on the next watcher tick
+    setNote(val === 'off' ? `auto-commit off for ${p.name}` : `auto-commit on (${val === 'plan' ? 'plan validation' : 'any task'}) for ${p.name} — needs a team + uncommitted changes`);
+  }
+  // Fire a checkpoint commit: AI-draft a message from the diff (best-effort), then
+  // route the commit & push to ops-lead via the normal request flow.
+  async function autoCommitNow(p: ProjectEntry, triggerRef: string, kind: 'task' | 'plan') {
+    let msg = '';
+    try {
+      const d = await call<{ ok: boolean; stat: string; diff: string; untracked: string[]; error?: string }>('project:diff', p.path!).catch(() => null);
+      if (d?.ok && lead && (d.stat || d.diff || d.untracked.length)) {
+        const ask = `Draft a git commit message for the project "${p.name}". Files (git diff --stat):\n${d.stat || '(none)'}\n\nUntracked: ${d.untracked.join(', ') || 'none'}\n\nDiff:\n${d.diff || '(no tracked changes)'}\n\nReply with ONLY the commit message: a concise imperative subject (≤72 chars), blank line, then 1-4 bullets. No code fences.`;
+        const reply = await call<string>('dispatch', `/ask ${lead} ${q(ask)}`).catch(() => '');
+        msg = String(reply || '').replace(/^```[a-z]*\n?/i, '').replace(/```$/, '').trim();
+      }
+    } catch { /* fall back to a generic message */ }
+    if (!msg) msg = `Checkpoint commit for ${p.name}.`;
+    msg = `${msg}\n\n(auto-commit checkpoint — triggered by completed ${kind === 'plan' ? 'plan-validation ' : ''}task ${triggerRef})`;
+    toast({ kind: 'info', text: `⟳ Auto-commit checkpoint for “${p.name}” (task ${triggerRef} done) → routing to ops-lead` });
+    await submitCommit(p, msg);
+  }
 
   async function runGit(p: ProjectEntry, action: string) {
     if (!p.path) return;
@@ -579,6 +640,18 @@ export function Projects({ store }: { store: FleetStore }) {
                     <button className="btn small" title="Open folder" onClick={() => void call('project:openFolder', p.path)}>open ↗</button>
                   </div>
                   <div className="muted small mono project-path" title={p.path}>{p.path}</div>
+                  <div className="muted small" style={{ marginTop: 4, display: 'inline-flex', alignItems: 'center', gap: 5 }}
+                    title={p.team
+                      ? `Checkpoint commits: when a ${p.autoCommit === 'plan' ? 'plan-validation ' : ''}task completes in team “${p.team}” and this repo has uncommitted changes, the app requests a commit & push (AI-drafted, throttled to once / 10 min).`
+                      : 'Set a team on this project (Edit) to enable checkpoint auto-commit.'}>
+                    ⟳ Auto-commit:
+                    <select className="cell-select small" value={p.autoCommit ?? 'off'} disabled={busy || !p.team} onChange={(e) => void setAutoCommitMode(p, e.target.value as 'off' | 'task' | 'plan')}>
+                      <option value="off">off</option>
+                      <option value="task">on any task done</option>
+                      <option value="plan">on plan validation</option>
+                    </select>
+                    {!p.team ? <span className="muted">(needs a team)</span> : null}
+                  </div>
 
                   {linkFor === p.id ? (
                     <div className="row-actions" style={{ gap: 8, marginTop: 6, flexWrap: 'wrap', alignItems: 'center', border: '1px solid var(--border, #2a2a2a)', borderRadius: 6, padding: 8 }}>

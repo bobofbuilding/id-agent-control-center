@@ -113,6 +113,12 @@ export interface ProjectEntry {
   /** Local folder this project lives in (enables git tracking + README import). */
   path?: string;
   notes?: string;
+  /**
+   * Checkpoint auto-commit: when a task (or a plan-validation task) completes in
+   * this project's team and the repo has uncommitted changes, the app requests a
+   * commit & push (AI-drafted message, throttled). Needs a `team` + `path`.
+   */
+  autoCommit?: 'off' | 'task' | 'plan';
   createdAt: number;
   updatedAt: number;
 }
