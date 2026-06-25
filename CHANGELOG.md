@@ -8,6 +8,19 @@ Every change pushed or merged to `main` carries its version number in the commit
 subject (`vX.Y.Z: …`), stamped automatically by the `commit-msg` hook — see
 [CONTRIBUTING.md](CONTRIBUTING.md).
 
+## [0.1.145] — 2026-06-25
+- **Projects: AI-assisted commit requests + create/fork GitHub repos.**
+  - **⤴ Request commit** is now an inline composer with **✨ Draft with AI** — the team lead reads
+    the project's working diff (`project:diff`, truncated) and drafts a commit message (subject +
+    bullets) you review/edit before routing the commit task to ops-lead.
+  - **＋ Create GitHub repo** appears on any folder-only project (no remote): names + creates a repo
+    via the GitHub API and connects it as `origin` over SSH (`git init` if needed; never auto-pushes,
+    so secrets/node_modules don't leak — the composer opens so you push with a good message).
+  - **Add from GitHub → Fork & clone**: forks a repo to your account, clones the fork, and wires the
+    original as `upstream`.
+  - GitHub API calls authenticate via the github MCP token (Authorization header only — never argv);
+    git remotes use SSH (token never embedded). New bridge: `project:diff`/`createRepo`/`fork`.
+
 ## [0.1.144] — 2026-06-25
 - **Blocked tasks wait in Holding, not Doing.** A task with an unfinished prerequisite no longer
   sits in the Doing lane — `laneOf` parks it in **Holding Pattern** until its prerequisites

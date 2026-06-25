@@ -1,6 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
 import { call, resolveCoordinator, type FleetStore } from '../store.ts';
-import { usePrompt } from '../components/prompt.tsx';
 import { useToast } from '../components/toast.tsx';
 import type { ProjectEntry, ProjectStatus } from '../../../../idctl/src/settings/schema.ts';
 
@@ -57,7 +56,6 @@ function GitStatus({ g }: { g?: GitInfo }) {
 }
 
 export function Projects({ store }: { store: FleetStore }) {
-  const prompt = usePrompt();
   const toast = useToast();
   const [projects, setProjects] = useState<ProjectEntry[]>([]);
   const [gitMap, setGitMap] = useState<Record<string, GitInfo>>({});
@@ -73,6 +71,13 @@ export function Projects({ store }: { store: FleetStore }) {
   const [ghUrl, setGhUrl] = useState('');
   const [root, setRoot] = useState<string | null>(null);
   const [syncing, setSyncing] = useState(false);
+  const [ghMode, setGhMode] = useState<'clone' | 'fork'>('clone'); // Add-from-GitHub: clone vs fork & clone
+  const [commitFor, setCommitFor] = useState<string | null>(null); // project whose AI commit composer is open
+  const [commitMsg, setCommitMsg] = useState('');
+  const [drafting, setDrafting] = useState(false);
+  const [repoFor, setRepoFor] = useState<string | null>(null);    // project whose "create GitHub repo" form is open
+  const [repoName, setRepoName] = useState('');
+  const [repoPrivate, setRepoPrivate] = useState(true);
 
   const lead = resolveCoordinator(store.agents, store.coordinator);
 
@@ -169,26 +174,34 @@ export function Projects({ store }: { store: FleetStore }) {
       setNote('choose where to clone it…');
       const parent = await call<string | null>('project:pickFolder', root ?? undefined).catch(() => null);
       if (!parent) { setNote('cancelled'); return; }
-      setNote('cloning… (large repos take a moment)');
-      const c = await call<CloneResult>('project:cloneGithub', url, parent);
-      if (!c.ok || !c.path) { setNote(`clone failed: ${c.error ?? 'unknown error'}`); return; }
+      setNote(ghMode === 'fork' ? 'forking on GitHub + cloning your fork…' : 'cloning… (large repos take a moment)');
+      const c = ghMode === 'fork'
+        ? await call<CloneResult & { slug?: string }>('project:fork', url, parent)
+        : await call<CloneResult>('project:cloneGithub', url, parent);
+      if (!c.ok || !c.path) { setNote(`${ghMode === 'fork' ? 'fork' : 'clone'} failed: ${c.error ?? 'unknown error'}`); return; }
+      const forkSlug = (c as { slug?: string }).slug;
       const [meta, readme] = await Promise.all([
         call<GithubMeta>('project:githubMeta', url).catch((): GithubMeta => ({ ok: false })),
         call<Readme>('project:readme', c.path).catch((): Readme => ({ found: false })),
       ]);
-      const tags = [...(meta.language ? [meta.language] : []), ...(meta.topics ?? [])];
+      const tags = [...(meta.language ? [meta.language] : []), ...(meta.topics ?? []), ...(ghMode === 'fork' ? ['fork'] : [])];
       setForm({
         ...BLANK,
         name: meta.name || readme.name || c.name || '',
         description: meta.description || readme.description || '',
         tags: tags.join(', '),
         path: c.path,
-        links: url.replace(/^https?:\/\//i, '').replace(/\.git$/i, ''),
+        // For a fork, link the fork (origin) first, then the upstream we cloned from.
+        links: ghMode === 'fork' && forkSlug
+          ? `${forkSlug}\n${url.replace(/^https?:\/\//i, '').replace(/\.git$/i, '')}`
+          : url.replace(/^https?:\/\//i, '').replace(/\.git$/i, ''),
       });
       setGhOpen(false); setGhUrl('');
       setEditing('new');
       const src = meta.ok && meta.description ? 'GitHub' : readme.found ? 'README' : 'folder';
-      setNote(`cloned ${c.name} ✓ — auto-filled from ${src}; review & Save${lead ? ' (or “Refine with lead”)' : ''}`);
+      setNote(ghMode === 'fork'
+        ? `forked → ${forkSlug ?? c.name} ✓ (upstream wired); review & Save`
+        : `cloned ${c.name} ✓ — auto-filled from ${src}; review & Save${lead ? ' (or “Refine with lead”)' : ''}`);
     } finally {
       setBusy(false);
     }
@@ -263,22 +276,62 @@ export function Projects({ store }: { store: FleetStore }) {
       setBusy(false);
     }
   }
+  const q = (s: string) => `"${s.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`;
   // Publish a change per project: route a GitHub-commit task to ops-lead (who holds the
   // creds) rather than committing from here. This is the standard "request for change" flow.
-  async function requestCommit(p: ProjectEntry) {
-    const desc = await prompt({ title: `Request a commit & push for “${p.name}”`, placeholder: 'describe the change / what to commit', okLabel: 'Request commit' });
-    if (!desc || !desc.trim()) return;
-    const q = (s: string) => `"${s.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`;
+  async function submitCommit(p: ProjectEntry, desc: string) {
+    if (!desc.trim()) { setNote('describe the change (or use ✨ Draft with AI)'); return; }
     const t = toast({ kind: 'progress', text: `Requesting ops-lead to commit & push “${p.name}”…` });
     try {
       const title = `Commit & push: ${p.name}`;
-      const body = `Project “${p.name}”${p.path ? ` at ${p.path}` : ''}. Review the working changes, commit them with a clear message, and push to the remote (init/create the GitHub repo if it doesn't exist yet). Requested change: ${desc.trim()}`;
+      const body = `Project “${p.name}”${p.path ? ` at ${p.path}` : ''}. Review the working changes, commit them with a clear message, and push to the remote (init/create the GitHub repo if it doesn't exist yet). Requested change / suggested commit message:\n${desc.trim()}`;
       await call('remote', `/task create ${q(title)} --owner ops-lead --description ${q(body)}`, undefined, 'ops-team');
       void call('remote', `/ask ops-lead ${q(`New change request — ${title}. ${body} Delegate to git-manager/deployer and mark the task done when pushed.`)}`, undefined, 'ops-team').catch(() => {});
       t.update({ kind: 'success', text: `Requested ops-lead to commit & push “${p.name}” ✓` });
+      setCommitFor(null); setCommitMsg('');
     } catch (e) {
       t.update({ kind: 'error', text: `Request failed: ${e instanceof Error ? e.message : String(e)}` });
     }
+  }
+  // AI assistance: read the project's working diff and have the team lead draft a
+  // commit message (subject + bullets), pre-filling the composer for review.
+  async function draftCommit(p: ProjectEntry) {
+    if (!p.path) return;
+    if (!lead) { setNote('no team lead online to draft with'); return; }
+    setDrafting(true);
+    try {
+      const d = await call<{ ok: boolean; stat: string; diff: string; untracked: string[]; error?: string }>('project:diff', p.path).catch(() => null);
+      if (!d || !d.ok) { setNote(`couldn't read the diff: ${d?.error ?? 'unknown'}`); return; }
+      if (!d.stat && !d.diff && !d.untracked.length) { setNote('no working changes to summarize'); return; }
+      const ask = `Draft a git commit message for the project "${p.name}". Working changes below.\n\nFiles changed (git diff --stat):\n${d.stat || '(none tracked)'}\n\nUntracked files: ${d.untracked.join(', ') || 'none'}\n\nDiff:\n${d.diff || '(no tracked changes)'}\n\nReply with ONLY the commit message: a concise imperative subject line (≤72 chars), then a blank line, then 1-4 short bullet points. No code fences, no preamble.`;
+      const reply = await call<string>('dispatch', `/ask ${lead} ${q(ask)}`).catch(() => '');
+      const clean = String(reply || '').replace(/^```[a-z]*\n?/i, '').replace(/```$/,'').trim();
+      if (!clean) { setNote(`${lead} didn't return a draft — write one manually`); return; }
+      setCommitMsg(clean);
+      setNote(`drafted by ${lead} — review & request`);
+    } finally {
+      setDrafting(false);
+    }
+  }
+  // Create a GitHub repo for a folder-only project and connect it as origin (SSH).
+  async function createRepo(p: ProjectEntry) {
+    if (!p.path) return;
+    const name = (repoName || p.name || '').trim();
+    if (!name) { setNote('enter a repo name'); return; }
+    setBusy(true);
+    const t = toast({ kind: 'progress', text: `Creating GitHub repo “${name}”…` });
+    try {
+      const r = await call<{ ok: boolean; slug?: string; htmlUrl?: string; error?: string }>('project:createRepo', p.path, { name, description: p.description || undefined, private: repoPrivate });
+      if (!r.ok) { t.update({ kind: 'error', text: `Create repo failed: ${r.error}` }); setNote(`create repo failed: ${r.error}`); return; }
+      const links = [r.slug ?? '', ...((p.links ?? []) as string[])].filter(Boolean).filter((v, i, a) => a.indexOf(v) === i);
+      const list = await call<ProjectEntry[]>('projects:save', { ...p, links });
+      setProjects(list); void loadGit(list);
+      t.update({ kind: 'success', text: `Created ${r.slug} ✓ — origin connected. Use ⤴ Request commit to push your files.` });
+      setRepoFor(null); setRepoName('');
+      setCommitFor(p.id); setCommitMsg(''); // open the composer so they can push content right away
+    } catch (e) {
+      t.update({ kind: 'error', text: `Create repo failed: ${e instanceof Error ? e.message : String(e)}` });
+    } finally { setBusy(false); }
   }
 
   async function runGit(p: ProjectEntry, action: string) {
@@ -369,7 +422,13 @@ export function Projects({ store }: { store: FleetStore }) {
       {ghOpen ? (
         <section className="card gh-add">
           <h3>Add from GitHub</h3>
-          <p className="muted small">Paste a repo URL — it clones into a folder you pick, then auto-fills name, description, and tags. You review before saving.</p>
+          <div className="row-actions" style={{ gap: 6, marginBottom: 6 }}>
+            <button className={`btn small${ghMode === 'clone' ? ' primary' : ''}`} disabled={busy} onClick={() => setGhMode('clone')}>Clone</button>
+            <button className={`btn small${ghMode === 'fork' ? ' primary' : ''}`} disabled={busy} onClick={() => setGhMode('fork')}>Fork &amp; clone</button>
+          </div>
+          <p className="muted small">{ghMode === 'fork'
+            ? 'Forks the repo to your GitHub account, clones your fork into a folder you pick, and wires the original as `upstream`. Auto-fills name/description/tags. Needs a GitHub token (Capabilities → github MCP).'
+            : 'Clones the repo into a folder you pick, then auto-fills name, description, and tags. You review before saving.'}</p>
           <div className="row-actions" style={{ gap: 8, flexWrap: 'wrap' }}>
             <input
               style={{ flex: 1, minWidth: 320 }}
@@ -381,7 +440,7 @@ export function Projects({ store }: { store: FleetStore }) {
               onChange={(e) => setGhUrl(e.target.value)}
               onKeyDown={(e) => { if (e.key === 'Enter') void addFromGithub(); }}
             />
-            <button className="btn primary" disabled={busy || !ghUrl.trim()} onClick={() => void addFromGithub()}>{busy ? 'Cloning…' : 'Clone & add'}</button>
+            <button className="btn primary" disabled={busy || !ghUrl.trim()} onClick={() => void addFromGithub()}>{busy ? (ghMode === 'fork' ? 'Forking…' : 'Cloning…') : (ghMode === 'fork' ? 'Fork & add' : 'Clone & add')}</button>
           </div>
         </section>
       ) : null}
@@ -432,10 +491,41 @@ export function Projects({ store }: { store: FleetStore }) {
                   <div className="row-actions" style={{ gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
                     <GitStatus g={g} />
                     <span className="grow" />
-                    <button className="btn small primary" title="Ask the ops team to commit & push this project's changes (routes a GitHub-commit task to ops-lead)" onClick={() => void requestCommit(p)}>⤴ Request commit</button>
+                    {g && !g.remoteUrl ? (
+                      <button className="btn small" title="Create a GitHub repo for this folder and connect it as origin (SSH)" onClick={() => { setRepoFor(repoFor === p.id ? null : p.id); setRepoName(p.name || ''); setNote(''); }}>{repoFor === p.id ? '− Cancel' : '＋ Create GitHub repo'}</button>
+                    ) : null}
+                    <button className="btn small primary" title="Commit & push this project's changes — optionally let AI draft the message (routes the task to ops-lead)" onClick={() => { setCommitFor(commitFor === p.id ? null : p.id); setCommitMsg(''); setNote(''); }}>{commitFor === p.id ? '− Cancel' : '⤴ Request commit'}</button>
                     <button className="btn small" title="Open folder" onClick={() => void call('project:openFolder', p.path)}>open ↗</button>
                   </div>
                   <div className="muted small mono project-path" title={p.path}>{p.path}</div>
+
+                  {repoFor === p.id ? (
+                    <div className="row-actions" style={{ gap: 8, marginTop: 6, flexWrap: 'wrap', alignItems: 'center', border: '1px solid var(--border, #2a2a2a)', borderRadius: 6, padding: 8 }}>
+                      <span className="muted small">new repo</span>
+                      <input className="mono" style={{ flex: '0 1 220px' }} value={repoName} disabled={busy} placeholder="repo-name" onChange={(e) => setRepoName(e.target.value)} />
+                      <label className="small" style={{ display: 'inline-flex', alignItems: 'center', gap: 5 }}>
+                        <input type="checkbox" checked={repoPrivate} disabled={busy} onChange={(e) => setRepoPrivate(e.target.checked)} /> private
+                      </label>
+                      <span className="grow" />
+                      <button className="btn small primary" disabled={busy || !repoName.trim()} onClick={() => void createRepo(p)}>{busy ? 'Creating…' : 'Create & connect'}</button>
+                    </div>
+                  ) : null}
+
+                  {commitFor === p.id ? (
+                    <div style={{ marginTop: 6, border: '1px solid var(--border, #2a2a2a)', borderRadius: 6, padding: 8, display: 'flex', flexDirection: 'column', gap: 6 }}>
+                      <div className="row-actions" style={{ gap: 6, alignItems: 'center' }}>
+                        <span className="muted small">commit message / change notes</span>
+                        <span className="grow" />
+                        <button className="btn small" disabled={drafting || !lead} title={lead ? `Let ${lead} read the working diff and draft a commit message` : 'no team lead online to draft with'} onClick={() => void draftCommit(p)}>{drafting ? '✨ Drafting…' : '✨ Draft with AI'}</button>
+                      </div>
+                      <textarea style={{ width: '100%', minHeight: 80 }} value={commitMsg} placeholder="Describe the change, or click “✨ Draft with AI” to summarize the working diff." onChange={(e) => setCommitMsg(e.target.value)} />
+                      <div className="row-actions" style={{ gap: 6 }}>
+                        <span className="grow" />
+                        <button className="btn small primary" disabled={!commitMsg.trim()} onClick={() => void submitCommit(p, commitMsg)}>⤴ Request commit &amp; push</button>
+                      </div>
+                    </div>
+                  ) : null}
+
                   {g?.isRepo ? (
                     <div className="row-actions" style={{ gap: 6, marginTop: 6, flexWrap: 'wrap' }}>
                       {GIT_ACTIONS.map((act) => (

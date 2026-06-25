@@ -11,7 +11,7 @@ import { startUpdater, stopUpdater, checkForUpdate, getStatus, applyStagedAndRel
 import { subsStatus, subsSignin, subsSignout, subsInstall, type SubProvider } from './subscriptions.ts';
 import { ollamaTags, ollamaPull, ollamaRemove } from './ollama.ts';
 import { getHardware, runInTerminal } from './system.ts';
-import { pickProjectFolder, openProjectFolder, projectReadme, projectGit, projectGitRun, githubMeta, cloneGithub, detectProjectsRoot, scanProjectsRoot } from './projects.ts';
+import { pickProjectFolder, openProjectFolder, projectReadme, projectGit, projectGitRun, githubMeta, cloneGithub, projectDiff, createGithubRepo, forkGithub, detectProjectsRoot, scanProjectsRoot } from './projects.ts';
 import { pickChatFiles, saveChatFiles, savePastedFile } from './chatfiles.ts';
 import { listChats, listInflightChats, getChat, saveChat, renameChat, removeChat, genTitle, unreadChatCount, markChatRead, patchChat, type ChatSession, type ChatPatch } from './chatstore.ts';
 import { listPlans, getPlan, savePlan, removePlan, type Plan } from './planstore.ts';
@@ -218,6 +218,12 @@ async function appCall(method: string, args: unknown[]): Promise<unknown> {
       return githubMeta(args[0] as string);
     case 'project:cloneGithub':
       return cloneGithub(args[0] as string, args[1] as string);
+    case 'project:diff':
+      return projectDiff(args[0] as string);
+    case 'project:createRepo':
+      return createGithubRepo(args[0] as string, (args[1] as { name?: string; description?: string; private?: boolean }) ?? {});
+    case 'project:fork':
+      return forkGithub(args[0] as string, args[1] as string);
     case 'project:detectRoot':
       return detectProjectsRoot(args[0] as string | undefined);
     case 'project:scanRoot':

@@ -15,7 +15,7 @@
 import { BrowserWindow, dialog, shell } from 'electron';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
-import { existsSync, readFileSync, readdirSync, realpathSync, statSync } from 'node:fs';
+import { existsSync, readFileSync, readdirSync, realpathSync, statSync, rmSync } from 'node:fs';
 import { join, basename } from 'node:path';
 import { homedir } from 'node:os';
 import { loadSettings } from '../../../idctl/src/settings/store.ts';
@@ -166,6 +166,110 @@ export async function cloneGithub(url: string, parentDir: string): Promise<{ ok:
       const err = e as { stderr?: string; message?: string };
       lastErr = (err.stderr || err.message || 'clone failed').trim();
     }
+  }
+  return { ok: false, error: lastErr };
+}
+
+/** Authenticated GitHub API call (token from the configured github MCP server).
+ *  The token travels only in the Authorization header — never on a command line. */
+async function githubApi(method: string, path: string, body?: unknown): Promise<{ ok: boolean; status: number; data?: Record<string, unknown>; error?: string }> {
+  const tok = githubToken();
+  if (!tok) return { ok: false, status: 0, error: 'no GitHub token configured — add it in Capabilities → github MCP server' };
+  try {
+    const r = await fetch(`https://api.github.com${path}`, {
+      method,
+      headers: { Accept: 'application/vnd.github+json', 'User-Agent': 'idctl', Authorization: `Bearer ${tok}`, ...(body !== undefined ? { 'Content-Type': 'application/json' } : {}) },
+      body: body !== undefined ? JSON.stringify(body) : undefined,
+      signal: AbortSignal.timeout(20000),
+    });
+    const data = (await r.json().catch(() => ({}))) as Record<string, unknown>;
+    if (!r.ok) return { ok: false, status: r.status, error: (typeof data.message === 'string' && data.message) || `GitHub API ${r.status}` };
+    return { ok: true, status: r.status, data };
+  } catch (e) {
+    return { ok: false, status: 0, error: e instanceof Error ? e.message : String(e) };
+  }
+}
+
+/** A project's working diff (for AI-drafting a commit message). Truncated so a huge
+ *  diff can't blow up a prompt; includes a --stat header + untracked file list. */
+export async function projectDiff(path: string): Promise<{ ok: boolean; stat: string; diff: string; untracked: string[]; error?: string }> {
+  if (!path || !existsSync(path)) return { ok: false, stat: '', diff: '', untracked: [], error: 'folder not found' };
+  if (!(await isOwnRepoRoot(path))) return { ok: false, stat: '', diff: '', untracked: [], error: 'not a git repository' };
+  try {
+    const stat = await git(path, ['diff', '--stat', 'HEAD']).catch(() => git(path, ['diff', '--stat']).catch(() => ''));
+    let diff = await git(path, ['diff', 'HEAD'], 20000).catch(() => git(path, ['diff'], 20000).catch(() => ''));
+    const MAX = 12000;
+    if (diff.length > MAX) diff = diff.slice(0, MAX) + `\n… (diff truncated — ${diff.length - MAX} more chars)`;
+    const untracked = (await git(path, ['ls-files', '--others', '--exclude-standard']).catch(() => '')).split('\n').filter(Boolean).slice(0, 60);
+    return { ok: true, stat, diff, untracked };
+  } catch (e) {
+    return { ok: false, stat: '', diff: '', untracked: [], error: e instanceof Error ? e.message : String(e) };
+  }
+}
+
+/** Create a GitHub repo for a local folder and connect it as `origin` (SSH). Inits
+ *  git if needed. Does NOT auto-commit/push — that's the Request-commit flow, so we
+ *  never blindly push secrets/node_modules. Returns the new repo's slug + urls. */
+export async function createGithubRepo(path: string, opts: { name?: string; description?: string; private?: boolean }): Promise<{ ok: boolean; slug?: string; sshUrl?: string; htmlUrl?: string; error?: string }> {
+  if (!path || !existsSync(path)) return { ok: false, error: 'folder not found' };
+  if (!githubToken()) return { ok: false, error: 'no GitHub token configured — add it in Capabilities → github MCP server' };
+  const name = (opts.name || basename(path)).trim().replace(/[^A-Za-z0-9._-]/g, '-').replace(/^-+|-+$/g, '') || basename(path);
+  try {
+    // Ensure a git repo with a 'main' branch (never touch an existing repo's history).
+    if (!(await isOwnRepoRoot(path))) {
+      await git(path, ['init']);
+      await git(path, ['symbolic-ref', 'HEAD', 'refs/heads/main']).catch(() => {});
+    }
+    const remotes = (await git(path, ['remote']).catch(() => '')).split('\n').filter(Boolean);
+    if (remotes.includes('origin')) {
+      const existing = await git(path, ['remote', 'get-url', 'origin']).catch(() => '');
+      return { ok: false, error: `this folder already has an 'origin' remote${existing ? ` (${existing})` : ''}` };
+    }
+    const res = await githubApi('POST', '/user/repos', { name, description: opts.description || undefined, private: !!opts.private, auto_init: false });
+    if (!res.ok) return { ok: false, error: res.error };
+    const repo = res.data ?? {};
+    const slug = String(repo.full_name ?? '');
+    const sshUrl = String(repo.ssh_url ?? `git@github.com:${slug}.git`);
+    const htmlUrl = String(repo.html_url ?? `https://github.com/${slug}`);
+    await git(path, ['remote', 'add', 'origin', sshUrl]); // SSH — never embed the token in the remote
+    return { ok: true, slug, sshUrl, htmlUrl };
+  } catch (e) {
+    const err = e as { stderr?: string; message?: string };
+    return { ok: false, error: (err.stderr || err.message || 'failed to create repo').trim() };
+  }
+}
+
+/** Fork a GitHub repo to the authenticated user, clone the fork into parentDir, and
+ *  wire `upstream` to the original (so projectGit reports it as a fork). */
+export async function forkGithub(url: string, parentDir: string): Promise<{ ok: boolean; path?: string; name?: string; slug?: string; error?: string }> {
+  const slug = repoSlug(url);
+  if (!slug) return { ok: false, error: 'not a GitHub repo URL' };
+  if (!parentDir || !existsSync(parentDir)) return { ok: false, error: 'destination folder not found' };
+  if (!githubToken()) return { ok: false, error: 'no GitHub token configured — add it in Capabilities → github MCP server' };
+  const res = await githubApi('POST', `/repos/${slug}/forks`, {}); // 202 Accepted; repo object returned now
+  if (!res.ok) return { ok: false, error: res.error };
+  const fork = res.data ?? {};
+  const forkSlug = String(fork.full_name ?? '');
+  const name = forkSlug.split('/')[1] || slug.split('/')[1];
+  const dest = join(parentDir, name);
+  if (existsSync(dest)) return { ok: false, error: `folder already exists: ${dest}` };
+  const sshUrl = String(fork.ssh_url ?? `git@github.com:${forkSlug}.git`);
+  const httpsUrl = String(fork.clone_url ?? `https://github.com/${forkSlug}.git`);
+  // GitHub forks asynchronously — the clone can fail for a few seconds; retry SSH→HTTPS.
+  let lastErr = '';
+  for (let attempt = 0; attempt < 4; attempt++) {
+    for (const remote of [sshUrl, httpsUrl]) {
+      try {
+        await execFileP('git', ['clone', remote, dest], { timeout: 300000 });
+        await git(dest, ['remote', 'add', 'upstream', `git@github.com:${slug}.git`]).catch(() => {});
+        return { ok: true, path: dest, name, slug: forkSlug };
+      } catch (e) {
+        const err = e as { stderr?: string; message?: string };
+        lastErr = (err.stderr || err.message || 'clone failed').trim();
+        try { if (existsSync(dest)) rmSync(dest, { recursive: true, force: true }); } catch { /* leave it */ }
+      }
+    }
+    await new Promise((r) => setTimeout(r, 2000)); // wait for the fork to materialize
   }
   return { ok: false, error: lastErr };
 }
