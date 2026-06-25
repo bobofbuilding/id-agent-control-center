@@ -124,6 +124,7 @@ function TasksPanel({ store }: { store: FleetStore }) {
   const [dragRef, setDragRef] = useState<string | null>(null); // task being dragged across lanes
   const [laneOverlay, setLaneOverlay] = useState<Record<string, string>>({}); // ref → fine-grained lane
   const [depsOverlay, setDepsOverlay] = useState<Record<string, string[]>>({}); // ref → prerequisite refs (app-side; manager has no deps)
+  const [reviewOverlay, setReviewOverlay] = useState<Record<string, { state: string; at: number }>>({}); // ref → adjustment-loop state + when-set
   const [confirmDel, setConfirmDel] = useState<string | null>(null);
   // Auto-decompose: describe an objective → lead splits it → create + farm out.
   const [showAssign, setShowAssign] = useState(false);
@@ -224,6 +225,7 @@ function TasksPanel({ store }: { store: FleetStore }) {
     }
     setLaneOverlay(await call<Record<string, string>>('tasks:lanes').catch(() => ({})));
     setDepsOverlay(await call<Record<string, string[]>>('tasks:deps').catch(() => ({})));
+    setReviewOverlay(await call<Record<string, { state: string; at: number }>>('tasks:review').catch(() => ({})));
   }
   useEffect(() => {
     reload();
@@ -253,15 +255,52 @@ function TasksPanel({ store }: { store: FleetStore }) {
     const r = ref(t);
     return Object.keys(depsOverlay).filter((k) => depsOverlay[k]?.includes(r) && taskIndex.has(k)).length;
   }
-  // A task's effective lane: an explicit overlay (if it still matches the manager status)
-  // wins; otherwise a BLOCKED task waits in Holding (it isn't really being worked until
-  // its prerequisites finish), and anything else lands in the default lane for its status.
+  // Actively "working" signal — owned, in Doing, recently updated. Used to detect a
+  // block has passed (the agent picked it back up after the user's response).
+  function isWorking(t: Task): boolean {
+    if (colOf(t.status) !== 'doing' || !t.ownerName) return false;
+    const up = t.updatedAt ? (t.updatedAt < 1e12 ? t.updatedAt * 1000 : t.updatedAt) : 0;
+    return up > 0 && Date.now() - up < 30 * 60 * 1000;
+  }
+  // Adjustment-loop state for a task (needs-adjustment | under-review | rework), or ''.
+  function reviewOf(t: Task): '' | 'needs-adjustment' | 'under-review' | 'rework' {
+    if (isDone(t)) return '';
+    const s = reviewOverlay[ref(t)]?.state;
+    return (s === 'needs-adjustment' || s === 'under-review' || s === 'rework') ? s : '';
+  }
+  // A task's effective lane. Precedence: a manual drag (overlay matching the status column)
+  // wins; then the Adjustment Loop if it's blocked on a USER decision (needs-adjustment →
+  // under-review → rework); then Holding if it's dependency-blocked; then the default lane.
   function laneOf(t: Task): Lane {
     const ov = laneOverlay[ref(t)] as Lane | undefined;
     if (ov && LANE_STATUS[ov] === colOf(t.status)) return ov;
+    const rv = reviewOf(t);
+    if (rv) return rv;
     if (isBlocked(t)) return 'holding';
     return DEFAULT_LANE[colOf(t.status)];
   }
+  // Auto-resolve the adjustment loop once a block has PASSED: a reviewed task that
+  // completes, OR has been Under Review / Rework for 10m+ since the user responded with
+  // no re-block (the agent has had the answer and moved on). Clearing returns it to its
+  // normal lane (Holding / To Do / Doing, as fits). isWorking gates the next-poll check.
+  useEffect(() => {
+    const REVIEW_TTL = 10 * 60 * 1000;
+    const toClear = tasks.filter((t) => {
+      const e = reviewOverlay[ref(t)];
+      if (!e) return false;
+      if (isDone(t)) return true;
+      return (e.state === 'under-review' || e.state === 'rework') && isWorking(t) && Date.now() - e.at > REVIEW_TTL;
+    });
+    if (!toClear.length) return;
+    let alive = true;
+    void (async () => {
+      let map = reviewOverlay;
+      for (const t of toClear) { try { map = (await call<Record<string, { state: string; at: number }>>('tasks:setReview', ref(t), '')); } catch { /* keep going */ } }
+      if (alive) setReviewOverlay(map);
+    })();
+    return () => { alive = false; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tasks, reviewOverlay]);
   // Drag a card to a lane → save the lane overlay + set the mapped manager status if it changed.
   async function moveToLane(t: Task, lane: Lane) {
     if (laneOf(t) === lane) return;
@@ -269,6 +308,8 @@ function TasksPanel({ store }: { store: FleetStore }) {
     setBusy(true); setNote(`move ${ref(t)} → ${lane.replace(/-/g, ' ')}…`);
     try {
       await call('tasks:setLane', ref(t), lane);
+      // A manual drag overrides the automatic adjustment-loop state for this task.
+      if (reviewOverlay[ref(t)]) await call('tasks:setReview', ref(t), '').catch(() => {});
       if (colOf(t.status) !== targetStatus) await call('remote', `/task status ${ref(t)} ${targetStatus}`, undefined, taskTeam(t));
       setNote('');
       await reload();
@@ -298,11 +339,16 @@ function TasksPanel({ store }: { store: FleetStore }) {
         const options = (Array.isArray(it?.options) ? it.options : []).map((o: unknown) => String(o)).filter(Boolean);
         if (!question || options.length < 2) continue;
         const agent = agentNames.has(it?.agent) ? String(it.agent) : leadName;
-        const taskTitle = it?.task ? String(it.task) : undefined;
-        await call('questions:add', { question, options, agent, taskRef: taskTitle, taskTitle, team: store.team ?? 'default' });
+        // Match the agent's task to a real board task so the Inbox decision + board lane line up.
+        const taskKey = it?.task ? String(it.task).trim() : '';
+        const match = taskKey ? open.find((t) => ref(t) === taskKey || t.title === taskKey || t.title.includes(taskKey)) : undefined;
+        const taskRef = match ? ref(match) : (taskKey || undefined);
+        const taskTitle = match ? match.title : (taskKey || undefined);
+        await call('questions:add', { question, options, agent, taskRef, taskTitle, team: store.team ?? 'default' });
+        if (taskRef) await call('tasks:setReview', taskRef, 'needs-adjustment').catch(() => {}); // → Needs Adjustment lane
         added++;
       }
-      if (added) toast({ kind: 'info', text: `⚙ surfaced ${added} blocker decision${added === 1 ? '' : 's'} → Inbox` });
+      if (added) { setReviewOverlay(await call<Record<string, { state: string; at: number }>>('tasks:review').catch(() => reviewOverlay)); toast({ kind: 'info', text: `⚙ surfaced ${added} blocker decision${added === 1 ? '' : 's'} → Inbox` }); }
       if (!silent) setNote(added ? `added ${added} blocker question${added === 1 ? '' : 's'} to the Inbox ✓` : 'no blocker decisions found');
     } catch (err) {
       if (!silent) setNote(`blocker scan failed: ${err instanceof Error ? err.message : String(err)}`);
@@ -793,8 +839,11 @@ function TasksPanel({ store }: { store: FleetStore }) {
             // strong stall signal — don't claim "working" when a task has sat untouched for 30m+.
             const upMs = t.updatedAt ? (t.updatedAt < 1e12 ? t.updatedAt * 1000 : t.updatedAt) : 0;
             const blocked = isBlocked(t);                        // waiting on a prerequisite → parked in Holding
-            const stale = owned && !blocked && upMs > 0 && Date.now() - upMs > 30 * 60 * 1000;
-            const working = owned && !stale && !blocked;         // recently moved to doing → plausibly active
+            const review = reviewOf(t);                          // adjustment loop (decision/under-review/rework)
+            const reviewColor = review === 'needs-adjustment' ? '224,163,60' : review === 'under-review' ? '167,139,250' : review === 'rework' ? '251,113,133' : '';
+            const reviewLabel = review === 'needs-adjustment' ? '⚖ needs your decision' : review === 'under-review' ? '👁 under review' : review === 'rework' ? '↻ rework' : '';
+            const stale = owned && !blocked && !review && upMs > 0 && Date.now() - upMs > 30 * 60 * 1000;
+            const working = owned && !stale && !blocked && !review; // recently moved to doing → plausibly active
             const cAbs = absTime(t.createdAt);
             const uAbs = absTime(t.updatedAt);
             const dAbs = absTime(t.completedAt ?? t.updatedAt);
@@ -805,7 +854,7 @@ function TasksPanel({ store }: { store: FleetStore }) {
               onDragStart={(e) => { setDragRef(ref(t)); e.dataTransfer.setData('text/plain', ref(t)); e.dataTransfer.effectAllowed = 'move'; }}
               onDragEnd={() => setDragRef(null)}
               className="kanban-card"
-              style={{ border: `1px solid ${blocked ? 'rgba(96,165,250,0.5)' : working ? 'rgba(60,203,120,0.55)' : stale ? 'rgba(224,163,60,0.55)' : 'var(--border, #2a2a2a)'}`, borderRadius: 6, padding: '6px 8px', background: 'var(--bg, #141414)', cursor: busy ? 'default' : 'grab' }}
+              style={{ border: `1px solid ${reviewColor ? `rgba(${reviewColor},0.6)` : blocked ? 'rgba(96,165,250,0.5)' : working ? 'rgba(60,203,120,0.55)' : stale ? 'rgba(224,163,60,0.55)' : 'var(--border, #2a2a2a)'}`, borderRadius: 6, padding: '6px 8px', background: 'var(--bg, #141414)', cursor: busy ? 'default' : 'grab' }}
             >
               <div className="b" style={{ fontSize: 13 }}>{t.title}</div>
               <div className="muted small mono">{t.shortId ?? ref(t)}{isRoutine(t) ? ' · routine' : ''}{store.viewAll && t.teamName ? ` · ${t.teamName}` : ''}{(() => { const n = blocksCount(t); return n ? ` · blocks ${n}` : ''; })()}</div>
@@ -824,7 +873,12 @@ function TasksPanel({ store }: { store: FleetStore }) {
                 );
               })()}
               <div className="row-actions" style={{ marginTop: 4, alignItems: 'center', gap: 6 }}>
-                {blocked ? (
+                {review ? (
+                  <span className="small" title={review === 'needs-adjustment' ? 'Blocked on a decision — answer it in the Inbox (option, comment, or “I’ll handle it”).' : review === 'under-review' ? 'You responded — the agent is working your answer. Auto-resolves once the block passes.' : 'Re-blocked after review — respond again in the Inbox to push it forward.'}
+                    style={{ display: 'inline-flex', alignItems: 'center', gap: 5, color: `rgb(${reviewColor})`, background: `rgba(${reviewColor},0.14)`, borderRadius: 10, padding: '1px 7px', fontWeight: 600 }}>
+                    {reviewLabel}{t.ownerName ? ` · ${t.ownerName}` : ''}
+                  </span>
+                ) : blocked ? (
                   <span className="small" title={`Waiting on a prerequisite — parked in Holding until it's done.${t.ownerName ? ` (owner: ${t.ownerName})` : ''}`}
                     style={{ display: 'inline-flex', alignItems: 'center', gap: 5, color: '#60a5fa', background: 'rgba(96,165,250,0.13)', borderRadius: 10, padding: '1px 7px', fontWeight: 600 }}>
                     ⏸ {t.ownerName ? `${t.ownerName} · ` : ''}waiting

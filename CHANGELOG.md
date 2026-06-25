@@ -8,6 +8,19 @@ Every change pushed or merged to `main` carries its version number in the commit
 subject (`vX.Y.Z: …`), stamped automatically by the `commit-msg` hook — see
 [CONTRIBUTING.md](CONTRIBUTING.md).
 
+## [0.1.156] — 2026-06-25
+- **Adjustment-loop state machine for tasks blocked on a USER decision.** A task moves through the
+  board automatically as its Inbox decision is handled:
+  - decision raised for it → **Needs Adjustment**;
+  - you respond (option / comment / “I’ll handle it”) → **Under Review**;
+  - it gets blocked again → **Rework**;
+  - the block passes (task completes, or it’s been Under Review and progressing for 10m+) → it
+    returns to **Holding / To Do / Doing** as fits.
+  Dependency-blocked tasks still sit in **Holding Pattern** (unchanged). A manual drag or **Skip**
+  clears the state. Cards show **⚖ needs your decision / 👁 under review / ↻ rework** badges. New
+  app-side `taskReview` overlay + `tasks:review`/`setReview`. (Transitions verified, incl. the
+  re-block→rework promotion.)
+
 ## [0.1.155] — 2026-06-25
 - **Plan blockers/decisions now land in the Inbox, not the plan card.** The ▶ Work pipeline's
   blocker scan now returns structured decisions (each with the agent's 2-4 **best options**) and

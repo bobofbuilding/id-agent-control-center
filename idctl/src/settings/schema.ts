@@ -65,6 +65,14 @@ export interface IdctlConfig {
    * Client-side only.
    */
   taskDeps?: Record<string, string[]>;
+  /**
+   * App-side "adjustment loop" state for tasks blocked on a USER decision (a question
+   * in the Inbox): task ref → { state, at }. state is 'needs-adjustment' (decision
+   * raised) | 'under-review' (user responded) | 'rework' (re-blocked after review); `at`
+   * is when that state was set (drives the auto-resolve once a block passes). Drives the
+   * board's Adjustment-Loop columns; cleared when the block passes. Client-side only.
+   */
+  taskReview?: Record<string, { state: string; at: number }>;
   /** Local project tracker entries (the "Projects" page). Client-side only. */
   projects?: ProjectEntry[];
   /**

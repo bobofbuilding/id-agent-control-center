@@ -49,10 +49,13 @@ function QuestionRow({ q, onDone }: { q: BlockerQuestion; onDone: () => void }) 
   const subject = q.taskTitle ?? q.taskRef ?? '';
 
   // Deliver a response to the blocked agent (best-effort, async) and clear the item.
+  // A response moves the task into the board's "Under Review" lane (the block is being
+  // worked on the back of your answer); it auto-resolves once the agent progresses.
   async function deliver(answer: string) {
     setBusy(true); setErr('');
     try {
       if (q.agent && answer) void call('dispatch', `/ask ${q.agent} ${qArg(answer)}`).catch(() => {});
+      if (q.taskRef) void call('tasks:setReview', q.taskRef, 'under-review').catch(() => {});
       await call('questions:remove', q.id);
       onDone();
     } catch (e) { setErr(e instanceof Error ? e.message : String(e)); setBusy(false); }
@@ -62,8 +65,10 @@ function QuestionRow({ q, onDone }: { q: BlockerQuestion; onDone: () => void }) 
   const handleManually = () => deliver(`Re “${subject}”: ${q.question} — the USER is handling this manually/independently. Do NOT work on it or re-raise it; set it aside and continue with everything else. The user will follow up when it's done.`);
   async function skip() {
     setBusy(true); setErr('');
-    try { await call('questions:remove', q.id); onDone(); }
-    catch (e) { setErr(e instanceof Error ? e.message : String(e)); setBusy(false); }
+    try {
+      if (q.taskRef) void call('tasks:setReview', q.taskRef, '').catch(() => {}); // dismissing clears the adjustment state
+      await call('questions:remove', q.id); onDone();
+    } catch (e) { setErr(e instanceof Error ? e.message : String(e)); setBusy(false); }
   }
 
   return (

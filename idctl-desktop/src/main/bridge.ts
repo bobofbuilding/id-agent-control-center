@@ -30,6 +30,7 @@ import {
   setSkillTags,
   setTaskLane,
   setTaskDeps,
+  setTaskReview,
 } from '../../../idctl/src/settings/store.ts';
 import { detectProjectsRoot, scanProjectsRoot } from './projects.ts';
 import { realpathSync } from 'node:fs';
@@ -191,6 +192,9 @@ const METHODS: Record<string, (...a: any[]) => Promise<unknown>> = {
   // app-side dependency overlay (task ref → prerequisite refs; the manager has no deps field)
   'tasks:deps': () => Promise.resolve(loadSettings().taskDeps ?? {}),
   'tasks:setDeps': (ref: string, deps: string[]) => Promise.resolve(setTaskDeps(String(ref), Array.isArray(deps) ? deps.map(String) : []).taskDeps ?? {}),
+  // app-side adjustment-loop overlay (task ref → needs-adjustment|under-review|rework)
+  'tasks:review': () => Promise.resolve(loadSettings().taskReview ?? {}),
+  'tasks:setReview': (ref: string, state: string) => Promise.resolve(setTaskReview(String(ref), String(state ?? '')).taskReview ?? {}),
 
   // dispatch / lifecycle
   dispatch: (command: string) => client.dispatch(String(command)),

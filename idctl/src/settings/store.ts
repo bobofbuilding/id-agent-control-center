@@ -336,6 +336,22 @@ export function setTaskLane(ref: string, lane: string, file = resolveConfigPath(
   return cfg;
 }
 
+/** Set a task's adjustment-loop state (needs-adjustment | under-review | rework).
+ *  Empty clears it. A fresh 'needs-adjustment' on a task already past review
+ *  (under-review/rework) is promoted to 'rework' — i.e. it got blocked AGAIN. */
+export function setTaskReview(ref: string, state: string, file = resolveConfigPath()): IdctlConfig {
+  const cfg = loadSettings(file);
+  const all = { ...(cfg.taskReview ?? {}) };
+  const now = Date.now();
+  const cur = all[ref]?.state;
+  if (!state) delete all[ref];
+  else if (state === 'needs-adjustment' && (cur === 'under-review' || cur === 'rework')) all[ref] = { state: 'rework', at: now };
+  else all[ref] = { state, at: now };
+  cfg.taskReview = all;
+  saveSettings(cfg, file);
+  return cfg;
+}
+
 /** Record a task's prerequisite refs (app-side dependency overlay). Empty deps clears it. */
 export function setTaskDeps(ref: string, deps: string[], file = resolveConfigPath()): IdctlConfig {
   const cfg = loadSettings(file);
