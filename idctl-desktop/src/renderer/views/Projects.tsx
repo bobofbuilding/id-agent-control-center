@@ -342,20 +342,21 @@ export function Projects({ store }: { store: FleetStore }) {
   // creds) rather than committing from here. This is the standard "request for change" flow.
   async function submitCommit(p: ProjectEntry, desc: string) {
     if (!desc.trim()) { setNote('describe the change (or use ✨ Draft with AI)'); return; }
-    // The project's OWNING team (default by default) owns the task and DELEGATES the
-    // actual git work to git-manager — the responsible agent for commits/pushes.
-    const ownTeam = p.team || defaultTeamName || 'default';
-    const ownLead = teamLeadOf(ownTeam);
-    const t = toast({ kind: 'progress', text: `Requesting ${ownTeam}/${ownLead} to commit & push “${p.name}” (via git-manager)…` });
+    if (!p.path) { setNote('this project has no local folder to commit'); return; }
+    // Commit & push DIRECTLY from the app (reliable) instead of delegating to an agent that may
+    // mark the task "done" without the commit ever landing. .gitignore keeps secrets out; the
+    // backend self-heals the branch + pulls before committing.
+    const t = toast({ kind: 'progress', text: `Committing & pushing “${p.name}”…` });
     try {
-      const title = `Commit & push: ${p.name}`;
-      const body = `Project “${p.name}”${p.path ? ` at ${p.path}` : ''}. You (${ownLead}, ${ownTeam}) own this — DELEGATE the actual git work to git-manager (the responsible git agent: use the cross-team form \`/ask ops-team/git-manager …\` if git-manager isn't in your team). git-manager must follow this STANDARD, clean procedure: (1) \`git fetch --all --prune\`; (2) make sure the checkout is on a healthy branch — if HEAD is on an orphaned branch whose upstream is GONE (a merged-and-deleted PR branch; "git status -sb" shows [gone]), switch back to the default branch (main/master) and fast-forward, do NOT commit onto the dead branch; (3) bring it up to date (\`git pull --ff-only\`; if it can't fast-forward, rebase your local changes onto the remote) so you never commit on a stale base; (4) SECRETS: ensure all secret files are gitignored and NOT tracked — .env / .env.* (keep .env.example), *.pem, *.key and other private keys, *.keystore, service-account*.json, credentials, .netrc, .pgpass; if any secret is already tracked, add it to .gitignore AND \`git rm --cached\` it. NEVER commit a secret; (5) review the working changes and commit with a clear message; (6) push to origin (init/create the GitHub repo if it doesn't exist yet). Coordinate and mark this task done once git-manager confirms the push. Requested change / suggested commit message:\n${desc.trim()}`;
-      await call('remote', `/task create ${q(title)} --owner ${ownLead} --description ${q(body)}`, undefined, ownTeam);
-      void call('remote', `/ask ${ownLead} ${q(`New change request — ${title}. ${body}`)}`, undefined, ownTeam).catch(() => {});
-      t.update({ kind: 'success', text: `${ownTeam}/${ownLead} will commit & push “${p.name}” via git-manager ✓` });
+      const r = await call<{ ok: boolean; output: string; committed: boolean; pushed: boolean }>('project:commit', p.path, desc.trim());
+      if (!r.ok) { t.update({ kind: 'error', text: `Commit failed: ${r.output}` }); return; }
+      if (!r.committed) t.update({ kind: 'info', text: `Nothing to commit — “${p.name}” is already clean` });
+      else if (r.pushed) t.update({ kind: 'success', text: `Committed & pushed “${p.name}” ✓` });
+      else t.update({ kind: 'info', text: `Committed “${p.name}” locally — ${r.output}` });
       setCommitFor(null); setCommitMsg('');
+      void loadGit(projects); // refresh the project's git status badge
     } catch (e) {
-      t.update({ kind: 'error', text: `Request failed: ${e instanceof Error ? e.message : String(e)}` });
+      t.update({ kind: 'error', text: `Commit failed: ${e instanceof Error ? e.message : String(e)}` });
     }
   }
   // AI assistance: read the project's working diff and have the team lead draft a

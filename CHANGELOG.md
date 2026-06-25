@@ -8,6 +8,14 @@ Every change pushed or merged to `main` carries its version number in the commit
 subject (`vX.Y.Z: …`), stamped automatically by the `commit-msg` hook — see
 [CONTRIBUTING.md](CONTRIBUTING.md).
 
+## [0.1.168] — 2026-06-25
+- **“Request commit” now commits directly — no more stalled commits.** It used to create a task and
+  ask an agent to do the git work, which could be marked “done” without the commit ever landing (and
+  the project would keep showing *uncommitted*). It now commits & pushes **directly** from the app:
+  self-heals the branch + pulls first, stages everything (`.gitignore` keeps secrets out), commits with
+  your message, and pushes to the current branch — reporting committed/pushed/clean immediately and
+  refreshing the project's git badge. A protected branch / offline just leaves it committed locally.
+
 ## [0.1.167] — 2026-06-25
 - **Per-task token spend on the board.** Each task card now shows `Nm Ns · N tokens` (the generation
   time + tokens spent working it), like a turn summary. This required new backend plumbing: the Claude

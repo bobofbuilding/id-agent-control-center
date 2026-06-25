@@ -569,3 +569,36 @@ export async function projectGitRun(path: string, action: string): Promise<{ ok:
     return { ok: false, output: `${err.stdout ?? ''}${err.stderr ?? ''}${err.message ?? ''}`.trim() };
   }
 }
+
+/**
+ * Commit & push a project's working changes DIRECTLY (reliable), instead of delegating to an
+ * agent that may mark the task done without actually committing. Self-healing: brings the repo
+ * up to date first (smartPull handles orphaned/merged-deleted branches), stages everything
+ * (.gitignore keeps secrets out), commits with the given message, and best-effort pushes to the
+ * current upstream branch — a protected branch / offline failure leaves it committed locally.
+ */
+export async function commitProject(path: string, message: string): Promise<{ ok: boolean; output: string; committed: boolean; pushed: boolean }> {
+  if (!path || !existsSync(path)) return { ok: false, output: 'folder not found', committed: false, pushed: false };
+  if (!(await isOwnRepoRoot(path))) return { ok: false, output: 'not a git repo root', committed: false, pushed: false };
+  const msg = (message || '').trim() || 'Update project';
+  try {
+    await smartPull(path).catch(() => ({})); // up-to-date base; ignore pull hiccups
+    await git(path, ['add', '-A']);
+    const status = await git(path, ['status', '--porcelain']).catch(() => '');
+    if (!status.trim()) return { ok: true, output: 'nothing to commit (clean)', committed: false, pushed: false };
+    await git(path, ['commit', '-m', msg]);
+    let pushed = false;
+    let pushOut = '';
+    try {
+      const branch = await git(path, ['rev-parse', '--abbrev-ref', 'HEAD']);
+      if (branch && branch !== 'HEAD') { await git(path, ['push', 'origin', `HEAD:${branch}`], 120000); pushed = true; }
+      else pushOut = 'detached HEAD — committed locally only';
+    } catch (e) {
+      pushOut = e instanceof Error ? e.message : String(e);
+    }
+    return { ok: true, output: pushed ? 'committed + pushed' : `committed locally (push: ${pushOut || 'skipped'})`, committed: true, pushed };
+  } catch (e) {
+    const err = e as { stdout?: string; stderr?: string; message?: string };
+    return { ok: false, output: `${err.stdout ?? ''}${err.stderr ?? ''}${err.message ?? ''}`.trim() || 'commit failed', committed: false, pushed: false };
+  }
+}
