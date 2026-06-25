@@ -8,6 +8,14 @@ Every change pushed or merged to `main` carries its version number in the commit
 subject (`vX.Y.Z: …`), stamped automatically by the `commit-msg` hook — see
 [CONTRIBUTING.md](CONTRIBUTING.md).
 
+## [0.1.166] — 2026-06-25
+- **"Blocks N" badges are now reactive — stale blockers clear automatically.** The prerequisite-side
+  badge counted *every* downstream task that depended on it, including ones already **done**, so a task
+  kept showing "blocks 1/2" long after the work it blocked had finished. It now counts only **pending**
+  dependents (and shows nothing once the task itself is done), recomputed each poll from live statuses.
+  On the current fleet this cleared **76 of 81** stale badges, leaving only the genuinely-active blockers.
+  (The dependent side — blocked tasks parking in Holding — was already reactive.)
+
 ## [0.1.165] — 2026-06-25
 - **Reactive goals & org sync.** Each agent's goals & instructions file (the `.id-instructions.md`
   sidecar) is now composed automatically from its place in the lead hierarchy and kept current:

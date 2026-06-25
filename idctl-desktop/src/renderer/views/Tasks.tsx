@@ -250,10 +250,18 @@ function TasksPanel({ store }: { store: FleetStore }) {
   function isBlocked(t: Task): boolean {
     return !isDone(t) && prereqsOf(t).some((p) => !p.done);
   }
-  // How many (live) tasks list THIS task as a prerequisite.
+  // How many still-PENDING tasks list THIS task as a prerequisite. Excludes dependents that
+  // are already done (otherwise the badge stays at "blocks N" forever after they finish — the
+  // stale-blocker bug) and only counts THIS task while it's itself unfinished. Recomputes every
+  // poll from live task statuses, so the badge clears reactively as dependents complete.
   function blocksCount(t: Task): number {
+    if (isDone(t)) return 0; // a finished task no longer blocks anything
     const r = ref(t);
-    return Object.keys(depsOverlay).filter((k) => depsOverlay[k]?.includes(r) && taskIndex.has(k)).length;
+    return Object.keys(depsOverlay).filter((k) => {
+      if (!depsOverlay[k]?.includes(r)) return false;
+      const d = taskIndex.get(k);
+      return !!d && !isDone(d); // count only dependents that are still pending
+    }).length;
   }
   // Actively "working" signal — owned, in Doing, recently updated. Used to detect a
   // block has passed (the agent picked it back up after the user's response).
