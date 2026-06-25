@@ -8,6 +8,15 @@ Every change pushed or merged to `main` carries its version number in the commit
 subject (`vX.Y.Z: …`), stamped automatically by the `commit-msg` hook — see
 [CONTRIBUTING.md](CONTRIBUTING.md).
 
+## [0.1.178] — 2026-06-25
+- **Reopens exactly where you left it — on restart and after an update.** Window geometry was saved as
+  `getNormalBounds()` + an `isMaximized()` flag and re-applied with `maximize()` on launch; on macOS
+  `isMaximized()` is an unreliable zoom-check that false-positives on a large manually-sized window, so the
+  app kept reopening *zoomed* instead of at your real position. It now saves and restores the **exact
+  on-screen bounds** (true macOS fullscreen is preserved separately), and persists on **every quit path** —
+  including the self-update relaunch (`app.quit()`) via a `before-quit` save — so a restart or an update
+  brings the window back to the same size and location.
+
 ## [0.1.177] — 2026-06-25
 - **Tasks board: a live flow that actually populates.** The board looked empty because **every task
   was `done`** (the fleet had finished its work) and done tasks were *all* hidden. The **Done lane now

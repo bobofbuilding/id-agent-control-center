@@ -32,7 +32,7 @@ declare const __dirname: string;
 let win: BrowserWindow | null = null;
 
 // --- window state: reopen the app where/how the user left it ---
-interface WinState { x?: number; y?: number; width: number; height: number; maximized?: boolean }
+interface WinState { x?: number; y?: number; width: number; height: number; fullScreen?: boolean }
 function winStatePath(): string { return join(app.getPath('userData'), 'window-state.json'); }
 function loadWinState(): WinState {
   try {
@@ -44,8 +44,15 @@ function loadWinState(): WinState {
 function saveWinState(w: BrowserWindow): void {
   try {
     if (w.isDestroyed()) return;
-    const b = w.getNormalBounds(); // un-maximized bounds, so the restore size is right
-    writeFileSync(winStatePath(), JSON.stringify({ x: b.x, y: b.y, width: b.width, height: b.height, maximized: w.isMaximized() }));
+    // Persist the ACTUAL on-screen bounds so the window reopens exactly where/how it was —
+    // including when it was zoomed/"maximized" (those bounds already fill the work area). The
+    // old approach saved getNormalBounds() + an isMaximized() flag and re-ran maximize() on
+    // launch, but on macOS isMaximized()≈zoom false-positives on a big manually-sized window,
+    // so the app kept reopening zoomed instead of at the user's real position. For true
+    // macOS fullscreen we save the pre-fullscreen bounds and re-enter fullscreen on restore.
+    const fullScreen = w.isFullScreen();
+    const b = fullScreen ? w.getNormalBounds() : w.getBounds();
+    writeFileSync(winStatePath(), JSON.stringify({ x: b.x, y: b.y, width: b.width, height: b.height, fullScreen }));
   } catch { /* best-effort */ }
 }
 /** Only restore a saved position if a usable chunk of the titlebar lands on some
@@ -78,14 +85,15 @@ function createWindow() {
     },
   });
 
-  if (st.maximized) win.maximize();
-  // Persist geometry (debounced) so the next launch — including after a self-update
-  // relaunch — reopens at the same size/position/maximized state.
+  if (st.fullScreen) win.setFullScreen(true);
+  // Persist geometry (debounced on move/resize; immediate on close + before-quit) so the next
+  // launch — including after a self-update relaunch — reopens at the same size/position.
   let saveT: ReturnType<typeof setTimeout> | null = null;
-  const scheduleSave = () => { if (saveT) clearTimeout(saveT); saveT = setTimeout(() => { if (win) saveWinState(win); }, 400); };
+  const saveNow = () => { if (saveT) { clearTimeout(saveT); saveT = null; } if (win) saveWinState(win); };
+  const scheduleSave = () => { if (saveT) clearTimeout(saveT); saveT = setTimeout(saveNow, 400); };
   win.on('resize', scheduleSave);
   win.on('move', scheduleSave);
-  win.on('close', () => { if (win) saveWinState(win); });
+  win.on('close', saveNow);
 
   // Open external links in the system browser, never in-app.
   win.webContents.setWindowOpenHandler(({ url }) => {
@@ -430,6 +438,9 @@ if (cuSelftest) { /* handled above */ } else if (driverProbe) {
   app.whenReady().then(() => {
     createWindow();
     if (win) startUpdater(win);
+    // Persist window geometry on EVERY quit path (Cmd-Q, menu, and the self-update relaunch,
+    // which calls app.quit()) before the window is destroyed — registered once, app-wide.
+    app.on('before-quit', () => { if (win && !win.isDestroyed()) saveWinState(win); });
     // Reactive org-sync: keep every agent's goals & instructions file composed from the lead
     // hierarchy + brain team-instructions (first pass ~15s after boot, then every 5 min).
     try { startOrgSync(); } catch (e) { console.warn('[org-sync] failed to start:', e); }
