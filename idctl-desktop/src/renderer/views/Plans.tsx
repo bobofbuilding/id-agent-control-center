@@ -168,27 +168,61 @@ export function Plans({ store }: { store: FleetStore }) {
   // Compile the plan + dispatch to ALL active teams/agents — no selection. The primary
   // (owning) team gets trackable task cards (auto-assigned + worked); every OTHER active
   // team gets the plan handed to its lead, run in parallel.
+  //
+  // PARTITIONED dispatch (efficient orchestration, no duplicated work): decompose the
+  // plan ONCE, group the sub-tasks into dependency CLUSTERS (connected components — so
+  // interdependent work stays on one team and its order is honored), then spread the
+  // clusters across every active team weighted by capacity (running agents). Independent
+  // clusters run in parallel on different teams; each team balances its slice across its
+  // own agents. Result: one plan, split across the whole active fleet — never duplicated.
   async function dispatchCore(p: BrainPlan): Promise<string> {
     const got = await call<{ file: string; content: string } | null>('brain:plan', p.file).catch(() => null);
     const obj = `Implement this plan, end to end:\n\n# ${p.title}\n\n${got?.content ?? ''}`;
-    const parts: string[] = [];
-    const allTeams = store.teams.map((t) => t.name).filter(Boolean);
-    const leads = await call<TeamLead[]>('work:teamLeads', allTeams).catch(() => [] as TeamLead[]);
-    const primary = store.team ?? 'default';
     const who = genAgent;
-    if ((leads.find((l) => l.team === primary)?.activeCount ?? 0) > 0 && who) {
-      const dec = await call<DecomposeResult>('work:decompose', obj, who).catch((): DecomposeResult => ({ ok: false, subtasks: [], raw: '', error: 'decompose failed' }));
-      if (dec.ok && dec.subtasks.length) {
-        const res = await call<CreatePlanResult>('work:createPlan', obj, dec.subtasks, { lane: 'doing', dispatch: true });
-        parts.push(`${primary}: dispatched ${res.created.filter((c) => c.ok).length}`);
-      } else { parts.push(`${primary}: ${dec.error || 'no tasks'}`); }
+    if (!who) return 'no agent to compile';
+    // 1) Decompose ONCE → sub-tasks (+ dependency edges).
+    const dec = await call<DecomposeResult>('work:decompose', obj, who).catch((): DecomposeResult => ({ ok: false, subtasks: [], raw: '', error: 'decompose failed' }));
+    if (!dec.ok || !dec.subtasks.length) return dec.error || 'could not split into tasks';
+    const subs = dec.subtasks;
+    const N = subs.length;
+    // 2) Active teams with a running lead + their capacity (running-agent count).
+    const allTeams = store.teams.map((t) => t.name).filter(Boolean);
+    const leads = (await call<TeamLead[]>('work:teamLeads', allTeams).catch(() => [] as TeamLead[])).filter((l) => l.activeCount > 0 && l.lead);
+    if (!leads.length) return 'no active teams to dispatch to';
+    // 3) Dependency clusters (union-find on the dep edges).
+    const parent = Array.from({ length: N }, (_, i) => i);
+    const find = (x: number): number => (parent[x] === x ? x : (parent[x] = find(parent[x])));
+    subs.forEach((s, i) => (s.dependsOn || []).forEach((d) => { if (d >= 0 && d < N && d !== i) parent[find(i)] = find(d); }));
+    const clusterMap = new Map<number, number[]>();
+    for (let i = 0; i < N; i++) { const r = find(i); (clusterMap.get(r) ?? clusterMap.set(r, []).get(r)!).push(i); }
+    const clusters = [...clusterMap.values()].sort((a, b) => b.length - a.length); // biggest first
+    // 4) Capacity-weighted assignment: each cluster → the team with the lowest projected
+    //    load-per-running-agent (greedy bin-packing).
+    const load: Record<string, number> = Object.fromEntries(leads.map((l) => [l.team, 0]));
+    const assign: Record<string, number[]> = Object.fromEntries(leads.map((l) => [l.team, []]));
+    for (const cl of clusters) {
+      const pick = leads.reduce((best, l) =>
+        (load[l.team] + cl.length) / Math.max(1, l.activeCount) < (load[best.team] + cl.length) / Math.max(1, best.activeCount) ? l : best, leads[0]);
+      assign[pick.team].push(...cl); load[pick.team] += cl.length;
     }
-    const others = leads.filter((l) => l.team !== primary && l.activeCount > 0 && l.lead).map((l) => l.team);
-    if (others.length) {
-      const fr = await call<FanoutResult[]>('work:fanout', obj, others).catch(() => [] as FanoutResult[]);
-      for (const r of fr) parts.push(`${r.team}: ${r.status === 'dispatched' ? `→ ${r.lead}` : r.status === 'no-active-agent' ? 'no agent' : 'failed'}`);
+    // 5) Per team → local sub-task batch (remap deps to local indices; clear the agent so
+    //    each team balances across ITS own active agents) + create + dispatch.
+    const parts: string[] = [];
+    for (const l of leads) {
+      const idxs = assign[l.team].sort((a, b) => a - b);
+      if (!idxs.length) continue;
+      const localOf = new Map<number, number>(); idxs.forEach((g, li) => localOf.set(g, li));
+      const batch = idxs.map((g) => ({
+        title: subs[g].title,
+        description: subs[g].description,
+        agent: '', // let work:createPlan balance across this team's active agents
+        dependsOn: (subs[g].dependsOn || []).filter((d) => localOf.has(d)).map((d) => localOf.get(d) as number),
+      }));
+      const res = await call<CreatePlanResult>('work:createPlan', obj, batch, { team: l.team, dispatch: true, lane: 'doing' }).catch((): CreatePlanResult => ({ created: [], dispatched: 0, deferred: 0 }));
+      const ok = res.created.filter((c) => c.ok).length;
+      if (ok) parts.push(`${l.team}: ${ok}`);
     }
-    return parts.join(' · ') || 'no active teams available';
+    return parts.length ? `split ${N} tasks → ${parts.join(' · ')}` : 'nothing dispatched';
   }
   // One button → all three phases, single live toast.
   async function runWork(p: BrainPlan) {

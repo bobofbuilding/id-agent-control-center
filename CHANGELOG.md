@@ -8,6 +8,15 @@ Every change pushed or merged to `main` carries its version number in the commit
 subject (`vX.Y.Z: …`), stamped automatically by the `commit-msg` hook — see
 [CONTRIBUTING.md](CONTRIBUTING.md).
 
+## [0.1.152] — 2026-06-25
+- **▶ Work now PARTITIONS the plan across teams instead of duplicating it.** The compile step
+  decomposes the plan **once**, groups the sub-tasks into **dependency clusters** (interdependent
+  tasks stay together so ordering is honored), then spreads the clusters across every active team
+  **weighted by capacity** (running-agent count). Independent clusters run in parallel on different
+  teams; each team balances its slice across its own agents. One plan → split across the whole
+  active fleet, never duplicated. (Verified: no task assigned twice, all deps kept within a team in
+  valid order.)
+
 ## [0.1.151] — 2026-06-25
 - **Plans: one ▶ Work button** replaces the three brain-plan actions (Audit status / Find blockers /
   Compile & dispatch). It runs them as a unified pipeline: ① **audit** the plan's real status →
