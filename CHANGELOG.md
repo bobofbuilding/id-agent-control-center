@@ -8,6 +8,9 @@ Every change pushed or merged to `main` carries its version number in the commit
 subject (`vX.Y.Z: …`), stamped automatically by the `commit-msg` hook — see
 [CONTRIBUTING.md](CONTRIBUTING.md).
 
+## [0.1.179] — 2026-06-25
+- **Capabilities:** markdown links in skill & plugin descriptions now render as clickable external links in the Modules view (a new `LinkedDescription` renderer), instead of showing raw `[label](url)` text.
+
 ## [0.1.178] — 2026-06-25
 - **Reopens exactly where you left it — on restart and after an update.** Window geometry was saved as
   `getNormalBounds()` + an `isMaximized()` flag and re-applied with `maximize()` on launch; on macOS
