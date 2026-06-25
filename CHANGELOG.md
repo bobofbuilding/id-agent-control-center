@@ -8,6 +8,20 @@ Every change pushed or merged to `main` carries its version number in the commit
 subject (`vX.Y.Z: …`), stamped automatically by the `commit-msg` hook — see
 [CONTRIBUTING.md](CONTRIBUTING.md).
 
+## [0.1.148] — 2026-06-25
+- **New projects default to the ops team** (holds git-manager) — New project, Import folder, Add
+  from GitHub (clone/fork), and Sync workspace all assign `ops-team` by default (editable). So every
+  project going forward can commit/push + checkpoint-auto-commit out of the box.
+- **The Work board now runs on auto-pilot — manual buttons removed.** Triage, re-dispatch-stalled,
+  and surface-blockers all fire automatically:
+  - **Auto-triage** unassigned To-Do tasks across **every** team (each team's lead assigns to active
+    agents), ~90s cadence.
+  - **Auto-re-dispatch stalled** tasks (stuck >30m, excluding blocked) to a different active agent, ~6m.
+  - **Auto-surface-blockers**: if work stays stuck, the lead surfaces decisions to your Inbox, ~30m.
+  - A single-flight lock + per-action cooldowns keep it from hammering the fleet; a passive
+    **⚙ auto-pilot** status (with live to-triage / stalled counts) replaces the buttons. Removed the
+    **Triage**, **Re-dispatch stalled**, **auto** toggle, **Surface blockers**, and **Clear archived** buttons.
+
 ## [0.1.147] — 2026-06-25
 - **Projects: checkpoint auto-commit.** Per-project **⟳ Auto-commit** dropdown — **off / on any task
   done / on plan validation**. When a (matching) task completes in the project's team and the repo

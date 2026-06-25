@@ -89,6 +89,9 @@ export function Projects({ store }: { store: FleetStore }) {
   const [linkUrl, setLinkUrl] = useState('');
 
   const lead = resolveCoordinator(store.agents, store.coordinator);
+  // New projects default to the ops team (it holds git-manager, so they can be
+  // committed/pushed + checkpoint-auto-committed). Falls back to blank if absent.
+  const opsDefault = useMemo(() => (store.teams.some((t) => t.name === 'ops-team') ? 'ops-team' : ''), [store.teams]);
   // Per-project checkpoint state: completed-task refs seen so far (baseline) + last
   // auto-commit time (throttle). A ref so the 45s watcher doesn't trigger re-renders.
   const autoSeenRef = useRef<Record<string, { seen: Set<string>; lastFire: number }>>({});
@@ -190,7 +193,7 @@ export function Projects({ store }: { store: FleetStore }) {
     return c;
   }, [projects]);
 
-  function openNew() { setForm(BLANK); setEditing('new'); setNote(''); }
+  function openNew() { setForm({ ...BLANK, team: opsDefault }); setEditing('new'); setNote(''); }
   function openEdit(p: ProjectEntry) {
     setForm({ name: p.name, status: p.status, description: p.description ?? '', team: p.team ?? '', tags: (p.tags ?? []).join(', '), links: (p.links ?? []).join('\n'), path: p.path ?? '', notes: p.notes ?? '' });
     setEditing(p.id); setNote('');
@@ -213,7 +216,7 @@ export function Projects({ store }: { store: FleetStore }) {
     const p = await call<string | null>('project:pickFolder').catch(() => null);
     if (!p) return;
     const r = await call<Readme>('project:readme', p).catch((): Readme => ({ found: false }));
-    setForm({ ...BLANK, path: p, name: r?.name || '', description: r?.description || '' });
+    setForm({ ...BLANK, team: opsDefault, path: p, name: r?.name || '', description: r?.description || '' });
     setEditing('new');
     setNote(r?.found ? 'imported folder — README read; review and Save' : 'imported folder (no README found)');
   }
@@ -240,6 +243,7 @@ export function Projects({ store }: { store: FleetStore }) {
       const tags = [...(meta.language ? [meta.language] : []), ...(meta.topics ?? []), ...(ghMode === 'fork' ? ['fork'] : [])];
       setForm({
         ...BLANK,
+        team: opsDefault,
         name: meta.name || readme.name || c.name || '',
         description: meta.description || readme.description || '',
         tags: tags.join(', '),

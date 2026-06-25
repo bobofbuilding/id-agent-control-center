@@ -125,7 +125,6 @@ function TasksPanel({ store }: { store: FleetStore }) {
   const [laneOverlay, setLaneOverlay] = useState<Record<string, string>>({}); // ref → fine-grained lane
   const [depsOverlay, setDepsOverlay] = useState<Record<string, string[]>>({}); // ref → prerequisite refs (app-side; manager has no deps)
   const [confirmDel, setConfirmDel] = useState<string | null>(null);
-  const [confirmClear, setConfirmClear] = useState(false);
   // Auto-decompose: describe an objective → lead splits it → create + farm out.
   const [showAssign, setShowAssign] = useState(false);
   const [objective, setObjective] = useState('');
@@ -146,9 +145,13 @@ function TasksPanel({ store }: { store: FleetStore }) {
   const [assignNote, setAssignNote] = useState('');
   const [fanTeams, setFanTeams] = useState<Set<string>>(new Set()); // other teams to fan the objective out to
   const [teamInfo, setTeamInfo] = useState<TeamLead[]>([]);          // active-lead + running counts per team
-  const [autoTriage, setAutoTriage] = useState(false);              // lead keeps auto-assigning unassigned To-Do tasks
   const [triaging, setTriaging] = useState(false);                  // a triage pass is in flight (guards re-entry)
-  const lastTriageRef = useRef(0);                                  // cooldown clock for auto-triage
+  // The board self-manages: triage / re-dispatch-stalled / surface-blockers all run
+  // automatically (no buttons). Per-action cooldown clocks + a serialize lock.
+  const lastTriageRef = useRef(0);                                  // cooldown: auto-triage (90s)
+  const lastRedispatchRef = useRef(0);                              // cooldown: auto-re-dispatch stalled (6m)
+  const lastBlockersRef = useRef(0);                                // cooldown: auto-surface-blockers (30m)
+  const autoRef = useRef(false);                                    // single-flight lock so auto-actions never overlap
   const prompt = usePrompt();
   const toast = useToast();
 
@@ -277,11 +280,12 @@ function TasksPanel({ store }: { store: FleetStore }) {
   }
 
   // Surface blocker DECISIONS (forks needing the user) as option-questions in the Inbox.
-  async function surfaceBlockers() {
+  // silent=true → automatic pass (no busy/note churn; just toast if it adds questions).
+  async function surfaceBlockers(silent = false) {
     const open = tasks.filter((t) => !isDone(t) && !isRoutine(t));
-    if (!open.length) { setNote('no open tasks to check'); return; }
-    if (!leadName) { setNote('no agent available to scan'); return; }
-    setBusy(true); setNote(`${leadName} is scanning open tasks for blocker decisions…`);
+    if (!open.length) { if (!silent) setNote('no open tasks to check'); return; }
+    if (!leadName) { if (!silent) setNote('no agent available to scan'); return; }
+    if (!silent) { setBusy(true); setNote(`${leadName} is scanning open tasks for blocker decisions…`); }
     try {
       const list = open.map((t) => `- ${ref(t)} [${t.ownerName ?? 'unassigned'}] ${t.title}`).join('\n');
       const reply = await call<string>('dispatch', `/ask ${leadName} ${qArg(SURFACE_BLOCKERS_PROMPT(list))}`);
@@ -298,50 +302,58 @@ function TasksPanel({ store }: { store: FleetStore }) {
         await call('questions:add', { question, options, agent, taskRef: taskTitle, taskTitle, team: store.team ?? 'default' });
         added++;
       }
-      setNote(added ? `added ${added} blocker question${added === 1 ? '' : 's'} to the Inbox ✓` : 'no blocker decisions found');
+      if (added) toast({ kind: 'info', text: `⚙ surfaced ${added} blocker decision${added === 1 ? '' : 's'} → Inbox` });
+      if (!silent) setNote(added ? `added ${added} blocker question${added === 1 ? '' : 's'} to the Inbox ✓` : 'no blocker decisions found');
     } catch (err) {
-      setNote(`blocker scan failed: ${err instanceof Error ? err.message : String(err)}`);
+      if (!silent) setNote(`blocker scan failed: ${err instanceof Error ? err.message : String(err)}`);
     } finally {
-      setBusy(false);
+      if (!silent) setBusy(false);
     }
   }
 
-  // Lead triages unassigned To-Do tasks: assign each to the best active agent + dispatch.
+  // Triage unassigned To-Do tasks across EVERY team with a pending pile — each team's
+  // lead assigns its tasks to the best active agents. silent=true → automatic pass.
   async function triage(silent = false) {
     if (triaging) return;
-    if (!leadName) { if (!silent) setNote('no lead available to triage'); return; }
-    const pending = tasks.filter((t) => !t.ownerName && laneOf(t) === 'todo' && (!store.viewAll || t.teamName === activeTeam));
-    if (!pending.length) { if (!silent) setNote(`no unassigned To Do tasks in ${activeTeam}`); return; }
+    const teamsWithPending = [...new Set(tasks.filter((t) => !t.ownerName && laneOf(t) === 'todo').map((t) => t.teamName).filter(Boolean))] as string[];
+    if (!teamsWithPending.length) { if (!silent) setNote('no unassigned To Do tasks'); return; }
     setTriaging(true);
     lastTriageRef.current = Date.now();
-    const t = toast({ kind: 'progress', text: `${leadName} is triaging ${pending.length} unassigned To Do task${pending.length === 1 ? '' : 's'}…` });
+    const t = silent ? null : toast({ kind: 'progress', text: `triaging unassigned To Do across ${teamsWithPending.length} team${teamsWithPending.length === 1 ? '' : 's'}…` });
+    let assigned = 0;
     try {
-      const res = await call<TriageResult>('work:triage', leadName, activeTeam);
-      if (res.error) { t.update({ kind: 'error', text: `Triage: ${res.error}` }); setNote(`triage: ${res.error}`); }
-      else {
-        const summary = res.assigned.length
-          ? `assigned ${res.assigned.length}${res.dispatched ? ` · dispatched ${res.dispatched}` : ''}${res.skipped ? ` · ${res.skipped} skipped` : ''}`
-          : 'nothing to assign';
-        t.update({ kind: res.assigned.length ? 'success' : 'info', text: `${leadName} triaged To Do — ${summary}` });
-        setNote(res.assigned.length ? `${summary} ✓` : summary);
-        await reload();
+      for (const team of teamsWithPending) {
+        const tl = resolveCoordinator(store.allAgents.filter((a) => a.team === team), team === store.team ? store.coordinator : undefined) ?? '';
+        if (!tl) continue;
+        try { const res = await call<TriageResult>('work:triage', tl, team); assigned += res.assigned?.length ?? 0; } catch { /* keep going */ }
       }
-    } catch (e) {
-      const m = e instanceof Error ? e.message : String(e);
-      t.update({ kind: 'error', text: `Triage failed: ${m}` });
-      setNote(`triage failed: ${m}`);
+      if (t) t.update({ kind: assigned ? 'success' : 'info', text: assigned ? `triaged — assigned ${assigned}` : 'nothing to assign' });
+      else if (assigned) toast({ kind: 'success', text: `⚙ auto-triaged ${assigned} task${assigned === 1 ? '' : 's'}` });
+      await reload();
     } finally { setTriaging(false); }
   }
 
-  // Auto-triage: when enabled, the lead keeps assigning unassigned To-Do tasks as they
-  // appear (on the 5s poll), throttled by a 90s cooldown so it never hammers the lead.
+  // Auto-pilot: triage, re-dispatch-stalled, and surface-blockers run automatically on
+  // the poll. A single-flight lock + per-action cooldowns keep it from hammering the
+  // fleet. Escalation: triage (90s) → re-dispatch stalled (6m) → if still stuck, surface
+  // blocker decisions to the Inbox (30m).
   useEffect(() => {
-    if (!autoTriage || triaging) return;
-    const pending = tasks.filter((t) => !t.ownerName && laneOf(t) === 'todo' && (!store.viewAll || t.teamName === activeTeam)).length;
-    if (!pending || Date.now() - lastTriageRef.current < 90_000) return;
-    void triage(true);
+    if (autoRef.current) return;
+    const now = Date.now();
+    const needTriage = now - lastTriageRef.current > 90_000 && tasks.some((t) => !t.ownerName && laneOf(t) === 'todo');
+    const needRedispatch = stalledTasks.length > 0 && now - lastRedispatchRef.current > 6 * 60_000;
+    const needBlockers = stalledTasks.length > 0 && now - lastBlockersRef.current > 30 * 60_000;
+    if (!needTriage && !needRedispatch && !needBlockers) return;
+    void (async () => {
+      autoRef.current = true;
+      try {
+        if (needTriage) await triage(true);
+        if (needRedispatch) { lastRedispatchRef.current = Date.now(); await redispatchAll(true); }
+        if (needBlockers) { lastBlockersRef.current = Date.now(); await surfaceBlockers(true); }
+      } finally { autoRef.current = false; }
+    })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [autoTriage, tasks, triaging]);
+  }, [tasks]);
 
   // Re-send a stalled task to its owner (reassigning to an active agent first if the owner is
   // stopped) so a stuck "doing" task gets picked back up. Returns false if nothing's active.
@@ -376,13 +388,15 @@ function TasksPanel({ store }: { store: FleetStore }) {
       if (ok) await reload();
     } catch (e) { tt.update({ kind: 'error', text: `re-dispatch failed: ${e instanceof Error ? e.message : String(e)}` }); }
   }
-  async function redispatchAll() {
+  async function redispatchAll(silent = false) {
     if (!stalledTasks.length) return;
-    const tt = toast({ kind: 'progress', text: `Re-dispatching ${stalledTasks.length} stalled task${stalledTasks.length === 1 ? '' : 's'}…` });
+    const n = stalledTasks.length;
+    const tt = silent ? null : toast({ kind: 'progress', text: `Re-dispatching ${n} stalled task${n === 1 ? '' : 's'}…` });
     let ok = 0;
     const load: Record<string, number> = {}; // shared so the batch spreads across active agents
     for (const t of stalledTasks) { try { if (await redispatchCore(t, load)) ok++; } catch { /* keep going */ } }
-    tt.update({ kind: ok ? 'success' : 'error', text: `re-dispatched ${ok}/${stalledTasks.length} stalled ✓` });
+    if (tt) tt.update({ kind: ok ? 'success' : 'error', text: `re-dispatched ${ok}/${n} stalled ✓` });
+    else if (ok) toast({ kind: 'info', text: `⚙ auto-re-dispatched ${ok} stalled task${ok === 1 ? '' : 's'}` });
     await reload();
   }
 
@@ -408,21 +422,6 @@ function TasksPanel({ store }: { store: FleetStore }) {
     if (agent) void run(`/task assign ${ref(t)} ${agent}`, `assign ${ref(t)} → ${agent}`, taskTeam(t));
   }
   async function del(t: Task) { setConfirmDel(null); await run(`/task remove ${ref(t)}`, `delete ${ref(t)}`, taskTeam(t)); }
-  async function clearDone() {
-    const done = tasks.filter(isDone);
-    setConfirmClear(false);
-    setBusy(true);
-    setNote(`clearing ${done.length} completed…`);
-    try {
-      for (const t of done) await call('remote', `/task remove ${ref(t)}`, undefined, taskTeam(t));
-      setNote(`cleared ${done.length} completed ✓`);
-      await reload();
-    } catch (err) {
-      setNote(`clear failed: ${err instanceof Error ? err.message : String(err)}`);
-    } finally {
-      setBusy(false);
-    }
-  }
 
   // ---- Auto-decompose on assign -------------------------------------------
   async function decompose() {
@@ -581,24 +580,11 @@ function TasksPanel({ store }: { store: FleetStore }) {
       <style>{`@keyframes idctlPulse{0%,100%{opacity:1;transform:scale(1)}50%{opacity:.35;transform:scale(.8)}}.idctl-pulse{animation:idctlPulse 1.2s ease-in-out infinite}`}</style>
       <div className="row-actions" style={{ marginBottom: 8, alignItems: 'center' }}>
         <span className="muted small">{openCount} open · {doneCount} done</span>
+        {/* Auto-pilot: triage, re-dispatch-stalled and blocker-surfacing all run on their own. */}
+        <span className="muted small" title="This board runs on auto-pilot: unassigned To-Do tasks are triaged to active agents (~90s), stalled tasks are re-dispatched (~6m), and if work stays stuck, blocker decisions are surfaced to your Inbox (~30m).">
+          · ⚙ auto-pilot{triaging ? ' · triaging…' : unassignedTodo ? ` · ${unassignedTodo} to triage` : ''}{stalledTasks.length ? ` · ${stalledTasks.length} stalled` : ''}
+        </span>
         <span className="grow" />
-        {doneCount > 0 ? (
-          confirmClear ? (
-            <>
-              <button className="btn icon-danger" disabled={busy} onClick={() => void clearDone()}>Delete {doneCount} archived?</button>
-              <button className="btn" disabled={busy} onClick={() => setConfirmClear(false)}>Cancel</button>
-            </>
-          ) : (
-            <button className="btn" disabled={busy} title="Permanently delete completed (archived) tasks from the manager" onClick={() => setConfirmClear(true)}>Clear archived</button>
-          )
-        ) : null}
-        <button className="btn" disabled={busy || triaging || !unassignedTodo} title={unassignedTodo ? `Have ${leadName || 'the lead'} assign the ${unassignedTodo} unassigned To Do task${unassignedTodo === 1 ? '' : 's'} to the best active agents and start them` : 'no unassigned To Do tasks'} onClick={() => void triage()}>{triaging ? '⚖ Triaging…' : `⚖ Triage To Do${unassignedTodo ? ` (${unassignedTodo})` : ''}`}</button>
-        {stalledTasks.length ? <button className="btn" disabled={busy} title={`Re-dispatch the ${stalledTasks.length} stalled task${stalledTasks.length === 1 ? '' : 's'} (no update in 30m+) to active agents`} onClick={() => void redispatchAll()}>↻ Re-dispatch stalled ({stalledTasks.length})</button> : null}
-        <label className="muted small" style={{ display: 'inline-flex', alignItems: 'center', gap: 5, cursor: 'pointer' }} title="Keep the lead auto-assigning new unassigned To Do tasks (checked every poll, throttled ~90s)">
-          <input type="checkbox" checked={autoTriage} onChange={(e) => setAutoTriage(e.target.checked)} />
-          auto
-        </label>
-        <button className="btn" disabled={busy} title="Ask the lead to surface task blockers that need YOUR decision → they appear as option-questions in the Inbox" onClick={() => void surfaceBlockers()}>⚠ Surface blockers</button>
         <button className="btn" disabled={busy || proposing} title="Create work: auto-plan, direct assignment, schedule, loop, or dream" onClick={() => { setShowAssign((v) => !v); setAssignNote(''); setProposal(null); }}>{showAssign ? '− Close' : '⚡ Create work'}</button>
         <button className="btn primary" disabled={busy} onClick={() => void newTask()}>+ New task</button>
       </div>
