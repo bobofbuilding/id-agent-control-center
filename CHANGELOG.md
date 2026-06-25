@@ -8,6 +8,15 @@ Every change pushed or merged to `main` carries its version number in the commit
 subject (`vX.Y.Z: …`), stamped automatically by the `commit-msg` hook — see
 [CONTRIBUTING.md](CONTRIBUTING.md).
 
+## [0.1.155] — 2026-06-25
+- **Plan blockers/decisions now land in the Inbox, not the plan card.** The ▶ Work pipeline's
+  blocker scan now returns structured decisions (each with the agent's 2-4 **best options**) and
+  files them in the Inbox's **“Decisions needed.”** The plan card shows only a compact `⚠ N → Inbox`
+  pointer.
+- **Inbox decisions are now answerable three ways:** pick a **best option**, **✎ Comment** a free-text
+  response/instructions, or **🛠 I'll handle it** — which tells the agent you're doing it manually so it
+  sets the item aside and won't re-raise it. (Plus Skip.) Each delivers back to the blocked agent.
+
 ## [0.1.154] — 2026-06-25
 - **Secrets are gitignored as a standard, everywhere.** New `ensureSecretGitignore` appends a managed
   block (`.env`/`.env.*` keeping `.env.example`, `*.pem`/`*.key`/private keys, `*.keystore`,

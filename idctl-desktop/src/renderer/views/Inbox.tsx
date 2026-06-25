@@ -38,21 +38,28 @@ export function Inbox({ store }: { store: FleetStore }) {
   );
 }
 
-/** A blocker decision with options. Choosing one delivers the answer to the agent
- *  that's blocked and clears the question; "Skip" just removes it. */
+/** A decision/blocker an agent surfaced. You can: pick one of the agent's best
+ *  options, write your own response, or take it on yourself ("I'll handle it" — tells
+ *  the agent to set it aside). Any of these delivers back to the agent and clears it. */
 function QuestionRow({ q, onDone }: { q: BlockerQuestion; onDone: () => void }) {
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState('');
+  const [comment, setComment] = useState('');
+  const [showComment, setShowComment] = useState(false);
+  const subject = q.taskTitle ?? q.taskRef ?? '';
 
-  async function choose(option: string) {
+  // Deliver a response to the blocked agent (best-effort, async) and clear the item.
+  async function deliver(answer: string) {
     setBusy(true); setErr('');
     try {
-      const answer = `Decision for task “${q.taskTitle ?? q.taskRef ?? ''}”. You asked: ${q.question} — the answer is: ${option}. Proceed accordingly.`;
-      if (q.agent) void call('dispatch', `/ask ${q.agent} ${qArg(answer)}`).catch(() => {}); // deliver async; don't block the UI
+      if (q.agent && answer) void call('dispatch', `/ask ${q.agent} ${qArg(answer)}`).catch(() => {});
       await call('questions:remove', q.id);
       onDone();
     } catch (e) { setErr(e instanceof Error ? e.message : String(e)); setBusy(false); }
   }
+  const chooseOption = (o: string) => deliver(`Decision on “${subject}”. You asked: ${q.question} — the user chose: ${o}. Proceed accordingly.`);
+  const sendComment = () => { const c = comment.trim(); if (c) void deliver(`Response on “${subject}”. You asked: ${q.question} — the user says: ${c}. Proceed accordingly.`); };
+  const handleManually = () => deliver(`Re “${subject}”: ${q.question} — the USER is handling this manually/independently. Do NOT work on it or re-raise it; set it aside and continue with everything else. The user will follow up when it's done.`);
   async function skip() {
     setBusy(true); setErr('');
     try { await call('questions:remove', q.id); onDone(); }
@@ -61,15 +68,24 @@ function QuestionRow({ q, onDone }: { q: BlockerQuestion; onDone: () => void }) 
 
   return (
     <div className="inbox-row">
-      <div className="inbox-from">{q.agent || 'agent'}{q.taskTitle ? ` · ${q.taskTitle}` : ''}</div>
+      <div className="inbox-from">{q.agent || 'agent'}{subject ? ` · ${subject}` : ''}</div>
       <div className="inbox-msg b">{q.question}</div>
       <div className="row-actions" style={{ marginTop: 8, gap: 6, flexWrap: 'wrap', alignItems: 'center' }}>
         {q.options.map((o) => (
-          <button key={o} className="btn" disabled={busy} onClick={() => void choose(o)} title={`Answer “${o}” and unblock ${q.agent}`}>{o}</button>
+          <button key={o} className="btn" disabled={busy} onClick={() => void chooseOption(o)} title={`Answer “${o}” and reply to ${q.agent || 'the agent'}`}>{o}</button>
         ))}
+        <button className="btn small" disabled={busy} onClick={() => setShowComment((v) => !v)} title="Write your own response instead of picking an option">✎ Comment</button>
+        <button className="btn small" disabled={busy} onClick={() => void handleManually()} title="You'll handle this yourself — the agent sets it aside and won't re-raise it">🛠 I'll handle it</button>
         <span className="grow" />
         <button className="btn small" disabled={busy} onClick={() => void skip()} title="Dismiss without answering">Skip</button>
       </div>
+      {showComment ? (
+        <div style={{ marginTop: 6, display: 'flex', gap: 6, alignItems: 'flex-end' }}>
+          <textarea style={{ flex: 1, minHeight: 48 }} placeholder="Write your response / instructions for the agent… (⌘/Ctrl+Enter to send)" value={comment} disabled={busy} autoFocus
+            onChange={(e) => setComment(e.target.value)} onKeyDown={(e) => { if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') void sendComment(); }} />
+          <button className="btn primary" disabled={busy || !comment.trim()} onClick={() => void sendComment()}>{busy ? '…' : 'Send'}</button>
+        </div>
+      ) : null}
       {err ? <p className="status-error small">{err}</p> : null}
     </div>
   );

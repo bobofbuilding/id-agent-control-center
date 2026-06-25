@@ -72,7 +72,10 @@ const SUGGEST_PROMPT = (content: string) =>
 const AUDIT_PROMPT = (title: string, content: string) =>
   'Audit the TRUE current status of this implementation plan. Verify against the ACTUAL codebase and your knowledge — use your tools to check what is really implemented; do NOT just trust the plan\'s own claims. Reply with JSON ONLY (no prose, no fences): {"status":"DONE|PARTIAL|PENDING","summary":"<1-3 sentences: what is actually done and what remains>"}.\n\nPLAN: ' + title + '\n\n' + content;
 const BLOCKERS_PROMPT = (title: string, content: string) =>
-  'Identify the concrete BLOCKERS preventing this plan from progressing or completing — missing prerequisites, unmet dependencies, decisions needed, or risks that would stop it. Verify against the actual codebase where relevant. Reply with a SHORT markdown bullet list (3-6 bullets max); if there are none, reply exactly "No blockers found." PLAN: ' + title + '\n\n' + content;
+  'Review this plan and surface anything that needs the USER — a hard blocker, a decision (a genuine fork), a confirmation before touching shared/live infra, or a piece of MANUAL work only the user can do. Verify against the actual codebase where relevant. Return JSON ONLY (no prose, no code fences): ' +
+  '[{"question":"<what you need from the user — 1-2 sentences with the key context so they can decide fast>","options":["<best option A>","<best option B>", ...]}]. ' +
+  'Give 2-4 concrete BEST options when there is a decision; for a confirmation use ["Approve","Hold off"]; if it needs the user to do manual work, say so in the question and use ["I\'ll do it","Skip for now"]. ' +
+  'Only include things that truly need the USER (not work you can just do). Return [] if nothing needs the user. PLAN: ' + title + '\n\n' + content;
 
 export function Plans({ store }: { store: FleetStore }) {
   const team = store.team ?? 'default';
@@ -162,8 +165,20 @@ export function Plans({ store }: { store: FleetStore }) {
     if (!who) return 'no agent';
     const got = await call<{ file: string; content: string } | null>('brain:plan', p.file).catch(() => null);
     const reply = okContent(await call<string>('dispatch', `/ask ${who} ${qArg(BLOCKERS_PROMPT(p.title, got?.content ?? ''))}`));
-    if (aliveRef.current) setBlockers((m) => ({ ...m, [p.file]: reply || 'no response' }));
-    return reply ? 'blockers noted' : 'no blockers';
+    // Route anything needing the USER to the Inbox as a decision (option or comment),
+    // instead of dumping text into the plan card.
+    const a = reply.indexOf('['); const b = reply.lastIndexOf(']');
+    const arr = a >= 0 && b > a ? (() => { try { return JSON.parse(reply.slice(a, b + 1)); } catch { return []; } })() : [];
+    let added = 0;
+    for (const it of (Array.isArray(arr) ? arr : [])) {
+      const question = String(it?.question ?? '').trim();
+      if (!question) continue;
+      const options = (Array.isArray(it?.options) ? it.options : []).map((o: unknown) => String(o)).filter(Boolean);
+      await call('questions:add', { question, options: options.length ? options : ['Acknowledge'], agent: who, taskRef: p.title, taskTitle: p.title, team: store.team ?? 'default' }).catch(() => {});
+      added++;
+    }
+    if (aliveRef.current) setBlockers((m) => ({ ...m, [p.file]: added ? `${added} decision${added === 1 ? '' : 's'} → Inbox` : 'nothing needs you' }));
+    return added ? `${added} → Inbox` : 'no blockers';
   }
   // Compile the plan + dispatch to ALL active teams/agents — no selection. The primary
   // (owning) team gets trackable task cards (auto-assigned + worked); every OTHER active
@@ -424,9 +439,8 @@ export function Plans({ store }: { store: FleetStore }) {
           </div>
         ) : null}
         {blockers[p.file] ? (
-          <div className="small" style={{ padding: '0 8px 8px' }}>
-            <div className="b warn-text" style={{ marginBottom: 2 }}>Blockers</div>
-            <pre className="plan-content" style={{ maxHeight: 160, marginTop: 0 }}>{blockers[p.file]}</pre>
+          <div className="small muted" style={{ padding: '0 8px 8px' }} title="Decisions that need you are in the Inbox — respond with an option, a comment, or take it on yourself.">
+            ⚠ {blockers[p.file]}
           </div>
         ) : null}
         {isOpen ? <pre className="plan-content">{brainContent}</pre> : null}
