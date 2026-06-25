@@ -400,6 +400,7 @@ export interface GitInfo {
   behind?: number;
   dirty?: boolean;
   compareRef?: string;
+  upstreamGone?: boolean; // tracking branch deleted on the remote (orphaned) — Pull self-heals
   error?: string;
 }
 
@@ -427,6 +428,10 @@ export async function projectGit(path: string): Promise<GitInfo> {
     const upstreamUrl = remotes.includes('upstream') ? await git(path, ['remote', 'get-url', 'upstream']).catch(() => '') : '';
     const isFork = !!upstreamUrl && upstreamUrl !== remoteUrl;
     const dirty = !!(await git(path, ['status', '--porcelain']).catch(() => ''));
+    // Orphaned branch: a tracking upstream is configured but its ref is gone (e.g. a
+    // merged PR branch deleted on the remote) → Pull self-heals (smartPull).
+    const sb = (await git(path, ['status', '-sb']).catch(() => '')).split('\n')[0] || '';
+    const upstreamGone = /\[gone\]/.test(sb);
 
     const remote = isFork ? 'upstream' : (remotes.includes('origin') ? 'origin' : remotes[0]);
     let ahead: number | undefined;
@@ -444,7 +449,7 @@ export async function projectGit(path: string): Promise<GitInfo> {
         }
       }
     }
-    return { isRepo: true, branch, remoteUrl: remoteUrl || undefined, upstreamUrl: upstreamUrl || undefined, isFork, ahead, behind, dirty, compareRef };
+    return { isRepo: true, branch, remoteUrl: remoteUrl || undefined, upstreamUrl: upstreamUrl || undefined, isFork, ahead, behind, dirty, compareRef, upstreamGone };
   } catch (e) {
     return { isRepo: false, error: e instanceof Error ? e.message : String(e) };
   }
@@ -453,16 +458,81 @@ export async function projectGit(path: string): Promise<GitInfo> {
 /** Whitelisted git commands the Projects page can run. */
 const GIT_ACTIONS: Record<string, string[]> = {
   fetch: ['fetch', '--all', '--prune'],
-  pull: ['pull', '--ff-only'],
   status: ['status', '-sb'],
   log: ['log', '--oneline', '--decorate', '-15'],
   diff: ['diff', '--stat'],
 };
 
+/**
+ * Resilient, STANDARDIZED pull — self-heals the common stranded states so the
+ * commit/sync process stays clean across every project. Never force-pushes,
+ * auto-merges, or discards work:
+ *   • live upstream            → git pull --ff-only
+ *   • upstream deleted after a merged PR, branch already on the default branch
+ *                              → switch back to the default branch + ff + delete the stale branch
+ *   • default branch, no upstream set → set it → ff
+ *   • orphaned branch with UNMERGED work → leave it; tell the user to push or switch
+ */
+async function smartPull(path: string): Promise<{ ok: boolean; output: string }> {
+  const out: string[] = [];
+  const run = async (args: string[], to = 120000): Promise<{ ok: boolean; text: string }> => {
+    try { const { stdout, stderr } = await execFileP('git', args, { cwd: path, timeout: to }); return { ok: true, text: `${stdout}${stderr}`.trim() }; }
+    catch (e) { const err = e as { stdout?: string; stderr?: string; message?: string }; return { ok: false, text: `${err.stdout ?? ''}${err.stderr ?? ''}${err.message ?? ''}`.trim() }; }
+  };
+  const f = await run(['fetch', '--all', '--prune']);
+  out.push(`$ git fetch --all --prune${f.text ? `\n${f.text}` : ' ✓'}`);
+
+  const branch = await git(path, ['rev-parse', '--abbrev-ref', 'HEAD']).catch(() => '');
+  const def = await defaultBranchOf(path, 'origin');
+  const defRemote = `origin/${def}`;
+  const haveDefRemote = await gitOk(path, ['rev-parse', '--verify', defRemote]);
+  const upstreamLive = await gitOk(path, ['rev-parse', '--verify', '--quiet', '@{upstream}']);
+  const hasUpstreamCfg = !!(await git(path, ['config', `branch.${branch}.merge`]).catch(() => ''));
+  const trackedDirty = (await git(path, ['status', '--porcelain']).catch(() => '')).split('\n').some((l) => l && !l.startsWith('??'));
+
+  // Normal path: a live upstream → fast-forward only (never auto-merge/rebase).
+  if (upstreamLive) {
+    const p = await run(['pull', '--ff-only']);
+    out.push(`$ git pull --ff-only${p.text ? `\n${p.text}` : ' ✓ already up to date'}`);
+    if (!p.ok) out.push(`⚠ Can't fast-forward — you have local commits the remote doesn't. Review Log/Diff, then push or reconcile; nothing was changed.`);
+    return { ok: p.ok, output: out.join('\n\n') };
+  }
+
+  // Upstream is gone or unset → heal toward the default branch.
+  if (branch === def) {
+    if (!haveDefRemote) { out.push(`⚠ On ${def} but no ${defRemote} exists — nothing to pull from.`); return { ok: false, output: out.join('\n\n') }; }
+    await git(path, ['branch', `--set-upstream-to=${defRemote}`, def]).catch(() => {});
+    const p = await run(['merge', '--ff-only', defRemote]);
+    out.push(`set upstream → ${defRemote}`, `$ git merge --ff-only ${defRemote}${p.text ? `\n${p.text}` : ' ✓ already up to date'}`);
+    return { ok: p.ok, output: out.join('\n\n') };
+  }
+
+  // Non-default branch, gone/absent upstream. If its work is already on the default
+  // branch (a merged + auto-deleted PR branch), switch back + ff + drop the stale branch.
+  const mergedIntoDefault = haveDefRemote && await gitOk(path, ['merge-base', '--is-ancestor', 'HEAD', defRemote]);
+  if (mergedIntoDefault) {
+    if (trackedDirty) { out.push(`⚠ '${branch}' is already merged into ${def} (its remote branch was deleted), but you have uncommitted changes here. Commit or stash them, then pull again to return to ${def}.`); return { ok: false, output: out.join('\n\n') }; }
+    const co = await run(['checkout', def]);
+    out.push(`'${branch}' is already merged into ${def} (remote branch deleted) → switching back to ${def}`, co.text || '✓');
+    if (!co.ok) return { ok: false, output: out.join('\n\n') };
+    await git(path, ['branch', `--set-upstream-to=${defRemote}`, def]).catch(() => {});
+    const p = await run(['merge', '--ff-only', defRemote]);
+    out.push(`$ git merge --ff-only ${defRemote}${p.text ? `\n${p.text}` : ' ✓ already up to date'}`);
+    const d = await run(['branch', '-d', branch]); // -d is safe: refuses if not merged
+    out.push(d.text || `deleted stale merged branch '${branch}'`);
+    return { ok: true, output: out.join('\n\n') };
+  }
+
+  // Orphaned branch with UNMERGED work — don't touch; preserve it.
+  out.push(`⚠ You're on '${branch}', whose remote branch is gone${hasUpstreamCfg ? ' (deleted)' : ' (never pushed)'}, and it has commits not yet on ${def}. Nothing was changed so no work is lost — push it to back it up (\`git push -u origin ${branch}\`), or switch to ${def}.`);
+  return { ok: false, output: out.join('\n\n') };
+}
+
 export async function projectGitRun(path: string, action: string): Promise<{ ok: boolean; output: string }> {
+  if (!path || !existsSync(path)) return { ok: false, output: 'folder not found' };
+  if (action === 'pull' || action === 'sync') return smartPull(path); // self-healing pull
   const args = GIT_ACTIONS[action];
   if (!args) return { ok: false, output: `unknown git action: ${action}` };
-  if (!path || !existsSync(path)) return { ok: false, output: 'folder not found' };
   try {
     const { stdout, stderr } = await execFileP('git', args, { cwd: path, timeout: 90000 });
     return { ok: true, output: `${stdout}${stderr}`.trim() || '(no output)' };

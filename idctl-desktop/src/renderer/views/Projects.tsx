@@ -8,7 +8,7 @@ const STATUS_LABEL: Record<ProjectStatus, string> = { active: 'active', paused: 
 const STATUS_CLASS: Record<ProjectStatus, string> = { active: 'st-active', paused: 'st-paused', blocked: 'st-blocked', done: 'st-done' };
 const GIT_ACTIONS = [
   { id: 'fetch', label: '⤓ Fetch', title: 'git fetch --all --prune — download new commits/branches from GitHub WITHOUT changing your files or branch' },
-  { id: 'pull', label: '⇩ Pull', title: 'git pull --ff-only — fast-forward your branch up to GitHub (only works if you have no diverging local commits)' },
+  { id: 'pull', label: '⇩ Pull', title: 'Resilient pull: fetch + fast-forward to GitHub. Self-heals a stranded repo — if your branch is an orphaned/merged-and-deleted PR branch, it switches back to the default branch and fast-forwards. Never force-pushes or auto-merges.' },
   { id: 'status', label: '◔ Status', title: 'git status -sb — current branch + which files are modified / staged / untracked' },
   { id: 'log', label: '☰ Log', title: 'git log --oneline -15 — the 15 most recent commits' },
   { id: 'diff', label: '± Diff', title: 'git diff --stat — files changed (with +/- line counts) since your last commit' },
@@ -25,6 +25,7 @@ type GitInfo = {
   behind?: number;
   dirty?: boolean;
   compareRef?: string;
+  upstreamGone?: boolean; // tracking branch deleted on the remote (orphaned) — Pull self-heals
   error?: string;
 };
 type Readme = { found: boolean; name?: string; description?: string };
@@ -57,6 +58,7 @@ function GitStatus({ g }: { g?: GitInfo }) {
       <span className="mono muted">⎇ {g.branch || '—'}</span>
       {g.isFork ? <span className="chip tag" title={`fork — upstream: ${g.upstreamUrl}`}>fork</span> : null}
       <span className={`small ${cls}`} title={g.compareRef ? `vs ${g.compareRef}` : undefined}>{label}</span>
+      {g.upstreamGone ? <span className="warn-text small" title={`This branch's remote was deleted (e.g. a merged PR branch). Click ⇩ Pull — it auto-heals: switches back to the default branch and fast-forwards.`}>⚠ orphaned branch · Pull to heal</span> : null}
       {g.dirty ? <span className="warn-text small" title="uncommitted local changes">● uncommitted</span> : null}
     </span>
   );
@@ -347,7 +349,7 @@ export function Projects({ store }: { store: FleetStore }) {
     const t = toast({ kind: 'progress', text: `Requesting ${ownTeam}/${ownLead} to commit & push “${p.name}” (via git-manager)…` });
     try {
       const title = `Commit & push: ${p.name}`;
-      const body = `Project “${p.name}”${p.path ? ` at ${p.path}` : ''}. You (${ownLead}, ${ownTeam}) own this — DELEGATE the actual git work to git-manager (the responsible git agent: use the cross-team form \`/ask ops-team/git-manager …\` if git-manager isn't in your team). git-manager must: (1) FIRST bring the local checkout up to date with the remote (git fetch, then git pull --ff-only; if it can't fast-forward, rebase local changes on top of the remote) so it never commits on a stale base; (2) review the working changes and commit with a clear message; (3) push to origin (init/create the GitHub repo if it doesn't exist yet). Coordinate and mark this task done once git-manager confirms the push. Requested change / suggested commit message:\n${desc.trim()}`;
+      const body = `Project “${p.name}”${p.path ? ` at ${p.path}` : ''}. You (${ownLead}, ${ownTeam}) own this — DELEGATE the actual git work to git-manager (the responsible git agent: use the cross-team form \`/ask ops-team/git-manager …\` if git-manager isn't in your team). git-manager must follow this STANDARD, clean procedure: (1) \`git fetch --all --prune\`; (2) make sure the checkout is on a healthy branch — if HEAD is on an orphaned branch whose upstream is GONE (a merged-and-deleted PR branch; "git status -sb" shows [gone]), switch back to the default branch (main/master) and fast-forward, do NOT commit onto the dead branch; (3) bring it up to date (\`git pull --ff-only\`; if it can't fast-forward, rebase your local changes onto the remote) so you never commit on a stale base; (4) review the working changes and commit with a clear message; (5) push to origin (init/create the GitHub repo if it doesn't exist yet). Coordinate and mark this task done once git-manager confirms the push. Requested change / suggested commit message:\n${desc.trim()}`;
       await call('remote', `/task create ${q(title)} --owner ${ownLead} --description ${q(body)}`, undefined, ownTeam);
       void call('remote', `/ask ${ownLead} ${q(`New change request — ${title}. ${body}`)}`, undefined, ownTeam).catch(() => {});
       t.update({ kind: 'success', text: `${ownTeam}/${ownLead} will commit & push “${p.name}” via git-manager ✓` });

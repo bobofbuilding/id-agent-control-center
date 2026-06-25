@@ -8,6 +8,21 @@ Every change pushed or merged to `main` carries its version number in the commit
 subject (`vX.Y.Z: …`), stamped automatically by the `commit-msg` hook — see
 [CONTRIBUTING.md](CONTRIBUTING.md).
 
+## [0.1.150] — 2026-06-25
+- **Self-healing, standardized git guards** so the commit/sync process stays clean across every
+  project:
+  - **⇩ Pull is now resilient (`smartPull`).** It fetch-prunes, then: a live upstream → `pull
+    --ff-only`; an **orphaned branch whose remote was deleted after a merged PR** → switches back to
+    the default branch, fast-forwards, and drops the stale branch; a default branch with no upstream
+    → sets it + ff; an **orphaned branch with UNMERGED work** → left untouched with guidance (never
+    loses work). It never force-pushes or auto-merges. Validated against both the merge-deleted and
+    unmerged scenarios.
+  - **Projects flag it:** an orphaned branch shows **⚠ orphaned branch · Pull to heal** in the git
+    status.
+  - **Commit requests carry the same standard procedure** — git-manager is told to fetch, get OFF a
+    `[gone]` branch onto the default branch, pull-then-commit-then-push, so agent-driven commits
+    self-heal too.
+
 ## [0.1.149] — 2026-06-25
 - **Projects are owned by the DEFAULT team, which delegates git work to git-manager.** New projects
   (New / Import / clone / fork / Sync) now default to **`default`** (was ops-team). Commit requests —
