@@ -361,6 +361,31 @@ export function Teams({ store }: { store: FleetStore }) {
     await loadHier();
   }
 
+  // ---- Reactive Org Sync: each agent's goals file composed from the hierarchy + brain ----
+  type SecLead = { agent: string; team: string; leadsTeams: string[] };
+  const [orgCfg, setOrgCfg] = useState<{ enabled?: boolean; autoRebuild?: boolean }>({ enabled: true, autoRebuild: true });
+  const [secondaries, setSecondaries] = useState<SecLead[]>([]);
+  const [orgBusy, setOrgBusy] = useState(false);
+  const [orgResult, setOrgResult] = useState<string | null>(null);
+  async function loadOrg() {
+    setOrgCfg(await call<{ enabled?: boolean; autoRebuild?: boolean }>('org:getConfig').catch(() => ({ enabled: true, autoRebuild: true })));
+    setSecondaries(await call<{ secondaries: SecLead[] }>('org:hierarchy').then((h) => h.secondaries ?? []).catch(() => []));
+  }
+  useEffect(() => { void loadOrg(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [activeTeam, store.lastUpdated]);
+  async function toggleOrg(patch: { enabled?: boolean; autoRebuild?: boolean }) {
+    const next = await call<{ enabled?: boolean; autoRebuild?: boolean }>('org:setConfig', patch).catch(() => orgCfg);
+    setOrgCfg(next);
+  }
+  async function syncOrgNow() {
+    setOrgBusy(true); setOrgResult('syncing…');
+    try {
+      const r = await call<{ agents: number; written: number; rebuilt: string[]; brain: boolean; skippedBusy: number }>('org:sync', { autoRebuild: orgCfg.autoRebuild !== false });
+      setOrgResult(`synced ${r.agents} agents · ${r.written} goals updated · rebuilt ${r.rebuilt.length}${r.skippedBusy ? ` · ${r.skippedBusy} deferred (busy)` : ''} · brain ${r.brain ? '✓' : '—'}`);
+      store.refresh();
+    } catch (err) { setOrgResult(`sync failed: ${err instanceof Error ? err.message : String(err)}`); }
+    finally { setOrgBusy(false); }
+  }
+
   // Whole-team lifecycle (start / stop / probe / rebuild every agent in a team).
   const [teamOpBusy, setTeamOpBusy] = useState(false);
   const [teamOpMsg, setTeamOpMsg] = useState('');
@@ -721,6 +746,35 @@ export function Teams({ store }: { store: FleetStore }) {
             No primary lead yet — promote one team's coordinator to delegate across teams (via <code>/ask &lt;team&gt;/&lt;agent&gt;</code>).
           </p>
         ) : null}
+
+        {/* Reactive Org Sync — secondary leads + auto-composed goals files */}
+        <div style={{ marginTop: 16, paddingTop: 12, borderTop: '1px solid var(--border, #2a2a2a)' }}>
+          <div className="row-actions" style={{ alignItems: 'center', gap: 10 }}>
+            <h4 style={{ margin: 0 }}>Reactive goals &amp; org sync</h4>
+            <span className="grow" />
+            <label className="muted small" style={{ display: 'inline-flex', alignItems: 'center', gap: 5, cursor: 'pointer' }} title="Continuously compose each agent's goals file from the hierarchy + brain team-instructions">
+              <input type="checkbox" checked={orgCfg.enabled !== false} onChange={(e) => void toggleOrg({ enabled: e.target.checked })} /> auto-sync
+            </label>
+            <label className="muted small" style={{ display: 'inline-flex', alignItems: 'center', gap: 5, cursor: 'pointer' }} title="Rebuild an agent when its goals change AND it's idle (so the new file takes effect)">
+              <input type="checkbox" checked={orgCfg.autoRebuild !== false} onChange={(e) => void toggleOrg({ autoRebuild: e.target.checked })} /> auto-rebuild
+            </label>
+            <button className="btn small" disabled={orgBusy} onClick={() => void syncOrgNow()} title="Recompose every agent's goals file now from the hierarchy + brain">{orgBusy ? 'syncing…' : 'Sync now'}</button>
+          </div>
+          <p className="muted small" style={{ marginTop: 4 }}>
+            Each agent's <b>goals &amp; instructions</b> file is composed from its place in the org: <b>primary</b> (<code>{hier.primary?.agent ?? 'unset'}</code>) ← <b>secondary leads</b> ← team leads ← workers. Secondary leads delegate down and relay sequenced status up to the primary. Brain <code>team-instruction</code> memories are embedded, and the hierarchy is written back to the brain.
+          </p>
+          <div className="kv" style={{ gridTemplateColumns: 'minmax(110px,160px) 1fr', gap: '4px 12px', alignItems: 'center', marginTop: 6 }}>
+            <span className="muted small">secondary lead</span>
+            <span className="muted small">delegates to (team leads)</span>
+            {secondaries.length ? secondaries.map((s) => (
+              <Fragment key={s.agent}>
+                <span className="b">{s.agent} <span className="muted small">· {s.team}</span></span>
+                <span className="small">{s.leadsTeams.length ? s.leadsTeams.map((t) => `${hier.coordinators[t] ?? '(no lead)'} (${t})`).join(', ') : <span className="muted">— none —</span>}</span>
+              </Fragment>
+            )) : <><span className="muted small">—</span><span className="muted small">defaults to researcher + coder on default</span></>}
+          </div>
+          {orgResult ? <p className="muted small" style={{ marginTop: 6 }}>{orgResult}</p> : null}
+        </div>
       </section>
       ) : null}
 

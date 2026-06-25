@@ -8,6 +8,22 @@ Every change pushed or merged to `main` carries its version number in the commit
 subject (`vX.Y.Z: …`), stamped automatically by the `commit-msg` hook — see
 [CONTRIBUTING.md](CONTRIBUTING.md).
 
+## [0.1.165] — 2026-06-25
+- **Reactive goals & org sync.** Each agent's goals & instructions file (the `.id-instructions.md`
+  sidecar) is now composed automatically from its place in the lead hierarchy and kept current:
+  - **primary lead → secondary leads → team leads → workers.** `researcher` and `coder` on the default
+    team act as **secondary leads**: each is told which team leads it delegates DOWN to, and to
+    sequence their results and relay a consolidated status UP to the primary (`lead`). Team leads are
+    told to report to their secondary lead; workers to their team lead.
+  - **Synced with the brain.** The live `team-instruction` memories are embedded into each agent's
+    file, and the hierarchy itself is written back to the brain (keyed `org:hierarchy`, upserted) so it
+    is shared source-of-truth the manager also injects per-dispatch.
+  - **Reactive + safe.** A loop recomposes ~15s after boot and every 5 min (plus a **Sync now** button
+    in HR Manager). It only rewrites a file when the content actually changed, and **rebuilds an agent
+    only when changed AND idle** (mid-task agents are deferred), rate-limited to a few per pass. The
+    org block is marker-fenced, so any manual instructions you added are preserved. Toggle **auto-sync**
+    / **auto-rebuild** in HR Manager → *Reactive goals & org sync*.
+
 ## [0.1.164] — 2026-06-25
 - **Retired the managed-secrets `.gitignore` standard (reverts 0.1.154 + 0.1.163).** It appended a
   tool-branded secrets block to every project and auto-committed it — but every repo already ignored

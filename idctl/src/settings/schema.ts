@@ -35,6 +35,21 @@ export interface IdctlConfig {
    */
   primaryCoordinator?: { team: string; agent: string };
   /**
+   * Middle of the lead hierarchy: secondary leads that sit BETWEEN the primary
+   * coordinator and the per-team coordinators. Each owns a set of teams whose
+   * leads relay up to it; it delegates down to those team leads/agents, sequences
+   * their results, and relays a consolidated status up to the primary. The org-sync
+   * loop composes each agent's goals file from this structure. (Default: researcher
+   * + coder on the default team.)
+   */
+  secondaryLeads?: { agent: string; team: string; leadsTeams: string[] }[];
+  /**
+   * Reactive org-sync: continuously compose each agent's goals & instructions file from
+   * the lead hierarchy + the brain's team-instruction memories. `enabled` defaults to on;
+   * `autoRebuild` (default on) lets it rebuild an agent when its goals change AND it's idle.
+   */
+  orgSync?: { enabled?: boolean; autoRebuild?: boolean };
+  /**
    * The team idctl scopes to on startup (the repo's shipped team). Defaults to
    * "default" — the canonical id-agents team (configs/default.yaml).
    */

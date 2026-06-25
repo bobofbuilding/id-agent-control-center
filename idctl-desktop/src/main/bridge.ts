@@ -21,6 +21,9 @@ import {
   setCoordinator,
   getCoordinator,
   setPrimaryCoordinator,
+  getSecondaryLeads,
+  setSecondaryLeads,
+  type SecondaryLead,
   upsertMcpServer,
   removeMcpServer,
   upsertProject,
@@ -41,6 +44,7 @@ import { kindNeedsKey, type ProviderProfile, type McpServerProfile, type Project
 import { buildRuntimeCatalog } from '../../../idctl/src/settings/runtimeCatalog.ts';
 import { testMcpServer } from './mcpTest.ts';
 import { decomposeWork, createAndDispatchPlan, fanOutObjective, teamLeads, triageUnassigned, type SubTask } from './work.ts';
+import { buildOrgHierarchy, syncOrg, startOrgSyncLoop } from './orgSync.ts';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { homedir } from 'node:os';
@@ -593,6 +597,21 @@ export async function call(method: string, args: unknown[] = []): Promise<unknow
     const s = loadSettings();
     return { primary: s.primaryCoordinator ?? null, coordinators: s.coordinators ?? {} };
   }
+  // ---- Org sync (reactive goals & instructions) ----
+  if (method === 'org:hierarchy') return buildOrgHierarchy(client);
+  if (method === 'org:sync') return syncOrg(client, (args[0] as { autoRebuild?: boolean }) ?? {});
+  if (method === 'org:getSecondaryLeads') return getSecondaryLeads();
+  if (method === 'org:setSecondaryLeads') {
+    setSecondaryLeads((args[0] as SecondaryLead[]) ?? []);
+    return { ok: true };
+  }
+  if (method === 'org:getConfig') return loadSettings().orgSync ?? { enabled: true, autoRebuild: true };
+  if (method === 'org:setConfig') {
+    const s = loadSettings();
+    s.orgSync = { ...(s.orgSync ?? {}), ...((args[0] as { enabled?: boolean; autoRebuild?: boolean }) ?? {}) };
+    saveSettings(s);
+    return s.orgSync;
+  }
   const fn = METHODS[method];
   if (!fn) throw new Error(`unknown method: ${method}`);
   return fn(...args);
@@ -601,4 +620,9 @@ export async function call(method: string, args: unknown[] = []): Promise<unknow
 export function info() {
   const team = client.team ?? 'default';
   return { managerUrl: client.managerUrl, team, coordinator: getCoordinator(team) ?? null };
+}
+
+/** Start the reactive org-sync loop, always reading the live (possibly-reassigned) client. */
+export function startOrgSync(): () => void {
+  return startOrgSyncLoop(() => client);
 }

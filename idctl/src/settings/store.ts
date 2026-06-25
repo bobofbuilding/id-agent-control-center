@@ -318,6 +318,19 @@ export function setPrimaryCoordinator(team: string, agent: string, file = resolv
   return cfg;
 }
 
+export type SecondaryLead = { agent: string; team: string; leadsTeams: string[] };
+
+export function getSecondaryLeads(file = resolveConfigPath()): SecondaryLead[] {
+  return loadSettings(file).secondaryLeads ?? [];
+}
+
+export function setSecondaryLeads(leads: SecondaryLead[], file = resolveConfigPath()): IdctlConfig {
+  const cfg = loadSettings(file);
+  cfg.secondaryLeads = leads;
+  saveSettings(cfg, file);
+  return cfg;
+}
+
 /** Merge auto-derived skill tags into the client-side categorization overlay. */
 export function setSkillTags(tags: Record<string, string[]>, file = resolveConfigPath()): IdctlConfig {
   const cfg = loadSettings(file);
