@@ -29,6 +29,36 @@ function runtimeLabel(r: string): string {
   return r.replace('claude-code-', 'claude-').replace('claude-agent-sdk', 'claude-sdk').replace('-cli', '');
 }
 
+function qArg(s: string): string { return `"${s.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`; }
+function okAgentDraft(s: string): string {
+  const t = (s || '').trim();
+  return t && t !== '(empty reply)' && t !== '(no reply)' ? t : '';
+}
+
+function isRunnableAgent(a: Agent): boolean {
+  return !!a.status && !/stop|offline|dead|exit|error|crash|down|disabled|sleep/i.test(a.status);
+}
+
+type HrAgentCandidate = Agent & { team?: string };
+function resolveHrManagerAgent(store: FleetStore): { name: string; team?: string } | null {
+  const candidates: HrAgentCandidate[] = (store.allAgents.length ? store.allAgents : store.agents).filter(isRunnableAgent);
+  const exact = candidates.find((a) => /^hr[-_]?manager$/i.test(a.name));
+  if (exact) return { name: exact.name, team: exact.team ?? store.team };
+  const descriptive = candidates.find((a) => /(^|[-_])hr($|[-_])|human[-_]?resources/i.test(a.name));
+  if (descriptive) return { name: descriptive.name, team: descriptive.team ?? store.team };
+  return null;
+}
+
+async function askHrManagerToDraft(store: FleetStore, prompt: string): Promise<string> {
+  const hr = resolveHrManagerAgent(store);
+  if (!hr) throw new Error('no active HR manager agent found');
+  const activeTeam = store.team ?? 'default';
+  const target = hr.team && hr.team !== activeTeam ? `${hr.team}/${hr.name}` : hr.name;
+  const draft = okAgentDraft(await call<string>('dispatch', `/ask ${target} ${qArg(prompt)}`));
+  if (!draft) throw new Error(`${target} returned an empty draft`);
+  return draft;
+}
+
 function modeOf(delegates: string[] | null): RelayMode {
   if (delegates === null) return 'permissive';
   if (delegates.includes('*')) return 'all';
@@ -193,18 +223,18 @@ export function Teams({ store }: { store: FleetStore }) {
   async function aiDraftInstr() {
     if (!instrTarget) return;
     const brief = instrText.trim();
-    setInstrBusy(true); setInstrMsg('asking AI to draft…');
+    setInstrBusy(true); setInstrMsg('asking HR manager to draft…');
     try {
       const meta =
         'Write a concise operating directive (a system-prompt addendum, 2-6 sentences, ' +
         'imperative voice, NO preamble, NO markdown headers, NO code fences) for an AI agent named "' + instrTarget + '"' +
         (brief ? ' whose goal is: ' + brief : ' — infer a sensible role from its name') +
         '. Output ONLY the directive text.';
-      const txt = await call<string>('ai:draft', meta);
+      const txt = await askHrManagerToDraft(store, meta);
       setInstrText(txt.trim());
       setInstrMsg('drafted ✓ — review, then Save & rebuild');
     } catch (e) {
-      setInstrMsg(`AI draft failed: ${e instanceof Error ? e.message : String(e)}`);
+      setInstrMsg(`HR manager draft failed: ${e instanceof Error ? e.message : String(e)}`);
     } finally { setInstrBusy(false); }
   }
 
@@ -260,16 +290,16 @@ export function Teams({ store }: { store: FleetStore }) {
   }
   async function aiDraftSgInstr() {
     if (!selAgentName) return;
-    setSgBusy(true); setSgMsg('asking AI to draft…');
+    setSgBusy(true); setSgMsg('asking HR manager to draft…');
     try {
       const meta =
         'Write a concise operating directive (a system-prompt addendum, 2-6 sentences, imperative voice, ' +
         'NO preamble, NO markdown headers, NO code fences) for an AI agent named "' + selAgentName + '"' +
         (sgInstr.trim() ? ' whose goal is: ' + sgInstr.trim() : ' — infer a sensible role from its name') +
         '. Output ONLY the directive text.';
-      const txt = await call<string>('ai:draft', meta);
+      const txt = await askHrManagerToDraft(store, meta);
       setSgInstr(txt.trim()); setSgMsg('drafted ✓ — review, then Save & rebuild');
-    } catch (e) { setSgMsg(`AI draft failed: ${e instanceof Error ? e.message : String(e)}`); }
+    } catch (e) { setSgMsg(`HR manager draft failed: ${e instanceof Error ? e.message : String(e)}`); }
     finally { setSgBusy(false); }
   }
 
@@ -1451,4 +1481,3 @@ function mcpFromChoice(id: string): McpServerSpec[] | undefined {
   const { enabled: _enabled, ...server } = profile;
   return [server];
 }
-
