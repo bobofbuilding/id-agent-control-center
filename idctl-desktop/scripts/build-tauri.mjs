@@ -23,4 +23,9 @@ await build({
 });
 
 cpSync(resolve(ROOT, 'src/tauri/index.html'), resolve(ROOT, 'dist-tauri/index.html'));
+mkdirSync(resolve(ROOT, 'dist-tauri/docs'), { recursive: true });
+cpSync(
+  resolve(ROOT, '../docs/CONTROL_CENTER_WIKI.json'),
+  resolve(ROOT, 'dist-tauri/docs/CONTROL_CENTER_WIKI.json'),
+);
 console.log('built → dist-tauri/');

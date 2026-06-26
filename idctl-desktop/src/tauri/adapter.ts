@@ -16,9 +16,17 @@ import { buildRuntimeCatalog } from '../../../idctl/src/settings/runtimeCatalog.
 import type { McpServerSpec, CreateSkillInput } from '../../../idctl/src/api/client.ts';
 
 const MGR_DEFAULT = 'http://127.0.0.1:4100';
+const WIKI_URL = 'docs/CONTROL_CENTER_WIKI.json';
 let managerUrl = localStorage.getItem('idctl.managerUrl') || MGR_DEFAULT;
 let team = localStorage.getItem('idctl.team') || 'default';
 let client = makeClient();
+
+interface WikiPayload {
+  path: string;
+  mtimeMs: number;
+  loadedAt: number;
+  doc: Record<string, unknown>;
+}
 
 function makeClient(): ManagerClient {
   // Local control center on loopback → legitimate admin client.
@@ -36,6 +44,14 @@ function lsGet<T>(key: string, fallback: T): T {
 }
 function lsSet(key: string, val: unknown): void {
   localStorage.setItem(key, JSON.stringify(val));
+}
+
+async function fetchWiki(): Promise<WikiPayload> {
+  const res = await fetch(WIKI_URL, { cache: 'no-cache' });
+  if (!res.ok) throw new Error(`wiki load failed: ${res.status} ${res.statusText}`);
+  const doc = await res.json() as Record<string, unknown>;
+  const now = Date.now();
+  return { path: WIKI_URL, mtimeMs: now, loadedAt: now, doc };
 }
 
 /** Enrich provider rows with key source (no env in the webview) + needsKey flag. */
@@ -85,6 +101,7 @@ const M: Record<string, (...a: any[]) => Promise<unknown>> = {
   health: () => client.health(),
   agents: () => client.agents(),
   teams: () => client.teams(),
+  'wiki:get': () => fetchWiki(),
   events: (since: number) => client.events(Number(since) || 0, { wait: 20, limit: 100 }),
   inboxPending: () => client.inboxPending(),
   tasks: () => client.tasks(),
