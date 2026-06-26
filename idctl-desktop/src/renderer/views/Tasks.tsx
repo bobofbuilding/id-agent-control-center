@@ -20,9 +20,9 @@ type TriageResult = { considered: number; assigned: { ref: string; agent: string
 
 type Tab = 'tasks' | 'goals' | 'plans' | 'schedule' | 'loops' | 'dream';
 const TABS: { id: Tab; label: string }[] = [
+  { id: 'goals', label: 'Goals' },
   { id: 'plans', label: 'Plans' },
   { id: 'tasks', label: 'Tasks' },
-  { id: 'goals', label: 'Goals' },
   { id: 'schedule', label: 'Schedule' },
   { id: 'loops', label: 'Loops' },
   { id: 'dream', label: 'Dream' },
