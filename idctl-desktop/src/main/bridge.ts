@@ -480,6 +480,8 @@ const METHODS: Record<string, (...a: any[]) => Promise<unknown>> = {
     (team ? client.withTeam(String(team)) : client).setAgentRuntime(String(id), String(runtime)),
   setAgentEffort: (id: string, effort: string, team?: string) =>
     (team ? client.withTeam(String(team)) : client).setAgentEffort(String(id), String(effort ?? '')),
+  setAgentSpeed: (id: string, speed: string, team?: string) =>
+    (team ? client.withTeam(String(team)) : client).setAgentSpeed(String(id), String(speed ?? '')),
   // reassign a local agent to another team (rebuilds it there)
   'agent:move': (id: string, team: string) => client.moveAgent(String(id), String(team)),
 

@@ -122,6 +122,26 @@ export function runtimeHasEffort(runtime?: string): boolean {
   return effortOptions(runtime).length > 0;
 }
 
+/**
+ * Output speed options per runtime. Claude Code's interactive `/fast` toggle is
+ * exposed in the UI for Claude Code runtimes only; other runtimes have no speed
+ * knob.
+ */
+export const RUNTIME_SPEEDS: Record<string, string[]> = {
+  'claude-code-cli': ['default', 'fast'],
+  'claude-code-local': ['default', 'fast'],
+};
+
+/** The speed scale this runtime honors (empty if it has no speed knob). */
+export function speedOptions(runtime?: string): string[] {
+  return RUNTIME_SPEEDS[runtime ?? ''] ?? [];
+}
+
+/** Does this runtime have an output-speed knob at all? */
+export function runtimeHasSpeed(runtime?: string): boolean {
+  return speedOptions(runtime).length > 0;
+}
+
 /** Current known models per runtime, used when no probeable provider is configured. */
 export const RUNTIME_CURATED: Record<string, string[]> = {
   'claude-agent-sdk': ['claude-opus-4-8', 'claude-sonnet-4-6', 'claude-haiku-4-5'],

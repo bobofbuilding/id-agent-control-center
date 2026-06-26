@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { call, agentsLeadFirst, type FleetStore, type TeamAgent } from '../store.ts';
 import { statusClass } from '../agentStatus.ts';
 import type { Agent } from '../../../../idctl/src/api/types.ts';
-import { RUNTIMES, offerableRuntimes, effortOptions, runtimeHasEffort } from '../../../../idctl/src/settings/runtimeCatalog.ts';
+import { RUNTIMES, offerableRuntimes, effortOptions, runtimeHasEffort, speedOptions, runtimeHasSpeed } from '../../../../idctl/src/settings/runtimeCatalog.ts';
 
 /**
  * The fleet agent grid — per-agent runtime/model switching + lifecycle actions, with a
@@ -59,13 +59,17 @@ function effortOf(a: Agent): string {
   const e = a.metadata?.effort;
   return typeof e === 'string' ? e : '';
 }
+function speedOf(a: Agent): string {
+  const s = a.metadata?.speed;
+  return typeof s === 'string' && s ? s : 'default';
+}
 function skillsOf(a: Agent): string[] {
   const s = a.metadata?.skills;
   return Array.isArray(s) ? (s as string[]) : [];
 }
 
 export function AgentTable({ store, onProbe, probeBusy }: { store: FleetStore; onProbe?: (a: TeamAgent) => void; probeBusy?: string | null }) {
-  const cols = onProbe ? 8 : 7;
+  const cols = onProbe ? 9 : 8;
   const [selected, setSelected] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [catalog, setCatalog] = useState<Record<string, string[]>>({});
@@ -169,6 +173,17 @@ export function AgentTable({ store, onProbe, probeBusy }: { store: FleetStore; o
       store.refresh(); setBusy(null);
     } catch (err) { setBusy(`effort change failed — ${err instanceof Error ? err.message : String(err)}`); setTimeout(() => setBusy(null), 4000); }
   }
+  async function setSpeed(a: TeamAgent, speed: string) {
+    if (speed === speedOf(a)) return;
+    const team = teamOf(a);
+    setBusy(`speed ${a.name}`);
+    try {
+      await call('setAgentSpeed', a.id, speed, team);
+      // Rebuild so the agent's harness picks up the new ID_AGENT_SPEED on its next launch.
+      await call('remote', `/agent ${a.name} rebuild`, undefined, team);
+      store.refresh(); setBusy(null);
+    } catch (err) { setBusy(`speed change failed — ${err instanceof Error ? err.message : String(err)}`); setTimeout(() => setBusy(null), 4000); }
+  }
   async function setRuntime(a: TeamAgent, runtime: string) {
     if (!runtime || runtime === a.runtime) return;
     const team = teamOf(a);
@@ -223,6 +238,16 @@ export function AgentTable({ store, onProbe, probeBusy }: { store: FleetStore; o
             </select>
           ) : (
             <span className="muted" title="local & cursor runtimes have no reasoning-effort setting">—</span>
+          )}
+        </td>
+        <td onClick={(e) => e.stopPropagation()}>
+          {runtimeHasSpeed(a.runtime) ? (
+            <select className="cell-select" value={speedOf(a)} onChange={(e) => void setSpeed(a, e.target.value)}
+              title={`Output speed for the ${runtimeLabel(a.runtime ?? '')} runtime`}>
+              {speedOptions(a.runtime).map((speed) => <option key={speed} value={speed}>{speed}</option>)}
+            </select>
+          ) : (
+            <span className="muted" title="this runtime has no output-speed setting">—</span>
           )}
         </td>
         <td className="muted" title="port is assigned by the manager">{a.port || '—'}</td>
@@ -283,7 +308,7 @@ export function AgentTable({ store, onProbe, probeBusy }: { store: FleetStore; o
         ) : null}
         <table className="grid">
           <thead>
-            <tr><th>Agent</th><th>Status</th><th>Runtime</th><th>Model</th><th title="Reasoning effort — lower spends fewer subscription tokens (codex & Claude CLI only)">Effort</th><th>Port</th><th>Actions</th>{onProbe ? <th>Probe</th> : null}</tr>
+            <tr><th>Agent</th><th>Status</th><th>Runtime</th><th>Model</th><th title="Reasoning effort — lower spends fewer subscription tokens (codex & Claude CLI only)">Effort</th><th title="Output speed — Claude Code runtimes only">Speed</th><th>Port</th><th>Actions</th>{onProbe ? <th>Probe</th> : null}</tr>
           </thead>
           <tbody>
             {groups.flatMap((g) => {
@@ -315,6 +340,7 @@ export function AgentTable({ store, onProbe, probeBusy }: { store: FleetStore; o
             {viewAll ? (<><span>team</span><b>{sel.team ?? '—'}</b></>) : null}
             <span>runtime</span><b>{sel.runtime ?? sel.type ?? '—'}</b>
             <span>model</span><b>{sel.model ?? '—'}</b>
+            <span>speed</span><b>{runtimeHasSpeed(sel.runtime) ? speedOf(sel) : '—'}</b>
             <span>port</span><b>{sel.port || '—'}</b>
             <span>skills</span>
             <b>{skillsOf(sel).length ? <span className="chips">{skillsOf(sel).map((s) => <span className="chip" key={s}>{s}</span>)}</span> : <span className="muted">none</span>}</b>
