@@ -8,6 +8,9 @@ Every change pushed or merged to `main` carries its version number in the commit
 subject (`vX.Y.Z: …`), stamped automatically by the `commit-msg` hook — see
 [CONTRIBUTING.md](CONTRIBUTING.md).
 
+## [0.1.193] — 2026-06-26
+- fix(dashboard): live coordination tile shows only team lead + its live dot; drop team title and member list
+
 ## [0.1.192] — 2026-06-26
 - fix(dashboard): sync live coordination with HR teams
 - feat(desktop): expose Claude output speed control

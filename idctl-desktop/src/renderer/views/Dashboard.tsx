@@ -214,39 +214,26 @@ function CoordinationTree({ store, events, activeTeams }: { store: FleetStore; e
     );
   };
 
-  // A team row: the team name, its lead, active tasks, then member nodes under the lead.
+  // A team row: just the team lead with the team's live dot to its right, plus active tasks.
+  // (Per request: no team title, no member names listed under the lead.)
   const teamRow = (tm: string) => {
     const tl = hier.coordinators[tm];
-    const teamAgents = store.allAgents.filter((a) => a.team === tm).sort((a, b) => {
-      if (a.name === tl) return -1;
-      if (b.name === tl) return 1;
-      return a.name.localeCompare(b.name);
-    });
+    const teamAgents = store.allAgents.filter((a) => a.team === tm);
     const memberNames = new Set(teamAgents.map((a) => a.name));
     const anyWorking = teamAgents.some((a) => isWorking(a));
     const dot = anyWorking ? '#3ccb78' : '#c98a3c'; // green active / orange idle
     const active = tasks.filter((t) => DOING_RE.test(t.status) && !DONE_RE.test(t.status) && t.ownerName && memberNames.has(t.ownerName));
     return (
-      <div key={tm} style={{ display: 'flex', flexDirection: 'column', gap: 3, minWidth: 0 }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0 }}>
-          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, flexShrink: 0 }}>
-            <b style={{ fontSize: 13 }}>{tm}</b>
-            <span style={{ width: 8, height: 8, borderRadius: '50%', background: dot, flexShrink: 0 }} title={anyWorking ? 'active' : 'idle'} />
-          </span>
-          <span
-            className="muted small"
-            style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', minWidth: 0 }}
-            title={active.map((t) => t.title).join(' · ')}
-          >
-            {active.length ? active.map((t) => `${t.shortId ?? ''} ${clip(String(t.title ?? ''), 30)}`.trim()).join('  ·  ') : '—'}
-          </span>
-        </div>
-        <div style={{ paddingLeft: 16, display: 'flex', flexDirection: 'column', gap: 2 }}>
-          {tl ? node(tl, 'team lead', tm) : <span className="muted small">no lead</span>}
-          {teamAgents.filter((a) => a.name !== tl).map((a) => (
-            <div key={a.id} style={{ paddingLeft: 16 }}>{node(a.name, 'member', tm)}</div>
-          ))}
-        </div>
+      <div key={tm} style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0 }}>
+        {tl ? node(tl, 'team lead', tm) : <span className="muted small">no lead</span>}
+        <span style={{ width: 8, height: 8, borderRadius: '50%', background: dot, flexShrink: 0 }} title={anyWorking ? 'active' : 'idle'} />
+        <span
+          className="muted small"
+          style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', minWidth: 0 }}
+          title={active.map((t) => t.title).join(' · ')}
+        >
+          {active.length ? active.map((t) => `${t.shortId ?? ''} ${clip(String(t.title ?? ''), 30)}`.trim()).join('  ·  ') : '—'}
+        </span>
       </div>
     );
   };
