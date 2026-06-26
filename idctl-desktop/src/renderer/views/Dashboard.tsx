@@ -214,12 +214,42 @@ function CoordinationTree({ store, events, activeTeams }: { store: FleetStore; e
     );
   };
 
+  // A team row: the team name, a status dot directly after it (green = at least one
+  // member working, orange = live but idle), then the team's active tasks to the right.
+  const teamRow = (tm: string) => {
+    const tl = hier.coordinators[tm];
+    const memberNames = new Set(store.allAgents.filter((a) => a.team === tm).map((a) => a.name));
+    const anyWorking = store.allAgents.some((a) => a.team === tm && isWorking(a));
+    const dot = anyWorking ? '#3ccb78' : '#c98a3c'; // green active / orange idle
+    const active = tasks.filter((t) => DOING_RE.test(t.status) && !DONE_RE.test(t.status) && t.ownerName && memberNames.has(t.ownerName));
+    return (
+      <div key={tm} style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0 }}>
+        <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, flexShrink: 0 }}>
+          <b style={{ fontSize: 13 }}>{tm}</b>
+          <span style={{ width: 8, height: 8, borderRadius: '50%', background: dot, flexShrink: 0 }} title={anyWorking ? 'active' : 'idle'} />
+          <span className="muted small">{tl ?? 'no lead'}</span>
+        </span>
+        <span
+          className="muted small"
+          style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', minWidth: 0 }}
+          title={active.map((t) => t.title).join(' · ')}
+        >
+          {active.length ? active.map((t) => `${t.shortId ?? ''} ${clip(String(t.title ?? ''), 30)}`.trim()).join('  ·  ') : '—'}
+        </span>
+      </div>
+    );
+  };
+
   const primary = hier.primary?.agent;
   if (!primary) return null; // nothing to show until a primary lead is designated (HR Manager)
   const activeTeamSet = new Set(activeTeams);
   const visibleSecondaries = hier.secondaries
     .map((s) => ({ ...s, leadsTeams: s.leadsTeams.filter((tm) => activeTeamSet.has(tm)) }))
     .filter((s) => s.leadsTeams.length > 0);
+  // Active teams not owned by any visible secondary — most notably the primary lead's
+  // own team — would otherwise vanish from the tile. Surface them under the primary.
+  const coveredTeams = new Set(visibleSecondaries.flatMap((s) => s.leadsTeams));
+  const orphanTeams = activeTeams.filter((tm) => !coveredTeams.has(tm));
 
   return (
     <section className="card" style={{ marginBottom: 12, flexShrink: 0 }}>
@@ -233,23 +263,19 @@ function CoordinationTree({ store, events, activeTeams }: { store: FleetStore; e
         ) : null}
       </h3>
       <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-        <div>{node(primary, 'primary lead')}</div>
+        <div>
+          {node(primary, 'primary lead')}
+          {orphanTeams.length ? (
+            <div style={{ paddingLeft: 18, marginTop: 4, display: 'flex', flexDirection: 'column', gap: 3 }}>
+              {orphanTeams.map((tm) => teamRow(tm))}
+            </div>
+          ) : null}
+        </div>
         {visibleSecondaries.map((s) => (
           <div key={s.agent} style={{ paddingLeft: 16, borderLeft: '1px solid var(--border, #2a2a2a)' }}>
             <div style={{ marginBottom: 4 }}>↳ {node(s.agent, 'secondary')}</div>
             <div style={{ paddingLeft: 18, display: 'flex', flexDirection: 'column', gap: 3 }}>
-              {s.leadsTeams.map((tm) => {
-                const tl = hier.coordinators[tm];
-                const workers = store.allAgents.filter((a) => a.team === tm && a.name !== tl);
-                const working = workers.filter(isWorking).length;
-                const liveW = workers.filter((w) => isAgentLive(w.status)).length;
-                return (
-                  <div key={tm} style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0 }}>
-                    {tl ? node(tl, tm) : <span className="muted small">{tm} · no lead</span>}
-                    <span className="muted small" style={{ whiteSpace: 'nowrap' }}>— {workers.length} workers · {working} working · {liveW} live</span>
-                  </div>
-                );
-              })}
+              {s.leadsTeams.map((tm) => teamRow(tm))}
             </div>
           </div>
         ))}
