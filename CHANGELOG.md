@@ -8,6 +8,9 @@ Every change pushed or merged to `main` carries its version number in the commit
 subject (`vX.Y.Z: …`), stamped automatically by the `commit-msg` hook — see
 [CONTRIBUTING.md](CONTRIBUTING.md).
 
+## [0.1.181] — 2026-06-26
+- Dashboard: scope the Activity tile to active teams and agents — hide rows from idle/stopped teams and known-but-stopped fleet agents; keep system/manager and unattributed rows. Also persist chat composer drafts.
+
 ## [0.1.180] — 2026-06-25
 - Control Center Wiki view + unified cross-team activity feed
 - In-app schema-driven Wiki (docs/CONTROL_CENTER_WIKI.json) covering pages/tabs/controls/endpoints, with a resilient loader (env/appPath/resources/cwd fallbacks) and a build copy into out/docs for packaging.
