@@ -8,6 +8,9 @@ Every change pushed or merged to `main` carries its version number in the commit
 subject (`vX.Y.Z: …`), stamped automatically by the `commit-msg` hook — see
 [CONTRIBUTING.md](CONTRIBUTING.md).
 
+## [0.1.183] — 2026-06-26
+- Automated release of outstanding ID Agents Control Center code.
+
 ## [0.1.182] — 2026-06-26
 - Chat: add genReason (per-message reasoning). Dashboard: command palette + control drawer + mirror successful control actions to the self-learning brain (controlLog); org-sync + styling refinements.
 
