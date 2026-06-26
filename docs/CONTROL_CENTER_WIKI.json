@@ -225,7 +225,7 @@
         "label": "Chat",
         "icon": "✦",
         "order": 20,
-        "visible": true
+        "visible": false
       },
       "sourceFiles": [
         "idctl-desktop/src/renderer/views/Chat.tsx",
@@ -233,7 +233,7 @@
         "idctl-desktop/src/main/chatfiles.ts",
         "idctl-desktop/src/main/images.ts"
       ],
-      "purpose": "Full chat workspace for sessions, agent targeting, project focus, file attachments, generated images, resumable dispatches, and live behind-the-scenes activity.",
+      "purpose": "Full chat workspace for sessions, agent targeting, project focus, file attachments, generated images, resumable dispatches, and live behind-the-scenes activity. NOTE: Chat is embedded into the Dashboard (lead-locked via the Chat `embedded`/`lockTarget` props) and is no longer a standalone nav page — the Dashboard is the lead chat.",
       "scope": "Active team by default. Embedded callers can pin a specific team or lock a target.",
       "tiles": [
         {

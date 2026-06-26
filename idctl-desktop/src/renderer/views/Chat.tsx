@@ -13,7 +13,9 @@ interface Msg {
   text: string;
   files?: { name: string; isImage: boolean }[];
   image?: { path: string; prompt: string; model: string };
-  trace?: string[];       // behind-the-scenes fleet activity captured while this reply ran
+  trace?: string[];        // the agent's OWN behind-the-scenes steps (background tasks) captured with this reply
+  delegations?: string[];  // work farmed out to other agents while this reply ran
+  reasoning?: string;      // one-line summary of what produced this reply (shown in the dropdown summary)
   pending?: boolean;
 }
 interface Inflight { queryId: string; replyId: number; target: string; startedAt: number; plan?: { request: boolean; text: string } }
@@ -506,11 +508,26 @@ export function Chat({ store, embedded = false, lockTarget, teamOverride }: { st
    *  The manager EVENT log (delegation lines) still carries agent+time but no
    *  queryId, so those remain a best-effort, time-windowed annotation — never
    *  load-bearing (the reply itself is queryId-keyed). */
-  function buildTrace(steps: ActivityStep[], startedAt: number): string[] {
-    const acts = steps.map(actLine);
-    const delegs = traceLines(storeEventsRef.current, 0, startedAt - 1500, agentNameById)
+  function buildTrace(steps: ActivityStep[], startedAt: number): { steps: string[]; delegations: string[] } {
+    // The agent's OWN behind-the-scenes work (background tasks). Delegate-kind
+    // steps are pulled out into their own strand below, not mixed in here.
+    const own = steps.filter((s) => s.kind !== 'delegate').map(actLine).slice(-14);
+    // Work farmed out to others: delegate-kind activity + delegation/relay lines
+    // seen on the manager event log since this dispatch started (best-effort,
+    // time-windowed — the reply itself stays queryId-keyed).
+    const delegSteps = steps.filter((s) => s.kind === 'delegate').map(actLine);
+    const delegEvents = traceLines(storeEventsRef.current, 0, startedAt - 1500, agentNameById)
       .filter((t) => / → |delegated|replied/.test(t.line)).slice(-4).map((t) => `${whenTime(t.at)} ${t.line}`.trim());
-    return [...acts, ...delegs].slice(-14);
+    return { steps: own, delegations: [...delegSteps, ...delegEvents].slice(-8) };
+  }
+  /** Always-available one-line summary of what produced a reply, rolled up from
+   *  its own steps + delegations — the deterministic fallback shown in the
+   *  dropdown summary when the local-Ollama paraphrase is unavailable. */
+  function deterministicReason(own: string[], delegations: string[]): string {
+    const parts: string[] = [];
+    if (own.length) parts.push(`${own.length} background step${own.length === 1 ? '' : 's'}`);
+    if (delegations.length) parts.push(`delegated ${delegations.length}×`);
+    return parts.join(' · ');
   }
 
   /** Deliver a terminal result to session `sid` (KEYED BY sid → always the right
@@ -591,8 +608,21 @@ export function Chat({ store, embedded = false, lockTarget, teamOverride }: { st
         if (deletedRef.current.has(sid)) return;
         await pollActivity(); // keep this dispatch's own trace fresh
         if (q?.status === 'delivered') {
-          const trace = buildTrace(actSteps, inf.startedAt);
-          await deliverInflight(sid, inf, { text: q.text || '(empty reply)', trace: trace.length ? trace : undefined }, true);
+          const { steps: own, delegations } = buildTrace(actSteps, inf.startedAt);
+          const text = q.text || '(empty reply)';
+          // Deliver immediately with a deterministic reasoning rollup (never empty),
+          // then best-effort UPGRADE the summary to a free local-Ollama paraphrase
+          // of the reply — same path the title gen uses; leaves the rollup if Ollama
+          // is unavailable. Fired async so the reply isn't delayed by inference.
+          await deliverInflight(sid, inf, {
+            text,
+            trace: own.length ? own : undefined,
+            delegations: delegations.length ? delegations : undefined,
+            reasoning: deterministicReason(own, delegations) || undefined,
+          }, true);
+          void call<string>('chat:genReason', text)
+            .then((r) => { if (r && r.trim()) void resolveMsg(sid, inf.replyId, { reasoning: clip(r.trim(), 100) }); })
+            .catch(() => {});
           return;
         }
         if (q?.status === 'failed' || q?.status === 'expired' || q?.status === 'cancelled') {
@@ -875,19 +905,41 @@ export function Chat({ store, embedded = false, lockTarget, teamOverride }: { st
                 {m.role !== 'system' ? <div className="msg-who">{m.role === 'you' ? 'you' : m.who}</div> : null}
                 <div className="msg-body">{m.pending && !m.image ? <span className="spin">▌ {m.text || (live ? `${m.who} working… ${elapsed}s` : 'thinking…')}</span> : m.text}</div>
                 {/* Live "what the agent is doing" feed while this reply is running:
-                    its own tool/file steps, plus any work farmed out to others. */}
-                {live && (activitySteps.length || liveTrace.length) ? (
+                    the agent's OWN steps (background tasks) and, as a distinct
+                    strand, any work farmed out to other agents (delegations). */}
+                {live && (activitySteps.length || liveTrace.length) ? (() => {
+                  const own = activitySteps.filter((a) => a.kind !== 'delegate');
+                  const delegSteps = activitySteps.filter((a) => a.kind === 'delegate');
+                  const hasDeleg = delegSteps.length || liveTrace.length;
+                  return (
                   <div className="chat-trace">
-                    <div className="chat-trace-head muted small">working · live</div>
-                    {activitySteps.map((a) => <div key={`a${a.seq}`} className={`chat-trace-row act-${a.kind === 'error' ? 'err' : 'accent'}`}><span className="chat-trace-when">{whenTime(a.at)}</span>{actIcon(a.kind)} {a.summary}</div>)}
+                    {hasDeleg ? <div className="chat-trace-head muted small">🤝 delegated · live</div> : null}
+                    {delegSteps.map((a) => <div key={`d${a.seq}`} className="chat-trace-row act-accent"><span className="chat-trace-when">{whenTime(a.at)}</span>{actIcon(a.kind)} {a.summary}</div>)}
                     {liveTrace.map((t) => <div key={`e${t.seq}`} className={`chat-trace-row trace-${t.cls}`}><span className="chat-trace-when">{whenTime(t.at)}</span>{t.line}</div>)}
+                    {own.length ? <div className="chat-trace-head muted small">working · live</div> : null}
+                    {own.map((a) => <div key={`a${a.seq}`} className={`chat-trace-row act-${a.kind === 'error' ? 'err' : 'accent'}`}><span className="chat-trace-when">{whenTime(a.at)}</span>{actIcon(a.kind)} {a.summary}</div>)}
                   </div>
-                ) : null}
-                {/* Captured trace, persisted with a finished reply. */}
-                {!m.pending && m.trace && m.trace.length ? (
+                  );
+                })() : null}
+                {/* Captured behind-the-scenes detail, persisted with a finished
+                    reply: the <summary> carries the one-line reasoning; expanding
+                    shows farmed-out work (delegations) then the agent's own
+                    background-task steps. */}
+                {!m.pending && (m.trace?.length || m.delegations?.length || m.reasoning) ? (
                   <details className="chat-trace done">
-                    <summary className="muted small">behind the scenes · {m.trace.length} step{m.trace.length === 1 ? '' : 's'}</summary>
-                    {m.trace.map((line, i) => <div key={i} className="chat-trace-row">{line}</div>)}
+                    <summary className="muted small">behind the scenes{m.reasoning ? ` — ${m.reasoning}` : m.trace?.length ? ` · ${m.trace.length} background step${m.trace.length === 1 ? '' : 's'}` : ''}</summary>
+                    {m.delegations?.length ? (
+                      <>
+                        <div className="chat-trace-head muted small">🤝 delegated</div>
+                        {m.delegations.map((line, i) => <div key={`d${i}`} className="chat-trace-row">{line}</div>)}
+                      </>
+                    ) : null}
+                    {m.trace?.length ? (
+                      <>
+                        {m.delegations?.length ? <div className="chat-trace-head muted small">background tasks</div> : null}
+                        {m.trace.map((line, i) => <div key={`s${i}`} className="chat-trace-row">{line}</div>)}
+                      </>
+                    ) : null}
                   </details>
                 ) : null}
                 {m.image ? <ChatImage path={m.image.path} /> : null}

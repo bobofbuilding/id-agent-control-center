@@ -3,7 +3,6 @@ import { useFleet, call } from './store.ts';
 import { PromptProvider } from './components/prompt.tsx';
 import { ToastProvider } from './components/toast.tsx';
 import { Dashboard } from './views/Dashboard.tsx';
-import { Chat } from './views/Chat.tsx';
 import { Teams } from './views/Teams.tsx';
 import { Inbox } from './views/Inbox.tsx';
 import { Tasks } from './views/Tasks.tsx';
@@ -17,11 +16,10 @@ import { Wiki, type ControlCenterWiki, type WikiPayload } from './views/Wiki.tsx
 import { CommandPalette } from './views/dashboard/CommandPalette.tsx';
 import { ControlDrawer } from './views/dashboard/ControlDrawer.tsx';
 
-type ViewId = 'dashboard' | 'chat' | 'inbox' | 'tasks' | 'projects' | 'health' | 'identity' | 'schedule' | 'teams' | 'modules' | 'computer' | 'settings' | 'wiki';
+type ViewId = 'dashboard' | 'inbox' | 'tasks' | 'projects' | 'health' | 'identity' | 'schedule' | 'teams' | 'modules' | 'computer' | 'settings' | 'wiki';
 
 const DEFAULT_NAV: { id: ViewId; label: string; icon: string; order: number }[] = [
   { id: 'dashboard', label: 'Dashboard', icon: '▦', order: 10 },
-  { id: 'chat', label: 'Chat', icon: '✦', order: 20 },
   { id: 'inbox', label: 'Inbox', icon: '✉', order: 30 },
   { id: 'tasks', label: 'Work', icon: '☑', order: 40 },
   { id: 'projects', label: 'Projects', icon: '◆', order: 50 },
@@ -158,7 +156,7 @@ export function App() {
               {n.id === 'inbox' && store.inbox.length > 0 ? (
                 <span className="nav-badge" title={`${store.inbox.length} pending message${store.inbox.length === 1 ? '' : 's'}`}>{store.inbox.length}</span>
               ) : null}
-              {n.id === 'chat' && store.chatUnread > 0 ? (
+              {n.id === 'dashboard' && store.chatUnread > 0 ? (
                 <span className="nav-badge" title={`${store.chatUnread} chat${store.chatUnread === 1 ? '' : 's'} with new replies`}>{store.chatUnread}</span>
               ) : null}
             </button>
@@ -215,8 +213,6 @@ function Router({ view, store, wiki, wikiError, wikiQuery, setWikiQuery, wikiPag
   switch (view) {
     case 'dashboard':
       return <Dashboard store={store} />;
-    case 'chat':
-      return <Chat store={store} />;
     case 'teams':
       return <Teams store={store} />;
     case 'inbox':
