@@ -36,6 +36,10 @@
       {
         "from": "resources/computeruse-mcp",
         "to": "computeruse-mcp"
+      },
+      {
+        "from": "../docs/CONTROL_CENTER_WIKI.json",
+        "to": "docs/CONTROL_CENTER_WIKI.json"
       }
     ],
     "mac": {
