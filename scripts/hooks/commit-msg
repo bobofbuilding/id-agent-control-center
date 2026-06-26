@@ -29,8 +29,10 @@ ver="$(sed -n 's/.*"version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$pkg" 
 next_ver="$(printf '%s' "$ver" | awk -F. 'NF==3 && $3 ~ /^[0-9]+$/ { printf "%s.%s.%d", $1, $2, $3 + 1 }')"
 [ -n "$next_ver" ] && ver="$next_ver"
 
-# Subject = first non-blank, non-comment line of the message.
-subject="$(grep -vE '^[[:space:]]*#' "$msg_file" 2>/dev/null | grep -vE '^[[:space:]]*$' 2>/dev/null | head -1)"
+# Subject = first non-blank, non-comment line of the message. Strip an accidental leading
+# bullet so a release-note bullet doesn't leak into the "vX.Y.Z: …" commit subject (mirrors
+# release.sh, which does the same when repurposing the changelog body as a subject).
+subject="$(grep -vE '^[[:space:]]*#' "$msg_file" 2>/dev/null | grep -vE '^[[:space:]]*$' 2>/dev/null | head -1 | sed -E 's/^[[:space:]]*[-*][[:space:]]*//')"
 [ -n "$subject" ] || exit 0
 
 # Already stamped (subject starts with vX...) — leave it alone.

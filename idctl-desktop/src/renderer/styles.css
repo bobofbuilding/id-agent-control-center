@@ -517,6 +517,44 @@ select, input {
 select:focus, input:focus { border-color: var(--accent); }
 .kv b select { padding: 3px 6px; }
 
+/* Identity & Keys */
+.identity-view { gap: 12px; }
+.identity-shell { align-items: flex-start; }
+.identity-agents { width: 250px; flex: 0 0 250px; position: sticky; top: 0; max-height: calc(100vh - 118px); overflow: auto; }
+.identity-agents .target { display: flex; flex-direction: column; gap: 1px; width: 100%; }
+.identity-main { display: flex; flex-direction: column; gap: 12px; min-width: 0; }
+.identity-hero { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
+.identity-hero h2 { margin: 0; font-size: 24px; letter-spacing: 0; }
+.identity-subtitle { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-top: 3px; }
+.identity-metrics { display: grid; grid-template-columns: repeat(3, minmax(96px, 1fr)); gap: 8px; min-width: 330px; }
+.identity-metrics div { border: 1px solid var(--line); border-radius: 8px; background: var(--bg); padding: 9px 10px; }
+.identity-metrics b { display: block; font-size: 18px; color: var(--text); }
+.identity-metrics span { display: block; color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: .04em; }
+.identity-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; align-items: stretch; }
+.identity-kv { grid-template-columns: 130px minmax(0, 1fr); }
+.identity-actions { justify-content: flex-start; flex-wrap: wrap; margin-top: 12px; }
+.id-pill { display: inline-flex; align-items: center; justify-content: center; min-width: 82px; border: 1px solid var(--line); border-radius: 999px; padding: 2px 7px; font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: .04em; white-space: nowrap; }
+.id-pill.verified { color: var(--ok); border-color: color-mix(in srgb, var(--ok) 48%, transparent); background: color-mix(in srgb, var(--ok) 12%, transparent); }
+.id-pill.warn { color: var(--warn); border-color: color-mix(in srgb, var(--warn) 48%, transparent); background: color-mix(in srgb, var(--warn) 12%, transparent); }
+.id-pill.missing { color: var(--err); border-color: color-mix(in srgb, var(--err) 48%, transparent); background: color-mix(in srgb, var(--err) 10%, transparent); }
+.id-pill.self { color: var(--accent); border-color: color-mix(in srgb, var(--accent) 42%, transparent); background: color-mix(in srgb, var(--accent) 9%, transparent); }
+.risk-list, .auth-list { display: flex; flex-direction: column; gap: 8px; }
+.risk-row { display: grid; grid-template-columns: 12px minmax(110px, .75fr) minmax(0, 1.25fr); gap: 8px; align-items: baseline; }
+.risk-row .dot { margin: 0; }
+.auth-list div { display: grid; grid-template-columns: 112px minmax(0, 1fr); gap: 10px; align-items: start; }
+.evidence-grid { display: flex; flex-direction: column; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
+.evidence-row { display: grid; grid-template-columns: minmax(210px, 1.2fr) 112px 120px minmax(0, 1fr); gap: 12px; align-items: center; padding: 10px 12px; border-top: 1px solid var(--line); background: var(--bg); }
+.evidence-row:first-child { border-top: 0; }
+.evidence-row p { margin: 3px 0 0; }
+.identity-table th, .identity-table td { vertical-align: top; }
+
+@media (max-width: 1100px) {
+  .identity-shell, .identity-grid, .identity-hero { display: flex; flex-direction: column; }
+  .identity-agents { position: static; width: 100%; flex-basis: auto; max-height: none; }
+  .identity-metrics { width: 100%; min-width: 0; }
+  .evidence-row { grid-template-columns: 1fr; gap: 6px; }
+}
+
 
 /* ── Computer Use ─────────────────────────────────────────────────────── */
 .cu-intro { margin: 2px 2px 12px; line-height: 1.5; }
