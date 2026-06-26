@@ -215,6 +215,9 @@ async function appCall(method: string, args: unknown[]): Promise<unknown> {
       return ollamaRemove(args[0] as string);
     case 'app:hardware':
       return getHardware();
+    case 'brain:openGraph':
+      await shell.openExternal('http://127.0.0.1:4200/dashboard/graph');
+      return { ok: true };
     case 'project:pickFolder':
       return pickProjectFolder(args[0] as string | undefined);
     case 'project:openFolder':
