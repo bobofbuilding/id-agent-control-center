@@ -71,6 +71,18 @@ for (const f of [process.env.DESK + "/package.json", process.env.DESK + "/packag
 }
 ' "$CUR" "$VER"
 
+# Keep the human-facing wiki in lockstep with the release: check-wiki.mjs (run above) requires
+# docs/CONTROL_CENTER_WIKI.json appVersion === package.json version + a current `updated` date.
+# Bump them here so the gate self-sustains instead of blocking the NEXT release.
+node -e '
+const fs = require("fs"); const [cur, ver] = process.argv.slice(1);
+const f = "docs/CONTROL_CENTER_WIKI.json";
+let s = fs.readFileSync(f, "utf8");
+s = s.replace(`"appVersion": "${cur}"`, `"appVersion": "${ver}"`);
+s = s.replace(/"updated":\s*"\d{4}-\d{2}-\d{2}"/, `"updated": "${new Date().toISOString().slice(0, 10)}"`);
+fs.writeFileSync(f, s);
+' "$CUR" "$VER"
+
 # --- 2) prepend a CHANGELOG entry under the title block (before the first "## [" heading) ---
 node -e '
 const fs = require("fs"); const [ver, note] = process.argv.slice(1);

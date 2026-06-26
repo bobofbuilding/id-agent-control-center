@@ -216,6 +216,44 @@ function isAgentIdle(agentName: string, tasks: Task[]): boolean {
   return !tasks.some((t) => t.ownerName === agentName && /doing|progress|active|start|claim/i.test(t.status));
 }
 
+// A query event whose latest status is one of these is FINISHED; anything else (dispatched /
+// received / processing / queued) means the agent is mid-query.
+const QUERY_DONE_RE = /deliver|done|complete|fail|cancel|expire|timeout/i;
+/**
+ * Agents with an IN-FLIGHT query (a chat /ask, not a tracked task) — they must NOT be rebuilt:
+ * a rebuild stops the agent, which cancels its pending query, so the user's chat reply is lost
+ * ("the query was lost. Please resend."). isAgentIdle() only looks at TASKS and is blind to this,
+ * so we read each team's recent event tail and flag any agent whose latest `query:*` event hasn't
+ * reached a terminal status. Best-effort (bounded event window); a miss only risks the pre-existing
+ * behavior, a false-positive just defers a rebuild one pass (harmless).
+ */
+async function collectQueryBusy(client: ManagerClient, teams: string[]): Promise<Set<string>> {
+  const busy = new Set<string>();
+  await Promise.all(
+    teams.map(async (team) => {
+      const tc = client.withTeam(team);
+      try {
+        const head = await tc.events(0, { wait: 0, limit: 1 });
+        const next = Number((head as { next_seq?: number }).next_seq) || 0;
+        const r = await tc.events(Math.max(0, next - 150), { wait: 0, limit: 150 });
+        const latest = new Map<string, { seq: number; status: string }>(); // agent → its newest query-event status
+        for (const e of (r.events ?? []) as { topic?: string; seq?: number; actor?: string; data?: Record<string, unknown> }[]) {
+          const topic = String(e.topic ?? '');
+          if (!topic.startsWith('query:')) continue;
+          const d = e.data ?? {};
+          const agent = String(d.agent ?? e.actor ?? d.target ?? d.name ?? '');
+          if (!agent) continue;
+          const seq = Number(e.seq) || 0;
+          const prev = latest.get(agent);
+          if (!prev || seq >= prev.seq) latest.set(agent, { seq, status: topic.slice('query:'.length) });
+        }
+        for (const [agent, { status }] of latest) if (!QUERY_DONE_RE.test(status)) busy.add(agent);
+      } catch { /* best-effort */ }
+    }),
+  );
+  return busy;
+}
+
 /**
  * One reconcile pass: recompose every agent's org block, write the ones that changed, and
  * (smart policy) rebuild a changed agent only if it's idle — rate-limited per pass.
@@ -234,6 +272,8 @@ export async function syncOrg(client: ManagerClient, opts: { autoRebuild?: boole
   const brainByTeam: Record<string, string[]> = {};
   for (const team of hier.teams) brainByTeam[team] = await brainInstructions(team);
   const tasks = await client.tasks().catch(() => [] as Task[]);
+  // Agents mid-chat-query (a rebuild would cancel the query → "the query was lost. Please resend.").
+  const queryBusy = autoRebuild ? await collectQueryBusy(client, hier.teams) : new Set<string>();
   const brain = await writeOrgToBrain(hier);
 
   let written = 0;
@@ -248,7 +288,8 @@ export async function syncOrg(client: ManagerClient, opts: { autoRebuild?: boole
     await tc.setAgentInstructions(agent.name, next).catch(() => {});
     written++;
     if (!autoRebuild || !isActiveStatus(agent.status)) continue;
-    if (!isAgentIdle(agent.name, tasks)) { skippedBusy++; continue; } // mid-task → defer to next natural rebuild
+    if (!isAgentIdle(agent.name, tasks)) { skippedBusy++; continue; }   // mid-task → defer to next natural rebuild
+    if (queryBusy.has(agent.name)) { skippedBusy++; continue; }         // mid-chat-query → defer (rebuild would lose the reply)
     if (rebuilt.length >= MAX_REBUILDS_PER_PASS) { skippedBusy++; continue; }
     await tc.remote(`/agent ${agent.name} rebuild`).catch(() => {});
     rebuilt.push(agent.name);
