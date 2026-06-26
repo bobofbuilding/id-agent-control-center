@@ -1,10 +1,10 @@
 {
-  "schemaVersion": 1,
-  "updated": "2026-06-25",
+  "schemaVersion": 2,
+  "updated": "2026-06-26",
   "title": "ID Agents Control Center Wiki",
-  "description": "Editable schematic for the Control Center UI. The desktop app reads this file through the main-process bridge, renders it in the Wiki page, and uses page nav metadata for sidebar labels, icons, order, and visibility.",
+  "description": "Human-readable wiki and editable UI schematic for the Control Center. Each page.body field is the prose wiki article; the desktop app still reads page nav metadata for sidebar labels, icons, order, and visibility, and keeps the structured sections as supporting implementation detail.",
   "editContract": {
-    "hotReload": "The desktop app polls this file while running. Local edits to nav labels, icons, order, visibility, page descriptions, tabs, tiles, fields, dropdowns, controls, displays, and routing notes appear in the UI without a rebuild.",
+    "hotReload": "The desktop app polls this file while running. Local edits to body prose, nav labels, icons, order, visibility, page descriptions, tabs, tiles, fields, dropdowns, controls, displays, and routing notes appear in the UI without a rebuild.",
     "pathOverride": "Set IDCTL_WIKI_PATH=/absolute/path/to/CONTROL_CENTER_WIKI.json to drive the UI from a different local schematic file.",
     "safeToEdit": [
       "title",
@@ -19,7 +19,8 @@
       "pages[].controls",
       "pages[].displays",
       "pages[].routing",
-      "pages[].notes"
+      "pages[].notes",
+      "pages[].body"
     ],
     "doNotEditUnlessAddingCode": [
       "pages[].id",
@@ -27,7 +28,9 @@
       "pages[].component",
       "pages[].sourceFiles"
     ],
-    "routeRule": "A page only becomes navigable if its route is implemented in idctl-desktop/src/renderer/App.tsx. Unknown routes are shown in the Wiki but skipped by the sidebar."
+    "routeRule": "A page only becomes navigable if its route is implemented in idctl-desktop/src/renderer/App.tsx. Unknown routes are shown in the Wiki but skipped by the sidebar.",
+    "body": "pages[].body is markdown prose for humans. Keep it factual and grounded in the current renderer behavior; do not remove nav, route, component, sourceFiles, or structured sections because those continue to drive the live UI and schematic detail.",
+    "releaseDrift": "scripts/check-wiki.mjs compares this appVersion and updated marker with idctl-desktop/package.json during release so stale wiki content is surfaced before shipping."
   },
   "global": {
     "shell": "Electron desktop app. Renderer calls window.idagents.call(method, ...args); preload sends IPC to main; main either handles app-local methods or forwards manager methods through bridge.ts and ManagerClient.",
@@ -215,7 +218,8 @@
       },
       "notes": [
         "The older static product spec described a dashboard agent grid; in current source that fleet grid lives on Health through AgentTable."
-      ]
+      ],
+      "body": "# Dashboard\n\nThe Dashboard is the operator home for the running fleet. It combines the selected team's lead chat with a cross-team coordination view, so you can send work to the right lead while watching the broader organization move.\n\nUse the team selector to decide which lead receives the embedded chat. Messages dispatch through the same manager bridge as the full Chat workspace, while the activity and coordination areas continue to summarize all running teams.\n\nThe current app no longer uses the old static dashboard agent grid described by the stale product spec. Agent roster management and probes live on Health; the Dashboard is centered on lead conversation, hierarchy, active task state, and recent events."
     },
     {
       "id": "chat",
@@ -396,7 +400,8 @@
         "remoteCommands": [
           "/ask <agent> <message>"
         ]
-      }
+      },
+      "body": "# Chat\n\nChat is the full conversation workspace behind the Dashboard's embedded lead chat. It manages sessions, target agents, project focus, attachments, generated images, live traces, and resumable dispatches.\n\nIn the current desktop shell, Chat is not a normal sidebar destination. It is available as a contextual or deep-link route and is embedded by the Dashboard when the operator is talking to a team lead.\n\nUse Chat when you need the complete session history, file handling, image context, or detailed behind-the-scenes activity for a dispatch. The Dashboard keeps the same dispatch path but locks the target to the selected team's coordinator."
     },
     {
       "id": "inbox",
@@ -518,7 +523,8 @@
         "remoteCommands": [
           "/ask <agent> <decision>"
         ]
-      }
+      },
+      "body": "# Inbox\n\nInbox is the decision queue for work that needs operator input. It separates direct questions from the manager inbox so pending decisions do not get buried in the general activity feed.\n\nOpen a question to answer, dismiss, or move the linked task into review. Responses go back through the manager and update task review state where a task reference is present.\n\nUse this page as the triage surface when the footer or sidebar badge shows pending input. It is intentionally narrower than Chat: the focus is resolving blockers, not continuing a full conversation."
     },
     {
       "id": "work",
@@ -866,7 +872,8 @@
           "/task remove",
           "/ask <agent> <message>"
         ]
-      }
+      },
+      "body": "# Work\n\nWork is the operating board for plans, tasks, schedules, loops, and dream reviews. The page groups the workflow into tabs so a request can move from plan, to task cards, to scheduled or repeating follow-up.\n\nThe task board is live and holistic by default: it can show all teams, group tasks by team, and route assignment or redispatch actions to the correct team context. Dragging cards changes the local review lane and syncs mapped manager status when appropriate.\n\nUse Plans for structured implementation plans, Tasks for Kanban execution and review state, Schedule for timed wakeups, Loops for recurring objectives, and Dream for proposed ideas or simulations that require human review before action."
     },
     {
       "id": "projects",
@@ -1103,7 +1110,8 @@
         "remoteCommands": [
           "/ask <lead> <refine or commit request>"
         ]
-      }
+      },
+      "body": "# Projects\n\nProjects tracks local and GitHub-backed workspaces that agents can use as context. It is where you add repositories, import folders, refine metadata, and open project folders for focused work.\n\nA project can carry tags, description, branch and git status, and automation preferences. The git panel helps review local changes and draft commit requests while keeping the operator in the approval path.\n\nUse this page before dispatching code work when the agents need a shared repository focus or when you want the Control Center to remember how a workspace should be handled."
     },
     {
       "id": "health",
@@ -1251,7 +1259,8 @@
           "setAgentEffort",
           "coordinator:set"
         ]
-      }
+      },
+      "body": "# Health\n\nHealth is the live fleet and usage view. It shows throughput, token usage by model and agent, and the agent roster through AgentTable.\n\nUse it to check which agents are running, probe an agent, start or stop workers, rebuild where supported, and inspect team membership in the all-teams view. This is the current home for the agent grid behavior that older specs placed on the Dashboard.\n\nThe page reads from the store's periodic snapshot and all-team aggregate poll, so it is best for operational status rather than historical analysis."
     },
     {
       "id": "identity",
@@ -1394,7 +1403,8 @@
           "/register <agent>",
           "/agent <agent> wallet provision"
         ]
-      }
+      },
+      "body": "# Identity & Keys\n\nIdentity & Keys is the place to inspect agent identity, Safe account posture, and session-key state. It gives operators a single view of who can act and what account or key material is associated with that action.\n\nUse the left-hand agent list to choose an agent, then review identity status, account details, session keys, and any warnings for that selection. The page is intended for review and operational checks before granting or relying on delegated capabilities.\n\nSome identity-provider behavior may still depend on local manager support, so treat this page as the current UI contract and verify provider depth against the active backend before documenting stronger guarantees."
     },
     {
       "id": "teams",
@@ -1693,7 +1703,8 @@
           "/agent <name> rebuild",
           "team lifecycle manager routes"
         ]
-      }
+      },
+      "body": "# HR Manager\n\nHR Manager is the team design and routing workspace. It covers organization structure, building agents, managing team membership, and reviewing outbound relay topology.\n\nUse Structure to understand the team graph, Build to draft and create agent rosters, Manage to edit deployed agents, and Route to inspect how teams delegate across the fleet. The embedded graph and routing overview are designed for whole-fleet reasoning, not just the currently selected team.\n\nChanges here affect how work is staffed and how instructions are written into agents, so review generated drafts before saving or rebuilding."
     },
     {
       "id": "modules",
@@ -1966,7 +1977,8 @@
       },
       "notes": [
         "Interop/discovery fields should stay explicit when adding future capability manifests: MCP, OpenAPI, A2A, and signed-write discovery are separate concerns."
-      ]
+      ],
+      "body": "# Capabilities\n\nCapabilities manages the extension surface available to teams and agents: MCP servers, skills, and plugins. It is the place to inspect what is installed, what can be enabled, and which team context is being edited.\n\nUse the tabs to switch between MCP, Skills, and Plugins. Team scoping happens inside the page rather than through a global footer selector; the store keeps holistic fleet visibility on by default.\n\nThis page is useful before assigning work that depends on a tool, connector, or specialist instruction because it shows whether the capability is present and how it is exposed."
     },
     {
       "id": "computer",
@@ -2156,7 +2168,8 @@
           "onComputerPending",
           "onComputerPanic"
         ]
-      }
+      },
+      "body": "# Computer Use\n\nComputer Use is the supervised desktop-control surface. It shows the live display stream, pending approval prompts, permission state, and recent computer-use activity.\n\nArm the live view when you want to supervise agents that can request screen or input actions. Pending actions must pass through the approval flow, and panic or permission controls are kept close to the live stage for fast intervention.\n\nThe page is backed by app-local broker integrations and push channels from the main process, so navigating away stops the live renderer view even though global notifications can still report relevant state."
     },
     {
       "id": "settings",
@@ -2457,7 +2470,8 @@
           "manager:setLocalConcurrency",
           "providers:*"
         ]
-      }
+      },
+      "body": "# Settings\n\nSettings contains the local desktop configuration for hardware, manager connection, self-update, subscriptions, Ollama, image services, stacks, and inference defaults.\n\nUse it when the app cannot reach the manager, when a local model or subscription CLI needs attention, or when you need to check for and stage an app update. These settings are app-local rather than manager task data.\n\nBecause release and update behavior is surfaced here, this page should stay aligned with the package version and release process. The wiki release check helps make stale documentation visible before a new build ships."
     },
     {
       "id": "wiki",
@@ -2516,7 +2530,9 @@
         "appLocalMethods": [
           "wiki:get"
         ]
-      }
+      },
+      "body": "# Wiki\n\nWiki is both the human documentation page and the editable schematic for the Control Center UI. The prose you are reading comes from each page's markdown body, while the structured sections below preserve the tabs, tiles, fields, controls, displays, routes, and source files used for implementation detail.\n\nThe desktop app hot-reload polls CONTROL_CENTER_WIKI.json through the main-process wiki bridge. Sidebar labels, icons, order, and visibility still come from pages[].nav for implemented routes, so documentation edits must preserve that metadata.\n\nUse this page to understand the current UI, then use the structured detail below each article when you need exact component, IPC, or source-file references."
     }
-  ]
+  ],
+  "appVersion": "0.1.194"
 }

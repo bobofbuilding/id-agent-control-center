@@ -292,6 +292,16 @@ button.chip.incompat:hover { border-color: var(--line); }
 .wiki-page-title { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
 .wiki-page-title h2 { margin: 0; font-size: 18px; }
 .wiki-icon { font-size: 28px; color: var(--accent); }
+.wiki-markdown { display: flex; flex-direction: column; gap: 9px; max-width: 860px; line-height: 1.55; }
+.wiki-markdown h2,
+.wiki-markdown h3,
+.wiki-markdown h4 { margin: 0; }
+.wiki-markdown h2 { font-size: 22px; }
+.wiki-markdown h3 { font-size: 16px; }
+.wiki-markdown h4 { font-size: 13px; color: var(--muted); text-transform: uppercase; }
+.wiki-markdown p { margin: 0; }
+.wiki-markdown ul { margin: 0; padding-left: 20px; }
+.wiki-markdown pre { margin: 0; padding: 10px 12px; border: 1px solid var(--line); border-radius: 8px; background: var(--bg-2); overflow: auto; }
 .wiki-block { display: flex; flex-direction: column; gap: 8px; }
 .wiki-block h3,
 .wiki-source h3 { margin: 0; }

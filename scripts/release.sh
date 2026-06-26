@@ -40,6 +40,9 @@ CUR="$(node -p "require('$DESK/package.json').version")"
 VER="${VER_ARG:-$(node -e "const [a,b,c]=process.argv[1].split('.'); console.log(\`\${a}.\${b}.\${Number(c)+1}\`)" "$CUR")}"
 echo "▶ releasing v$VER  (was v$CUR)"
 
+# Surface stale human-facing wiki content before mutating release files.
+node "$ROOT/scripts/check-wiki.mjs"
+
 # --- derive the CHANGELOG body from the REAL commits since the last release tag, so the
 #     entry reflects TRUE contents — every feature/fix in this release, not a single passed
 #     note. Strip the off-by-one "vX.Y.Z:" hook prefix, drop auto-gen/merge/generic lines.

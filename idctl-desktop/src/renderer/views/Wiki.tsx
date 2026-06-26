@@ -1,3 +1,4 @@
+import type { ReactNode } from 'react';
 import type { FleetStore } from '../store.ts';
 
 export interface WikiNav {
@@ -23,6 +24,7 @@ export interface WikiPage {
   component?: string;
   nav?: WikiNav;
   sourceFiles?: string[];
+  body?: string;
   purpose?: string;
   scope?: string;
   tabs?: WikiEntry[];
@@ -150,6 +152,8 @@ function PageDetail({ page }: { page: WikiPage }) {
         <span className="wiki-icon">{page.nav?.icon ?? '▤'}</span>
       </div>
 
+      {page.body ? <MarkdownBody markdown={page.body} /> : null}
+
       {page.purpose ? <p>{page.purpose}</p> : null}
       {page.scope ? <p className="muted">{page.scope}</p> : null}
 
@@ -241,6 +245,105 @@ function ObjectRows({ obj, skip = new Set<string>() }: { obj: Record<string, unk
 
 function RouteChips({ routes }: { routes: string[] }) {
   return <div className="wiki-chip-list">{routes.map((r) => <code key={r}>{r}</code>)}</div>;
+}
+
+function MarkdownBody({ markdown }: { markdown: string }) {
+  return <div className="wiki-markdown">{parseMarkdown(markdown).map((block, i) => renderMarkdownBlock(block, i))}</div>;
+}
+
+type MarkdownBlock =
+  | { type: 'heading'; level: 1 | 2 | 3; text: string }
+  | { type: 'paragraph'; text: string }
+  | { type: 'list'; items: string[] }
+  | { type: 'code'; code: string };
+
+function parseMarkdown(markdown: string): MarkdownBlock[] {
+  const blocks: MarkdownBlock[] = [];
+  const lines = markdown.replace(/\r\n/g, '\n').split('\n');
+  let paragraph: string[] = [];
+  let list: string[] = [];
+  let code: string[] | null = null;
+
+  const flushParagraph = () => {
+    if (paragraph.length) blocks.push({ type: 'paragraph', text: paragraph.join(' ') });
+    paragraph = [];
+  };
+  const flushList = () => {
+    if (list.length) blocks.push({ type: 'list', items: list });
+    list = [];
+  };
+
+  for (const line of lines) {
+    if (line.trim().startsWith('```')) {
+      if (code) {
+        blocks.push({ type: 'code', code: code.join('\n') });
+        code = null;
+      } else {
+        flushParagraph();
+        flushList();
+        code = [];
+      }
+      continue;
+    }
+    if (code) {
+      code.push(line);
+      continue;
+    }
+
+    const heading = /^(#{1,3})\s+(.+)$/.exec(line);
+    const bullet = /^\s*[-*]\s+(.+)$/.exec(line);
+    if (!line.trim()) {
+      flushParagraph();
+      flushList();
+    } else if (heading) {
+      flushParagraph();
+      flushList();
+      blocks.push({ type: 'heading', level: heading[1].length as 1 | 2 | 3, text: heading[2] });
+    } else if (bullet) {
+      flushParagraph();
+      list.push(bullet[1]);
+    } else {
+      flushList();
+      paragraph.push(line.trim());
+    }
+  }
+  if (code) blocks.push({ type: 'code', code: code.join('\n') });
+  flushParagraph();
+  flushList();
+  return blocks;
+}
+
+function renderMarkdownBlock(block: MarkdownBlock, key: number): JSX.Element {
+  if (block.type === 'heading') {
+    if (block.level === 1) return <h2 key={key}>{renderInlineMarkdown(block.text)}</h2>;
+    if (block.level === 2) return <h3 key={key}>{renderInlineMarkdown(block.text)}</h3>;
+    return <h4 key={key}>{renderInlineMarkdown(block.text)}</h4>;
+  }
+  if (block.type === 'list') return <ul key={key}>{block.items.map((item, i) => <li key={i}>{renderInlineMarkdown(item)}</li>)}</ul>;
+  if (block.type === 'code') return <pre key={key}><code>{block.code}</code></pre>;
+  return <p key={key}>{renderInlineMarkdown(block.text)}</p>;
+}
+
+function renderInlineMarkdown(text: string): ReactNode[] {
+  const nodes: ReactNode[] = [];
+  const pattern = /(\*\*[^*]+\*\*|`[^`]+`|\[[^\]]+\]\(https?:\/\/[^)\s]+\))/g;
+  let last = 0;
+  let match: RegExpExecArray | null;
+  while ((match = pattern.exec(text))) {
+    if (match.index > last) nodes.push(text.slice(last, match.index));
+    const token = match[0];
+    if (token.startsWith('**')) {
+      nodes.push(<strong key={nodes.length}>{token.slice(2, -2)}</strong>);
+    } else if (token.startsWith('`')) {
+      nodes.push(<code key={nodes.length}>{token.slice(1, -1)}</code>);
+    } else {
+      const link = /^\[([^\]]+)\]\((https?:\/\/[^)\s]+)\)$/.exec(token);
+      if (link) nodes.push(<a key={nodes.length} href={link[2]} target="_blank" rel="noreferrer">{link[1]}</a>);
+    }
+    last = pattern.lastIndex;
+  }
+  if (last < text.length) nodes.push(text.slice(last));
+  return nodes;
 }
 
 function renderValue(value: unknown): JSX.Element {
