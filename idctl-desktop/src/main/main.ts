@@ -7,6 +7,7 @@ import { app, BrowserWindow, ipcMain, shell, Menu, MenuItem, globalShortcut, scr
 import { join } from 'node:path';
 import { readFileSync, writeFileSync } from 'node:fs';
 import { call, startOrgSync, startModelRefreshLoop } from './bridge.ts';
+import { recordControlAction } from './controlLog.ts';
 import { startUpdater, stopUpdater, checkForUpdate, getStatus, applyStagedAndRelaunch } from './updater.ts';
 import { subsStatus, subsSignin, subsSignout, subsInstall, type SubProvider } from './subscriptions.ts';
 import { ollamaTags, ollamaPull, ollamaRemove } from './ollama.ts';
@@ -361,7 +362,12 @@ async function appCall(method: string, args: unknown[]): Promise<unknown> {
 // Single IPC entry point → app methods + allowlisted bridge methods.
 ipcMain.handle('idagents:call', async (_e, method: string, args: unknown[]) => {
   try {
-    return { ok: true, result: await appCall(method, args) };
+    const result = await appCall(method, args);
+    // Mirror successful control actions to the self-learning brain (best-effort, fire-and-forget):
+    // this is the single choke point every renderer mutation flows through, so the brain learns
+    // config/org/project changes that never reach the manager. Never awaited — can't delay the reply.
+    recordControlAction(method, Array.isArray(args) ? args : [], result);
+    return { ok: true, result };
   } catch (err) {
     return { ok: false, error: err instanceof Error ? err.message : String(err) };
   }

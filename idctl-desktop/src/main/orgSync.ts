@@ -15,11 +15,11 @@
 import type { ManagerClient } from '../../../idctl/src/api/client.ts';
 import type { Agent, Task } from '../../../idctl/src/api/types.ts';
 import { loadSettings, type SecondaryLead } from '../../../idctl/src/settings/store.ts';
+import { brain } from '../../../idctl/src/api/brain.ts';
 import { isActiveStatus } from './work.ts';
 
 const ORG_BEGIN = '<!-- BEGIN id-agents org -->';
 const ORG_END = '<!-- END id-agents org -->';
-const BRAIN_URL = process.env.BRAIN_URL || 'http://127.0.0.1:4200';
 // Cap rebuilds per pass so a fleet-wide instruction change doesn't restart everyone at once
 // (writes are cheap and unbounded; only the disruptive rebuilds are throttled).
 const MAX_REBUILDS_PER_PASS = 3;
@@ -121,17 +121,10 @@ function composeOrgBlock(
 
 /** Pull the brain's current team-instruction memories for a team (best-effort, short timeout). */
 async function brainInstructions(team: string): Promise<string[]> {
-  try {
-    const url = `${BRAIN_URL}/memory/shared?tag=team-instruction&project=${encodeURIComponent(team)}&limit=8`;
-    const r = await fetch(url, { signal: AbortSignal.timeout(2500) });
-    if (!r.ok) return [];
-    const j = (await r.json()) as { memories?: { content?: string; id?: number; agent_id?: string; mem_key?: string }[] };
-    return (j.memories ?? [])
-      .filter((m) => m.agent_id === 'team-instructions' && m.content && m.mem_key !== 'org:hierarchy')
-      .map((m) => `${String(m.content).trim()}${m.id ? ` [memory:${m.id}]` : ''}`);
-  } catch {
-    return [];
-  }
+  const memories = await brain.sharedMemory({ tag: 'team-instruction', project: team, limit: 8 });
+  return memories
+    .filter((m) => m.agent_id === 'team-instructions' && m.content && m.mem_key !== 'org:hierarchy')
+    .map((m) => `${String(m.content).trim()}${m.id ? ` [memory:${m.id}]` : ''}`);
 }
 
 function renderOrgSummary(hier: OrgHierarchy): string {
@@ -144,26 +137,16 @@ function renderOrgSummary(hier: OrgHierarchy): string {
 }
 
 /** Write the hierarchy back to the brain as a keyed shared memory so the brain holds the
- *  org structure as a source of truth (and the manager can inject it per-dispatch). */
+ *  org structure as a source of truth (and the manager can inject it per-dispatch). Uses the
+ *  shared BrainClient: visibility='public' (shared:true) so GET /memory/shared returns it;
+ *  mem_key upserts by (agent_id, key) so no duplicates. */
 async function writeOrgToBrain(hier: OrgHierarchy): Promise<boolean> {
-  try {
-    // storeMemory destructures { key, shared } and requires visibility='public' (shared:true)
-    // for GET /memory/shared to return it; mem_key upserts by (agent_id, key) so no duplicates.
-    const r = await fetch(`${BRAIN_URL}/memory/team-instructions`, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({
-        content: renderOrgSummary(hier),
-        key: 'org:hierarchy',
-        tags: ['team-instruction', 'org-structure'],
-        shared: true,
-      }),
-      signal: AbortSignal.timeout(2500),
-    });
-    return r.ok;
-  } catch {
-    return false;
-  }
+  return brain.memory('team-instructions', {
+    content: renderOrgSummary(hier),
+    key: 'org:hierarchy',
+    tags: ['team-instruction', 'org-structure'],
+    shared: true,
+  });
 }
 
 /** Upsert the org block into the sidecar text, preserving anything outside the markers. */

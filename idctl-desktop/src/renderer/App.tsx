@@ -14,6 +14,8 @@ import { Projects } from './views/Projects.tsx';
 import { ComputerUse } from './views/ComputerUse.tsx';
 import { Settings } from './views/Settings.tsx';
 import { Wiki, type ControlCenterWiki, type WikiPayload } from './views/Wiki.tsx';
+import { CommandPalette } from './views/dashboard/CommandPalette.tsx';
+import { ControlDrawer } from './views/dashboard/ControlDrawer.tsx';
 
 type ViewId = 'dashboard' | 'chat' | 'inbox' | 'tasks' | 'projects' | 'health' | 'identity' | 'schedule' | 'teams' | 'modules' | 'computer' | 'settings' | 'wiki';
 
@@ -87,6 +89,16 @@ export function App() {
   const [wikiQuery, setWikiQuery] = useState('');
   const [wikiPageId, setWikiPageId] = useState('');
   const nav = navFromWiki(wiki?.doc);
+  // ⌘K command palette + right-side control drawer — the "drive everything" surface.
+  const [paletteOpen, setPaletteOpen] = useState(false);
+  const [drawerPanel, setDrawerPanel] = useState<string | null>(null);
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && (e.key === 'k' || e.key === 'K')) { e.preventDefault(); setPaletteOpen((o) => !o); }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, []);
 
   useEffect(() => {
     call<string>('app:version').then(setVersion).catch(() => {});
@@ -131,6 +143,7 @@ export function App() {
     <div className="app">
       <div className="titlebar">
         <span className="titlebar-name">ID Agents Control Center{version ? ` · v${version}` : ''}</span>
+        <button className="cmdk-trigger" title="Command palette (⌘K)" onClick={() => setPaletteOpen(true)}>⌘K</button>
       </div>
       <div className="body">
         <nav className="sidebar">
@@ -175,6 +188,14 @@ export function App() {
           <StatusBar store={store} />
         </main>
       </div>
+      <CommandPalette
+        store={store}
+        open={paletteOpen}
+        onClose={() => setPaletteOpen(false)}
+        navigate={(v) => setView(v as ViewId)}
+        openDrawer={(id) => setDrawerPanel(id)}
+      />
+      <ControlDrawer store={store} panel={drawerPanel} onClose={() => setDrawerPanel(null)} />
     </div>
     </PromptProvider>
     </ToastProvider>
