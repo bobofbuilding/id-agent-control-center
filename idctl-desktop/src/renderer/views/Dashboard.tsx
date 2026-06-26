@@ -134,6 +134,7 @@ type ActivityFeedItem = {
   className: string;
   desc: string;
   team?: string;
+  agent?: string; // raw agent id/name, used for active-agent filtering
   at: number;
   title: string;
 };
@@ -274,6 +275,13 @@ export function Dashboard({ store }: { store: FleetStore }) {
   const agentById = useMemo(() => new Map(store.allAgents.map((a) => [a.id, a.name] as const)), [store.allAgents]);
   const feedItems = useMemo<ActivityFeedItem[]>(() => {
     const name = (id: string) => agentLabel(id, agentById);
+    const activeTeamSet = new Set(activeTeams);
+    const fleetAgentKeys = new Set<string>();
+    const activeAgentKeys = new Set<string>();
+    for (const a of store.allAgents) {
+      fleetAgentKeys.add(a.id); fleetAgentKeys.add(a.name);
+      if (isActive(a.status)) { activeAgentKeys.add(a.id); activeAgentKeys.add(a.name); }
+    }
     const items: ActivityFeedItem[] = [];
     for (const e of events) {
       const at = toMs(e.timestamp ?? e.occurred_at);
@@ -283,6 +291,7 @@ export function Dashboard({ store }: { store: FleetStore }) {
         className: topicClass(e.topic),
         desc: describe(e, name),
         team: e.team,
+        agent: str(e.data?.agent) || str(e.actor) || str(e.data?.from) || str(e.data?.name) || undefined,
         at,
         title: e.topic,
       });
@@ -297,6 +306,7 @@ export function Dashboard({ store }: { store: FleetStore }) {
         className: taskClass(t.status),
         desc: `${owner}${taskVerb(t.status)}${ref ? ` · ${ref}` : ''} · ${clip(t.title, 110)}`,
         team: t.teamName,
+        agent: t.ownerName ?? undefined,
         at,
         title: `${t.status}${t.description ? ` — ${t.description}` : ''}`,
       });
@@ -308,6 +318,7 @@ export function Dashboard({ store }: { store: FleetStore }) {
         className: newsClass(n),
         desc: newsDesc(n),
         team: n.teamName,
+        agent: str(n.data?.from) || str(n.data?.sender) || str(n.data?.agent) || str(n.data?.source) || undefined,
         at: toMs(n.timestamp),
         title: n.type,
       });
@@ -319,15 +330,21 @@ export function Dashboard({ store }: { store: FleetStore }) {
         className: 'warn',
         desc: inboxDesc(i),
         team: store.team,
+        agent: i.from || undefined,
         at: toMs(i.timestamp),
         title: i.query_id,
       });
     }
     return items
-      .filter((i) => i.desc)
+      .filter((i) => {
+        if (!i.desc) return false;
+        if (i.team && !activeTeamSet.has(i.team)) return false;
+        if (i.agent && fleetAgentKeys.has(i.agent) && !activeAgentKeys.has(i.agent)) return false;
+        return true;
+      })
       .sort((a, b) => b.at - a.at)
       .slice(0, 80);
-  }, [agentById, events, tasks, news, store.inbox, store.team]);
+  }, [activeTeams, agentById, events, tasks, news, store.allAgents, store.inbox, store.team]);
 
   return (
     <div className="view" style={{ display: 'flex', flexDirection: 'column', minHeight: 0 }}>
@@ -357,7 +374,7 @@ export function Dashboard({ store }: { store: FleetStore }) {
             top (when no project is focused; a focused project's banner adds a little extra). */}
         <aside className="card" style={{ width: 560, flexShrink: 0, marginTop: 38, display: 'flex', flexDirection: 'column', minHeight: 0 }}>
           <h3 style={{ marginTop: 0 }}>
-            Activity <span className="muted small">· all teams{feedItems.length ? ` (${feedItems.length})` : ''} · {tasks.length} tasks · {news.length + store.inbox.length} comms</span>
+            Activity <span className="muted small">· active teams{feedItems.length ? ` (${feedItems.length})` : ''} · {tasks.length} tasks · {news.length + store.inbox.length} comms</span>
           </h3>
           <div className="feed-list" style={{ flex: 1, overflowY: 'auto', minHeight: 0 }}>
             {feedItems.map((item) => (
