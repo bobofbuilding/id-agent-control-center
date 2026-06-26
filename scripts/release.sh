@@ -40,6 +40,22 @@ CUR="$(node -p "require('$DESK/package.json').version")"
 VER="${VER_ARG:-$(node -e "const [a,b,c]=process.argv[1].split('.'); console.log(\`\${a}.\${b}.\${Number(c)+1}\`)" "$CUR")}"
 echo "▶ releasing v$VER  (was v$CUR)"
 
+# --- derive the CHANGELOG body from the REAL commits since the last release tag, so the
+#     entry reflects TRUE contents — every feature/fix in this release, not a single passed
+#     note. Strip the off-by-one "vX.Y.Z:" hook prefix, drop auto-gen/merge/generic lines.
+#     Falls back to the passed note, then a generic line, when there are no real commits.
+#     (Computed from local HEAD BEFORE the bump commit; the node step below bullets each line.) ---
+LAST_TAG="$(git describe --tags --abbrev=0 2>/dev/null || true)"
+RANGE="${LAST_TAG:+${LAST_TAG}..}HEAD"
+CHANGELOG_BODY="$(git log "$RANGE" --no-merges --format='%s' 2>/dev/null \
+  | sed -E 's/^v[0-9]+\.[0-9]+\.[0-9]+: *//' \
+  | grep -vE '^(chore\(auto-release\)|chore: bump|chore\(release\)|Merge |Automated release of outstanding)' || true)"
+if [ -z "$CHANGELOG_BODY" ]; then
+  CHANGELOG_BODY="$(printf '%s' "$NOTE" | sed -E 's/^v[0-9]+\.[0-9]+\.[0-9]+: *//')"
+fi
+[ -z "$CHANGELOG_BODY" ] && CHANGELOG_BODY="Maintenance release."
+printf '▶ changelog for v%s (from %s):\n%s\n' "$VER" "${RANGE}" "$CHANGELOG_BODY"
+
 # --- 0) typecheck FIRST, before mutating anything — a failure leaves the tree pristine ---
 ( cd "$DESK" && npm run typecheck )
 
@@ -61,12 +77,12 @@ const body = note.trim().split("\n").map((l) => l.trim()).filter(Boolean).map((l
 const entry = `## [${ver}] — ${date}\n${body}\n\n`;
 const i = t.indexOf("## [");
 fs.writeFileSync(f, (i >= 0 ? t.slice(0, i) + entry + t.slice(i) : t + "\n" + entry));
-' "$VER" "$NOTE"
+' "$VER" "$CHANGELOG_BODY"
 
 # --- 3) commit + tag + push (typecheck already passed in step 0) ---
 # Stamp the version onto the subject ourselves (the commit-msg hook is idempotent and leaves a
 # "v…"-prefixed subject untouched — so this works whether or not the hook is installed in this clone).
-SUBJECT="$(printf '%s' "$NOTE" | head -1)"
+SUBJECT="$(printf '%s' "$CHANGELOG_BODY" | head -1 | sed -E 's/^- *//')"
 git add -A
 git commit -q -m "v$VER: $SUBJECT"
 git pull --rebase origin main   # fold in any concurrent agent pushes before we publish (fail-stops on conflict)

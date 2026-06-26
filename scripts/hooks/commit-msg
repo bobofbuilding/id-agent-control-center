@@ -20,6 +20,15 @@ pkg="$root/idctl-desktop/package.json"
 ver="$(sed -n 's/.*"version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$pkg" | head -1)"
 [ -n "$ver" ] || exit 0
 
+# Stamp the NEXT patch version, not the current (pre-bump) one: a feature commit made
+# now ships in the next patch release (release.sh bumps the patch at release time), so
+# its label should match the release it lands in. Defensive: only when the version is a
+# plain X.Y.Z with a numeric patch; otherwise keep the current version. Never abort.
+# (Note: an explicit non-patch release version is rare; release.sh strips this prefix when
+#  building the CHANGELOG, so the human-facing notes are correct regardless.)
+next_ver="$(printf '%s' "$ver" | awk -F. 'NF==3 && $3 ~ /^[0-9]+$/ { printf "%s.%s.%d", $1, $2, $3 + 1 }')"
+[ -n "$next_ver" ] && ver="$next_ver"
+
 # Subject = first non-blank, non-comment line of the message.
 subject="$(grep -vE '^[[:space:]]*#' "$msg_file" 2>/dev/null | grep -vE '^[[:space:]]*$' 2>/dev/null | head -1)"
 [ -n "$subject" ] || exit 0
