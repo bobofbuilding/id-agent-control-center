@@ -567,9 +567,9 @@ select:focus, input:focus { border-color: var(--accent); }
 .cu-mode-row input { margin-top: 3px; }
 
 /* ── Command palette (⌘K) — the "drive everything" front door ───────────────── */
-.titlebar { display: flex; align-items: center; }
+.titlebar { display: flex; align-items: center; justify-content: center; position: relative; }
 .cmdk-trigger {
-  margin-left: auto; -webkit-app-region: no-drag;
+  position: absolute; right: 8px; top: 50%; transform: translateY(-50%); -webkit-app-region: no-drag;
   background: var(--bg-3); border: 1px solid var(--line); color: var(--muted);
   border-radius: 6px; padding: 2px 8px; font-size: 11px; letter-spacing: .04em; cursor: pointer;
 }
