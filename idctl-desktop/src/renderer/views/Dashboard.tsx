@@ -194,8 +194,8 @@ function CoordinationTree({ store, events, activeTeams }: { store: FleetStore; e
   const taskOf = (name?: string) => (name ? tasks.find((t) => t.ownerName === name && DOING_RE.test(t.status) && !DONE_RE.test(t.status)) : undefined);
   const isWorking = (agent: { id?: string; name: string; team?: string; status?: string }) =>
     !!taskOf(agent.name) || workingKeys.has(activityKey(agent)) || workingKeys.has(agent.name) || !!(agent.id && workingKeys.has(agent.id)) || WORKING_STATUS_RE.test(agent.status ?? '');
-  const node = (name: string, role: string) => {
-    const a = store.allAgents.find((x) => x.name === name);
+  const node = (name: string, role: string, team?: string) => {
+    const a = store.allAgents.find((x) => x.name === name && (!team || x.team === team)) ?? store.allAgents.find((x) => x.name === name);
     const present = !!a;
     const isLive = present && isAgentLive(a?.status);
     const task = taskOf(name);
@@ -214,28 +214,39 @@ function CoordinationTree({ store, events, activeTeams }: { store: FleetStore; e
     );
   };
 
-  // A team row: the team name, a status dot directly after it (green = at least one
-  // member working, orange = live but idle), then the team's active tasks to the right.
+  // A team row: the team name, its lead, active tasks, then member nodes under the lead.
   const teamRow = (tm: string) => {
     const tl = hier.coordinators[tm];
-    const memberNames = new Set(store.allAgents.filter((a) => a.team === tm).map((a) => a.name));
-    const anyWorking = store.allAgents.some((a) => a.team === tm && isWorking(a));
+    const teamAgents = store.allAgents.filter((a) => a.team === tm).sort((a, b) => {
+      if (a.name === tl) return -1;
+      if (b.name === tl) return 1;
+      return a.name.localeCompare(b.name);
+    });
+    const memberNames = new Set(teamAgents.map((a) => a.name));
+    const anyWorking = teamAgents.some((a) => isWorking(a));
     const dot = anyWorking ? '#3ccb78' : '#c98a3c'; // green active / orange idle
     const active = tasks.filter((t) => DOING_RE.test(t.status) && !DONE_RE.test(t.status) && t.ownerName && memberNames.has(t.ownerName));
     return (
-      <div key={tm} style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0 }}>
-        <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, flexShrink: 0 }}>
-          <b style={{ fontSize: 13 }}>{tm}</b>
-          <span style={{ width: 8, height: 8, borderRadius: '50%', background: dot, flexShrink: 0 }} title={anyWorking ? 'active' : 'idle'} />
-          <span className="muted small">{tl ?? 'no lead'}</span>
-        </span>
-        <span
-          className="muted small"
-          style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', minWidth: 0 }}
-          title={active.map((t) => t.title).join(' · ')}
-        >
-          {active.length ? active.map((t) => `${t.shortId ?? ''} ${clip(String(t.title ?? ''), 30)}`.trim()).join('  ·  ') : '—'}
-        </span>
+      <div key={tm} style={{ display: 'flex', flexDirection: 'column', gap: 3, minWidth: 0 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0 }}>
+          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, flexShrink: 0 }}>
+            <b style={{ fontSize: 13 }}>{tm}</b>
+            <span style={{ width: 8, height: 8, borderRadius: '50%', background: dot, flexShrink: 0 }} title={anyWorking ? 'active' : 'idle'} />
+          </span>
+          <span
+            className="muted small"
+            style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', minWidth: 0 }}
+            title={active.map((t) => t.title).join(' · ')}
+          >
+            {active.length ? active.map((t) => `${t.shortId ?? ''} ${clip(String(t.title ?? ''), 30)}`.trim()).join('  ·  ') : '—'}
+          </span>
+        </div>
+        <div style={{ paddingLeft: 16, display: 'flex', flexDirection: 'column', gap: 2 }}>
+          {tl ? node(tl, 'team lead', tm) : <span className="muted small">no lead</span>}
+          {teamAgents.filter((a) => a.name !== tl).map((a) => (
+            <div key={a.id} style={{ paddingLeft: 16 }}>{node(a.name, 'member', tm)}</div>
+          ))}
+        </div>
       </div>
     );
   };

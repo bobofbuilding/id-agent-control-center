@@ -40,24 +40,58 @@ export interface OrgSyncResult {
   skippedBusy: number; // changed sidecars whose agent was mid-task (rebuild deferred)
 }
 
+function secondaryDomainTeams(teams: string[]): { research: string[]; coder: string[] } {
+  const others = teams.filter((t) => t !== 'default' && t !== 'public').sort((a, b) => a.localeCompare(b));
+  const research = others.filter((t) => /research|security|intel|analy|audit/i.test(t));
+  const coder = others.filter((t) => !research.includes(t));
+  return { research, coder };
+}
+
 /** Default secondary leads when none are configured: researcher + coder on `default`,
  *  splitting the other teams by domain (research/security → researcher, the rest → coder). */
 function defaultSecondaries(teams: string[]): SecondaryLead[] {
-  const others = teams.filter((t) => t !== 'default' && t !== 'public');
-  const research = others.filter((t) => /research|security|intel|analy|audit/i.test(t));
-  const coder = others.filter((t) => !research.includes(t));
+  const { research, coder } = secondaryDomainTeams(teams);
   return [
     { agent: 'researcher', team: 'default', leadsTeams: research },
     { agent: 'coder', team: 'default', leadsTeams: coder },
   ];
 }
 
+function mergeConfiguredSecondaries(configured: SecondaryLead[], teams: string[]): SecondaryLead[] {
+  const configuredCopy = configured.map((s) => ({
+    ...s,
+    leadsTeams: Array.from(new Set(s.leadsTeams ?? [])).sort((a, b) => a.localeCompare(b)),
+  }));
+  const covered = new Set(configuredCopy.flatMap((s) => s.leadsTeams));
+  const uncovered = teams.filter((t) => t !== 'default' && t !== 'public' && !covered.has(t));
+  if (!uncovered.length) return configuredCopy.sort((a, b) => a.agent.localeCompare(b.agent));
+
+  const { research, coder } = secondaryDomainTeams(uncovered);
+  const ensureSecondary = (agent: string): SecondaryLead => {
+    let sec = configuredCopy.find((s) => s.agent === agent);
+    if (!sec) {
+      sec = { agent, team: 'default', leadsTeams: [] };
+      configuredCopy.push(sec);
+    }
+    return sec;
+  };
+  const addTeams = (agent: string, names: string[]) => {
+    if (!names.length) return;
+    const sec = ensureSecondary(agent);
+    sec.leadsTeams = Array.from(new Set([...(sec.leadsTeams ?? []), ...names])).sort((a, b) => a.localeCompare(b));
+  };
+
+  addTeams('researcher', research);
+  addTeams('coder', coder);
+  return configuredCopy.sort((a, b) => a.agent.localeCompare(b.agent));
+}
+
 export async function buildOrgHierarchy(client: ManagerClient): Promise<OrgHierarchy> {
   const cfg = loadSettings();
-  const teams = (await client.teams().catch(() => [])).map((t) => t.name).filter(Boolean);
+  const teams = (await client.teams().catch(() => [])).map((t) => t.name).filter(Boolean).sort((a, b) => a.localeCompare(b));
   const coordinators = cfg.coordinators ?? {};
   const primary = cfg.primaryCoordinator ?? null;
-  const secondaries = cfg.secondaryLeads?.length ? cfg.secondaryLeads : defaultSecondaries(teams);
+  const secondaries = cfg.secondaryLeads?.length ? mergeConfiguredSecondaries(cfg.secondaryLeads, teams) : defaultSecondaries(teams);
   return { primary, secondaries, coordinators, teams };
 }
 
