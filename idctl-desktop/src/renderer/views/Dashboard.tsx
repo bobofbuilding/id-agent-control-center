@@ -198,42 +198,45 @@ function CoordinationTree({ store, events, activeTeams }: { store: FleetStore; e
     const a = store.allAgents.find((x) => x.name === name && (!team || x.team === team)) ?? store.allAgents.find((x) => x.name === name);
     const present = !!a;
     const isLive = present && isAgentLive(a?.status);
-    const task = taskOf(name);
     const working = !!(a && isWorking(a));
     const color = !present ? '#6b6b6b' : working ? '#3ccb78' : isLive ? '#c98a3c' : '#777';
     const state = !present ? 'not deployed' : working ? 'working' : isLive ? 'idle' : 'stopped';
     return (
-      <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, minWidth: 0 }}>
+      <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, minWidth: 0 }} title={state}>
         <span style={{ width: 8, height: 8, borderRadius: '50%', background: color, flexShrink: 0 }} />
         <b style={{ fontSize: 13 }}>{name}</b>
         <span className="muted small">{role}</span>
-        <span className="muted small" style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }} title={task?.title}>
-          · {task ? `${task.shortId ?? ''} ${clip(String(task.title ?? ''), 30)}` : state}
-        </span>
       </span>
     );
   };
 
-  // A team row: just the team lead with the team's live dot to its right, plus active tasks.
-  // (Per request: no team title, no member names listed under the lead.)
+  // A team row: the team lead (dot + name on the left) followed by one live dot per
+  // team member to the right — green working / orange idle / grey stopped. No team
+  // title, no task text, no idle label. The primary lead's own team is excluded
+  // upstream so the lead isn't duplicated here as a team lead.
   const teamRow = (tm: string) => {
     const tl = hier.coordinators[tm];
-    const teamAgents = store.allAgents.filter((a) => a.team === tm);
-    const memberNames = new Set(teamAgents.map((a) => a.name));
-    const anyWorking = teamAgents.some((a) => isWorking(a));
-    const dot = anyWorking ? '#3ccb78' : '#c98a3c'; // green active / orange idle
-    const active = tasks.filter((t) => DOING_RE.test(t.status) && !DONE_RE.test(t.status) && t.ownerName && memberNames.has(t.ownerName));
+    const members = store.allAgents.filter((a) => a.team === tm && a.name !== tl);
     return (
       <div key={tm} style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0 }}>
         {tl ? node(tl, 'team lead', tm) : <span className="muted small">no lead</span>}
-        <span style={{ width: 8, height: 8, borderRadius: '50%', background: dot, flexShrink: 0 }} title={anyWorking ? 'active' : 'idle'} />
-        <span
-          className="muted small"
-          style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', minWidth: 0 }}
-          title={active.map((t) => t.title).join(' · ')}
-        >
-          {active.length ? active.map((t) => `${t.shortId ?? ''} ${clip(String(t.title ?? ''), 30)}`.trim()).join('  ·  ') : '—'}
-        </span>
+        {members.length ? (
+          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, flexShrink: 0 }}>
+            {members.map((a) => {
+              const isLive = isAgentLive(a.status);
+              const working = isWorking(a);
+              const color = working ? '#3ccb78' : isLive ? '#c98a3c' : '#777';
+              const state = working ? 'working' : isLive ? 'idle' : 'stopped';
+              return (
+                <span
+                  key={a.id}
+                  title={`${a.name} · ${state}`}
+                  style={{ width: 8, height: 8, borderRadius: '50%', background: color, flexShrink: 0 }}
+                />
+              );
+            })}
+          </span>
+        ) : null}
       </div>
     );
   };
@@ -244,10 +247,11 @@ function CoordinationTree({ store, events, activeTeams }: { store: FleetStore; e
   const visibleSecondaries = hier.secondaries
     .map((s) => ({ ...s, leadsTeams: s.leadsTeams.filter((tm) => activeTeamSet.has(tm)) }))
     .filter((s) => s.leadsTeams.length > 0);
-  // Active teams not owned by any visible secondary — most notably the primary lead's
-  // own team — would otherwise vanish from the tile. Surface them under the primary.
+  // Active teams not owned by any visible secondary, surfaced under the primary —
+  // EXCEPT the primary lead's own (default) team: the lead already appears as
+  // "primary lead" above, so rendering its team row would duplicate the same agent.
   const coveredTeams = new Set(visibleSecondaries.flatMap((s) => s.leadsTeams));
-  const orphanTeams = activeTeams.filter((tm) => !coveredTeams.has(tm));
+  const orphanTeams = activeTeams.filter((tm) => !coveredTeams.has(tm) && hier.coordinators[tm] !== primary);
 
   return (
     <section className="card" style={{ marginBottom: 12, flexShrink: 0 }}>
