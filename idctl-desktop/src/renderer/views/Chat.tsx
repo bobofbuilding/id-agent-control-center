@@ -189,6 +189,8 @@ export function Chat({ store, embedded = false, lockTarget, teamOverride }: { st
   const listRef = useRef<HTMLDivElement>(null); // the scrollable messages container
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const stickRef = useRef(true);                // user is following the bottom (auto-scroll on) vs scrolled up to read
+  const programmaticScrollRef = useRef(false);  // ignore scroll events caused by our own bottom-pinning
+  const programmaticScrollTimerRef = useRef<number | null>(null);
   const sessionIdRef = useRef(''); // the currently-active session id (for late-arriving replies)
   const sessionRef = useRef<Session | null>(null); // mirror of the active session (to persist a gated empty chat)
   const deletedRef = useRef<Set<string>>(new Set()); // sessions deleted this run — drop their late writes
@@ -378,15 +380,25 @@ export function Chat({ store, embedded = false, lockTarget, teamOverride }: { st
 
   function scrollToBottom(smooth = true) {
     const el = listRef.current;
-    if (el) el.scrollTo({ top: el.scrollHeight, behavior: smooth ? 'smooth' : 'auto' });
+    if (!el) return;
+    programmaticScrollRef.current = true;
+    if (programmaticScrollTimerRef.current !== null) window.clearTimeout(programmaticScrollTimerRef.current);
+    el.scrollTo({ top: el.scrollHeight, behavior: smooth ? 'smooth' : 'auto' });
+    programmaticScrollTimerRef.current = window.setTimeout(() => {
+      programmaticScrollRef.current = false;
+      programmaticScrollTimerRef.current = null;
+    }, smooth ? 250 : 0);
   }
   // Stay pinned to the latest as new content arrives — including the live
   // activity feed + trace that stream in while an agent works — UNLESS the user
   // has scrolled up to read (then we don't yank them back down).
-  useEffect(() => { if (stickRef.current) scrollToBottom(true); }, [session?.messages, activitySteps, liveTrace, running, attachments]);
+  useEffect(() => { if (stickRef.current) scrollToBottom(!running); }, [session?.messages, activitySteps, liveTrace, running, attachments]);
   // Jump straight to the bottom (no animation) when the open chat changes.
   // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => { stickRef.current = true; scrollToBottom(false); }, [session?.id]);
+  useEffect(() => () => {
+    if (programmaticScrollTimerRef.current !== null) window.clearTimeout(programmaticScrollTimerRef.current);
+  }, []);
   useEffect(() => {
     const el = textareaRef.current;
     if (!el) return;
@@ -897,6 +909,7 @@ export function Chat({ store, embedded = false, lockTarget, teamOverride }: { st
             className="messages"
             ref={listRef}
             onScroll={() => {
+              if (programmaticScrollRef.current) return;
               const el = listRef.current;
               if (el) stickRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < Math.max(160, el.clientHeight * 0.25);
             }}
