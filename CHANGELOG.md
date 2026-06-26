@@ -8,6 +8,13 @@ Every change pushed or merged to `main` carries its version number in the commit
 subject (`vX.Y.Z: …`), stamped automatically by the `commit-msg` hook — see
 [CONTRIBUTING.md](CONTRIBUTING.md).
 
+## [0.1.192] — 2026-06-26
+- fix(dashboard): sync live coordination with HR teams
+- feat(desktop): expose Claude output speed control
+- fix(tauri): load bundled Control Center wiki
+- fix(desktop): bundle CONTROL_CENTER_WIKI.json into packaged app so Wiki page populates
+- feat(dashboard): team-level status dots + surface orphan/primary teams in Live coordination
+
 ## [0.1.191] — 2026-06-26
 - fix: keep chat pinned during streaming scroll
 
