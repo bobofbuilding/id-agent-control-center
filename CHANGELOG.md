@@ -8,6 +8,10 @@ Every change pushed or merged to `main` carries its version number in the commit
 subject (`vX.Y.Z: …`), stamped automatically by the `commit-msg` hook — see
 [CONTRIBUTING.md](CONTRIBUTING.md).
 
+## [0.1.195] — 2026-06-26
+- fix(chat): only re-pin to bottom when genuinely at bottom
+- docs: add prose wiki bodies and drift check
+
 ## [0.1.194] — 2026-06-26
 - fix(dashboard): live coordination tile — drop task text + idle labels, dedupe lead (no lead-as-team-lead), show one member dot per teammate to the right of each team lead (default team excluded)
 
