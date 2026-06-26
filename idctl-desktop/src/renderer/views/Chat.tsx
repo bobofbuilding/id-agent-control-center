@@ -911,7 +911,10 @@ export function Chat({ store, embedded = false, lockTarget, teamOverride }: { st
             onScroll={() => {
               if (programmaticScrollRef.current) return;
               const el = listRef.current;
-              if (el) stickRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < Math.max(160, el.clientHeight * 0.25);
+              // Only re-engage auto-scroll when the user is genuinely at the bottom.
+              // Small tolerance (24px) absorbs sub-pixel rounding + smooth-scroll settle;
+              // anything more would yank the user down while they're scrolled up reading.
+              if (el) stickRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 24;
             }}
           >
             {msgs.map((m) => {
