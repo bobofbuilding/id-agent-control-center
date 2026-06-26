@@ -187,6 +187,7 @@ export function Chat({ store, embedded = false, lockTarget, teamOverride }: { st
   const idRef = useRef(1);
   const endRef = useRef<HTMLDivElement>(null);
   const listRef = useRef<HTMLDivElement>(null); // the scrollable messages container
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
   const stickRef = useRef(true);                // user is following the bottom (auto-scroll on) vs scrolled up to read
   const sessionIdRef = useRef(''); // the currently-active session id (for late-arriving replies)
   const sessionRef = useRef<Session | null>(null); // mirror of the active session (to persist a gated empty chat)
@@ -386,6 +387,12 @@ export function Chat({ store, embedded = false, lockTarget, teamOverride }: { st
   // Jump straight to the bottom (no animation) when the open chat changes.
   // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => { stickRef.current = true; scrollToBottom(false); }, [session?.id]);
+  useEffect(() => {
+    const el = textareaRef.current;
+    if (!el) return;
+    el.style.height = 'auto';
+    el.style.height = `${Math.min(el.scrollHeight, 160)}px`;
+  }, [input]);
   useEffect(() => { sessionRef.current = session; }, [session]);
   useEffect(() => {
     const sid = session?.id;
@@ -891,7 +898,7 @@ export function Chat({ store, embedded = false, lockTarget, teamOverride }: { st
             ref={listRef}
             onScroll={() => {
               const el = listRef.current;
-              if (el) stickRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 120;
+              if (el) stickRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < Math.max(160, el.clientHeight * 0.25);
             }}
           >
             {msgs.map((m) => {
@@ -966,8 +973,10 @@ export function Chat({ store, embedded = false, lockTarget, teamOverride }: { st
 
           <div className="composer">
             <button className="btn attach-btn" title={destDir ? 'Attach files (or paste an image/file into the message)' : 'Focus a project or pick an agent with a workspace to attach files'} disabled={busy || inflight || !destDir} onClick={() => void addAttachments()}>📎</button>
-            <input
+            <textarea
+              ref={textareaRef}
               className="composer-input"
+              rows={1}
               value={input}
               placeholder={inflight ? `waiting for ${session?.inflight?.target ?? target}…` : focused ? `message ${target} about ${focused.name}…` : `message ${target}…`}
               disabled={busy || inflight}

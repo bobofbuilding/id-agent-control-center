@@ -367,7 +367,7 @@ button.chip.incompat:hover { border-color: var(--line); }
 .msg { max-width: 80%; }
 .msg.you { align-self: flex-end; text-align: right; }
 .msg-who { font-size: 11px; color: var(--muted); margin-bottom: 3px; }
-.msg-body { display: inline-block; padding: 9px 12px; border-radius: 12px; background: var(--bg-3); white-space: pre-wrap; text-align: left; }
+.msg-body { display: inline-block; padding: 9px 12px; border-radius: 12px; background: var(--bg-3); white-space: pre-wrap; overflow-wrap: anywhere; text-align: left; }
 .msg.you .msg-body { background: var(--accent); color: #04121c; }
 .msg.system .msg-body { background: transparent; color: var(--muted); font-style: italic; padding-left: 0; }
 .spin { color: var(--warn); }
@@ -410,11 +410,12 @@ button.chip.incompat:hover { border-color: var(--line); }
 .file-x:hover { color: var(--danger, #e5534b); }
 .attach-btn { padding: 9px 10px; font-size: 15px; line-height: 1; }
 .attach-btn:disabled { opacity: .4; }
-.composer { display: flex; gap: 8px; margin-top: 12px; }
+.composer { display: flex; gap: 8px; margin-top: 12px; align-items: flex-end; }
 .composer-input {
   flex: 1; background: var(--bg); border: 1px solid var(--line); color: var(--text);
   border-radius: 8px; padding: 9px 12px; font: inherit; outline: none;
 }
+textarea.composer-input { resize: none; line-height: 1.4; min-height: 38px; max-height: 160px; overflow-y: auto; }
 .composer-input:focus { border-color: var(--accent); }
 .targets { width: 180px; flex: 0 0 180px; display: flex; flex-direction: column; gap: 4px; }
 .target { text-align: left; background: transparent; border: 0; color: var(--muted); padding: 7px 10px; border-radius: 7px; cursor: pointer; font: inherit; }
