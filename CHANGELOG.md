@@ -8,6 +8,9 @@ Every change pushed or merged to `main` carries its version number in the commit
 subject (`vX.Y.Z: …`), stamped automatically by the `commit-msg` hook — see
 [CONTRIBUTING.md](CONTRIBUTING.md).
 
+## [0.1.187] — 2026-06-26
+- fix(release): build CHANGELOG from real last-tag..HEAD commits + stamp next-patch in commit-msg hook
+
 ## [0.1.186] — 2026-06-26
 - feat(chat): auto-growing composer textarea + stick-to-bottom scroll tweak
 
