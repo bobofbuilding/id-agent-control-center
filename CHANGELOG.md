@@ -8,6 +8,9 @@ Every change pushed or merged to `main` carries its version number in the commit
 subject (`vX.Y.Z: …`), stamped automatically by the `commit-msg` hook — see
 [CONTRIBUTING.md](CONTRIBUTING.md).
 
+## [0.1.189] — 2026-06-26
+- **Concurrency fix:** the lead/coordinator now fans INDEPENDENT work out in PARALLEL (async `/news-to --trigger` to all owners at once) instead of strictly sequential `/talk-to` — so 2+ subscription agents (codex/claude) run concurrently through the lead, not one at a time. Synchronous `/talk-to` is reserved for genuinely DEPENDENT chains. Guarded at the source (`COORDINATION_TAIL` + a do-not-revert comment) so future "make lead"/team-build presets stay parallel; the live lead + engineering-lead instructions were updated too.
+
 ## [0.1.188] — 2026-06-26
 - fix(release): build CHANGELOG from real last-tag..HEAD commits + stamp next-patch in commit-msg hook
 - fix(release): build CHANGELOG from real last-tag..HEAD commits + stamp next-patch in commit-msg hook

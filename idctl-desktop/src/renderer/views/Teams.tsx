@@ -51,17 +51,25 @@ function describeRelay(d: string[] | null): string {
   return d.join(', ');
 }
 
-/** Shared reliability + task-hygiene guidance appended to every coordinator
- *  directive (the generic preset and the roster-aware one the builder generates). */
-const COORDINATION_TAIL = `RELIABILITY — how to delegate:
-- STRONGLY PREFER synchronous **/talk-to** (pattern 1 in the inter-agent skill). It blocks until the teammate replies and the MANAGER handles the wait, so you get the result inline and reliably.
-- For a sub-task that belongs to ANOTHER team, hand it to that team's lead with **/ask <team>/<lead>** (subject to your team's relay policy). If a team isn't reachable, say so — don't silently absorb its work.
-- Do NOT hand-roll a long polling loop against a teammate's /news after an async /news-to — that is fragile and can hang for a long time if the teammate doesn't wake. If you find yourself looping on /news waiting for a delegate, STOP and use /talk-to instead.
-- Use async /news-to (trigger:true) ONLY for genuine fire-and-forget where you do NOT need the result inline. If you must parallelize, prefer a few sequential /talk-to calls over a fragile async fan-out.
+/**
+ * Shared delegation guidance appended to every coordinator directive (the generic preset and
+ * the roster-aware one the builder generates).
+ *
+ * GUARD — PARALLEL-FIRST, DO NOT REVERT TO SEQUENTIAL. An earlier version told the lead to
+ * "STRONGLY PREFER synchronous /talk-to" and "prefer a few sequential /talk-to calls over a
+ * fragile async fan-out". Because /talk-to BLOCKS until each reply, that serialized the
+ * teammates — two subscription agents could never run at the same time through the lead, even
+ * though the manager + the harness fully support concurrent subscription processes. The fix is
+ * to fan INDEPENDENT work out in parallel (async /news-to --trigger to all owners at once) and
+ * reserve /talk-to only for genuinely DEPENDENT chains. Keep it this way.
+ */
+const COORDINATION_TAIL = `PARALLELISM — fire INDEPENDENT work off at the SAME TIME (this is the default):
+- When sub-tasks DON'T depend on each other, dispatch them to their owners IN PARALLEL with async **/news-to <agent> "<task>" (trigger:true)** — send ALL of them first, back-to-back, so the teammates run concurrently on their own processes/subscriptions. Do NOT /talk-to independent tasks one-by-one — that blocks and forces them to run sequentially.
+- Then COLLECT: check **/news** on a cadence (every ~20-30s) up to a sensible deadline, summarizing each reply the moment it lands. Attach a tracked task to each async hand-off and mark it done when you collect the reply. If a teammate hasn't answered by the deadline, re-send ONCE or report it blocked — never loop on /news forever.
+- Use synchronous **/talk-to** ONLY for a DEPENDENT step (you need one teammate's OUTPUT before the next can start) or a single quick hand-off — it blocks until the reply, which is right for a chain but WRONG for parallel work. For a one-off /talk-to, omit the tracked \`task\` field (the reply is inline).
+- For a sub-task in ANOTHER team's domain, hand it to that team's lead with **/ask <team>/<lead>** (subject to your team's relay policy); fire those in parallel too. If a team isn't reachable, say so — don't silently absorb its work.
 
-Keep the task board clean: for synchronous /talk-to delegations do NOT attach a tracked manager task (omit the \`task\` field) — you get the reply inline, so a tracked task would just linger unclosed. Only attach a tracked task for async handoffs you will collect later, and mark it done when you do.
-
-Compressing, decomposing, delegating, and summarizing — NOT doing the work yourself — is your primary job as the lead. Do the work yourself only for trivial one-liners, or when delegation would clearly be slower with no benefit (and say so in one line).`;
+Compressing, decomposing, delegating INDEPENDENT work IN PARALLEL, and summarizing — NOT doing the work yourself — is your primary job as the lead. Do the work yourself only for trivial one-liners, or when delegation would clearly be slower with no benefit (and say so in one line).`;
 
 /** Ready-made "act as the team coordinator" directive (generic coder/researcher
  *  teammates) — used by the Agent-instructions card's "Coordinator preset" button. */
@@ -73,7 +81,7 @@ For any NON-TRIVIAL request, work in this order, and narrate each step as you go
 
 1. **Compress** — distill the request to its essential intent, deliverable, and hard constraints; strip the noise. State it back in 1-2 lines so the scope is unambiguous before any work starts.
 2. **Break it up** — decompose the compressed request into the smallest independent sub-tasks. For each, name the ONE owner best suited to it, and keep it self-contained (include only the context that owner needs).
-3. **Delegate** — hand each sub-task to its owner: a teammate on your team (implementation/code → **coder**, research/analysis/docs → **researcher**) via the **inter-agent** skill, or another team's lead via **/ask <team>/<lead>** when the work is in that team's domain. Prefer a few focused, sequential hand-offs over one giant one.
+3. **Delegate** — hand each sub-task to its owner: a teammate on your team (implementation/code → **coder**, research/analysis/docs → **researcher**) via the **inter-agent** skill, or another team's lead via **/ask <team>/<lead>** when the work is in that team's domain. **Fan INDEPENDENT sub-tasks out IN PARALLEL** (async /news-to --trigger to each owner at once, so they run concurrently); chain with synchronous /talk-to ONLY the ones that need another's output.
 4. **Summarize step by step** — as EACH delegate replies, compress its result to 1-3 lines and post that running update immediately; don't wait for everything to finish. Keep a visible tally of what's done, what's pending, and any blockers.
 5. **Close out** — assemble the step summaries into one coherent answer, stating who did what.
 
@@ -94,7 +102,7 @@ For any NON-TRIVIAL request, work in this order, and narrate each step as you go
 
 1. **Compress** — distill the request to its essential intent, deliverable, and hard constraints; strip the noise. State it back in 1-2 lines so the scope is unambiguous before any work starts.
 2. **Break it up** — decompose into the smallest independent sub-tasks; for each, pick the ONE owner best suited to it and keep it self-contained.
-3. **Delegate** — hand each sub-task to its owner via the **inter-agent** skill (or **/ask <team>/<lead>** for another team's domain):
+3. **Delegate** — hand each sub-task to its owner via the **inter-agent** skill (or **/ask <team>/<lead>** for another team's domain). **Fan INDEPENDENT sub-tasks out IN PARALLEL** (async /news-to --trigger to each at once, so they run concurrently); use synchronous /talk-to only for steps that depend on another's output:
 ${bullets}
 4. **Summarize step by step** — as EACH delegate replies, compress its result to 1-3 lines and post that running update immediately; don't wait for everything to finish. Track what's done, pending, and blocked.
 5. **Close out** — assemble the step summaries into one coherent answer, stating who did what.
