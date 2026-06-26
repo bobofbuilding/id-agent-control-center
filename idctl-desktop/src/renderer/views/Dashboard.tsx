@@ -1,5 +1,6 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { call, resolveCoordinator, type FleetStore, type TeamEvent } from '../store.ts';
+import { isAgentLive } from '../agentStatus.ts';
 import { Chat } from './Chat.tsx';
 import type { InboxItem, NewsItem, Task } from '../../../../idctl/src/api/types.ts';
 
@@ -8,9 +9,6 @@ import type { InboxItem, NewsItem, Task } from '../../../../idctl/src/api/types.
  * chosen team's lead/coordinator (pick the team from the header — independent of any global
  * active team), beside a slim, live activity feed spanning every team.
  */
-
-const ACTIVE_RE = /stop|offline|dead|exit|error|crash|down|disabled|sleep/i;
-function isActive(status?: string): boolean { return !!status && !ACTIVE_RE.test(status); }
 
 function ago(ts?: number): string {
   if (!ts) return '';
@@ -140,41 +138,70 @@ type ActivityFeedItem = {
 };
 const DOING_RE = /doing|progress|active|start|claim/i;
 const DONE_RE = /done|complete/i;
+const WORKING_STATUS_RE = /processing|busy/i;
+const RECENT_WORKING_MS = 90_000;
+const WORKING_EVENT_RE = /activity|processing|tool|file|query:processing|task:(doing|claim|claimed|progress|active|start)/i;
+
+function activityKey(agent: { name: string; team?: string }): string {
+  return `${agent.team ?? ''}:${agent.name}`;
+}
+function eventAgent(e: TeamEvent): string {
+  return str(e.data?.agent) || str(e.actor) || str(e.data?.from) || str(e.data?.name);
+}
+function recentWorkingKeys(events: TeamEvent[]): Set<string> {
+  const cutoff = Date.now() - RECENT_WORKING_MS;
+  const keys = new Set<string>();
+  for (const e of events) {
+    const at = toMs(e.timestamp ?? e.occurred_at);
+    const signal = `${e.topic} ${str(e.data?.status)} ${str(e.data?.kind)} ${str(e.data?.type)}`;
+    if (at < cutoff || !WORKING_EVENT_RE.test(signal)) continue;
+    const agent = eventAgent(e);
+    if (!agent) continue;
+    keys.add(`${e.team ?? ''}:${agent}`);
+    keys.add(agent);
+  }
+  return keys;
+}
 
 /**
  * Live coordination tree — a real-time mirror of who's driving what: primary lead → secondary
  * leads → team leads → workers, each with its live state (working / idle / stopped) and current
  * task. The observation half of the CC refactor (Phase 4): the agents orchestrate, this just shows it.
  */
-function CoordinationTree({ store }: { store: FleetStore }) {
+function CoordinationTree({ store, events, activeTeams }: { store: FleetStore; events: TeamEvent[]; activeTeams: string[] }) {
   const [hier, setHier] = useState<OrgHier>({ primary: null, secondaries: [], coordinators: {}, teams: [] });
   const [tasks, setTasks] = useState<LiteTask[]>([]);
   const [spend, setSpend] = useState<{ total: number; count: number; top?: { agent: string; total: number } } | null>(null);
-  useEffect(() => {
-    let live = true;
-    const load = () => {
-      void call<OrgHier>('org:hierarchy').then((h) => { if (live && h) setHier(h); }).catch(() => {});
-      void call<LiteTask[]>('tasks:allTeams').then((t) => { if (live) setTasks(Array.isArray(t) ? t : []); }).catch(() => {});
-      void call<{ day?: { total?: number; count?: number; agents?: { agent: string; total?: number; output: number }[] } }>('usage').then((u) => {
-        if (!live || !u?.day) return;
-        const agents = u.day.agents ?? [];
-        const top = agents.length ? agents.map((a) => ({ agent: a.agent, total: a.total ?? a.output })).sort((x, y) => y.total - x.total)[0] : undefined;
-        setSpend({ total: u.day.total ?? 0, count: u.day.count ?? 0, top });
-      }).catch(() => {});
-    };
-    load();
-    const iv = setInterval(load, 5000);
-    return () => { live = false; clearInterval(iv); };
+  const liveRef = useRef(true);
+  useEffect(() => () => { liveRef.current = false; }, []);
+  const load = useCallback(() => {
+    void call<OrgHier>('org:hierarchy').then((h) => { if (liveRef.current && h) setHier(h); }).catch(() => {});
+    void call<LiteTask[]>('tasks:allTeams').then((t) => { if (liveRef.current) setTasks(Array.isArray(t) ? t : []); }).catch(() => {});
+    void call<{ day?: { total?: number; count?: number; agents?: { agent: string; total?: number; output: number }[] } }>('usage').then((u) => {
+      if (!liveRef.current || !u?.day) return;
+      const agents = u.day.agents ?? [];
+      const top = agents.length ? agents.map((a) => ({ agent: a.agent, total: a.total ?? a.output })).sort((x, y) => y.total - x.total)[0] : undefined;
+      setSpend({ total: u.day.total ?? 0, count: u.day.count ?? 0, top });
+    }).catch(() => {});
   }, []);
+  useEffect(() => { load(); }, [load, store.lastUpdated]);
+  useEffect(() => {
+    const iv = setInterval(() => { load(); }, 15000);
+    return () => clearInterval(iv);
+  }, [load]);
 
+  const workingKeys = recentWorkingKeys(events);
   const taskOf = (name?: string) => (name ? tasks.find((t) => t.ownerName === name && DOING_RE.test(t.status) && !DONE_RE.test(t.status)) : undefined);
+  const isWorking = (agent: { id?: string; name: string; team?: string; status?: string }) =>
+    !!taskOf(agent.name) || workingKeys.has(activityKey(agent)) || workingKeys.has(agent.name) || !!(agent.id && workingKeys.has(agent.id)) || WORKING_STATUS_RE.test(agent.status ?? '');
   const node = (name: string, role: string) => {
     const a = store.allAgents.find((x) => x.name === name);
     const present = !!a;
-    const isLive = present && isActive(a?.status);
+    const isLive = present && isAgentLive(a?.status);
     const task = taskOf(name);
-    const color = !present ? '#6b6b6b' : task ? '#3ccb78' : isLive ? '#c98a3c' : '#777';
-    const state = !present ? 'not deployed' : task ? 'working' : isLive ? 'idle' : 'stopped';
+    const working = !!(a && isWorking(a));
+    const color = !present ? '#6b6b6b' : working ? '#3ccb78' : isLive ? '#c98a3c' : '#777';
+    const state = !present ? 'not deployed' : working ? 'working' : isLive ? 'idle' : 'stopped';
     return (
       <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, minWidth: 0 }}>
         <span style={{ width: 8, height: 8, borderRadius: '50%', background: color, flexShrink: 0 }} />
@@ -189,6 +216,10 @@ function CoordinationTree({ store }: { store: FleetStore }) {
 
   const primary = hier.primary?.agent;
   if (!primary) return null; // nothing to show until a primary lead is designated (HR Manager)
+  const activeTeamSet = new Set(activeTeams);
+  const visibleSecondaries = hier.secondaries
+    .map((s) => ({ ...s, leadsTeams: s.leadsTeams.filter((tm) => activeTeamSet.has(tm)) }))
+    .filter((s) => s.leadsTeams.length > 0);
 
   return (
     <section className="card" style={{ marginBottom: 12, flexShrink: 0 }}>
@@ -203,22 +234,22 @@ function CoordinationTree({ store }: { store: FleetStore }) {
       </h3>
       <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
         <div>{node(primary, 'primary lead')}</div>
-        {hier.secondaries.map((s) => (
+        {visibleSecondaries.map((s) => (
           <div key={s.agent} style={{ paddingLeft: 16, borderLeft: '1px solid var(--border, #2a2a2a)' }}>
             <div style={{ marginBottom: 4 }}>↳ {node(s.agent, 'secondary')}</div>
             <div style={{ paddingLeft: 18, display: 'flex', flexDirection: 'column', gap: 3 }}>
-              {s.leadsTeams.length ? s.leadsTeams.map((tm) => {
+              {s.leadsTeams.map((tm) => {
                 const tl = hier.coordinators[tm];
                 const workers = store.allAgents.filter((a) => a.team === tm && a.name !== tl);
-                const working = workers.filter((w) => taskOf(w.name)).length;
-                const liveW = workers.filter((w) => isActive(w.status)).length;
+                const working = workers.filter(isWorking).length;
+                const liveW = workers.filter((w) => isAgentLive(w.status)).length;
                 return (
                   <div key={tm} style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0 }}>
                     {tl ? node(tl, tm) : <span className="muted small">{tm} · no lead</span>}
                     <span className="muted small" style={{ whiteSpace: 'nowrap' }}>— {workers.length} workers · {working} working · {liveW} live</span>
                   </div>
                 );
-              }) : <span className="muted small">no teams assigned</span>}
+              })}
             </div>
           </div>
         ))}
@@ -230,7 +261,7 @@ function CoordinationTree({ store }: { store: FleetStore }) {
 export function Dashboard({ store }: { store: FleetStore }) {
   // Teams that currently have ≥1 running agent (idle teams hidden from the picker).
   const activeTeams = useMemo(
-    () => store.teams.map((t) => t.name).filter((n) => store.allAgents.some((a) => a.team === n && isActive(a.status))),
+    () => store.teams.map((t) => t.name).filter((n) => store.allAgents.some((a) => a.team === n && isAgentLive(a.status))),
     [store.teams, store.allAgents],
   );
   // The chat targets a CHOSEN team's lead — independent of the global active team.
@@ -255,23 +286,26 @@ export function Dashboard({ store }: { store: FleetStore }) {
   const [events, setEvents] = useState<TeamEvent[]>([]);
   const [tasks, setTasks] = useState<Task[]>([]);
   const [news, setNews] = useState<DashboardNews[]>([]);
-  useEffect(() => {
-    let live = true;
-    const load = async () => {
+  const activityLiveRef = useRef(true);
+  useEffect(() => () => { activityLiveRef.current = false; }, []);
+  const loadActivity = useCallback(() => {
+    void (async () => {
       const [evs, ts, ns] = await Promise.all([
         call<TeamEvent[]>('events:multi', 80).catch(() => [] as TeamEvent[]),
         call<Task[]>('tasks:allTeams').catch(() => [] as Task[]),
         call<DashboardNews[]>('news:allTeams', 80).catch(() => [] as DashboardNews[]),
       ]);
-      if (!live) return;
+      if (!activityLiveRef.current) return;
       setEvents(evs);
       setTasks(ts);
       setNews(ns);
-    };
-    void load();
-    const iv = setInterval(load, 4000);
-    return () => { live = false; clearInterval(iv); };
+    })();
   }, []);
+  useEffect(() => { loadActivity(); }, [loadActivity, store.lastUpdated]);
+  useEffect(() => {
+    const iv = setInterval(() => { loadActivity(); }, 15000);
+    return () => clearInterval(iv);
+  }, [loadActivity]);
   const agentById = useMemo(() => new Map(store.allAgents.map((a) => [a.id, a.name] as const)), [store.allAgents]);
   const feedItems = useMemo<ActivityFeedItem[]>(() => {
     const name = (id: string) => agentLabel(id, agentById);
@@ -280,7 +314,7 @@ export function Dashboard({ store }: { store: FleetStore }) {
     const activeAgentKeys = new Set<string>();
     for (const a of store.allAgents) {
       fleetAgentKeys.add(a.id); fleetAgentKeys.add(a.name);
-      if (isActive(a.status)) { activeAgentKeys.add(a.id); activeAgentKeys.add(a.name); }
+      if (isAgentLive(a.status)) { activeAgentKeys.add(a.id); activeAgentKeys.add(a.name); }
     }
     const items: ActivityFeedItem[] = [];
     for (const e of events) {
@@ -361,7 +395,7 @@ export function Dashboard({ store }: { store: FleetStore }) {
         </label>
       </header>
 
-      <CoordinationTree store={store} />
+      <CoordinationTree store={store} events={events} activeTeams={activeTeams} />
 
       {/* Explicit flex row so the chat fills the left and the activity tile always shows on the right. */}
       <div style={{ display: 'flex', gap: 14, flex: 1, minHeight: 0, alignItems: 'stretch' }}>

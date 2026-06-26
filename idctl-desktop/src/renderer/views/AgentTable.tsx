@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { call, agentsLeadFirst, type FleetStore, type TeamAgent } from '../store.ts';
+import { statusClass } from '../agentStatus.ts';
 import type { Agent } from '../../../../idctl/src/api/types.ts';
 import { RUNTIMES, offerableRuntimes, effortOptions, runtimeHasEffort } from '../../../../idctl/src/settings/runtimeCatalog.ts';
 
@@ -46,11 +47,6 @@ function runtimeModelMismatch(runtime?: string, model?: string): string | null {
   const fam = modelFamily(model);
   if (fam === 'other') return null;
   return runtimeAccepts(runtime).has(fam) ? null : `${runtimeLabel(runtime)} runtime expects a ${[...runtimeAccepts(runtime)][0]} model, but "${model}" looks like ${fam}`;
-}
-function statusClass(s: string): string {
-  if (/running|online|ok/i.test(s)) return 'ok';
-  if (/start|pending|processing/i.test(s)) return 'warn';
-  return 'err';
 }
 function short(s?: string): string {
   if (!s) return '—';
