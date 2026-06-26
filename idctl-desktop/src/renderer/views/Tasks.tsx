@@ -7,6 +7,7 @@ import { Schedule } from './Schedule.tsx';
 import { Loops } from './Loops.tsx';
 import { Plans } from './Plans.tsx';
 import { Dream } from './Dream.tsx';
+import { Goals } from './Goals.tsx';
 
 // Auto-decompose IPC shapes (mirror main/work.ts).
 type SubTask = { title: string; description: string; agent: string; dependsOn: number[] };
@@ -17,10 +18,11 @@ type TeamLead = { team: string; lead: string | null; activeCount: number; totalC
 type FanoutResult = { team: string; lead?: string; status: 'dispatched' | 'no-active-agent' | 'failed'; queryId?: string; detail?: string };
 type TriageResult = { considered: number; assigned: { ref: string; agent: string }[]; skipped: number; dispatched: number; error?: string };
 
-type Tab = 'tasks' | 'plans' | 'schedule' | 'loops' | 'dream';
+type Tab = 'tasks' | 'goals' | 'plans' | 'schedule' | 'loops' | 'dream';
 const TABS: { id: Tab; label: string }[] = [
   { id: 'plans', label: 'Plans' },
   { id: 'tasks', label: 'Tasks' },
+  { id: 'goals', label: 'Goals' },
   { id: 'schedule', label: 'Schedule' },
   { id: 'loops', label: 'Loops' },
   { id: 'dream', label: 'Dream' },
@@ -119,6 +121,7 @@ export function Tasks({ store, initialTab }: { store: FleetStore; initialTab?: T
         ))}
       </div>
       {tab === 'tasks' ? <TasksPanel store={store} /> : null}
+      {tab === 'goals' ? <Goals store={store} /> : null}
       {tab === 'plans' ? <Plans store={store} /> : null}
       {tab === 'schedule' ? <Schedule store={store} /> : null}
       {tab === 'loops' ? <Loops store={store} /> : null}

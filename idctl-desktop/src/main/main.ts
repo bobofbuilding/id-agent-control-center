@@ -18,6 +18,7 @@ import { listChats, listInflightChats, getChat, saveChat, renameChat, removeChat
 import { listPlans, getPlan, savePlan, removePlan, type Plan } from './planstore.ts';
 import { listBrainPlans, getBrainPlan, setBrainPlanStatus, createBrainPlan } from './brainplans.ts';
 import { listLoops, getLoop, saveLoop, removeLoop, type Loop } from './loopstore.ts';
+import { listGoals, getGoal, saveGoal, removeGoal, type Goal } from './goalstore.ts';
 import { listDreams, getDream, saveDream, removeDream, type Dream } from './dreamstore.ts';
 import { listQuestions, addQuestion, removeQuestion, type BlockerQuestion } from './questionstore.ts';
 import { generateImage, readImage, imageModels, getImageServer, detectImageServer } from './images.ts';
@@ -278,6 +279,15 @@ async function appCall(method: string, args: unknown[]): Promise<unknown> {
       return savePlan(args[0] as Plan);
     case 'plans:remove':
       return removePlan(args[0] as string);
+    // Goals: saved per-project goals (goalstore).
+    case 'goals:list':
+      return listGoals(args[0] as string | undefined);
+    case 'goals:get':
+      return getGoal(args[0] as string);
+    case 'goals:save':
+      return saveGoal(args[0] as Goal);
+    case 'goals:remove':
+      return removeGoal(args[0] as string);
     // Brain plans: read-only LIVE view of <projectsRoot>/brain/plans (README index + files).
     case 'brain:plans':
       return listBrainPlans(args[0] as string | undefined);
