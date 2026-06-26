@@ -112,6 +112,19 @@ function composeOrgBlock(
     else out.push('Do your assigned tasks and mark them done when finished.');
   }
 
+  // PARALLEL-delegation guard (concurrency): every coordinator must fan INDEPENDENT work out at
+  // once — synchronous /talk-to to multiple teammates serializes them so 2+ subscription agents
+  // can never run at the same time through a lead. See Teams.tsx COORDINATION_TAIL (do not revert).
+  if (info.role === 'primary' || info.role === 'secondary' || info.role === 'teamlead') {
+    out.push(
+      'When you delegate INDEPENDENT work to more than one teammate/lead, **fan it out IN PARALLEL** — ' +
+      'fire async `/news-to <agent> "<task>" (trigger:true)` to each at once so they run concurrently on ' +
+      'their own processes, then collect via `/news` (bounded; re-send once or report blocked if one goes ' +
+      "quiet). Use synchronous `/talk-to` ONLY for a step that needs another's output first, or a single " +
+      'quick hand-off. Never run independent delegations one-at-a-time.',
+    );
+  }
+
   if (brainLines.length) {
     out.push('', '## Current team instructions (synced from the brain)');
     for (const b of brainLines) out.push(`- ${b}`);
