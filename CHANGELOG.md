@@ -8,6 +8,9 @@ Every change pushed or merged to `main` carries its version number in the commit
 subject (`vX.Y.Z: …`), stamped automatically by the `commit-msg` hook — see
 [CONTRIBUTING.md](CONTRIBUTING.md).
 
+## [0.1.197] — 2026-06-26
+- fix(teams): route instruction drafts through HR manager
+
 ## [0.1.196] — 2026-06-26
 - **Fix "the query was lost. Please resend.":** org-sync was rebuilding agents to apply goals changes while they were mid-CHAT-QUERY. Its idle check only looked at owned tasks — blind to in-flight chat /ask queries — so a goals sync could rebuild the lead you were messaging, and stopping an agent cancels its pending queries (reply lost). org-sync now reads each team's recent query-event tail and DEFERS rebuilding any agent whose latest query:* event hasn't reached a terminal status, alongside the existing mid-task deferral. Also wired the wiki appVersion auto-bump into the release script so the wiki-drift gate self-sustains.
 
