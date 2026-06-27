@@ -4,8 +4,8 @@ import { defaultBaseUrl, kindNeedsKey, type ProviderKind, type ProviderProfile }
 import type { ProbeOutcome } from '../../../../idctl/src/settings/ProviderClient.ts';
 import type { DiscoveredServer } from '../../../../idctl/src/settings/localDiscovery.ts';
 import { PROVIDER_CATALOG, findProvider } from '../../../../idctl/src/settings/providerCatalog.ts';
-import { LOCAL_MODEL_CATALOG, type ModelCapability, type LocalModelEntry } from '../../../../idctl/src/settings/modelCatalog.ts';
-import { LOCAL_STACKS, type LocalStackEntry } from '../../../../idctl/src/settings/localStacks.ts';
+import { TOP_LOCAL_MODEL_CATALOG, type ModelCapability, type LocalModelEntry } from '../../../../idctl/src/settings/modelCatalog.ts';
+import { TOP_LOCAL_STACKS, type LocalStackEntry } from '../../../../idctl/src/settings/localStacks.ts';
 
 const MODEL_CAPS: ModelCapability[] = ['general', 'tools', 'reasoning', 'coding', 'vision', 'embedding', 'fast'];
 
@@ -229,7 +229,7 @@ export function Settings({ store }: { store: FleetStore }) {
   }
 
   // Local models (Ollama): list installed + download a new one (streamed progress).
-  const POPULAR = ['llama3.2:1b', 'llama3.2:3b', 'qwen2.5:3b', 'qwen3:1.7b', 'gemma3:1b', 'gemma2:2b', 'phi3.5', 'deepseek-r1:1.5b', 'smollm2:1.7b', 'mistral'];
+  const POPULAR = TOP_LOCAL_MODEL_CATALOG.map((m) => m.id);
   const [ollamaModels, setOllamaModels] = useState<{ name: string; size?: number; parameterSize?: string }[]>([]);
   const [pullName, setPullName] = useState('llama3.2:1b');
   const [pulling, setPulling] = useState(false);
@@ -303,6 +303,23 @@ export function Settings({ store }: { store: FleetStore }) {
   async function loadOllama() {
     const r = await call<{ ok: boolean; models: { name: string; size?: number; parameterSize?: string }[] }>('ollama:tags').catch(() => ({ ok: false, models: [] as { name: string }[] }));
     setOllamaModels(r.models ?? []);
+    return r.models ?? [];
+  }
+  async function ensureOllamaBackend(models?: { name: string }[]) {
+    const base = 'http://127.0.0.1:11434';
+    if (providers.some((p) => p.kind === 'ollama' || normUrl(p.baseUrl) === normUrl(base))) return;
+    const rows = models ?? ollamaModels;
+    const profile: ProviderProfile = {
+      name: uniqueProviderName('ollama', new Set(providers.map((p) => p.name))),
+      kind: 'ollama',
+      baseUrl: base,
+      enabled: true,
+      ...(rows.length
+        ? { lastSync: { at: Date.now(), status: 'live', modelCount: rows.length, models: rows.map((m) => m.name).slice(0, 200) } }
+        : {}),
+    };
+    await call('providers:add', profile);
+    await reload();
   }
   async function pull(modelId: string) {
     const m = modelId.trim();
@@ -312,7 +329,11 @@ export function Settings({ store }: { store: FleetStore }) {
     try {
       const r = await call<{ ok: boolean; error?: string }>('ollama:pull', m);
       if (!r.ok) setPullMsg(`failed: ${r.error}`);
-      else { setPullMsg(`downloaded ${m} ✓`); await loadOllama(); }
+      else {
+        const models = await loadOllama();
+        await ensureOllamaBackend(models);
+        setPullMsg(`downloaded ${m} ✓ · Ollama connected`);
+      }
     } finally {
       setPulling(false);
     }
@@ -326,13 +347,13 @@ export function Settings({ store }: { store: FleetStore }) {
   async function copyText(text: string) {
     try { await navigator.clipboard.writeText(text); } catch { /* clipboard blocked */ }
   }
-  const filteredModels = LOCAL_MODEL_CATALOG.filter((m) => {
+  const filteredModels = TOP_LOCAL_MODEL_CATALOG.filter((m) => {
     if (modelCap !== 'all' && !m.capabilities.includes(modelCap)) return false;
     const q = modelQuery.trim().toLowerCase();
     return !q || m.id.toLowerCase().includes(q) || m.family.toLowerCase().includes(q) || (m.blurb ?? '').toLowerCase().includes(q);
   });
-  const stackTags = Array.from(new Set(LOCAL_STACKS.flatMap((s) => s.tags ?? []))).sort();
-  const filteredStacks = stackTag === 'all' ? LOCAL_STACKS : LOCAL_STACKS.filter((s) => (s.tags ?? []).includes(stackTag));
+  const stackTags = Array.from(new Set(TOP_LOCAL_STACKS.flatMap((s) => s.tags ?? []))).sort();
+  const filteredStacks = stackTag === 'all' ? TOP_LOCAL_STACKS : TOP_LOCAL_STACKS.filter((s) => (s.tags ?? []).includes(stackTag));
   const runningPorts = new Set((discovered ?? []).map((d) => d.port));
 
   function providerPort(p: ProviderRow): number | null {
@@ -383,6 +404,11 @@ export function Settings({ store }: { store: FleetStore }) {
       return { level: 'error', msg: `port ${s.defaultPort} is in use — install it on a different port` };
     }
     return null;
+  }
+  function stackInstalled(s: LocalStackEntry): boolean {
+    const apiBase = s.apiBase ? normUrl(s.apiBase) : null;
+    return providers.some((p) => (apiBase && normUrl(p.baseUrl) === apiBase) || (s.defaultPort != null && providerPort(p) === s.defaultPort))
+      || (discovered ?? []).some((d) => d.id === s.id || (apiBase && normUrl(d.baseUrl) === apiBase) || (s.defaultPort != null && d.port === s.defaultPort));
   }
   useEffect(() => {
     void loadOllama();
@@ -674,7 +700,7 @@ export function Settings({ store }: { store: FleetStore }) {
       <section className="card">
         <h3>Local LLM stacks</h3>
         <p className="muted small" style={{ marginTop: -4 }}>
-          Self-hostable inference servers you can run <b>next to Ollama</b> — from <a className="ext-link" href="https://github.com/av/awesome-llm-services" target="_blank" rel="noreferrer">awesome-llm-services</a>. <b>Install</b> opens the command in your Terminal (visible and abortable — nothing runs silently); app-only stacks show <b>Get ↗</b> (no CLI install — opens the download). After installing + starting one, hit <b>⟳ Scan running</b> then add it under <b>Inference backends</b> below. ⚠ only appears when a stack's default port is <i>actually</i> in use right now (shared default ports are no longer flagged — they aren't a conflict unless you run two at once).
+          Self-hostable inference servers you can run <b>next to Ollama</b> — the top 10 picks from <a className="ext-link" href="https://github.com/av/awesome-llm-services" target="_blank" rel="noreferrer">awesome-llm-services</a>. <b>Install</b> opens the command in your Terminal (visible and abortable — nothing runs silently); app-only stacks show <b>Get ↗</b> (no CLI install — opens the download). After installing + starting one, hit <b>⟳ Scan running</b> then add it under <b>Inference backends</b> below. ⚠ only appears when a stack's default port is <i>actually</i> in use right now (shared default ports are no longer flagged — they aren't a conflict unless you run two at once).
         </p>
         <div className="row-actions" style={{ flexWrap: 'wrap', gap: 6 }}>
           <span className="chips grow">
@@ -691,7 +717,7 @@ export function Settings({ store }: { store: FleetStore }) {
             const running = s.defaultPort != null && runningPorts.has(s.defaultPort);
             const pw = stackPortWarn(s);
             const ic = stackInstallCmd(s);
-            const uc = stackUninstallCmd(s);
+            const uc = stackInstalled(s) ? stackUninstallCmd(s) : null;
             return (
               <div className="stack-row" key={s.id}>
                 <div className="stack-head">

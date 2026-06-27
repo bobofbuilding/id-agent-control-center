@@ -86,3 +86,22 @@ export const LOCAL_MODEL_CATALOG: LocalModelEntry[] = [
   {"id": "smollm2:360m", "family": "SmolLM2", "params": "360M", "approxSizeGB": 0.726, "contextTokens": 8192, "contextLabel": "8K", "capabilities": ["general", "fast"], "license": "Apache 2.0", "blurb": "Pocket-size SmolLM2; usable for simple tasks and on-device demos, not a general daily driver."},
   {"id": "smollm2:135m", "family": "SmolLM2", "params": "135M", "approxSizeGB": 0.271, "contextTokens": 8192, "contextLabel": "8K", "capabilities": ["general", "fast"], "license": "Apache 2.0", "blurb": "Ultra-tiny model for edge/embedded experiments; basic instruction-following only, 8K context."},
 ];
+
+/** The Control Center default view intentionally stays short: reliable, popular
+ *  Ollama tags that are good agent backbones across common desktop hardware. */
+const TOP_LOCAL_MODEL_IDS = [
+  'qwen3:1.7b',
+  'qwen3:4b',
+  'qwen3:8b',
+  'llama3.2:3b',
+  'llama3.1:8b',
+  'gemma3:4b',
+  'phi4-mini:3.8b',
+  'qwen2.5-coder:7b',
+  'deepseek-r1:8b',
+  'mistral-nemo:12b',
+] as const;
+
+export const TOP_LOCAL_MODEL_CATALOG: LocalModelEntry[] = TOP_LOCAL_MODEL_IDS
+  .map((id) => LOCAL_MODEL_CATALOG.find((m) => m.id === id))
+  .filter((m): m is LocalModelEntry => !!m);

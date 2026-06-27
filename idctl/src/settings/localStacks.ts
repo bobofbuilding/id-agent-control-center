@@ -62,3 +62,7 @@ export const LOCAL_STACKS: LocalStackEntry[] = [
   {"id": "lemonade", "name": "Lemonade Server", "blurb": "AMD's privacy-first local AI server optimized for Ryzen AI NPU + iGPU (hybrid execution); bundles llama.cpp and exposes an OpenAI-compatible API.", "apiKind": "openai-compatible", "openaiCompatible": true, "defaultPort": 8000, "apiBase": "http://127.0.0.1:8000/api/v1", "install": "pip install lemonade-sdk   # then: lemonade-server serve   (or download the installer)", "homepage": "https://github.com/lemonade-sdk/lemonade", "platforms": ["windows", "linux", "macos"], "appleSilicon": true, "tags": ["amd", "npu", "ryzen-ai", "gguf", "apple-silicon", "multimodal"]},
   {"id": "airllm", "name": "AirLLM", "blurb": "Memory-optimization inference library that runs 70B (even 405B) models on a single 4GB GPU via layer-by-layer disk streaming; a Python library, not a server.", "apiKind": "other", "openaiCompatible": false, "install": "pip install airllm", "homepage": "https://github.com/lyogavin/airllm", "platforms": ["linux", "macos", "windows"], "appleSilicon": true, "tags": ["low-vram", "layer-streaming", "library", "no-server", "70b-on-4gb", "metal", "quantization"]},
 ];
+
+/** Default stack shortlist for the Settings page. The full catalog remains
+ *  available to code, but the UI should not push long-tail servers by default. */
+export const TOP_LOCAL_STACKS: LocalStackEntry[] = LOCAL_STACKS.slice(0, 10);

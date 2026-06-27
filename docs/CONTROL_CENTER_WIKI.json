@@ -1,6 +1,6 @@
 {
   "schemaVersion": 2,
-  "updated": "2026-06-27",
+  "updated": "2026-06-28",
   "title": "ID Agents Control Center Wiki",
   "description": "Human-readable wiki and editable UI schematic for the Control Center. Each page.body field is the prose wiki article; the desktop app still reads page nav metadata for sidebar labels, icons, order, and visibility, and keeps the structured sections as supporting implementation detail.",
   "editContract": {
@@ -31,7 +31,7 @@
     "routeRule": "A page only becomes navigable if its route is implemented in idctl-desktop/src/renderer/App.tsx. Unknown routes are shown in the Wiki but skipped by the sidebar.",
     "body": "pages[].body is markdown prose for operators. Keep each article grounded in current renderer behavior, explain when to use the page, and call out routing or safety boundaries. Do not remove nav, route, component, sourceFiles, or structured sections because those continue to drive the live UI and schematic detail.",
     "releaseDrift": "scripts/check-wiki.mjs compares this appVersion and updated marker with idctl-desktop/package.json, validates page sourceFiles, and fails when a page source file changes without docs/CONTROL_CENTER_WIKI.json changing in the same worktree diff. Set IDCTL_WIKI_DRIFT_BASE=<ref> to compare committed branch changes against a base ref as well.",
-    "releaseNaming": "Operator-facing release notes, ops/deployer handoffs, and content-ops release-cycle updates should say IDACC release / idacc release, not IACC release / iacc release. IDACC means ID Agent Control Center."
+    "releaseNaming": "Operator-facing release notes, ops/deployer handoffs, and ops-team content-ops release-cycle wiki updates should say IDACC release / idacc release, not IACC release / iacc release. IDACC means ID Agent Control Center."
   },
   "global": {
     "shell": "Electron desktop app. Renderer calls window.idagents.call(method, ...args); preload sends IPC to main; main either handles app-local methods or forwards manager methods through bridge.ts and ManagerClient.",
