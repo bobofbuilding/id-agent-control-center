@@ -2535,5 +2535,5 @@
       "body": "# Wiki\n\nWiki is both the human documentation page and the editable schematic for the Control Center UI. The prose you are reading comes from each page's markdown body, while the structured sections below preserve the tabs, tiles, fields, controls, displays, routes, and source files used for implementation detail.\n\nThe desktop app hot-reload polls CONTROL_CENTER_WIKI.json through the main-process wiki bridge. Sidebar labels, icons, order, and visibility still come from pages[].nav for implemented routes, so documentation edits must preserve that metadata.\n\nUse this page to understand the current UI, then use the structured detail below each article when you need exact component, IPC, or source-file references."
     }
   ],
-  "appVersion": "0.1.198"
+  "appVersion": "0.1.199"
 }
