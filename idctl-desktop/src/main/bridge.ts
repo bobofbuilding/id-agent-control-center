@@ -6,6 +6,7 @@
  */
 
 import { ManagerClient } from '../../../idctl/src/api/client.ts';
+import type { Agent } from '../../../idctl/src/api/types.ts';
 import { runOnboarding, type OnboardPlan } from '../../../idctl/src/api/onboard.ts';
 import { loadConfig, type Config } from '../../../idctl/src/config.ts';
 import { getKeyProvider } from '../../../idctl/src/keys/mockProvider.ts';
@@ -163,10 +164,58 @@ function controllerProofStatus(agent: string, wallet: string): ControllerProofRe
   return record;
 }
 
-function requireControllerProof(agent: string): void {
+function controllerWalletFromAgent(agent: Agent | undefined): string {
+  const metaWallet = agent?.metadata?.ows_wallet;
+  const wallet = agent?.ows_wallet ?? (typeof metaWallet === 'string' ? metaWallet : '');
+  return typeof wallet === 'string' ? wallet.trim().toLowerCase() : '';
+}
+
+async function controllerWalletForAgent(agent: string): Promise<string> {
+  const agents = await client.agents();
+  const row = agents.find((a) => a.name === agent || a.id === agent || a.alias === agent);
+  const wallet = controllerWalletFromAgent(row);
+  if (!wallet || !ETH_ADDRESS_RE.test(wallet)) {
+    throw new Error('No valid controller wallet is linked for this agent.');
+  }
+  return wallet;
+}
+
+async function startControllerChallenge(agent: string, wallet: string): Promise<ControllerProofRecord> {
+  const expected = await controllerWalletForAgent(agent);
+  if (wallet.toLowerCase() !== expected) {
+    throw new Error('Controller challenge wallet does not match the agent controller wallet.');
+  }
+  return newControllerChallenge(agent, expected);
+}
+
+async function verifyControllerChallengeForAgent(agent: string, wallet: string, signature: string): Promise<ControllerProofRecord> {
+  const expected = await controllerWalletForAgent(agent);
+  if (wallet.toLowerCase() !== expected) {
+    throw new Error('Controller signature wallet does not match the agent controller wallet.');
+  }
+  return verifyControllerChallenge(agent, expected, signature);
+}
+
+async function controllerProofStatusForAgent(agent: string, wallet: string): Promise<ControllerProofRecord | null> {
+  const expected = await controllerWalletForAgent(agent);
+  if (wallet.toLowerCase() !== expected) return null;
+  return controllerProofStatus(agent, expected);
+}
+
+async function requireControllerProof(agent: string): Promise<void> {
+  const expected = await controllerWalletForAgent(agent);
   const record = controllerProofs.get(agent);
-  if (!record?.verifiedAt || record.expiresAt <= Date.now()) {
+  if (!record?.verifiedAt || record.expiresAt <= Date.now() || record.wallet.toLowerCase() !== expected) {
     throw new Error('Privileged identity and key actions require a fresh controller-wallet challenge.');
+  }
+}
+
+async function requireControllerProofIfWalletExists(agent: string): Promise<void> {
+  try {
+    await requireControllerProof(agent);
+  } catch (err) {
+    if (err instanceof Error && err.message === 'No valid controller wallet is linked for this agent.') return;
+    throw err;
   }
 }
 
@@ -616,15 +665,19 @@ const METHODS: Record<string, (...a: any[]) => Promise<unknown>> = {
 
   // teams: create + start a new agent
   spawnAgent: (spec: Parameters<ManagerClient['spawnAgent']>[0]) => client.spawnAgent(spec),
-  'identity:controllerChallenge': async (agent: string, wallet: string) => newControllerChallenge(String(agent), String(wallet)),
-  'identity:controllerVerify': async (agent: string, wallet: string, signature: string) => verifyControllerChallenge(String(agent), String(wallet), String(signature)),
-  'identity:controllerStatus': async (agent: string, wallet: string) => controllerProofStatus(String(agent), String(wallet)),
-  'identity:register': (agent: string) => {
+  'identity:controllerChallenge': async (agent: string, wallet: string) => startControllerChallenge(String(agent), String(wallet)),
+  'identity:controllerVerify': async (agent: string, wallet: string, signature: string) => verifyControllerChallengeForAgent(String(agent), String(wallet), String(signature)),
+  'identity:controllerStatus': async (agent: string, wallet: string) => controllerProofStatusForAgent(String(agent), String(wallet)),
+  'identity:register': async (agent: string) => {
     const name = String(agent);
-    requireControllerProof(name);
+    await requireControllerProof(name);
     return client.remote(`/register ${name}`);
   },
-  'wallet:provision': (agent: string) => client.remote(`/agent ${String(agent)} wallet provision`),
+  'wallet:provision': async (agent: string) => {
+    const name = String(agent);
+    await requireControllerProofIfWalletExists(name);
+    return client.remote(`/agent ${name} wallet provision`);
+  },
   'onboard:run': (plan: OnboardPlan) => runOnboarding(client, plan),
 
   // dashboard: per-runtime model catalog (synced providers + codex cache + curated)
@@ -787,24 +840,24 @@ const METHODS: Record<string, (...a: any[]) => Promise<unknown>> = {
   'keys:caps': async () => keys.capabilities(),
   'keys:list': (agents: string[]) => keys.listAccounts(agents ?? []),
   'keys:ensure': (agent: string) => keys.ensureAccount(String(agent)),
-  'keys:deploy': (agent: string) => {
+  'keys:deploy': async (agent: string) => {
     const name = String(agent);
-    requireControllerProof(name);
+    await requireControllerProof(name);
     return keys.deployAccount(name);
   },
-  'keys:issue': (agent: string, scopeIdx: number, ttlMs: number) => {
+  'keys:issue': async (agent: string, scopeIdx: number, ttlMs: number) => {
     const name = String(agent);
     const scope = SCOPE_PRESETS[Number(scopeIdx) || 0] ?? SCOPE_PRESETS[0];
     const ttl = Number(ttlMs);
-    requireControllerProof(name);
-    if (!Number.isFinite(ttl) || ttl <= 0 || scope.label.includes('full') || scope.spendLimitWei === '0') {
+    await requireControllerProof(name);
+    if (!Number.isFinite(ttl) || ttl <= 0 || scope.label.toLowerCase().includes('full') || scope.spendLimitWei === '0') {
       throw new Error('Refusing to issue uncapped, full, non-expiring, or invalid session keys from the Control Center.');
     }
     return keys.issueSession(name, scope, ttl);
   },
-  'keys:revoke': (agent: string, sessionId: string) => {
+  'keys:revoke': async (agent: string, sessionId: string) => {
     const name = String(agent);
-    requireControllerProof(name);
+    await requireControllerProof(name);
     return keys.revokeSession(name, String(sessionId));
   },
   'keys:presets': async () => ({ scopes: SCOPE_PRESETS, ttls: TTL_PRESETS }),

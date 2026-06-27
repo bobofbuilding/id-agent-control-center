@@ -544,6 +544,9 @@ select:focus, input:focus { border-color: var(--accent); }
 .identity-kv { grid-template-columns: 130px minmax(0, 1fr); }
 .identity-actions { justify-content: flex-start; flex-wrap: wrap; margin-top: 12px; }
 .identity-alert { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: 10px; align-items: center; border: 1px solid color-mix(in srgb, var(--err) 45%, var(--line)); border-radius: 8px; background: color-mix(in srgb, var(--err) 10%, var(--bg)); color: var(--text); padding: 9px 10px; }
+.identity-gate { display: grid; grid-template-columns: minmax(180px, .55fr) minmax(0, 1fr); gap: 18px; align-items: start; }
+.identity-gate h3 { margin-bottom: 6px; }
+.identity-gate p { margin: 0; max-width: 360px; }
 .controller-proof { display: flex; flex-direction: column; gap: 9px; }
 .identity-proof-message { width: 100%; min-height: 118px; resize: vertical; border: 1px solid var(--line); border-radius: 8px; background: var(--bg); color: var(--text); padding: 8px; font-size: 11px; line-height: 1.45; }
 .identity-proof-input { width: 100%; border: 1px solid var(--line); border-radius: 8px; background: var(--bg); color: var(--text); padding: 7px 8px; font-size: 11px; }
@@ -561,9 +564,13 @@ select:focus, input:focus { border-color: var(--accent); }
 .evidence-row:first-child { border-top: 0; }
 .evidence-row p { margin: 3px 0 0; }
 .identity-table th, .identity-table td { vertical-align: top; }
+.identity-details { padding: 0; }
+.identity-details summary { cursor: pointer; padding: 12px 14px; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; font-size: 12px; }
+.identity-details[open] summary { border-bottom: 1px solid var(--line); color: var(--text); }
+.identity-detail-grid { display: grid; grid-template-columns: minmax(220px, .8fr) minmax(0, 1.2fr); gap: 14px; padding: 14px; }
 
 @media (max-width: 1100px) {
-  .identity-shell, .identity-grid, .identity-hero { display: flex; flex-direction: column; }
+  .identity-shell, .identity-grid, .identity-hero, .identity-gate, .identity-detail-grid { display: flex; flex-direction: column; }
   .identity-agents { position: static; width: 100%; flex-basis: auto; max-height: none; }
   .identity-metrics { width: 100%; min-width: 0; }
   .identity-alert { grid-template-columns: 1fr; }

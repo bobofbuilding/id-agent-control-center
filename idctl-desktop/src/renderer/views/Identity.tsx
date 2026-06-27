@@ -5,22 +5,6 @@ import type { AgentAccount, KeyCapabilities, SessionKey, SessionScope } from '..
 
 type EvidenceState = 'verified' | 'warn' | 'missing' | 'self';
 
-interface EvidenceRow {
-  layer: string;
-  state: EvidenceState;
-  evidence: string;
-  source: string;
-  detail: string;
-}
-
-interface AuthorityRow {
-  type: string;
-  owner: string;
-  scope: string;
-  expiry: string;
-  status: EvidenceState;
-}
-
 interface ControllerProof {
   agent: string;
   wallet: string;
@@ -29,6 +13,12 @@ interface ControllerProof {
   signature: string;
   verifiedAt: number;
   expiresAt: number;
+}
+
+interface ReviewRow {
+  label: string;
+  state: EvidenceState;
+  note: string;
 }
 
 function shortAddr(a?: string): string {
@@ -56,7 +46,7 @@ function identityValue(
 function statusLabel(state: EvidenceState): string {
   if (state === 'verified') return 'verified';
   if (state === 'warn') return 'review';
-  if (state === 'self') return 'self-attested';
+  if (state === 'self') return 'declared';
   return 'missing';
 }
 
@@ -64,125 +54,76 @@ function StatusPill({ state }: { state: EvidenceState }) {
   return <span className={`id-pill ${state}`}>{statusLabel(state)}</span>;
 }
 
-function riskClass(state: EvidenceState): string {
+function statusTone(state: EvidenceState): string {
   return state === 'verified' ? 'ok-text' : state === 'missing' ? 'status-error' : 'warn-text';
 }
 
+function dotTone(state: EvidenceState): string {
+  return state === 'verified' ? 'ok' : state === 'missing' ? 'err' : 'warn';
+}
+
 function isSignatureLike(value: string): boolean {
-  return /^0x[0-9a-fA-F]{130,}$/.test(value.trim());
+  return /^0x[0-9a-fA-F]{130}$/.test(value.trim());
 }
 
 function proofMatchesWallet(proof: ControllerProof | undefined, wallet: string): boolean {
   return Boolean(proof?.verifiedAt && proof.expiresAt > Date.now() && proof.signature && wallet && proof.wallet.toLowerCase() === wallet.toLowerCase());
 }
 
-function agentIdentityRows(
+function isUnsafeScope(scope: SessionScope | undefined): boolean {
+  return !scope || scope.label.toLowerCase().includes('full') || scope.spendLimitWei === '0';
+}
+
+function isUnsafeTtl(ttl: { label: string; ms: number } | undefined): boolean {
+  return !ttl || !Number.isFinite(ttl.ms) || ttl.ms <= 0;
+}
+
+function mockProviderWarning(caps: KeyCapabilities | null): string {
+  if (!caps) return 'Checking key provider...';
+  return caps.live ? `${caps.chainLabel} live provider` : `${caps.chainLabel} mock provider; no on-chain authority is created.`;
+}
+
+function reviewRows(
   agent: Agent | undefined,
   acct: AgentAccount | undefined,
   domain: string,
   wallet: string,
   controllerVerified: boolean,
-): EvidenceRow[] {
-  const hasDomain = Boolean(domain);
-  const hasWallet = Boolean(wallet);
-  const hasSafe = Boolean(acct?.smartAccount);
-  return [
-    {
-      layer: 'Controller challenge',
-      state: controllerVerified ? 'verified' : hasWallet ? 'warn' : 'missing',
-      evidence: controllerVerified ? `signed nonce from ${shortAddr(wallet)}` : hasWallet ? 'Controller signature required' : 'No controller wallet linked',
-      source: 'controller wallet',
-      detail: controllerVerified
-        ? 'Local proof-of-control is recorded for this controller wallet.'
-        : 'Sign a fresh nonce from the controller wallet before treating self-attested rows as controlled.',
-    },
-    {
-      layer: 'Public identity',
-      state: hasDomain ? (controllerVerified ? 'verified' : 'self') : 'missing',
-      evidence: hasDomain ? domain : 'No ENS / idchain domain registered',
-      source: 'ENS / idchain',
-      detail: hasDomain
-        ? controllerVerified
-          ? 'Name is controller-attested locally; live resolver verification is still pending.'
-          : 'Name is declared in the agent row; controller proof still needs verification.'
-        : 'Register an identity before publishing endpoints or reputation.',
-    },
-    {
-      layer: 'Controller wallet',
-      state: hasWallet ? (controllerVerified ? 'verified' : 'self') : 'missing',
-      evidence: hasWallet ? shortAddr(wallet) : 'No OWS wallet provisioned',
-      source: 'wallet registry',
-      detail: controllerVerified ? 'Wallet control proof gates privileged identity and key actions.' : 'Wallet control is authority, not reputation. Re-check before privileged actions.',
-    },
-    {
-      layer: 'Agent account',
-      state: acct?.deployed ? 'verified' : hasSafe ? 'warn' : 'missing',
-      evidence: hasSafe ? shortAddr(acct?.smartAccount) : 'No Safe account',
-      source: `chain ${acct?.chainId ?? '-'}`,
-      detail: acct?.deployed ? 'Smart account is marked deployed.' : 'Counterfactual account can receive delegations, but on-chain use still needs deployment.',
-    },
-    {
-      layer: 'Context / endpoints',
-      state: hasDomain ? 'warn' : 'missing',
-      evidence: hasDomain ? 'ENSIP-26 context expected' : 'No agent-context record',
-      source: 'ENSIP-26',
-      detail: 'Future resolver check should verify MCP, A2A, web endpoint origin, and freshness.',
-    },
-    {
-      layer: 'Manifest / skill',
-      state: agent ? (controllerVerified ? 'verified' : 'self') : 'missing',
-      evidence: agent ? `${agent.runtime ?? 'runtime'} / ${agent.model ?? 'model'}` : 'No active agent selected',
-      source: 'SKILL.md / AIP',
-      detail: controllerVerified ? 'Runtime declaration is accepted under the current controller proof.' : 'Display as declared capability until manifest hash, signature, and domain proof are checked.',
-    },
-  ];
-}
-
-function authorityRows(acct: AgentAccount, sessions: SessionKey[], wallet: string, controllerVerified: boolean): AuthorityRow[] {
-  const active = sessions.filter((s) => s.status === 'active');
-  const broad = active.some((s) => s.scope.label.includes('full') || s.validUntil === 0);
-  return [
-    {
-      type: 'Cold controller',
-      owner: wallet ? shortAddr(wallet) : 'not linked',
-      scope: 'ENS, registry, recovery',
-      expiry: controllerVerified ? 'fresh challenge' : 'external wallet',
-      status: controllerVerified ? 'verified' : wallet ? 'warn' : 'missing',
-    },
-    {
-      type: 'Safe account',
-      owner: shortAddr(acct.owner),
-      scope: 'agent authority root',
-      expiry: acct.deployed ? 'on-chain' : 'counterfactual',
-      status: acct.deployed ? 'verified' : 'warn',
-    },
-    {
-      type: 'Runtime sessions',
-      owner: `${active.length} active`,
-      scope: broad ? 'contains broad grant' : 'scoped grants',
-      expiry: active.length ? active.map((s) => remaining(s.validUntil)).join(', ') : 'none',
-      status: active.length === 0 ? 'warn' : broad ? 'warn' : 'verified',
-    },
-    {
-      type: 'Control Center access',
-      owner: 'Better Auth operator',
-      scope: 'human login, org role, API keys',
-      expiry: 'fresh-session required',
-      status: 'self',
-    },
-  ];
-}
-
-function riskRows(domain: string, wallet: string, acct: AgentAccount | undefined, controllerVerified: boolean): { label: string; state: EvidenceState; note: string }[] {
+): ReviewRow[] {
   const active = acct?.sessions.filter((s) => s.status === 'active') ?? [];
   const nonExpiring = active.filter((s) => s.validUntil === 0).length;
   return [
-    { label: 'Identity binding', state: domain && wallet ? (controllerVerified ? 'verified' : 'warn') : 'missing', note: domain && wallet ? (controllerVerified ? 'controller proof recorded' : 'declared, needs controller challenge') : 'name or wallet missing' },
-    { label: 'Account deployment', state: acct?.deployed ? 'verified' : 'warn', note: acct?.deployed ? 'Safe marked deployed' : 'counterfactual or absent' },
-    { label: 'Session-key hygiene', state: nonExpiring ? 'warn' : active.length ? 'verified' : 'warn', note: nonExpiring ? `${nonExpiring} non-expiring grant` : `${active.length} active grant${active.length === 1 ? '' : 's'}` },
-    { label: 'Operator auth', state: 'warn', note: 'wire Better Auth freshness, passkeys, 2FA, org roles' },
-    { label: 'Trust resolution', state: 'warn', note: 'add live ENSIP-25/26, EEP, ERC-8004, manifest checks' },
+    {
+      label: 'Controller proof',
+      state: controllerVerified ? 'verified' : wallet ? 'warn' : 'missing',
+      note: controllerVerified ? 'fresh wallet challenge recorded' : wallet ? 'sign a challenge before privileged actions' : 'provision a controller wallet first',
+    },
+    {
+      label: 'Public identity',
+      state: domain && wallet ? (controllerVerified ? 'verified' : 'self') : 'missing',
+      note: domain && wallet ? `${domain} -> ${shortAddr(wallet)}` : 'name or wallet is missing',
+    },
+    {
+      label: 'Safe account',
+      state: acct?.deployed ? 'verified' : acct?.smartAccount ? 'warn' : 'missing',
+      note: acct?.smartAccount ? `${shortAddr(acct.smartAccount)} ${acct.deployed ? 'deployed' : 'not deployed'}` : 'no account found',
+    },
+    {
+      label: 'Session keys',
+      state: nonExpiring ? 'warn' : active.length ? 'verified' : 'warn',
+      note: nonExpiring ? `${nonExpiring} non-expiring grant needs review` : `${active.length} active grant${active.length === 1 ? '' : 's'}`,
+    },
+    {
+      label: 'Live trust checks',
+      state: 'warn',
+      note: agent ? 'ENSIP / manifest / reputation resolver reads are still pending' : 'select an agent',
+    },
   ];
+}
+
+function activeSessionSort(a: SessionKey, b: SessionKey): number {
+  if (a.status !== b.status) return a.status === 'active' ? -1 : 1;
+  return b.createdAt - a.createdAt;
 }
 
 export function Identity({ store }: { store: FleetStore }) {
@@ -190,7 +131,7 @@ export function Identity({ store }: { store: FleetStore }) {
   const [accounts, setAccounts] = useState<Record<string, AgentAccount>>({});
   const [presets, setPresets] = useState<{ scopes: SessionScope[]; ttls: { label: string; ms: number }[] } | null>(null);
   const [sel, setSel] = useState<string | null>(null);
-  const [scopeIdx, setScopeIdx] = useState(0);
+  const [scopeIdx, setScopeIdx] = useState(1);
   const [ttlIdx, setTtlIdx] = useState(1);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -204,15 +145,20 @@ export function Identity({ store }: { store: FleetStore }) {
   const wallet = selAgent ? identityValue(selAgent, 'ows_wallet') : '';
   const proof = selected ? proofs[selected] : undefined;
   const controllerVerified = proofMatchesWallet(proof, wallet);
-
-  const evidence = useMemo(() => agentIdentityRows(selAgent, acct, domain, wallet, controllerVerified), [selAgent, acct, domain, wallet, controllerVerified]);
-  const risks = useMemo(() => riskRows(domain, wallet, acct, controllerVerified), [domain, wallet, acct, controllerVerified]);
-  const authorities = useMemo(() => (acct ? authorityRows(acct, acct.sessions, wallet, controllerVerified) : []), [acct, wallet, controllerVerified]);
-  const activeSessions = acct?.sessions.filter((s) => s.status === 'active').length ?? 0;
-  const verifiedLayers = evidence.filter((e) => e.state === 'verified').length;
+  const activeSessions = useMemo(() => [...(acct?.sessions ?? [])].sort(activeSessionSort), [acct]);
+  const safeScopes = useMemo(
+    () => (presets?.scopes ?? []).map((scope, idx) => ({ scope, idx })).filter(({ scope }) => !isUnsafeScope(scope)),
+    [presets],
+  );
+  const finiteTtls = useMemo(
+    () => (presets?.ttls ?? []).map((ttl, idx) => ({ ttl, idx })).filter(({ ttl }) => !isUnsafeTtl(ttl)),
+    [presets],
+  );
   const issueScope = presets?.scopes[scopeIdx];
   const issueTtl = presets?.ttls[ttlIdx];
-  const issueBlocked = Boolean(issueScope && (issueScope.label.includes('full') || issueScope.spendLimitWei === '0' || issueTtl?.ms === 0));
+  const issueBlocked = !controllerVerified || isUnsafeScope(issueScope) || isUnsafeTtl(issueTtl);
+  const review = useMemo(() => reviewRows(selAgent, acct, domain, wallet, controllerVerified), [selAgent, acct, domain, wallet, controllerVerified]);
+  const readyCount = review.filter((r) => r.state === 'verified').length;
 
   async function reload() {
     if (names.length === 0) return;
@@ -230,8 +176,28 @@ export function Identity({ store }: { store: FleetStore }) {
   }, []);
 
   useEffect(() => {
-    reload();
+    void reload();
   }, [store.agents.length]);
+
+  useEffect(() => {
+    const nextScope = safeScopes[0]?.idx;
+    if (nextScope !== undefined && isUnsafeScope(presets?.scopes[scopeIdx])) setScopeIdx(nextScope);
+    const nextTtl = finiteTtls[0]?.idx;
+    if (nextTtl !== undefined && isUnsafeTtl(presets?.ttls[ttlIdx])) setTtlIdx(nextTtl);
+  }, [presets, safeScopes, finiteTtls, scopeIdx, ttlIdx]);
+
+  useEffect(() => {
+    if (!selected || !wallet || controllerVerified) return;
+    let live = true;
+    call<ControllerProof | null>('identity:controllerStatus', selected, wallet)
+      .then((status) => {
+        if (live && status) setProofs((prev) => ({ ...prev, [selected]: status }));
+      })
+      .catch(() => {});
+    return () => {
+      live = false;
+    };
+  }, [selected, wallet, controllerVerified]);
 
   async function act(method: string, ...args: unknown[]) {
     setError(null);
@@ -285,7 +251,7 @@ export function Identity({ store }: { store: FleetStore }) {
   async function verifyControllerProof() {
     if (!selected || !proof) return;
     if (!isSignatureLike(proof.signature)) {
-      setError('Paste a 0x-prefixed controller-wallet signature for the challenge message.');
+      setError('Paste a 0x-prefixed 65-byte signature from the controller wallet.');
       return;
     }
     setError(null);
@@ -302,20 +268,15 @@ export function Identity({ store }: { store: FleetStore }) {
 
   function requireControllerProof(label: string, fn: () => void) {
     if (!controllerVerified) {
-      setError(`${label} requires a signed controller-wallet challenge first.`);
+      setError(`${label} requires a fresh signed controller-wallet challenge.`);
       return;
     }
     fn();
   }
 
   function issueSession() {
-    if (!presets || !selected) return;
-    if (!controllerVerified) {
-      setError('Issue session key requires a signed controller-wallet challenge first.');
-      return;
-    }
-    if (issueBlocked) {
-      setError('Refusing to issue uncapped, full, or non-expiring session keys from this screen. Choose a capped scope and finite TTL.');
+    if (!presets || !selected || issueBlocked) {
+      setError(controllerVerified ? 'Choose a capped scope and finite TTL.' : 'Issue session key requires a signed controller-wallet challenge first.');
       return;
     }
     void act('keys:issue', selected, scopeIdx, presets.ttls[ttlIdx].ms);
@@ -326,23 +287,26 @@ export function Identity({ store }: { store: FleetStore }) {
       <header className="view-head">
         <div>
           <h1>Identity & Keys</h1>
-          <div className="muted small">Agent public identity, local authority, human operator access, and reputation evidence.</div>
+          <div className="muted small">Verify controller control, manage the agent account, and issue only scoped session keys.</div>
         </div>
-        <span className="muted">
-          {caps?.chainLabel}
-          {caps && !caps.live ? ' · MOCK' : ''}
-        </span>
+        <span className={caps?.live ? 'ok-text' : 'warn-text'}>{mockProviderWarning(caps)}</span>
       </header>
 
       <div className="cols identity-shell">
         <section className="card identity-agents">
           <h3>Agents</h3>
-          {store.agents.map((a) => (
-            <button key={a.id} className={`target${a.name === selected ? ' active' : ''}`} onClick={() => setSel(a.name)}>
-              <span>{a.name}</span>
-              <span className="muted small">{identityValue(a, 'idchain_domain') || a.status || 'unbound'}</span>
-            </button>
-          ))}
+          {store.agents.map((a) => {
+            const agentWallet = identityValue(a, 'ows_wallet');
+            const agentProof = proofs[a.name];
+            const verified = proofMatchesWallet(agentProof, agentWallet);
+            return (
+              <button key={a.id} className={`target${a.name === selected ? ' active' : ''}`} onClick={() => setSel(a.name)}>
+                <span>{a.name}</span>
+                <span className="muted small">{identityValue(a, 'idchain_domain') || a.status || 'unbound'}</span>
+                <span className={verified ? 'ok-text small' : 'muted small'}>{verified ? 'controller verified' : 'proof required'}</span>
+              </button>
+            );
+          })}
         </section>
 
         <section className="grow identity-main">
@@ -354,12 +318,12 @@ export function Identity({ store }: { store: FleetStore }) {
                   <h2>{selected}</h2>
                   <div className="identity-subtitle">
                     <span className={domain ? 'mono' : 'muted'}>{domain || 'no ENS / idchain name'}</span>
-                    <span className="muted">registry and reputation checks pending live resolver wiring</span>
+                    <StatusPill state={controllerVerified ? 'verified' : wallet ? 'warn' : 'missing'} />
                   </div>
                 </div>
                 <div className="identity-metrics">
-                  <div><b>{verifiedLayers}/{evidence.length}</b><span>verified layers</span></div>
-                  <div><b>{activeSessions}</b><span>active sessions</span></div>
+                  <div><b>{readyCount}/{review.length}</b><span>ready checks</span></div>
+                  <div><b>{activeSessions.filter((s) => s.status === 'active').length}</b><span>active keys</span></div>
                   <div><b>{acct.deployed ? 'live' : 'draft'}</b><span>Safe account</span></div>
                 </div>
               </section>
@@ -372,23 +336,51 @@ export function Identity({ store }: { store: FleetStore }) {
                 </div>
               ) : null}
 
+              <section className="card identity-gate">
+                <div>
+                  <h3>Security Gate</h3>
+                  <p className="muted">Privileged actions stay locked until the controller wallet signs a fresh challenge.</p>
+                </div>
+                <div className="controller-proof">
+                  <div className="risk-row">
+                    <span className={`dot ${controllerVerified ? 'ok' : wallet ? 'warn' : 'err'}`} />
+                    <b>{controllerVerified ? 'Controller verified' : 'Controller proof required'}</b>
+                    <span className={controllerVerified ? 'ok-text' : wallet ? 'warn-text' : 'status-error'}>
+                      {controllerVerified ? `valid until ${new Date(proof!.expiresAt).toLocaleTimeString()}` : wallet ? `wallet ${shortAddr(wallet)}` : 'no controller wallet'}
+                    </span>
+                  </div>
+                  {proof ? (
+                    <>
+                      <textarea className="identity-proof-message mono" readOnly value={proof.message} />
+                      <input
+                        className="identity-proof-input mono"
+                        value={proof.signature}
+                        onChange={(e) => updateSignature(e.target.value)}
+                        placeholder="Paste 0x signature from controller wallet"
+                      />
+                    </>
+                  ) : null}
+                  <div className="row-actions identity-actions">
+                    <button className="btn" disabled={busy || !wallet} onClick={startChallenge}>New challenge</button>
+                    <button className="btn primary" disabled={busy || !proof || !proof.signature || controllerVerified} onClick={verifyControllerProof}>Verify signature</button>
+                  </div>
+                </div>
+              </section>
+
               <div className="identity-grid">
                 <section className="card">
-                  <h3>Public Identity</h3>
+                  <h3>Account</h3>
                   <div className="kv identity-kv">
-                    <span>ENS / ID-chain</span>
-                    <b className={domain ? 'mono' : 'muted'}>{domain || '-'}</b>
-                    <span>OWS wallet</span>
+                    <span>Controller</span>
                     <b className={wallet ? 'mono' : 'muted'}>{wallet ? shortAddr(wallet) : 'not provisioned'}</b>
                     <span>Safe</span>
                     <b className="mono">{shortAddr(acct.smartAccount)}</b>
-                    <span>owner</span>
+                    <span>Owner</span>
                     <b className="mono">{shortAddr(acct.owner)}</b>
+                    <span>Chain</span>
+                    <b>{acct.chainId}</b>
                   </div>
                   <div className="row-actions identity-actions">
-                    <button className="btn" disabled={busy || !controllerVerified} onClick={() => requireControllerProof('Register identity', () => void identityAction(selected!, 'register'))}>
-                      Register identity
-                    </button>
                     {!wallet ? (
                       <button className="btn" disabled={busy} onClick={() => void identityAction(selected!, 'provision')}>
                         Provision wallet
@@ -397,115 +389,49 @@ export function Identity({ store }: { store: FleetStore }) {
                     <button className="btn" disabled={busy} onClick={() => void act('keys:ensure', selected)}>
                       Create account
                     </button>
-                    <button className="btn" disabled={busy || acct.deployed || !controllerVerified} onClick={() => requireControllerProof('Deploy', () => void act('keys:deploy', selected))}>
+                    <button className="btn" disabled={busy || !controllerVerified} onClick={() => requireControllerProof('Register identity', () => void identityAction(selected!, 'register'))}>
+                      Register identity
+                    </button>
+                    <button className="btn primary" disabled={busy || acct.deployed || !controllerVerified} onClick={() => requireControllerProof('Deploy account', () => void act('keys:deploy', selected))}>
                       Deploy
                     </button>
                   </div>
                 </section>
 
                 <section className="card">
-                  <h3>Controller Proof</h3>
-                  <div className="controller-proof">
-                    <div className="risk-row">
-                      <span className={`dot ${controllerVerified ? 'ok' : wallet ? 'warn' : 'err'}`} />
-                      <b>{controllerVerified ? 'Verified' : 'Required'}</b>
-                      <span className={controllerVerified ? 'ok-text' : wallet ? 'warn-text' : 'status-error'}>
-                        {controllerVerified ? `nonce signed ${new Date(proof!.verifiedAt).toLocaleTimeString()}` : wallet ? 'sign a nonce with the controller wallet' : 'provision a wallet first'}
-                      </span>
-                    </div>
-                    {proof ? (
-                      <>
-                        <textarea className="identity-proof-message mono" readOnly value={proof.message} />
-                        <input
-                          className="identity-proof-input mono"
-                          value={proof.signature}
-                          onChange={(e) => updateSignature(e.target.value)}
-                          placeholder="Paste 0x signature from controller wallet"
-                        />
-                      </>
-                    ) : null}
-                    <div className="row-actions identity-actions">
-                      <button className="btn" disabled={busy || !wallet} onClick={startChallenge}>New challenge</button>
-                      <button className="btn primary" disabled={busy || !proof || !proof.signature} onClick={verifyControllerProof}>Verify signature</button>
-                    </div>
+                  <h3>Security Review</h3>
+                  <div className="risk-list">
+                    {review.map((r) => (
+                      <div key={r.label} className="risk-row">
+                        <span className={`dot ${dotTone(r.state)}`} />
+                        <b>{r.label}</b>
+                        <span className={statusTone(r.state)}>{r.note}</span>
+                      </div>
+                    ))}
                   </div>
                 </section>
               </div>
 
               <section className="card">
-                <h3>Risk & Health</h3>
-                <div className="risk-list">
-                  {risks.map((r) => (
-                    <div key={r.label} className="risk-row">
-                      <span className={`dot ${r.state === 'verified' ? 'ok' : r.state === 'missing' ? 'err' : 'warn'}`} />
-                      <b>{r.label}</b>
-                      <span className={riskClass(r.state)}>{r.note}</span>
-                    </div>
-                  ))}
-                </div>
-              </section>
-
-              <section className="card">
-                <h3>Trust Resolution Stack</h3>
-                <div className="evidence-grid">
-                  {evidence.map((row) => (
-                    <div key={row.layer} className="evidence-row">
-                      <div>
-                        <b>{row.layer}</b>
-                        <p className="muted small">{row.detail}</p>
-                      </div>
-                      <StatusPill state={row.state} />
-                      <span className="mono small">{row.source}</span>
-                      <span>{row.evidence}</span>
-                    </div>
-                  ))}
-                </div>
-              </section>
-
-              <section className="card">
-                <h3>Keys & Authority</h3>
-                <table className="grid identity-table">
-                  <thead>
-                    <tr>
-                      <th>Authority</th>
-                      <th>Owner</th>
-                      <th>Scope</th>
-                      <th>Expiry / proof</th>
-                      <th>Status</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {authorities.map((a) => (
-                      <tr key={a.type}>
-                        <td className="b">{a.type}</td>
-                        <td className="mono muted">{a.owner}</td>
-                        <td>{a.scope}</td>
-                        <td>{a.expiry}</td>
-                        <td><StatusPill state={a.status} /></td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </section>
-
-              <section className="card">
-                <h3>Session Keys ({acct.sessions.length})</h3>
+                <h3>Session Keys</h3>
                 <table className="grid identity-table">
                   <thead>
                     <tr>
                       <th>Scope</th>
                       <th>Signer</th>
                       <th>Spend cap</th>
-                      <th>Validity</th>
+                      <th>Status</th>
                       <th>Action</th>
                     </tr>
                   </thead>
                   <tbody>
-                    {acct.sessions.map((s) => (
+                    {activeSessions.map((s) => (
                       <tr key={s.id}>
                         <td className="b">{s.scope.label}</td>
                         <td className="mono muted">{shortAddr(s.address)}</td>
-                        <td className="mono small">{s.scope.spendLimitWei === '0' ? '0 / no cap' : s.scope.spendLimitWei}</td>
+                        <td className={s.scope.spendLimitWei === '0' ? 'warn-text mono small' : 'mono small'}>
+                          {s.scope.spendLimitWei === '0' ? 'uncapped' : s.scope.spendLimitWei}
+                        </td>
                         <td className={s.status === 'active' ? 'ok-text' : s.status === 'revoked' ? 'status-error' : 'muted'}>
                           {s.status === 'active' ? remaining(s.validUntil) : s.status}
                         </td>
@@ -518,7 +444,7 @@ export function Identity({ store }: { store: FleetStore }) {
                         </td>
                       </tr>
                     ))}
-                    {acct.sessions.length === 0 ? (
+                    {activeSessions.length === 0 ? (
                       <tr>
                         <td colSpan={5} className="muted">
                           No session keys yet.
@@ -530,57 +456,50 @@ export function Identity({ store }: { store: FleetStore }) {
 
                 {presets ? (
                   <div className="issue-row">
-                    <select value={scopeIdx} onChange={(e) => setScopeIdx(Number(e.target.value))}>
-                      {presets.scopes.map((s, i) => (
-                        <option key={i} value={i}>
-                          {s.label}
+                    <select value={scopeIdx} onChange={(e) => setScopeIdx(Number(e.target.value))} disabled={!safeScopes.length}>
+                      {safeScopes.map(({ scope, idx }) => (
+                        <option key={idx} value={idx}>
+                          {scope.label}
                         </option>
                       ))}
                     </select>
-                    <select value={ttlIdx} onChange={(e) => setTtlIdx(Number(e.target.value))}>
-                      {presets.ttls.map((t, i) => (
-                        <option key={i} value={i}>
-                          {t.label}
+                    <select value={ttlIdx} onChange={(e) => setTtlIdx(Number(e.target.value))} disabled={!finiteTtls.length}>
+                      {finiteTtls.map(({ ttl, idx }) => (
+                        <option key={idx} value={idx}>
+                          {ttl.label}
                         </option>
                       ))}
                     </select>
-                    <button
-                      className="btn primary"
-                      disabled={busy || !controllerVerified || issueBlocked}
-                      onClick={issueSession}
-                    >
-                      Issue session key
+                    <button className="btn primary" disabled={busy || issueBlocked} onClick={issueSession}>
+                      Issue scoped key
                     </button>
                   </div>
                 ) : null}
-                <p className={issueBlocked ? 'warn-text small' : 'muted small'}>
-                  Privileged key changes require controller proof. Full, uncapped, and non-expiring grants are blocked here until fresh-session and passkey/2FA enforcement is wired.
+                <p className="muted small">
+                  This screen only issues finite, spend-capped keys. Full, uncapped, and non-expiring grants are blocked by the UI and bridge.
                 </p>
               </section>
 
-              <div className="identity-grid">
-                <section className="card">
-                  <h3>Human Operator Access</h3>
-                  <div className="auth-list">
-                    <div><StatusPill state={controllerVerified ? 'warn' : 'missing'} /><span>{controllerVerified ? 'Controller proof is present; Better Auth freshness still needs wiring.' : 'Controller proof is required before privileged mutations.'}</span></div>
-                    <div><StatusPill state="warn" /><span>Fresh session plus passkey or 2FA remains required before key rotation, reveal, export, or rebinding.</span></div>
-                    <div><StatusPill state="missing" /><span>Better Auth is not proof of ENS ownership, wallet control, ERC-8004 identity, or agent runtime authenticity.</span></div>
+              <details className="card identity-details">
+                <summary>Advanced evidence</summary>
+                <div className="identity-detail-grid">
+                  <div className="kv identity-kv">
+                    <span>ENS / ID-chain</span>
+                    <b className={domain ? 'mono' : 'muted'}>{domain || '-'}</b>
+                    <span>Runtime</span>
+                    <b>{selAgent?.runtime ?? '-'}</b>
+                    <span>Model</span>
+                    <b>{selAgent?.model ?? '-'}</b>
+                    <span>Provider</span>
+                    <b>{caps?.provider ?? '-'}</b>
                   </div>
-                </section>
-
-                <section className="card">
-                  <h3>Reputation Evidence</h3>
                   <div className="auth-list">
-                    <div><StatusPill state={domain && controllerVerified ? 'warn' : 'missing'} /><span>{domain && controllerVerified ? 'Identity is controller-attested locally; reputation providers still need live reads.' : 'Reputation reads require a bound identity and controller proof.'}</span></div>
-                    <div><StatusPill state="warn" /><span>Validation results should show validator, method, confidence, stake or slash status, and exact job reference.</span></div>
-                    <div><StatusPill state="self" /><span>Use layered evidence, not a single global score; trust tier never implies permission to spend or sign.</span></div>
+                    <div><StatusPill state="warn" /><span>Live ENSIP-25/26 resolver checks are still pending.</span></div>
+                    <div><StatusPill state="warn" /><span>Manifest hash and runtime signature verification are still pending.</span></div>
+                    <div><StatusPill state="self" /><span>Better Auth proves operator login only; it is not wallet or agent identity proof.</span></div>
                   </div>
-                </section>
-              </div>
-
-              <p className="muted small">
-                Current key provider is mock-backed. The page is structured for live ENSIP-25/26, ERC-8004, EEP, manifest, Better Auth, and Safe4337 checks without changing the operator workflow.
-              </p>
+                </div>
+              </details>
             </>
           ) : (
             <section className="card">
