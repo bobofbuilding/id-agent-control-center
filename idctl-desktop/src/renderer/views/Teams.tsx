@@ -40,6 +40,9 @@ function isRunnableAgent(a: Agent): boolean {
 }
 
 type HrAgentCandidate = Agent & { team?: string };
+function hrAgentKey(a: HrAgentCandidate, fallbackTeam = 'default'): string {
+  return `${a.team ?? fallbackTeam}/${a.name}`;
+}
 function resolveHrManagerAgent(store: FleetStore): { name: string; team?: string } | null {
   const candidates: HrAgentCandidate[] = (store.allAgents.length ? store.allAgents : store.agents).filter(isRunnableAgent);
   const exact = candidates.find((a) => /^hr[-_]?manager$/i.test(a.name));
@@ -194,25 +197,31 @@ export function Teams({ store }: { store: FleetStore }) {
   const [instrSaved, setInstrSaved] = useState('');
   const [instrBusy, setInstrBusy] = useState(false);
   const [instrMsg, setInstrMsg] = useState('');
-  const instrTarget = instrAgent && store.agents.some((a) => a.name === instrAgent) ? instrAgent : coordName;
-  async function loadInstr(agent: string) {
+  const instrChoices: HrAgentCandidate[] = store.allAgents.length ? store.allAgents : store.agents.map((a) => ({ ...a, team: activeTeam }));
+  const defaultInstrKey = coordName ? `${activeTeam}/${coordName}` : (instrChoices[0] ? hrAgentKey(instrChoices[0], activeTeam) : '');
+  const instrTargetKey = instrAgent && instrChoices.some((a) => hrAgentKey(a, activeTeam) === instrAgent) ? instrAgent : defaultInstrKey;
+  const instrTargetChoice = instrChoices.find((a) => hrAgentKey(a, activeTeam) === instrTargetKey);
+  const instrTarget = instrTargetChoice?.name ?? '';
+  const instrTargetTeam = instrTargetChoice?.team ?? activeTeam;
+  async function loadInstr(agent: string, team?: string) {
     if (!agent) { setInstrText(''); setInstrSaved(''); return; }
-    const t = await call<string>('agent:getInstructions', agent).catch(() => '');
+    const t = await call<string>('agent:getInstructions', agent, team).catch(() => '');
     setInstrText(t); setInstrSaved(t);
   }
-  useEffect(() => { void loadInstr(instrTarget); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [instrTarget, store.team]);
+  useEffect(() => { void loadInstr(instrTarget, instrTargetTeam); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [instrTarget, instrTargetTeam, store.team]);
   async function saveInstr(team?: string) {
     if (!instrTarget) return;
     setInstrBusy(true); setInstrMsg('saving…');
     try {
       // `team` scopes the write to the selected agent's team (Structure panel), so a
       // pending active-team switch can't redirect it; omitted ⇒ the active team.
-      const r = await call<{ ok: boolean; needsRebuild?: boolean }>('agent:setInstructions', instrTarget, instrText, team);
+      const targetTeam = team ?? instrTargetTeam;
+      const r = await call<{ ok: boolean; needsRebuild?: boolean }>('agent:setInstructions', instrTarget, instrText, targetTeam);
       setInstrSaved(instrText);
       setInstrMsg(r.needsRebuild ? `saved ✓ — rebuilding ${instrTarget}…` : 'saved ✓');
       // Rebuild so the new instructions land in the agent's system prompt now.
-      await call('rebuildAgent', instrTarget, team).catch(() => {});
-      setInstrMsg(instrText.trim() ? `saved ✓ — ${instrTarget} rebuilt; it now follows these instructions` : `cleared ✓ — ${instrTarget} rebuilt`);
+      await call('rebuildAgent', instrTarget, targetTeam).catch(() => {});
+      setInstrMsg(instrText.trim() ? `saved ✓ — ${targetTeam}/${instrTarget} rebuilt; it now follows these instructions` : `cleared ✓ — ${targetTeam}/${instrTarget} rebuilt`);
     } catch (e) {
       setInstrMsg(`save failed: ${e instanceof Error ? e.message : String(e)}`);
     } finally { setInstrBusy(false); }
@@ -822,8 +831,10 @@ export function Teams({ store }: { store: FleetStore }) {
         </p>
         <div className="row-actions" style={{ gap: 8, alignItems: 'center', marginBottom: 6 }}>
           <span className="muted small">agent</span>
-          <select className="cell-select" value={instrTarget} disabled={instrBusy} onChange={(e) => setInstrAgent(e.target.value)}>
-            {store.agents.map((a) => <option key={a.id} value={a.name}>{a.name}</option>)}
+          <select className="cell-select" value={instrTargetKey} disabled={instrBusy} onChange={(e) => setInstrAgent(e.target.value)}>
+            {instrChoices.map((a) => (
+              <option key={hrAgentKey(a, activeTeam)} value={hrAgentKey(a, activeTeam)}>{a.name} · {a.team ?? activeTeam}</option>
+            ))}
           </select>
           <button className="btn small" disabled={instrBusy} onClick={() => void aiDraftInstr()}>✦ AI draft</button>
           {instrText.trim() ? <button className="btn small" disabled={instrBusy} onClick={() => setInstrText('')}>Clear</button> : null}

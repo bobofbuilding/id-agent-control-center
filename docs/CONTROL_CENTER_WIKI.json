@@ -30,7 +30,7 @@
     ],
     "routeRule": "A page only becomes navigable if its route is implemented in idctl-desktop/src/renderer/App.tsx. Unknown routes are shown in the Wiki but skipped by the sidebar.",
     "body": "pages[].body is markdown prose for operators. Keep each article grounded in current renderer behavior, explain when to use the page, and call out routing or safety boundaries. Do not remove nav, route, component, sourceFiles, or structured sections because those continue to drive the live UI and schematic detail.",
-    "releaseDrift": "scripts/check-wiki.mjs compares this appVersion and updated marker with idctl-desktop/package.json during release so stale wiki content is surfaced before shipping.",
+    "releaseDrift": "scripts/check-wiki.mjs compares this appVersion and updated marker with idctl-desktop/package.json, validates page sourceFiles, and fails when a page source file changes without docs/CONTROL_CENTER_WIKI.json changing in the same worktree diff. Set IDCTL_WIKI_DRIFT_BASE=<ref> to compare committed branch changes against a base ref as well.",
     "releaseNaming": "Operator-facing release notes, ops/deployer handoffs, and content-ops release-cycle updates should say IDACC release / idacc release, not IACC release / iacc release. IDACC means ID Agent Control Center."
   },
   "global": {
@@ -545,7 +545,7 @@
         "idctl-desktop/src/renderer/views/Dream.tsx"
       ],
       "purpose": "Work operating surface: plans, live Kanban, recurring schedules, agent chains, and dreams.",
-      "scope": "All-team task view for the board; creation/assignment panels operate on the selected active team.",
+      "scope": "All-team task view for the board; creation and assignment panels can target the selected team, selected teams, team leads, or every active agent depending on assignment scope.",
       "tabs": [
         {
           "id": "plans",
@@ -600,7 +600,7 @@
         {
           "id": "schedule",
           "label": "Schedule",
-          "purpose": "Heartbeats and supervision check-ins.",
+          "purpose": "All-team heartbeats and supervision check-ins, including cross-team heartbeat targets that would otherwise be hidden by the active roster.",
           "tiles": [
             "Per-agent heartbeats",
             "Other cross-team heartbeats",
@@ -739,6 +739,24 @@
           "optionsSource": "active teams from store.allAgents"
         },
         {
+          "id": "assignment-scope",
+          "label": "assignment scope",
+          "description": "Chooses whether direct assignment targets this team, selected teams, team leads, or all active agents.",
+          "optionsSource": "static AssignScope buttons in Tasks.tsx",
+          "routesInto": [
+            "work:createPlan"
+          ]
+        },
+        {
+          "id": "assignment-teams",
+          "label": "selected teams",
+          "description": "Team chips used when assignment scope is Selected teams; inactive teams are disabled.",
+          "optionsSource": "store.teams + active agents from store.allAgents",
+          "routesInto": [
+            "work:createPlan"
+          ]
+        },
+        {
           "id": "lead",
           "label": "lead",
           "description": "Agent asked to decompose a plan objective.",
@@ -753,7 +771,7 @@
         {
           "id": "heartbeat-interval",
           "label": "Set interval",
-          "description": "Heartbeat cadence per agent.",
+          "description": "Heartbeat cadence per team-qualified agent target.",
           "optionsSource": "1 min, 5 min, 15 min, 1 hour, 6 hours, 24 hours"
         }
       ],
@@ -775,6 +793,15 @@
           "label": "Create work",
           "type": "foldout button",
           "description": "Opens the multi-mode work creator.",
+          "routesInto": [
+            "local React state"
+          ]
+        },
+        {
+          "id": "select-all-shown",
+          "label": "select all shown",
+          "type": "button",
+          "description": "Selects every live agent currently visible under the chosen assignment scope.",
           "routesInto": [
             "local React state"
           ]
@@ -874,7 +901,7 @@
           "/ask <agent> <message>"
         ]
       },
-      "body": "# Work\n\nWork is the execution surface for plans, task cards, schedules, loops, and dream review. It turns operator intent into tracked manager work and gives the team a place to move items through planning, assignment, review, and completion.\n\n## Start here when\n\n- A request needs to become tasks, not just a chat reply.\n- You need to triage unassigned work, assign a fleet objective, or surface blockers for a human decision.\n- You want scheduled follow-up, recurring loops, or reviewed idea drafts.\n\n## Tab guide\n\n- Plans: structured plans and dispatch handoff.\n- Tasks: Kanban execution, review lanes, assignment, and blocker surfacing.\n- Schedule: timed wakeups and reminders.\n- Loops: recurring objectives.\n- Dream: proposed ideas or simulations that require review before action.\n\nDragging cards changes the local review lane and syncs mapped manager status when appropriate. Assignment and redispatch actions should be checked against the active team context before launching work."
+      "body": "# Work\n\nWork is the execution surface for plans, task cards, schedules, loops, and dream review. It turns operator intent into tracked manager work and gives the team a place to move items through planning, assignment, review, and completion.\n\n## Start here when\n\n- A request needs to become tasks, not just a chat reply.\n- You need to triage unassigned work, assign a fleet objective, or surface blockers for a human decision.\n- You want scheduled follow-up, recurring loops, or reviewed idea drafts.\n\n## Tab guide\n\n- Plans: structured plans and dispatch handoff.\n- Tasks: Kanban execution, review lanes, scoped assignment, and blocker surfacing.\n- Schedule: team-aware heartbeats and supervision reminders.\n- Loops: recurring objectives.\n- Dream: proposed ideas or simulations that require review before action.\n\nDragging cards changes the local review lane and syncs mapped manager status when appropriate. Assignment can dispatch to one team, selected teams, team leads, or every active agent, grouping manager plan creation by target team so owners stay scoped correctly. Schedule heartbeats use team-qualified targets, so cross-team agents and manager-level heartbeats remain visible and editable from the Schedule tab."
     },
     {
       "id": "projects",
@@ -1556,6 +1583,17 @@
           "optionsSource": "static tabs in Teams.tsx"
         },
         {
+          "id": "instruction-agent",
+          "label": "agent",
+          "description": "Team-qualified agent picker for loading, saving, and rebuilding persistent instructions.",
+          "optionsSource": "store.allAgents when available, otherwise active team agents",
+          "routesInto": [
+            "agent:getInstructions",
+            "agent:setInstructions",
+            "rebuildAgent"
+          ]
+        },
+        {
           "id": "reassign-team",
           "label": "reassign to",
           "description": "Moves an agent to another team and rebuilds it there.",
@@ -1705,7 +1743,7 @@
           "team lifecycle manager routes"
         ]
       },
-      "body": "# HR Manager\n\nHR Manager is the organization design and routing workspace. It covers team structure, agent creation, roster management, instructions, and outbound relay topology.\n\n## Tab guide\n\n- Structure: inspect the team graph and leadership shape.\n- Build: draft and create agent rosters.\n- Manage: edit deployed agents and their instructions.\n- Route: inspect how teams delegate across the fleet.\n\n## Operating rule\n\nChanges here affect staffing, instructions, and delegation paths. Review generated drafts before saving, syncing, or rebuilding, and use the graph as a whole-fleet planning aid rather than a view of only the active team."
+      "body": "# HR Manager\n\nHR Manager is the organization design and routing workspace. It covers team structure, agent creation, roster management, instructions, and outbound relay topology.\n\n## Tab guide\n\n- Structure: inspect the team graph and leadership shape.\n- Build: draft and create agent rosters.\n- Manage: edit deployed agents and their instructions.\n- Route: inspect how teams delegate across the fleet.\n\n## Operating rule\n\nChanges here affect staffing, instructions, and delegation paths. Review generated drafts before saving, syncing, or rebuilding, and use the graph as a whole-fleet planning aid rather than a view of only the active team. Agent instruction editing is now team-qualified in the picker and save path, so selecting an agent from another team loads, saves, and rebuilds that exact team/agent instead of silently falling back to the active team."
     },
     {
       "id": "modules",

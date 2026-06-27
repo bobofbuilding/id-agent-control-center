@@ -57,6 +57,9 @@ function isMissed(s: ScheduleEntry): boolean {
 }
 
 type TeamSchedule = ScheduleEntry & { team?: string };
+function targetKey(agent: string, team?: string): string {
+  return `${team ?? 'default'}/${agent}`;
+}
 
 export function Schedule({ store }: { store: FleetStore }) {
   const [schedules, setSchedules] = useState<ScheduleEntry[]>([]);
@@ -91,17 +94,19 @@ export function Schedule({ store }: { store: FleetStore }) {
     }
   }
 
-  const heartbeats = schedules.filter((s) => s.kind === 'heartbeat');
-  function hbFor(agent: string): ScheduleEntry | undefined {
-    return heartbeats.find((s) => s.targets.includes(agent));
+  const fleetAgents = store.allAgents.length ? store.allAgents : store.agents.map((a) => ({ ...a, team: store.team ?? 'default' }));
+  const shownSchedules = allSchedules.length ? allSchedules : schedules.map((s) => ({ ...s, team: store.team ?? 'default' }));
+  const heartbeats = shownSchedules.filter((s) => s.kind === 'heartbeat');
+  function hbFor(agent: string, team?: string): TeamSchedule | undefined {
+    return heartbeats.find((s) => s.targets.includes(agent) && (!team || s.team === team));
   }
 
   // Heartbeats whose target ISN'T an agent in the current team's roster — they'd otherwise be
   // invisible (the per-agent table only iterates this team's agents), so a cross-team or
   // manager-level heartbeat (e.g. a "task-master") never showed up. Surface them all here.
-  const rosterNames = new Set(store.agents.map((a) => a.name));
+  const rosterKeys = new Set(fleetAgents.map((a) => targetKey(a.name, a.team)));
   const otherHeartbeats = allSchedules.filter(
-    (s) => s.kind === 'heartbeat' && (Array.isArray(s.targets) ? s.targets : []).some((t) => !rosterNames.has(t) || s.team !== store.team),
+    (s) => s.kind === 'heartbeat' && (Array.isArray(s.targets) ? s.targets : []).some((t) => !rosterKeys.has(targetKey(t, s.team))),
   );
 
   // Cleaner: open check-ins still watching a finished OR removed task — safe to close in bulk.
@@ -115,15 +120,16 @@ export function Schedule({ store }: { store: FleetStore }) {
     });
   }
 
-  async function setHeartbeat(agent: string) {
-    const seconds = hbInterval[agent] ?? hbFor(agent)?.intervalSeconds ?? 3600;
-    const existing = heartbeats.filter((h) => h.targets.includes(agent));
+  async function setHeartbeat(agent: string, team?: string) {
+    const key = targetKey(agent, team);
+    const seconds = hbInterval[key] ?? hbFor(agent, team)?.intervalSeconds ?? 3600;
+    const existing = heartbeats.filter((h) => h.targets.includes(agent) && (!team || h.team === team));
     // ADD-then-PRUNE: create the new heartbeat before removing the old, so a
     // failed add never leaves the agent unmonitored.
     await act(`heartbeat ${agent}`, async () => {
-      await call('addHeartbeat', agent, seconds, HEARTBEAT_MSG, 'internal');
-      for (const s of existing) await call('removeSchedule', s.id);
-      setHbInterval((m) => { const next = { ...m }; delete next[agent]; return next; });
+      await call('addHeartbeat', agent, seconds, HEARTBEAT_MSG, 'internal', team);
+      for (const s of existing) await call('removeSchedule', s.id, s.team);
+      setHbInterval((m) => { const next = { ...m }; delete next[key]; return next; });
     });
   }
 
@@ -149,13 +155,14 @@ export function Schedule({ store }: { store: FleetStore }) {
             </tr>
           </thead>
           <tbody>
-            {store.agents.map((a) => {
-              const hb = hbFor(a.name);
+            {fleetAgents.map((a) => {
+              const hb = hbFor(a.name, a.team);
               const missed = hb ? isMissed(hb) : false;
               const failed = !!hb && hb.active && hb.lastStatus === 'failed';
+              const key = targetKey(a.name, a.team);
               return (
-                <tr key={a.id}>
-                  <td className="b">{a.name}</td>
+                <tr key={`${key}:${a.id}`}>
+                  <td className="b">{a.name} <span className="muted small">· {a.team ?? store.team ?? 'default'}</span></td>
                   <td className="muted">{hb ? fmtInterval(hb.intervalSeconds) : 'off'}</td>
                   <td className={missed || failed ? 'status-error' : hb?.active ? 'ok-text' : 'muted'}>
                     {!hb ? '—' : missed ? '⚠ missed' : failed ? '⚠ last run failed' : hb.active ? '♥ on' : 'paused'}
@@ -165,28 +172,28 @@ export function Schedule({ store }: { store: FleetStore }) {
                     <select
                       className="cell-select"
                       disabled={busy}
-                      value={hbInterval[a.name] ?? hb?.intervalSeconds ?? 3600}
-                      onChange={(e) => setHbInterval((m) => ({ ...m, [a.name]: Number(e.target.value) }))}
+                      value={hbInterval[key] ?? hb?.intervalSeconds ?? 3600}
+                      onChange={(e) => setHbInterval((m) => ({ ...m, [key]: Number(e.target.value) }))}
                     >
                       {INTERVALS.map((iv) => <option key={iv.s} value={iv.s}>{iv.label}</option>)}
                     </select>{' '}
-                    <button className="btn" disabled={busy} onClick={() => void setHeartbeat(a.name)}>{hb ? 'Update' : 'Enable'}</button>
+                    <button className="btn" disabled={busy} onClick={() => void setHeartbeat(a.name, a.team)}>{hb ? 'Update' : 'Enable'}</button>
                   </td>
                   <td className="row-actions">
                     {hb ? (
                       <>
-                        <button className="btn" disabled={busy} onClick={() => void act(`${hb.active ? 'pause' : 'resume'} ${a.name}`, () => call(hb.active ? 'pauseSchedule' : 'resumeSchedule', hb.id))}>
+                        <button className="btn" disabled={busy} onClick={() => void act(`${hb.active ? 'pause' : 'resume'} ${a.name}`, () => call(hb.active ? 'pauseSchedule' : 'resumeSchedule', hb.id, hb.team))}>
                           {hb.active ? 'Pause' : 'Resume'}
                         </button>
-                        <button className="btn" disabled={busy} onClick={() => void act(`disable ${a.name}`, () => call('removeSchedule', hb.id))}>✕</button>
+                        <button className="btn" disabled={busy} onClick={() => void act(`disable ${a.name}`, () => call('removeSchedule', hb.id, hb.team))}>✕</button>
                       </>
                     ) : null}
                   </td>
                 </tr>
               );
             })}
-            {store.agents.length === 0 ? (
-              <tr><td colSpan={6} className="muted center pad">{store.connection === 'offline' ? 'manager unreachable' : 'no agents in this team'}</td></tr>
+            {fleetAgents.length === 0 ? (
+              <tr><td colSpan={6} className="muted center pad">{store.connection === 'offline' ? 'manager unreachable' : 'no agents available'}</td></tr>
             ) : null}
           </tbody>
         </table>

@@ -20,7 +20,6 @@ type ViewId = 'dashboard' | 'inbox' | 'tasks' | 'projects' | 'health' | 'identit
 
 const DEFAULT_NAV: { id: ViewId; label: string; icon: string; order: number }[] = [
   { id: 'dashboard', label: 'Dashboard', icon: '▦', order: 10 },
-  { id: 'inbox', label: 'Inbox', icon: '✉', order: 30 },
   { id: 'tasks', label: 'Work', icon: '☑', order: 40 },
   { id: 'projects', label: 'Projects', icon: '◆', order: 50 },
   { id: 'health', label: 'Health', icon: '✚', order: 60 },
@@ -31,7 +30,7 @@ const DEFAULT_NAV: { id: ViewId; label: string; icon: string; order: number }[] 
   { id: 'settings', label: 'Settings', icon: '⚙', order: 110 },
   { id: 'wiki', label: 'Wiki', icon: '▤', order: 120 },
 ];
-const IMPLEMENTED_VIEWS = new Set<ViewId>([...DEFAULT_NAV.map((n) => n.id), 'schedule']);
+const IMPLEMENTED_VIEWS = new Set<ViewId>([...DEFAULT_NAV.map((n) => n.id), 'inbox', 'schedule']);
 
 function isViewId(id: string | null | undefined): id is ViewId {
   return !!id && IMPLEMENTED_VIEWS.has(id as ViewId);
@@ -42,6 +41,7 @@ function navFromWiki(doc?: ControlCenterWiki | null): typeof DEFAULT_NAV {
   const pages = doc?.pages ?? [];
   const nav = pages
     .filter((p) => isViewId(p.route) && p.nav?.visible !== false)
+    .filter((p) => p.route !== 'inbox')
     .map((p) => {
       const id = p.route as ViewId;
       const base = defaults.get(id);

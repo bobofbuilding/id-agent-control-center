@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type CSSProperties } from 'react';
-import { call, resolveCoordinator, type FleetStore } from '../store.ts';
+import { call, resolveCoordinator, type FleetStore, type TeamAgent } from '../store.ts';
 import { usePrompt } from '../components/prompt.tsx';
 import { useToast } from '../components/toast.tsx';
 import type { Task } from '../../../../idctl/src/api/types.ts';
@@ -17,6 +17,7 @@ type CreatePlanResult = { created: CreatedTask[]; dispatched: number; deferred: 
 type TeamLead = { team: string; lead: string | null; activeCount: number; totalCount: number };
 type FanoutResult = { team: string; lead?: string; status: 'dispatched' | 'no-active-agent' | 'failed'; queryId?: string; detail?: string };
 type TriageResult = { considered: number; assigned: { ref: string; agent: string }[]; skipped: number; dispatched: number; error?: string };
+type AssignScope = 'team' | 'selected-teams' | 'team-leads' | 'all-agents';
 
 type Tab = 'tasks' | 'goals' | 'plans' | 'schedule' | 'loops' | 'dream';
 const TABS: { id: Tab; label: string }[] = [
@@ -101,6 +102,12 @@ function liveAgent(status?: string): boolean {
   const s = String(status || '').toLowerCase();
   return !!s && !/stop|offline|dead|exit|error|crash|down|disabled|sleep/.test(s);
 }
+function agentKey(a: TeamAgent, fallbackTeam = 'default'): string {
+  return `${a.team ?? fallbackTeam}/${a.name}`;
+}
+function agentLabel(a: TeamAgent, fallbackTeam = 'default'): string {
+  return `${a.name} · ${a.team ?? fallbackTeam}`;
+}
 
 /** Tabbed wrapper: Tasks + Schedule + Loops in one page. */
 export function Tasks({ store, initialTab }: { store: FleetStore; initialTab?: Tab }) {
@@ -151,6 +158,8 @@ function TasksPanel({ store }: { store: FleetStore }) {
   const [mode, setMode] = useState<'plan' | 'assign' | 'schedule' | 'loop' | 'dream'>('plan');
   const [schedTarget, setSchedTarget] = useState('');       // single-agent target (schedule/loop/dream)
   const [assignTo, setAssignTo] = useState<Set<string>>(new Set()); // multi-agent target (assignment)
+  const [assignScope, setAssignScope] = useState<AssignScope>('team');
+  const [assignTeams, setAssignTeams] = useState<Set<string>>(new Set());
   const [taskDesc, setTaskDesc] = useState('');             // assignment description / details
   const [schedKind, setSchedKind] = useState<'interval' | 'calendar'>('interval');
   const [everyMin, setEveryMin] = useState(30);             // interval cadence (minutes)
@@ -190,6 +199,22 @@ function TasksPanel({ store }: { store: FleetStore }) {
   const leadName = lead && teamAgents.some((a) => a.name === lead) ? lead : coordinator;
   const otherTeams = store.teams.map((t) => t.name).filter((n) => n && n !== activeTeam);
   const activeTeamAgents = teamAgents.filter((a) => liveAgent(a.status)); // routable members of the chosen team
+  const allTeamAgents = store.allAgents.length ? store.allAgents : store.agents.map((a) => ({ ...a, team: store.team ?? 'default' }));
+  const activeAllAgents = allTeamAgents.filter((a) => liveAgent(a.status));
+  const selectedAssignTeams = assignTeams.size ? assignTeams : new Set([activeTeam]);
+  const teamLeadAgents = store.teams.flatMap((t) => {
+    const ags = allTeamAgents.filter((a) => a.team === t.name);
+    const leadForTeam = resolveCoordinator(ags, t.name === store.team ? store.coordinator : undefined);
+    const a = leadForTeam ? ags.find((x) => x.name === leadForTeam) : undefined;
+    return a && liveAgent(a.status) ? [a] : [];
+  });
+  const assignOptions =
+    assignScope === 'all-agents' ? activeAllAgents
+    : assignScope === 'team-leads' ? teamLeadAgents
+    : assignScope === 'selected-teams' ? activeAllAgents.filter((a) => selectedAssignTeams.has(a.team ?? 'default'))
+    : (activeTeamAgents.length ? activeTeamAgents : teamAgents);
+  const assignOptionKeys = new Set(assignOptions.map((a) => agentKey(a, activeTeam)));
+  const selectedAssignTargets = assignOptions.filter((a) => assignTo.has(agentKey(a, activeTeam)));
   // Keep the single-agent target (schedule/loop/dream) valid as the team changes.
   useEffect(() => {
     setSchedTarget((cur) => (cur && teamAgents.some((a) => a.name === cur) ? cur : (leadName || teamAgents[0]?.name || '')));
@@ -510,16 +535,25 @@ function TasksPanel({ store }: { store: FleetStore }) {
   //    (no decomposition; respectOwners keeps the exact owners). ──────────────────────
   async function createAssignment() {
     const title = objective.trim();
-    const agents = [...assignTo].filter(Boolean);
+    const agents = selectedAssignTargets.filter((a) => assignOptionKeys.has(agentKey(a, activeTeam)));
     if (!title || !agents.length) { setAssignNote('enter a task and pick at least one agent'); return; }
     setProposing(true);
-    const t = toast({ kind: 'progress', text: `Assigning “${title.slice(0, 40)}” to ${agents.join(', ')}…` });
+    const t = toast({ kind: 'progress', text: `Assigning "${title.slice(0, 40)}" to ${agents.length} agent${agents.length === 1 ? '' : 's'}…` });
     try {
-      const subtasks = agents.map((a) => ({ title, description: taskDesc.trim(), agent: a, dependsOn: [] as number[] }));
-      const res = await call<CreatePlanResult>('work:createPlan', title, subtasks, { team: activeTeam, dispatch: true, respectOwners: true });
-      const ok = res.created.filter((c) => c.ok).length;
-      t.update({ kind: ok ? 'success' : 'error', text: `${activeTeam}: assigned ${ok}/${agents.length} · dispatched ${res.dispatched}` });
-      setAssignNote(`assigned to ${agents.join(', ')} ✓`);
+      const byTeam = new Map<string, TeamAgent[]>();
+      for (const a of agents) {
+        const tm = a.team ?? activeTeam;
+        byTeam.set(tm, [...(byTeam.get(tm) ?? []), a]);
+      }
+      const results = await Promise.all([...byTeam.entries()].map(async ([tm, ags]) => {
+        const subtasks = ags.map((a) => ({ title, description: taskDesc.trim(), agent: a.name, dependsOn: [] as number[] }));
+        const res = await call<CreatePlanResult>('work:createPlan', title, subtasks, { team: tm, dispatch: true, respectOwners: true });
+        return { team: tm, ok: res.created.filter((c) => c.ok).length, dispatched: res.dispatched };
+      }));
+      const ok = results.reduce((n, r) => n + r.ok, 0);
+      const dispatched = results.reduce((n, r) => n + r.dispatched, 0);
+      t.update({ kind: ok ? 'success' : 'error', text: `assigned ${ok}/${agents.length} · dispatched ${dispatched} across ${results.length} team${results.length === 1 ? '' : 's'}` });
+      setAssignNote(`assigned to ${agents.map((a) => agentLabel(a, activeTeam)).join(', ')} ✓`);
       setObjective(''); setTaskDesc(''); setAssignTo(new Set()); setShowAssign(false);
       await reload();
     } catch (err) {
@@ -655,7 +689,7 @@ function TasksPanel({ store }: { store: FleetStore }) {
           <div className="kv" style={{ gridTemplateColumns: '90px 1fr', gap: '8px 12px', alignItems: 'start' }}>
             <span>team</span>
             <b>
-              <select className="cell-select" value={activeTeam} disabled={proposing} onChange={(e) => { setWorkTeam(e.target.value); setLead(''); setAssignTo(new Set()); }}>
+              <select className="cell-select" value={activeTeam} disabled={proposing} onChange={(e) => { setWorkTeam(e.target.value); setLead(''); setAssignTo(new Set()); setAssignTeams(new Set([e.target.value])); }}>
                 {(activeTeams.length ? activeTeams : [activeTeam]).map((t) => <option key={t} value={t}>{t}{t === store.team ? ' (active)' : ''}</option>)}
               </select>
             </b>
@@ -671,15 +705,56 @@ function TasksPanel({ store }: { store: FleetStore }) {
 
             {mode === 'assign' ? (<>
               <span>agents</span>
-              <b style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
-                {(activeTeamAgents.length ? activeTeamAgents : teamAgents).map((a) => (
-                  <label key={a.id} className="small" style={{ display: 'inline-flex', alignItems: 'center', gap: 5, border: '1px solid var(--border, #2a2a2a)', borderRadius: 6, padding: '2px 8px', opacity: liveAgent(a.status) ? 1 : 0.5, cursor: proposing ? 'default' : 'pointer' }}>
-                    <input type="checkbox" disabled={proposing || !liveAgent(a.status)} checked={assignTo.has(a.name)}
-                      onChange={(e) => setAssignTo((prev) => { const n = new Set(prev); if (e.target.checked) n.add(a.name); else n.delete(a.name); return n; })} />
-                    {a.name}{liveAgent(a.status) ? '' : ' · stopped'}
-                  </label>
-                ))}
-                {activeTeamAgents.length ? <button className="btn small" disabled={proposing} onClick={() => setAssignTo(new Set(activeTeamAgents.map((a) => a.name)))}>all active</button> : null}
+              <b>
+                <div className="row-actions" style={{ gap: 6, marginBottom: 6, flexWrap: 'wrap' }}>
+                  {([
+                    ['team', 'This team'],
+                    ['selected-teams', 'Selected teams'],
+                    ['team-leads', 'Team leads'],
+                    ['all-agents', 'All active agents'],
+                  ] as [AssignScope, string][]).map(([id, label]) => (
+                    <button key={id} className={`btn small${assignScope === id ? ' primary' : ''}`} disabled={proposing}
+                      onClick={() => { setAssignScope(id); setAssignTo(new Set()); if (id === 'selected-teams' && !assignTeams.size) setAssignTeams(new Set([activeTeam])); }}>
+                      {label}
+                    </button>
+                  ))}
+                  <span className="muted small">{assignOptions.length} available</span>
+                </div>
+                {assignScope === 'selected-teams' ? (
+                  <div className="chips" style={{ marginBottom: 6 }}>
+                    {store.teams.map((t) => {
+                      const on = selectedAssignTeams.has(t.name);
+                      const count = activeAllAgents.filter((a) => a.team === t.name).length;
+                      return (
+                        <button key={t.name} className={`chip${on ? ' on' : ''}`} disabled={proposing || count === 0}
+                          title={count ? `${count} active agent${count === 1 ? '' : 's'}` : 'no active agents'}
+                          onClick={() => setAssignTeams((prev) => { const n = new Set(prev); if (on) n.delete(t.name); else n.add(t.name); return n; })}>
+                          {on ? '✓ ' : ''}{t.name} <span className="muted">{count}</span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                ) : null}
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+                  {assignOptions.map((a) => {
+                    const key = agentKey(a, activeTeam);
+                    const canPick = liveAgent(a.status);
+                    return (
+                      <label key={`${key}:${a.id}`} className="small" title={agentLabel(a, activeTeam)}
+                        style={{ display: 'inline-flex', alignItems: 'center', gap: 5, border: '1px solid var(--border, #2a2a2a)', borderRadius: 6, padding: '2px 8px', opacity: canPick ? 1 : 0.5, cursor: proposing || !canPick ? 'default' : 'pointer' }}>
+                        <input type="checkbox" disabled={proposing || !canPick} checked={assignTo.has(key)}
+                          onChange={(e) => setAssignTo((prev) => { const n = new Set(prev); if (e.target.checked) n.add(key); else n.delete(key); return n; })} />
+                        {a.name}<span className="muted">· {a.team ?? activeTeam}</span>{canPick ? '' : ' · stopped'}
+                      </label>
+                    );
+                  })}
+                  {assignOptions.length ? (
+                    <>
+                      <button className="btn small" disabled={proposing} onClick={() => setAssignTo(new Set(assignOptions.filter((a) => liveAgent(a.status)).map((a) => agentKey(a, activeTeam))))}>select all shown</button>
+                      {assignTo.size ? <button className="btn small" disabled={proposing} onClick={() => setAssignTo(new Set())}>clear</button> : null}
+                    </>
+                  ) : <span className="muted small">no active agents in this scope</span>}
+                </div>
               </b>
             </>) : null}
 
@@ -777,7 +852,7 @@ function TasksPanel({ store }: { store: FleetStore }) {
                 <button className="btn primary" disabled={proposing} onClick={() => void createPlan()}>{proposing ? 'Dispatching…' : `Create ${proposal.length} & dispatch`}</button>
               )}
             </>) : mode === 'assign' ? (
-              <button className="btn primary" disabled={proposing || !objective.trim() || !assignTo.size} onClick={() => void createAssignment()}>{proposing ? 'Assigning…' : `☑ Assign to ${assignTo.size || ''} ${assignTo.size === 1 ? 'agent' : 'agents'} & dispatch`}</button>
+              <button className="btn primary" disabled={proposing || !objective.trim() || !selectedAssignTargets.length} onClick={() => void createAssignment()}>{proposing ? 'Assigning…' : `☑ Assign to ${selectedAssignTargets.length || ''} ${selectedAssignTargets.length === 1 ? 'agent' : 'agents'} & dispatch`}</button>
             ) : mode === 'schedule' ? (
               <button className="btn primary" disabled={proposing || !objective.trim() || !schedTarget} onClick={() => void createSchedule()}>{proposing ? 'Scheduling…' : '🕑 Schedule'}</button>
             ) : mode === 'loop' ? (
@@ -798,7 +873,7 @@ function TasksPanel({ store }: { store: FleetStore }) {
                     {s.dependsOn.length ? <div className="small warn-text">⇢ after {s.dependsOn.map((d) => `#${d + 1}`).join(', ')}</div> : <div className="small ok-text">▶ starts immediately</div>}
                   </div>
                   <select className="cell-select" value={s.agent} disabled={proposing} onChange={(e) => editSubAgent(i, e.target.value)} title="owner">
-                    {store.agents.map((a) => <option key={a.id} value={a.name}>{a.name}{liveAgent(a.status) ? '' : ' · stopped'}</option>)}
+                    {teamAgents.map((a) => <option key={a.id} value={a.name}>{a.name}{liveAgent(a.status) ? '' : ' · stopped'}</option>)}
                   </select>
                   <button className="btn icon-danger small" disabled={proposing} title="Remove this sub-task" onClick={() => removeSub(i)}>✕</button>
                 </div>

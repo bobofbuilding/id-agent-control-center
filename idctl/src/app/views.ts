@@ -23,7 +23,6 @@ export interface ViewDef {
 
 export const VIEWS: ViewDef[] = [
   { id: 'dash', label: 'Dashboard', short: 'Dash' },
-  { id: 'chat', label: 'Chat', short: 'Chat' },
   { id: 'onboard', label: 'Onboard agent', short: 'New', shortcut: 'n' },
   { id: 'inbox', label: 'Inbox', short: 'Inbox' },
   { id: 'tasks', label: 'Tasks', short: 'Tasks' },
