@@ -8,6 +8,9 @@ Every change pushed or merged to `main` carries its version number in the commit
 subject (`vX.Y.Z: …`), stamped automatically by the `commit-msg` hook — see
 [CONTRIBUTING.md](CONTRIBUTING.md).
 
+## [0.1.204] — 2026-06-27
+- Improve IDACC scoped work controls
+
 ## [0.1.203] — 2026-06-27
 - Bind controller proof to linked wallet and tighten Identity key UI
 
