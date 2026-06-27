@@ -21,6 +21,16 @@ interface AuthorityRow {
   status: EvidenceState;
 }
 
+interface ControllerProof {
+  agent: string;
+  wallet: string;
+  nonce: string;
+  message: string;
+  signature: string;
+  verifiedAt: number;
+  expiresAt: number;
+}
+
 function shortAddr(a?: string): string {
   return a ? `${a.slice(0, 6)}...${a.slice(-4)}` : '-';
 }
@@ -58,31 +68,51 @@ function riskClass(state: EvidenceState): string {
   return state === 'verified' ? 'ok-text' : state === 'missing' ? 'status-error' : 'warn-text';
 }
 
-function agentIdentityRows(agent: Agent | undefined, acct: AgentAccount | undefined, domain: string, wallet: string): EvidenceRow[] {
+function isSignatureLike(value: string): boolean {
+  return /^0x[0-9a-fA-F]{130,}$/.test(value.trim());
+}
+
+function proofMatchesWallet(proof: ControllerProof | undefined, wallet: string): boolean {
+  return Boolean(proof?.verifiedAt && proof.expiresAt > Date.now() && proof.signature && wallet && proof.wallet.toLowerCase() === wallet.toLowerCase());
+}
+
+function agentIdentityRows(
+  agent: Agent | undefined,
+  acct: AgentAccount | undefined,
+  domain: string,
+  wallet: string,
+  controllerVerified: boolean,
+): EvidenceRow[] {
   const hasDomain = Boolean(domain);
   const hasWallet = Boolean(wallet);
   const hasSafe = Boolean(acct?.smartAccount);
   return [
     {
-      layer: 'Personhood / KYA',
-      state: 'missing',
-      evidence: 'No World ID, KYB, or KYA credential linked',
-      source: 'trust layer 0',
-      detail: 'Treat as controller evidence only when present; not runtime safety.',
+      layer: 'Controller challenge',
+      state: controllerVerified ? 'verified' : hasWallet ? 'warn' : 'missing',
+      evidence: controllerVerified ? `signed nonce from ${shortAddr(wallet)}` : hasWallet ? 'Controller signature required' : 'No controller wallet linked',
+      source: 'controller wallet',
+      detail: controllerVerified
+        ? 'Local proof-of-control is recorded for this controller wallet.'
+        : 'Sign a fresh nonce from the controller wallet before treating self-attested rows as controlled.',
     },
     {
       layer: 'Public identity',
-      state: hasDomain ? 'self' : 'missing',
+      state: hasDomain ? (controllerVerified ? 'verified' : 'self') : 'missing',
       evidence: hasDomain ? domain : 'No ENS / idchain domain registered',
       source: 'ENS / idchain',
-      detail: hasDomain ? 'Name is declared in the agent row; controller proof still needs chain verification.' : 'Register an identity before publishing endpoints or reputation.',
+      detail: hasDomain
+        ? controllerVerified
+          ? 'Name is controller-attested locally; live resolver verification is still pending.'
+          : 'Name is declared in the agent row; controller proof still needs verification.'
+        : 'Register an identity before publishing endpoints or reputation.',
     },
     {
       layer: 'Controller wallet',
-      state: hasWallet ? 'self' : 'missing',
+      state: hasWallet ? (controllerVerified ? 'verified' : 'self') : 'missing',
       evidence: hasWallet ? shortAddr(wallet) : 'No OWS wallet provisioned',
       source: 'wallet registry',
-      detail: 'Wallet control is authority, not reputation. Re-check before privileged actions.',
+      detail: controllerVerified ? 'Wallet control proof gates privileged identity and key actions.' : 'Wallet control is authority, not reputation. Re-check before privileged actions.',
     },
     {
       layer: 'Agent account',
@@ -100,15 +130,15 @@ function agentIdentityRows(agent: Agent | undefined, acct: AgentAccount | undefi
     },
     {
       layer: 'Manifest / skill',
-      state: agent ? 'self' : 'missing',
+      state: agent ? (controllerVerified ? 'verified' : 'self') : 'missing',
       evidence: agent ? `${agent.runtime ?? 'runtime'} / ${agent.model ?? 'model'}` : 'No active agent selected',
       source: 'SKILL.md / AIP',
-      detail: 'Display as declared capability until manifest hash, signature, and domain proof are checked.',
+      detail: controllerVerified ? 'Runtime declaration is accepted under the current controller proof.' : 'Display as declared capability until manifest hash, signature, and domain proof are checked.',
     },
   ];
 }
 
-function authorityRows(acct: AgentAccount, sessions: SessionKey[], wallet: string): AuthorityRow[] {
+function authorityRows(acct: AgentAccount, sessions: SessionKey[], wallet: string, controllerVerified: boolean): AuthorityRow[] {
   const active = sessions.filter((s) => s.status === 'active');
   const broad = active.some((s) => s.scope.label.includes('full') || s.validUntil === 0);
   return [
@@ -116,8 +146,8 @@ function authorityRows(acct: AgentAccount, sessions: SessionKey[], wallet: strin
       type: 'Cold controller',
       owner: wallet ? shortAddr(wallet) : 'not linked',
       scope: 'ENS, registry, recovery',
-      expiry: 'external wallet',
-      status: wallet ? 'warn' : 'missing',
+      expiry: controllerVerified ? 'fresh challenge' : 'external wallet',
+      status: controllerVerified ? 'verified' : wallet ? 'warn' : 'missing',
     },
     {
       type: 'Safe account',
@@ -143,11 +173,11 @@ function authorityRows(acct: AgentAccount, sessions: SessionKey[], wallet: strin
   ];
 }
 
-function riskRows(domain: string, wallet: string, acct: AgentAccount | undefined): { label: string; state: EvidenceState; note: string }[] {
+function riskRows(domain: string, wallet: string, acct: AgentAccount | undefined, controllerVerified: boolean): { label: string; state: EvidenceState; note: string }[] {
   const active = acct?.sessions.filter((s) => s.status === 'active') ?? [];
   const nonExpiring = active.filter((s) => s.validUntil === 0).length;
   return [
-    { label: 'Identity binding', state: domain && wallet ? 'warn' : 'missing', note: domain && wallet ? 'declared, needs controller challenge' : 'name or wallet missing' },
+    { label: 'Identity binding', state: domain && wallet ? (controllerVerified ? 'verified' : 'warn') : 'missing', note: domain && wallet ? (controllerVerified ? 'controller proof recorded' : 'declared, needs controller challenge') : 'name or wallet missing' },
     { label: 'Account deployment', state: acct?.deployed ? 'verified' : 'warn', note: acct?.deployed ? 'Safe marked deployed' : 'counterfactual or absent' },
     { label: 'Session-key hygiene', state: nonExpiring ? 'warn' : active.length ? 'verified' : 'warn', note: nonExpiring ? `${nonExpiring} non-expiring grant` : `${active.length} active grant${active.length === 1 ? '' : 's'}` },
     { label: 'Operator auth', state: 'warn', note: 'wire Better Auth freshness, passkeys, 2FA, org roles' },
@@ -163,6 +193,8 @@ export function Identity({ store }: { store: FleetStore }) {
   const [scopeIdx, setScopeIdx] = useState(0);
   const [ttlIdx, setTtlIdx] = useState(1);
   const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [proofs, setProofs] = useState<Record<string, ControllerProof>>({});
 
   const names = store.agents.map((a) => a.name);
   const selected = sel ?? names[0];
@@ -170,22 +202,31 @@ export function Identity({ store }: { store: FleetStore }) {
   const selAgent = selected ? store.agents.find((a) => a.name === selected) : undefined;
   const domain = selAgent ? identityValue(selAgent, 'idchain_domain') : '';
   const wallet = selAgent ? identityValue(selAgent, 'ows_wallet') : '';
+  const proof = selected ? proofs[selected] : undefined;
+  const controllerVerified = proofMatchesWallet(proof, wallet);
 
-  const evidence = useMemo(() => agentIdentityRows(selAgent, acct, domain, wallet), [selAgent, acct, domain, wallet]);
-  const risks = useMemo(() => riskRows(domain, wallet, acct), [domain, wallet, acct]);
-  const authorities = useMemo(() => (acct ? authorityRows(acct, acct.sessions, wallet) : []), [acct, wallet]);
+  const evidence = useMemo(() => agentIdentityRows(selAgent, acct, domain, wallet, controllerVerified), [selAgent, acct, domain, wallet, controllerVerified]);
+  const risks = useMemo(() => riskRows(domain, wallet, acct, controllerVerified), [domain, wallet, acct, controllerVerified]);
+  const authorities = useMemo(() => (acct ? authorityRows(acct, acct.sessions, wallet, controllerVerified) : []), [acct, wallet, controllerVerified]);
   const activeSessions = acct?.sessions.filter((s) => s.status === 'active').length ?? 0;
   const verifiedLayers = evidence.filter((e) => e.state === 'verified').length;
+  const issueScope = presets?.scopes[scopeIdx];
+  const issueTtl = presets?.ttls[ttlIdx];
+  const issueBlocked = Boolean(issueScope && (issueScope.label.includes('full') || issueScope.spendLimitWei === '0' || issueTtl?.ms === 0));
 
   async function reload() {
     if (names.length === 0) return;
-    const list = await call<AgentAccount[]>('keys:list', names);
-    setAccounts(Object.fromEntries(list.map((a) => [a.agent, a])));
+    try {
+      const list = await call<AgentAccount[]>('keys:list', names);
+      setAccounts(Object.fromEntries(list.map((a) => [a.agent, a])));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to load key accounts');
+    }
   }
 
   useEffect(() => {
-    call<KeyCapabilities>('keys:caps').then(setCaps).catch(() => {});
-    call<{ scopes: SessionScope[]; ttls: { label: string; ms: number }[] }>('keys:presets').then(setPresets).catch(() => {});
+    call<KeyCapabilities>('keys:caps').then(setCaps).catch((err) => setError(err instanceof Error ? err.message : 'Failed to load key capabilities'));
+    call<{ scopes: SessionScope[]; ttls: { label: string; ms: number }[] }>('keys:presets').then(setPresets).catch((err) => setError(err instanceof Error ? err.message : 'Failed to load key presets'));
   }, []);
 
   useEffect(() => {
@@ -193,24 +234,91 @@ export function Identity({ store }: { store: FleetStore }) {
   }, [store.agents.length]);
 
   async function act(method: string, ...args: unknown[]) {
+    setError(null);
     setBusy(true);
     try {
       await call(method, ...args);
       await reload();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : `${method} failed`);
     } finally {
       setBusy(false);
     }
   }
 
   async function identityAction(agent: string, action: 'register' | 'provision') {
+    setError(null);
     setBusy(true);
     try {
       await call(action === 'register' ? 'identity:register' : 'wallet:provision', agent);
       store.refresh();
       await reload();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : `${action} failed`);
     } finally {
       setBusy(false);
     }
+  }
+
+  async function startChallenge() {
+    if (!selected || !wallet) return;
+    setError(null);
+    setBusy(true);
+    try {
+      const challenge = await call<ControllerProof>('identity:controllerChallenge', selected, wallet);
+      setProofs((prev) => ({ ...prev, [selected]: challenge }));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to start controller challenge');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  function updateSignature(signature: string) {
+    if (!selected || !proof) return;
+    setProofs((prev) => ({
+      ...prev,
+      [selected]: { ...proof, signature, verifiedAt: 0 },
+    }));
+  }
+
+  async function verifyControllerProof() {
+    if (!selected || !proof) return;
+    if (!isSignatureLike(proof.signature)) {
+      setError('Paste a 0x-prefixed controller-wallet signature for the challenge message.');
+      return;
+    }
+    setError(null);
+    setBusy(true);
+    try {
+      const verified = await call<ControllerProof>('identity:controllerVerify', selected, wallet, proof.signature);
+      setProofs((prev) => ({ ...prev, [selected]: verified }));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to verify controller signature');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  function requireControllerProof(label: string, fn: () => void) {
+    if (!controllerVerified) {
+      setError(`${label} requires a signed controller-wallet challenge first.`);
+      return;
+    }
+    fn();
+  }
+
+  function issueSession() {
+    if (!presets || !selected) return;
+    if (!controllerVerified) {
+      setError('Issue session key requires a signed controller-wallet challenge first.');
+      return;
+    }
+    if (issueBlocked) {
+      setError('Refusing to issue uncapped, full, or non-expiring session keys from this screen. Choose a capped scope and finite TTL.');
+      return;
+    }
+    void act('keys:issue', selected, scopeIdx, presets.ttls[ttlIdx].ms);
   }
 
   return (
@@ -250,11 +358,19 @@ export function Identity({ store }: { store: FleetStore }) {
                   </div>
                 </div>
                 <div className="identity-metrics">
-                  <div><b>{verifiedLayers}/5</b><span>verified layers</span></div>
+                  <div><b>{verifiedLayers}/{evidence.length}</b><span>verified layers</span></div>
                   <div><b>{activeSessions}</b><span>active sessions</span></div>
                   <div><b>{acct.deployed ? 'live' : 'draft'}</b><span>Safe account</span></div>
                 </div>
               </section>
+
+              {error ? (
+                <div className="identity-alert" role="alert">
+                  <b>Action failed</b>
+                  <span>{error}</span>
+                  <button className="btn" onClick={() => setError(null)}>Dismiss</button>
+                </div>
+              ) : null}
 
               <div className="identity-grid">
                 <section className="card">
@@ -270,7 +386,7 @@ export function Identity({ store }: { store: FleetStore }) {
                     <b className="mono">{shortAddr(acct.owner)}</b>
                   </div>
                   <div className="row-actions identity-actions">
-                    <button className="btn" disabled={busy} onClick={() => void identityAction(selected!, 'register')}>
+                    <button className="btn" disabled={busy || !controllerVerified} onClick={() => requireControllerProof('Register identity', () => void identityAction(selected!, 'register'))}>
                       Register identity
                     </button>
                     {!wallet ? (
@@ -281,25 +397,53 @@ export function Identity({ store }: { store: FleetStore }) {
                     <button className="btn" disabled={busy} onClick={() => void act('keys:ensure', selected)}>
                       Create account
                     </button>
-                    <button className="btn" disabled={busy || acct.deployed} onClick={() => void act('keys:deploy', selected)}>
+                    <button className="btn" disabled={busy || acct.deployed || !controllerVerified} onClick={() => requireControllerProof('Deploy', () => void act('keys:deploy', selected))}>
                       Deploy
                     </button>
                   </div>
                 </section>
 
                 <section className="card">
-                  <h3>Risk & Health</h3>
-                  <div className="risk-list">
-                    {risks.map((r) => (
-                      <div key={r.label} className="risk-row">
-                        <span className={`dot ${r.state === 'verified' ? 'ok' : r.state === 'missing' ? 'err' : 'warn'}`} />
-                        <b>{r.label}</b>
-                        <span className={riskClass(r.state)}>{r.note}</span>
-                      </div>
-                    ))}
+                  <h3>Controller Proof</h3>
+                  <div className="controller-proof">
+                    <div className="risk-row">
+                      <span className={`dot ${controllerVerified ? 'ok' : wallet ? 'warn' : 'err'}`} />
+                      <b>{controllerVerified ? 'Verified' : 'Required'}</b>
+                      <span className={controllerVerified ? 'ok-text' : wallet ? 'warn-text' : 'status-error'}>
+                        {controllerVerified ? `nonce signed ${new Date(proof!.verifiedAt).toLocaleTimeString()}` : wallet ? 'sign a nonce with the controller wallet' : 'provision a wallet first'}
+                      </span>
+                    </div>
+                    {proof ? (
+                      <>
+                        <textarea className="identity-proof-message mono" readOnly value={proof.message} />
+                        <input
+                          className="identity-proof-input mono"
+                          value={proof.signature}
+                          onChange={(e) => updateSignature(e.target.value)}
+                          placeholder="Paste 0x signature from controller wallet"
+                        />
+                      </>
+                    ) : null}
+                    <div className="row-actions identity-actions">
+                      <button className="btn" disabled={busy || !wallet} onClick={startChallenge}>New challenge</button>
+                      <button className="btn primary" disabled={busy || !proof || !proof.signature} onClick={verifyControllerProof}>Verify signature</button>
+                    </div>
                   </div>
                 </section>
               </div>
+
+              <section className="card">
+                <h3>Risk & Health</h3>
+                <div className="risk-list">
+                  {risks.map((r) => (
+                    <div key={r.label} className="risk-row">
+                      <span className={`dot ${r.state === 'verified' ? 'ok' : r.state === 'missing' ? 'err' : 'warn'}`} />
+                      <b>{r.label}</b>
+                      <span className={riskClass(r.state)}>{r.note}</span>
+                    </div>
+                  ))}
+                </div>
+              </section>
 
               <section className="card">
                 <h3>Trust Resolution Stack</h3>
@@ -367,7 +511,7 @@ export function Identity({ store }: { store: FleetStore }) {
                         </td>
                         <td className="row-actions">
                           {s.status === 'active' ? (
-                            <button className="btn" disabled={busy} onClick={() => void act('keys:revoke', selected, s.id)}>
+                            <button className="btn" disabled={busy || !controllerVerified} onClick={() => requireControllerProof('Revoke session key', () => void act('keys:revoke', selected, s.id))}>
                               Revoke
                             </button>
                           ) : null}
@@ -402,21 +546,24 @@ export function Identity({ store }: { store: FleetStore }) {
                     </select>
                     <button
                       className="btn primary"
-                      disabled={busy}
-                      onClick={() => void act('keys:issue', selected, scopeIdx, presets.ttls[ttlIdx].ms)}
+                      disabled={busy || !controllerVerified || issueBlocked}
+                      onClick={issueSession}
                     >
                       Issue session key
                     </button>
                   </div>
                 ) : null}
+                <p className={issueBlocked ? 'warn-text small' : 'muted small'}>
+                  Privileged key changes require controller proof. Full, uncapped, and non-expiring grants are blocked here until fresh-session and passkey/2FA enforcement is wired.
+                </p>
               </section>
 
               <div className="identity-grid">
                 <section className="card">
                   <h3>Human Operator Access</h3>
                   <div className="auth-list">
-                    <div><StatusPill state="self" /><span>Better Auth should own human login, org role, sessions, passkeys, 2FA, and control-plane API keys.</span></div>
-                    <div><StatusPill state="warn" /><span>Sensitive mutations require a fresh session plus passkey or 2FA before key rotation, reveal, export, or rebinding.</span></div>
+                    <div><StatusPill state={controllerVerified ? 'warn' : 'missing'} /><span>{controllerVerified ? 'Controller proof is present; Better Auth freshness still needs wiring.' : 'Controller proof is required before privileged mutations.'}</span></div>
+                    <div><StatusPill state="warn" /><span>Fresh session plus passkey or 2FA remains required before key rotation, reveal, export, or rebinding.</span></div>
                     <div><StatusPill state="missing" /><span>Better Auth is not proof of ENS ownership, wallet control, ERC-8004 identity, or agent runtime authenticity.</span></div>
                   </div>
                 </section>
@@ -424,7 +571,7 @@ export function Identity({ store }: { store: FleetStore }) {
                 <section className="card">
                   <h3>Reputation Evidence</h3>
                   <div className="auth-list">
-                    <div><StatusPill state="warn" /><span>EEP endorsements and ERC-8004 feedback should be weighted by source, recency, task context, and suspicious clusters.</span></div>
+                    <div><StatusPill state={domain && controllerVerified ? 'warn' : 'missing'} /><span>{domain && controllerVerified ? 'Identity is controller-attested locally; reputation providers still need live reads.' : 'Reputation reads require a bound identity and controller proof.'}</span></div>
                     <div><StatusPill state="warn" /><span>Validation results should show validator, method, confidence, stake or slash status, and exact job reference.</span></div>
                     <div><StatusPill state="self" /><span>Use layered evidence, not a single global score; trust tier never implies permission to spend or sign.</span></div>
                   </div>

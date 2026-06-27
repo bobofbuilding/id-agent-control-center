@@ -543,6 +543,10 @@ select:focus, input:focus { border-color: var(--accent); }
 .identity-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; align-items: stretch; }
 .identity-kv { grid-template-columns: 130px minmax(0, 1fr); }
 .identity-actions { justify-content: flex-start; flex-wrap: wrap; margin-top: 12px; }
+.identity-alert { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: 10px; align-items: center; border: 1px solid color-mix(in srgb, var(--err) 45%, var(--line)); border-radius: 8px; background: color-mix(in srgb, var(--err) 10%, var(--bg)); color: var(--text); padding: 9px 10px; }
+.controller-proof { display: flex; flex-direction: column; gap: 9px; }
+.identity-proof-message { width: 100%; min-height: 118px; resize: vertical; border: 1px solid var(--line); border-radius: 8px; background: var(--bg); color: var(--text); padding: 8px; font-size: 11px; line-height: 1.45; }
+.identity-proof-input { width: 100%; border: 1px solid var(--line); border-radius: 8px; background: var(--bg); color: var(--text); padding: 7px 8px; font-size: 11px; }
 .id-pill { display: inline-flex; align-items: center; justify-content: center; min-width: 82px; border: 1px solid var(--line); border-radius: 999px; padding: 2px 7px; font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: .04em; white-space: nowrap; }
 .id-pill.verified { color: var(--ok); border-color: color-mix(in srgb, var(--ok) 48%, transparent); background: color-mix(in srgb, var(--ok) 12%, transparent); }
 .id-pill.warn { color: var(--warn); border-color: color-mix(in srgb, var(--warn) 48%, transparent); background: color-mix(in srgb, var(--warn) 12%, transparent); }
@@ -562,6 +566,7 @@ select:focus, input:focus { border-color: var(--accent); }
   .identity-shell, .identity-grid, .identity-hero { display: flex; flex-direction: column; }
   .identity-agents { position: static; width: 100%; flex-basis: auto; max-height: none; }
   .identity-metrics { width: 100%; min-width: 0; }
+  .identity-alert { grid-template-columns: 1fr; }
   .evidence-row { grid-template-columns: 1fr; gap: 6px; }
 }
 

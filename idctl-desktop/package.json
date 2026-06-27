@@ -63,6 +63,8 @@
     "typescript": "^5.6.3"
   },
   "dependencies": {
+    "@noble/curves": "^1.9.1",
+    "@noble/hashes": "^1.8.0",
     "@nut-tree-fork/libnut-darwin": "^2.7.5",
     "@tauri-apps/api": "^2.11.1",
     "@tauri-apps/plugin-http": "^2.5.9"

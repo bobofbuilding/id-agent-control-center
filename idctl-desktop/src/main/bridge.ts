@@ -38,7 +38,7 @@ import {
 } from '../../../idctl/src/settings/store.ts';
 import { detectProjectsRoot, scanProjectsRoot } from './projects.ts';
 import { realpathSync } from 'node:fs';
-import { createHash } from 'node:crypto';
+import { createHash, randomBytes } from 'node:crypto';
 import { ProviderClient } from '../../../idctl/src/settings/ProviderClient.ts';
 import { discoverLocalServers, type DiscoveredServer } from '../../../idctl/src/settings/localDiscovery.ts';
 import { kindNeedsKey, type ProviderProfile, type McpServerProfile, type ProjectEntry } from '../../../idctl/src/settings/schema.ts';
@@ -51,6 +51,124 @@ import { readFileSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { homedir } from 'node:os';
 import type { ProviderKind } from '../../../idctl/src/settings/schema.ts';
+import { secp256k1 } from '@noble/curves/secp256k1';
+import { keccak_256 } from '@noble/hashes/sha3';
+
+interface ControllerProofRecord {
+  agent: string;
+  wallet: string;
+  nonce: string;
+  message: string;
+  signature: string;
+  verifiedAt: number;
+  expiresAt: number;
+}
+
+const CONTROLLER_PROOF_TTL_MS = 10 * 60_000;
+const controllerProofs = new Map<string, ControllerProofRecord>();
+const ETH_ADDRESS_RE = /^0x[0-9a-fA-F]{40}$/;
+
+function challengeMessage(agent: string, wallet: string, nonce: string): string {
+  return [
+    'ID Agents controller proof',
+    `Agent: ${agent}`,
+    `Controller: ${wallet}`,
+    `Nonce: ${nonce}`,
+    'Purpose: verify controller authority for Control Center privileged identity and key actions.',
+  ].join('\n');
+}
+
+function newControllerChallenge(agent: string, wallet: string): ControllerProofRecord {
+  if (!ETH_ADDRESS_RE.test(wallet)) {
+    throw new Error('Controller wallet must be a valid 0x address.');
+  }
+  const nonce = randomBytes(16).toString('hex');
+  const record: ControllerProofRecord = {
+    agent,
+    wallet: wallet.toLowerCase(),
+    nonce,
+    message: challengeMessage(agent, wallet, nonce),
+    signature: '',
+    verifiedAt: 0,
+    expiresAt: Date.now() + CONTROLLER_PROOF_TTL_MS,
+  };
+  controllerProofs.set(agent, record);
+  return record;
+}
+
+function isSignatureLike(value: string): boolean {
+  return /^0x[0-9a-fA-F]{130}$/.test(value.trim());
+}
+
+function bytesToHex(bytes: Uint8Array): string {
+  return Array.from(bytes, (byte) => byte.toString(16).padStart(2, '0')).join('');
+}
+
+function hexToBytes(value: string): Uint8Array {
+  const hex = value.startsWith('0x') ? value.slice(2) : value;
+  const bytes = new Uint8Array(hex.length / 2);
+  for (let i = 0; i < bytes.length; i += 1) {
+    bytes[i] = Number.parseInt(hex.slice(i * 2, i * 2 + 2), 16);
+  }
+  return bytes;
+}
+
+function personalSignHash(message: string): Uint8Array {
+  const body = Buffer.from(message, 'utf8');
+  const prefix = Buffer.from(`\x19Ethereum Signed Message:\n${body.length}`, 'utf8');
+  return keccak_256(Buffer.concat([prefix, body]));
+}
+
+function recoverPersonalSignAddress(message: string, signature: string): string {
+  const bytes = hexToBytes(signature.trim());
+  const v = bytes[64];
+  const recovery = v >= 35 ? (v - 35) % 2 : v >= 27 ? v - 27 : v;
+  if (recovery !== 0 && recovery !== 1) {
+    throw new Error('Controller signature has an unsupported recovery id.');
+  }
+  const sig = secp256k1.Signature.fromCompact(bytes.slice(0, 64)).addRecoveryBit(recovery);
+  const publicKey = sig.recoverPublicKey(personalSignHash(message)).toRawBytes(false);
+  return `0x${bytesToHex(keccak_256(publicKey.slice(1)).slice(-20))}`;
+}
+
+async function verifyControllerChallenge(agent: string, wallet: string, signature: string): Promise<ControllerProofRecord> {
+  const record = controllerProofs.get(agent);
+  if (!record || record.wallet.toLowerCase() !== wallet.toLowerCase()) {
+    throw new Error('No active controller challenge for this agent and wallet.');
+  }
+  if (record.expiresAt <= Date.now()) {
+    controllerProofs.delete(agent);
+    throw new Error('Controller challenge expired. Start a new challenge.');
+  }
+  if (!isSignatureLike(signature)) {
+    throw new Error('Controller signature must be a 0x-prefixed 65-byte wallet signature.');
+  }
+  const trimmed = signature.trim() as `0x${string}`;
+  const recovered = recoverPersonalSignAddress(record.message, trimmed);
+  if (recovered.toLowerCase() !== wallet.toLowerCase()) {
+    throw new Error('Controller signature does not match the challenge wallet.');
+  }
+  const verified = { ...record, signature: trimmed, verifiedAt: Date.now() };
+  controllerProofs.set(agent, verified);
+  return verified;
+}
+
+function controllerProofStatus(agent: string, wallet: string): ControllerProofRecord | null {
+  const record = controllerProofs.get(agent);
+  if (!record || record.wallet.toLowerCase() !== wallet.toLowerCase() || !record.verifiedAt) return null;
+  if (record.expiresAt <= Date.now()) {
+    controllerProofs.delete(agent);
+    return null;
+  }
+  return record;
+}
+
+function requireControllerProof(agent: string): void {
+  const record = controllerProofs.get(agent);
+  if (!record?.verifiedAt || record.expiresAt <= Date.now()) {
+    throw new Error('Privileged identity and key actions require a fresh controller-wallet challenge.');
+  }
+}
 
 /**
  * The codex runtime's real model list lives in the codex CLI's own cache
@@ -498,7 +616,14 @@ const METHODS: Record<string, (...a: any[]) => Promise<unknown>> = {
 
   // teams: create + start a new agent
   spawnAgent: (spec: Parameters<ManagerClient['spawnAgent']>[0]) => client.spawnAgent(spec),
-  'identity:register': (agent: string) => client.remote(`/register ${String(agent)}`),
+  'identity:controllerChallenge': async (agent: string, wallet: string) => newControllerChallenge(String(agent), String(wallet)),
+  'identity:controllerVerify': async (agent: string, wallet: string, signature: string) => verifyControllerChallenge(String(agent), String(wallet), String(signature)),
+  'identity:controllerStatus': async (agent: string, wallet: string) => controllerProofStatus(String(agent), String(wallet)),
+  'identity:register': (agent: string) => {
+    const name = String(agent);
+    requireControllerProof(name);
+    return client.remote(`/register ${name}`);
+  },
   'wallet:provision': (agent: string) => client.remote(`/agent ${String(agent)} wallet provision`),
   'onboard:run': (plan: OnboardPlan) => runOnboarding(client, plan),
 
@@ -662,10 +787,26 @@ const METHODS: Record<string, (...a: any[]) => Promise<unknown>> = {
   'keys:caps': async () => keys.capabilities(),
   'keys:list': (agents: string[]) => keys.listAccounts(agents ?? []),
   'keys:ensure': (agent: string) => keys.ensureAccount(String(agent)),
-  'keys:deploy': (agent: string) => keys.deployAccount(String(agent)),
-  'keys:issue': (agent: string, scopeIdx: number, ttlMs: number) =>
-    keys.issueSession(String(agent), SCOPE_PRESETS[Number(scopeIdx) || 0], Number(ttlMs)),
-  'keys:revoke': (agent: string, sessionId: string) => keys.revokeSession(String(agent), String(sessionId)),
+  'keys:deploy': (agent: string) => {
+    const name = String(agent);
+    requireControllerProof(name);
+    return keys.deployAccount(name);
+  },
+  'keys:issue': (agent: string, scopeIdx: number, ttlMs: number) => {
+    const name = String(agent);
+    const scope = SCOPE_PRESETS[Number(scopeIdx) || 0] ?? SCOPE_PRESETS[0];
+    const ttl = Number(ttlMs);
+    requireControllerProof(name);
+    if (!Number.isFinite(ttl) || ttl <= 0 || scope.label.includes('full') || scope.spendLimitWei === '0') {
+      throw new Error('Refusing to issue uncapped, full, non-expiring, or invalid session keys from the Control Center.');
+    }
+    return keys.issueSession(name, scope, ttl);
+  },
+  'keys:revoke': (agent: string, sessionId: string) => {
+    const name = String(agent);
+    requireControllerProof(name);
+    return keys.revokeSession(name, String(sessionId));
+  },
   'keys:presets': async () => ({ scopes: SCOPE_PRESETS, ttls: TTL_PRESETS }),
 
   // inference providers (settings store + probe + connect/sync)
