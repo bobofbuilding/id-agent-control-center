@@ -343,8 +343,9 @@ const METHODS: Record<string, (...a: any[]) => Promise<unknown>> = {
     const inline = typeof r === 'string' ? r : (r?.result ?? r?.message ?? '');
     return { inline: String(inline || '(no reply)') };
   },
-  'query:poll': async (queryId: string, wait?: number) => {
-    const q = await client.query(String(queryId), typeof wait === 'number' ? wait : undefined);
+  'query:poll': async (queryId: string, wait?: number, team?: string) => {
+    const c = team ? client.withTeam(String(team)) : client;
+    const q = await c.query(String(queryId), typeof wait === 'number' ? wait : undefined);
     const r = q.result as any;
     const text = typeof r === 'string' ? r : (r?.result ?? r?.message ?? '');
     return { status: q.status, text: String(text || ''), error: q.error };

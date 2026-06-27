@@ -31,6 +31,7 @@ export interface ChatMessage {
   role: 'you' | 'agent' | 'system';
   who: string;
   text: string;
+  queryId?: string;
   files?: { name: string; isImage: boolean }[];
   image?: { path: string; prompt: string; model: string };
 }
@@ -82,6 +83,10 @@ export function listChats(team?: string): ChatSummary[] {
   return out.sort((a, b) => b.updatedAt - a.updatedAt);
 }
 
+function isRecoverableFailureText(text?: string): boolean {
+  return /^\s*✗\s*(failed|agent failed|query failed|query expired|expired)\b/i.test(String(text || ''));
+}
+
 /** Sessions that have a persisted in-flight dispatch — so the renderer can resume
  *  polling ALL of them on mount (not just the last-open one), and a reply to a
  *  backgrounded chat still lands with an unread badge after a restart. `delivered`
@@ -99,7 +104,7 @@ export function listInflightChats(team?: string): Array<{ id: string; inflight: 
       const inf = s.inflight;
       if (!inf?.queryId) continue;
       const reply = (s.messages || []).find((m) => m.id === inf.replyId);
-      const delivered = !!(reply && ((reply.text && reply.text.trim()) || reply.image));
+      const delivered = !!(reply && (reply.image || ((reply.text || '').trim() && !isRecoverableFailureText(reply.text))));
       out.push({ id: s.id, inflight: inf, delivered });
     } catch { /* skip a corrupt file */ }
   }

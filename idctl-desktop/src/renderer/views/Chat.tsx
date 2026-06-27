@@ -11,6 +11,7 @@ interface Msg {
   role: 'you' | 'agent' | 'system';
   who: string;
   text: string;
+  queryId?: string;
   files?: { name: string; isImage: boolean }[];
   image?: { path: string; prompt: string; model: string };
   trace?: string[];        // the agent's OWN behind-the-scenes steps (background tasks) captured with this reply
@@ -34,6 +35,7 @@ interface Session {
 }
 type ChatSummary = { id: string; title: string; team: string; messageCount: number; updatedAt: number; unread?: boolean };
 type ImageResult = { ok: boolean; path?: string; dataUrl?: string; model?: string; costUsd?: number; error?: string };
+type QueryPoll = { status?: string; text?: string; error?: string };
 
 /** Quote a free-text message as ONE token for the manager's tokenizer (matches client.ts qArg). */
 function qArg(s: string): string {
@@ -45,6 +47,15 @@ function fmtBytes(n: number): string {
   return `${(n / (1024 * 1024)).toFixed(1)} MB`;
 }
 function clip(s: string, n: number): string { return s.length > n ? s.slice(0, n) + '…' : s; }
+function hasReplyContent(m?: Pick<Msg, 'text' | 'image'>): boolean {
+  return !!(m && (m.image || (m.text && m.text.trim())));
+}
+function isRecoverableFailureText(text?: string): boolean {
+  return /^\s*✗\s*(failed|agent failed|query failed|query expired|expired)\b/i.test(String(text || ''));
+}
+function isRecoverableFailedMsg(m: Msg): boolean {
+  return !!m.queryId && isRecoverableFailureText(m.text);
+}
 
 // Free, local image-vs-chat routing for the unified composer. Conservative —
 // defaults to chat unless the prompt clearly asks for a generated image (so we
@@ -198,6 +209,7 @@ export function Chat({ store, embedded = false, lockTarget, teamOverride }: { st
   const aliveRef = useRef(true); // false once unmounted (Chat view not on screen) → late replies count as unread
   const sendingRef = useRef(false); // synchronous single-flight latch: true from send() entry until inflight is committed
   const activePollsRef = useRef<Set<string>>(new Set()); // queryIds currently being polled (dedup resume)
+  const recoveryPollsRef = useRef<Set<string>>(new Set()); // stale failed bubbles already being checked
   useEffect(() => { aliveRef.current = true; return () => { aliveRef.current = false; }; }, []);
 
   /** Clear a session's unread flag (the user is now viewing it) + refresh the
@@ -227,7 +239,7 @@ export function Chat({ store, embedded = false, lockTarget, teamOverride }: { st
   useEffect(() => {
     const inf = session?.inflight;
     const reply = inf ? session?.messages.find((x) => x.id === inf.replyId) : undefined;
-    const alreadyDelivered = !!(reply && ((reply.text && reply.text.trim()) || reply.image));
+    const alreadyDelivered = !!(reply && hasReplyContent(reply) && !isRecoverableFailureText(reply.text));
     if (inf?.queryId && session && !alreadyDelivered) {
       const sinceSeq = store.events.reduce((mx, e) => Math.max(mx, e?.seq ?? 0), 0);
       setRunning({ sid: session.id, replyId: inf.replyId, startedAt: inf.startedAt, target: inf.target, queryId: inf.queryId, sinceSeq });
@@ -316,6 +328,7 @@ export function Chat({ store, embedded = false, lockTarget, teamOverride }: { st
     // an effect; here we only (re)attach the poll loop — pollInflight dedups per
     // queryId, so re-adopting the same session won't spawn a second loop.
     setBusy(false);
+    void recoverStaleFailedMessages(s);
     resumeOrClearInflight(s);
   }
 
@@ -327,12 +340,48 @@ export function Chat({ store, embedded = false, lockTarget, teamOverride }: { st
     const inf = s.inflight;
     if (!inf?.queryId) return;
     const reply = s.messages.find((x) => x.id === inf.replyId);
-    const delivered = !!(reply && ((reply.text && reply.text.trim()) || reply.image));
+    const delivered = !!(reply && hasReplyContent(reply) && !isRecoverableFailureText(reply.text));
     if (delivered) {
       void call('chats:patch', s.id, { inflight: null }).catch(() => {});
       setSession((cur) => (cur && cur.id === s.id ? { ...cur, inflight: null } : cur));
     } else {
       void pollInflight(s.id, inf);
+    }
+  }
+
+  async function recoverStaleFailedMessages(s: Session) {
+    const candidates = s.messages.filter(isRecoverableFailedMsg);
+    for (const m of candidates) {
+      const queryId = m.queryId;
+      if (!queryId) continue;
+      const key = `${s.id}:${m.id}:${queryId}`;
+      if (recoveryPollsRef.current.has(key) || activePollsRef.current.has(queryId)) continue;
+      recoveryPollsRef.current.add(key);
+      try {
+        const q = await call<QueryPoll>('query:poll', queryId, 0, s.team).catch(() => null);
+        if (q?.status !== 'delivered') continue;
+        await resolveMsg(s.id, m.id, {
+          role: 'agent',
+          who: m.who || s.target,
+          text: q.text || '(empty reply)',
+          pending: false,
+          queryId,
+        });
+        if (s.inflight?.queryId === queryId) {
+          await call('chats:patch', s.id, { inflight: null }).catch(() => {});
+          setSession((cur) => (cur && cur.id === s.id ? { ...cur, inflight: null } : cur));
+        }
+      } finally {
+        recoveryPollsRef.current.delete(key);
+      }
+    }
+  }
+
+  async function recoverSavedFailedChats(list: ChatSummary[]) {
+    for (const item of list) {
+      if (deletedRef.current.has(item.id)) continue;
+      const s = await call<Session | null>('chats:get', item.id).catch(() => null);
+      if (s) await recoverStaleFailedMessages(s);
     }
   }
 
@@ -373,6 +422,7 @@ export function Chat({ store, embedded = false, lockTarget, teamOverride }: { st
         if (p.delivered) { void call('chats:patch', p.id, { inflight: null }).catch(() => {}); continue; }
         void pollInflight(p.id, p.inflight);
       }
+      void recoverSavedFailedChats(list);
     })();
     return () => { alive = false; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -553,7 +603,7 @@ export function Chat({ store, embedded = false, lockTarget, teamOverride }: { st
    *  chat file; resolveMsg marks it unread when not being viewed), clear the
    *  inflight, and run the plan-save on a successful reply. */
   async function deliverInflight(sid: string, inf: Inflight, patch: Partial<Msg>, isReply = false) {
-    await resolveMsg(sid, inf.replyId, { ...patch, pending: false });
+    await resolveMsg(sid, inf.replyId, { queryId: inf.queryId, ...patch, pending: false });
     await call('chats:patch', sid, { inflight: null }).catch(() => {});
     setSession((cur) => (cur && cur.id === sid ? { ...cur, inflight: null } : cur));
     // Plan context rides on the inflight record (not a closure arg), so the
@@ -565,6 +615,18 @@ export function Chat({ store, embedded = false, lockTarget, teamOverride }: { st
         await appendSystem(sid, t ? `📋 Saved to Plans → “${t}” (Work › Plans tab)` : '⚠ Couldn’t save this to Plans.');
       }
     }
+  }
+
+  async function confirmRecoverableTerminal(inf: Inflight, first: QueryPoll): Promise<QueryPoll | null> {
+    let last: QueryPoll = first;
+    for (const wait of [0, 2, 2]) {
+      const q = await call<QueryPoll>('query:poll', inf.queryId, wait, team).catch(() => null);
+      if (!q?.status) return null;
+      last = q;
+      if (q.status === 'delivered') return q;
+      if (q.status === 'pending' || q.status === 'processing') return null;
+    }
+    return last;
   }
 
   /** Poll an in-flight query until terminal, delivering the reply into session
@@ -604,9 +666,9 @@ export function Chat({ store, embedded = false, lockTarget, teamOverride }: { st
     try {
       await pollActivity(); // floor this dispatch's activity cursor at start
       while (aliveRef.current && !deletedRef.current.has(sid)) {
-        let q: { status?: string; text?: string; error?: string } | null = null;
+        let q: QueryPoll | null = null;
         try {
-          q = await call<{ status?: string; text?: string; error?: string }>('query:poll', inf.queryId, 8);
+          q = await call<QueryPoll>('query:poll', inf.queryId, 8, team);
         } catch (e) {
           const msg = e instanceof Error ? e.message : String(e);
           if (PERMANENT.test(msg)) { // the query no longer exists (manager reset / lost) — terminal, don't spin
@@ -644,7 +706,31 @@ export function Chat({ store, embedded = false, lockTarget, teamOverride }: { st
             .catch(() => {});
           return;
         }
-        if (q?.status === 'failed' || q?.status === 'expired' || q?.status === 'cancelled') {
+        if (q?.status === 'failed' || q?.status === 'expired') {
+          await resolveMsg(sid, inf.replyId, { queryId: inf.queryId, text: `${inf.target} returned ${q.status}; checking for a final reply…`, pending: true });
+          const confirmed = await confirmRecoverableTerminal(inf, q);
+          if (!confirmed) { await new Promise((r) => setTimeout(r, 1500)); continue; }
+          if (confirmed.status === 'delivered') {
+            const { steps: own, delegations } = buildTrace(actSteps, inf.startedAt);
+            const text = confirmed.text || '(empty reply)';
+            await deliverInflight(sid, inf, {
+              text,
+              trace: own.length ? own : undefined,
+              delegations: delegations.length ? delegations : undefined,
+              reasoning: deterministicReason(own, delegations) || undefined,
+            }, true);
+            void call<string>('chat:genReason', text)
+              .then((r) => { if (r && r.trim()) void resolveMsg(sid, inf.replyId, { reasoning: clip(r.trim(), 100) }); })
+              .catch(() => {});
+            return;
+          }
+          if (confirmed.status === 'pending' || confirmed.status === 'processing') {
+            await new Promise((r) => setTimeout(r, 1500)); continue;
+          }
+          await deliverInflight(sid, inf, { role: 'system', text: `✗ ${confirmed.error || confirmed.status}` });
+          return;
+        }
+        if (q?.status === 'cancelled') {
           await deliverInflight(sid, inf, { role: 'system', text: `✗ ${q.error || q.status}` });
           return;
         }
@@ -685,9 +771,11 @@ export function Chat({ store, embedded = false, lockTarget, teamOverride }: { st
     // Commit the inflight to STATE first so the derived composer lock (`inflight`)
     // is continuously held — only THEN release `busy`, leaving no window where both
     // are false and a second send could slip through. Persist + poll after.
-    setSession((cur) => (cur && cur.id === sid ? { ...cur, inflight: inf } : cur));
+    setSession((cur) => (cur && cur.id === sid
+      ? { ...cur, inflight: inf, messages: cur.messages.map((x) => (x.id === replyId ? { ...x, queryId: inf.queryId } : x)) }
+      : cur));
     setBusy(false);
-    await call('chats:patch', sid, { inflight: inf }).catch(() => {});
+    await call('chats:patch', sid, { inflight: inf, patchMessage: { id: replyId, patch: { queryId: inf.queryId } } }).catch(() => {});
     void pollInflight(sid, inf);
   }
 
