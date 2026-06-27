@@ -8,6 +8,9 @@ Every change pushed or merged to `main` carries its version number in the commit
 subject (`vX.Y.Z: …`), stamped automatically by the `commit-msg` hook — see
 [CONTRIBUTING.md](CONTRIBUTING.md).
 
+## [0.1.202] — 2026-06-27
+- Refine activity feed spacing
+
 ## [0.1.201] — 2026-06-27
 - Gate identity keys behind controller proof
 
