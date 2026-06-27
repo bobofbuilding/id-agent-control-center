@@ -8,6 +8,9 @@ Every change pushed or merged to `main` carries its version number in the commit
 subject (`vX.Y.Z: …`), stamped automatically by the `commit-msg` hook — see
 [CONTRIBUTING.md](CONTRIBUTING.md).
 
+## [0.1.198] — 2026-06-27
+- docs: clarify IDACC release naming
+
 ## [0.1.197] — 2026-06-26
 - fix(teams): route instruction drafts through HR manager
 
