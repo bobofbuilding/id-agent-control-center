@@ -1,6 +1,6 @@
 {
   "schemaVersion": 2,
-  "updated": "2026-06-26",
+  "updated": "2026-06-27",
   "title": "ID Agents Control Center Wiki",
   "description": "Human-readable wiki and editable UI schematic for the Control Center. Each page.body field is the prose wiki article; the desktop app still reads page nav metadata for sidebar labels, icons, order, and visibility, and keeps the structured sections as supporting implementation detail.",
   "editContract": {
@@ -30,7 +30,8 @@
     ],
     "routeRule": "A page only becomes navigable if its route is implemented in idctl-desktop/src/renderer/App.tsx. Unknown routes are shown in the Wiki but skipped by the sidebar.",
     "body": "pages[].body is markdown prose for humans. Keep it factual and grounded in the current renderer behavior; do not remove nav, route, component, sourceFiles, or structured sections because those continue to drive the live UI and schematic detail.",
-    "releaseDrift": "scripts/check-wiki.mjs compares this appVersion and updated marker with idctl-desktop/package.json during release so stale wiki content is surfaced before shipping."
+    "releaseDrift": "scripts/check-wiki.mjs compares this appVersion and updated marker with idctl-desktop/package.json during release so stale wiki content is surfaced before shipping.",
+    "releaseNaming": "Operator-facing release notes, ops/deployer handoffs, and content-ops release-cycle updates should say IDACC release / idacc release, not IACC release / iacc release. IDACC means ID Agent Control Center."
   },
   "global": {
     "shell": "Electron desktop app. Renderer calls window.idagents.call(method, ...args); preload sends IPC to main; main either handles app-local methods or forwards manager methods through bridge.ts and ManagerClient.",
