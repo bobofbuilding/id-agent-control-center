@@ -130,8 +130,8 @@ input, textarea { -webkit-user-select: text; user-select: text; }
 .dot.err { background: var(--err); }
 
 /* Activity feed */
-.feed-list { display: flex; flex-direction: column; gap: 2px; overflow: auto; }
-.feed-row { display: flex; gap: 8px; align-items: baseline; font-size: 12.5px; line-height: 1.5; padding: 3px 4px; border-radius: 5px; }
+.feed-list { display: flex; flex-direction: column; gap: 4px; overflow: auto; padding-right: 10px; }
+.feed-row { display: flex; gap: 10px; align-items: baseline; font-size: 12.5px; line-height: 1.55; padding: 4px 6px; border-radius: 5px; }
 .feed-row:hover { background: var(--bg-3); }
 /* Supervision check-ins — legible two-line rows. */
 .ci-list { display: flex; flex-direction: column; gap: 4px; }
@@ -147,7 +147,7 @@ input, textarea { -webkit-user-select: text; user-select: text; }
 .feed-row .topic.accent { color: var(--accent); }
 .feed-row .desc { color: var(--text); flex: 1; white-space: normal; overflow-wrap: anywhere; }
 .feed-row .topic { text-transform: uppercase; font-size: 10px; letter-spacing: .03em; opacity: .85; min-width: 52px; }
-.feed-row .t { margin-left: auto; color: var(--muted); }
+.feed-row .t { margin-left: 14px; min-width: 30px; text-align: right; color: var(--muted); }
 
 /* In-table dropdowns (per-agent model + actions) */
 .cell-select {
