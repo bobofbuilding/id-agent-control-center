@@ -3,7 +3,7 @@
  * id-agents manager, and loads the React renderer.
  */
 
-import { app, BrowserWindow, ipcMain, shell, Menu, MenuItem, globalShortcut, screen } from 'electron';
+import { app, BrowserWindow, ipcMain, shell, Menu, MenuItem, globalShortcut, screen, safeStorage } from 'electron';
 import { join } from 'node:path';
 import { readFileSync, writeFileSync } from 'node:fs';
 import { call, startGoalDriver, startOrgSync, startModelRefreshLoop } from './bridge.ts';
@@ -23,8 +23,8 @@ import { listDreams, getDream, saveDream, removeDream, type Dream } from './drea
 import { listQuestions, addQuestion, removeQuestion, type BlockerQuestion } from './questionstore.ts';
 import { generateImage, readImage, imageModels, getImageServer, detectImageServer } from './images.ts';
 import { readWiki } from './wiki.ts';
-import { loadSettings, setUpdateSettings, setImageServer } from '../../../idctl/src/settings/store.ts';
-import type { ImageServerConfig } from '../../../idctl/src/settings/schema.ts';
+import { loadSettings, removeEvmRpc, setUpdateSettings, setImageServer, upsertEvmRpc, recordEvmRpcRequest } from '../../../idctl/src/settings/store.ts';
+import type { EvmRpcKeySource, EvmRpcProfile, EvmRpcRequest, ImageServerConfig } from '../../../idctl/src/settings/schema.ts';
 import { startBroker, armBroker, disarmBroker, setWatching, brokerStatus, auditTail, panicBroker, setSupervised, setPaused, confirmAction, pendingActions, setPanicHotkey, mintAgentToken, brokerUrl, stopBroker } from './computeruse/broker.ts';
 import { getPermissions, openPermissionSettings, relaunchApp, type CuPermissionPane } from './computeruse/permissions.ts';
 import { driverCapability, getMousePos } from './computeruse/driver.mac.ts';
@@ -35,6 +35,113 @@ declare const __dirname: string;
 let win: BrowserWindow | null = null;
 let brainGraphWin: BrowserWindow | null = null;
 let stopGoalDriver: (() => void) | null = null;
+
+type EvmRpcRow = Omit<EvmRpcProfile, 'apiKey' | 'apiKeyEncrypted'> & { keySource: EvmRpcKeySource };
+
+function evmEnvKeyName(id: string): string {
+  return `IDCTL_EVM_${id.toUpperCase().replace(/[^A-Z0-9]+/g, '_')}_API_KEY`;
+}
+
+function encryptSecret(secret: string): string {
+  return safeStorage.encryptString(secret).toString('base64');
+}
+
+function decryptSecret(encrypted?: string): string | undefined {
+  if (!encrypted) return undefined;
+  try {
+    return safeStorage.decryptString(Buffer.from(encrypted, 'base64'));
+  } catch {
+    return undefined;
+  }
+}
+
+function evmKeySourceOf(rpc: EvmRpcProfile): EvmRpcKeySource {
+  if (rpc.apiKeyEncrypted) return 'encrypted';
+  if (rpc.apiKey) return 'config';
+  if (process.env[evmEnvKeyName(rpc.id)]) return 'env';
+  return 'none';
+}
+
+function resolveEvmRpcKey(rpc: EvmRpcProfile): string | undefined {
+  return decryptSecret(rpc.apiKeyEncrypted) || rpc.apiKey || process.env[evmEnvKeyName(rpc.id)] || undefined;
+}
+
+function redactEvmRpc(rpc: EvmRpcProfile): EvmRpcRow {
+  const { apiKey: _apiKey, apiKeyEncrypted: _apiKeyEncrypted, ...safe } = rpc;
+  return { ...safe, keySource: evmKeySourceOf(rpc) };
+}
+
+function normalizeRpcUrlForStorage(httpsUrl: string, apiKey?: string): string {
+  let url = httpsUrl.trim();
+  const key = apiKey?.trim();
+  if (!key) return url;
+  const encoded = encodeURIComponent(key);
+  url = url.split(key).join('{API_KEY}');
+  if (encoded !== key) url = url.split(encoded).join('{API_KEY}');
+  return url;
+}
+
+function rpcUrlForRequest(httpsUrl: string, apiKey?: string): string {
+  const key = apiKey?.trim();
+  let url = httpsUrl.trim();
+  if (key) {
+    url = url.replace(/\{API_KEY\}|\$API_KEY/g, encodeURIComponent(key));
+    if (!/\{API_KEY\}|\$API_KEY/.test(httpsUrl) && /\/v[23]\/?$/.test(url)) {
+      url = `${url.replace(/\/?$/, '/')}${encodeURIComponent(key)}`;
+    }
+  }
+  return url;
+}
+
+function validateEvmRpcInput(input: EvmRpcProfile): void {
+  if (!input.network?.trim()) throw new Error('network is required');
+  const url = input.httpsUrl?.trim();
+  if (!url) throw new Error('HTTPS URL is required');
+  let parsed: URL;
+  try {
+    parsed = new URL(url.replace(/\{API_KEY\}|\$API_KEY/g, 'placeholder'));
+  } catch {
+    throw new Error('HTTPS URL must be a valid URL');
+  }
+  if (parsed.protocol !== 'https:') throw new Error('EVM RPC URL must use https');
+}
+
+async function probeEvmRpc(id: string): Promise<{ rpcs: EvmRpcRow[]; outcome: EvmRpcRequest }> {
+  const rpc = (loadSettings().evmRpcs ?? []).find((x) => x.id === id);
+  if (!rpc) throw new Error('EVM RPC endpoint not found');
+  const key = resolveEvmRpcKey(rpc);
+  const started = Date.now();
+  const outcome: EvmRpcRequest = { at: started, method: 'eth_blockNumber', status: 'unknown', keySource: evmKeySourceOf(rpc) };
+  try {
+    const res = await fetch(rpcUrlForRequest(rpc.httpsUrl, key), {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'eth_blockNumber', params: [] }),
+    });
+    outcome.httpStatus = res.status;
+    const body = await res.json().catch(() => null) as { result?: string; error?: { message?: string; code?: number } } | null;
+    outcome.latencyMs = Date.now() - started;
+    if (res.status === 401 || res.status === 403 || body?.error?.code === 401) {
+      outcome.status = 'auth-error';
+      outcome.error = body?.error?.message ?? `HTTP ${res.status}`;
+    } else if (!res.ok) {
+      outcome.status = 'unreachable';
+      outcome.error = body?.error?.message ?? `HTTP ${res.status}`;
+    } else if (typeof body?.result === 'string') {
+      outcome.status = 'available';
+      outcome.blockNumber = Number.parseInt(body.result, 16);
+    } else {
+      outcome.status = 'error';
+      outcome.error = body?.error?.message ?? 'missing eth_blockNumber result';
+    }
+  } catch (err) {
+    outcome.latencyMs = Date.now() - started;
+    outcome.status = 'unreachable';
+    outcome.error = err instanceof Error ? err.message : String(err);
+  }
+  recordEvmRpcRequest(id, outcome);
+  return { rpcs: (loadSettings().evmRpcs ?? []).map(redactEvmRpc), outcome };
+}
 
 // --- window state: reopen the app where/how the user left it ---
 interface WinState { x?: number; y?: number; width: number; height: number; fullScreen?: boolean }
@@ -201,6 +308,28 @@ async function appCall(method: string, args: unknown[]): Promise<unknown> {
       return loadSettings().update ?? null;
     case 'update:setSettings':
       return setUpdateSettings((args[0] as Record<string, unknown>) ?? {}).update ?? null;
+    case 'evmRpc:list':
+      return (loadSettings().evmRpcs ?? []).map(redactEvmRpc);
+    case 'evmRpc:save':
+      {
+        const input = (args[0] as EvmRpcProfile) ?? {};
+        const apiKeyInput = typeof (input as any).apiKey === 'string' ? (input as any).apiKey.trim() : '';
+        const apiKeyEncrypted = apiKeyInput ? encryptSecret(apiKeyInput) : input.apiKeyEncrypted;
+        const rpc: EvmRpcProfile = {
+          ...input,
+          httpsUrl: normalizeRpcUrlForStorage(input.httpsUrl ?? '', apiKeyInput),
+          apiKey: undefined,
+          apiKeyEncrypted,
+        };
+        validateEvmRpcInput(rpc);
+        upsertEvmRpc(rpc);
+        return (loadSettings().evmRpcs ?? []).map(redactEvmRpc);
+      }
+    case 'evmRpc:remove':
+      removeEvmRpc(String(args[0] ?? ''));
+      return (loadSettings().evmRpcs ?? []).map(redactEvmRpc);
+    case 'evmRpc:probe':
+      return probeEvmRpc(String(args[0] ?? ''));
     case 'subs:status':
       return subsStatus();
     case 'subs:signin':

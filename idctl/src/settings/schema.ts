@@ -13,6 +13,12 @@ export interface IdctlConfig {
   /** Inference backend connections (cloud + local). */
   providers: ProviderProfile[];
   /**
+   * EVM JSON-RPC endpoints used for on-chain data reads. Secrets are written by
+   * the desktop main process as encrypted blobs and must not be returned to the
+   * renderer.
+   */
+  evmRpcs?: EvmRpcProfile[];
+  /**
    * External MCP servers the operator has registered (the "Modules" catalog).
    * These are definitions; attaching one to an agent writes it to that agent's
    * metadata.mcpServers via the manager and takes effect on rebuild.
@@ -223,6 +229,39 @@ export interface ProviderSync {
   models: string[];
   /** Where the API key was resolved from (cloud providers). */
   keySource?: 'config' | 'env' | 'none';
+}
+
+export type EvmRpcKeySource = 'encrypted' | 'config' | 'env' | 'none';
+export type EvmRpcStatus = 'unknown' | 'available' | 'auth-error' | 'unreachable' | 'error';
+
+/** Cached status from the most recent data-availability probe. */
+export interface EvmRpcRequest {
+  /** ms epoch of the last JSON-RPC request. */
+  at: number;
+  method: string;
+  status: EvmRpcStatus;
+  latencyMs?: number;
+  httpStatus?: number;
+  blockNumber?: number;
+  error?: string;
+  keySource?: EvmRpcKeySource;
+}
+
+/** EVM JSON-RPC endpoint. apiKey fields are main-process only. */
+export interface EvmRpcProfile {
+  /** Stable id, e.g. "ethereum-mainnet" or "base-public". */
+  id: string;
+  /** User-facing network name, e.g. "Ethereum mainnet", "Base", "Sepolia". */
+  network: string;
+  /** HTTPS JSON-RPC URL. API keys should be stored separately where possible. */
+  httpsUrl: string;
+  /** Legacy/plain fallback. Prefer apiKeyEncrypted in the desktop app. */
+  apiKey?: string;
+  /** Electron safeStorage encrypted API key, base64 encoded. */
+  apiKeyEncrypted?: string;
+  enabled: boolean;
+  /** Last data-availability probe result. */
+  lastRequest?: EvmRpcRequest;
 }
 
 /** MCP server transport. Only serializable kinds cross the agent-spawn boundary. */

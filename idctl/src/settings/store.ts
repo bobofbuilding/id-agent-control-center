@@ -9,7 +9,7 @@
 
 import { existsSync, mkdirSync, readFileSync, writeFileSync, statSync, chmodSync, renameSync, unlinkSync } from 'node:fs';
 import { resolveConfigPath, configDir } from './paths.ts';
-import { emptyConfig, defaultUpdateSettings, DEFAULT_TEAM, type GoalDriverSettings, type IdctlConfig, type ImageServerConfig, type ManagerProfile, type McpServerProfile, type ProjectEntry, type ProviderProfile, type ProviderSync, type UpdateSettings } from './schema.ts';
+import { emptyConfig, defaultUpdateSettings, DEFAULT_TEAM, type EvmRpcProfile, type EvmRpcRequest, type GoalDriverSettings, type IdctlConfig, type ImageServerConfig, type ManagerProfile, type McpServerProfile, type ProjectEntry, type ProviderProfile, type ProviderSync, type UpdateSettings } from './schema.ts';
 
 function normalizeGoalDriver(input: unknown): GoalDriverSettings | undefined {
   if (!input || typeof input !== 'object') return undefined;
@@ -43,6 +43,7 @@ export function loadSettings(file = resolveConfigPath()): IdctlConfig {
       version: 1,
       managers: Array.isArray(raw.managers) ? raw.managers : [],
       providers: Array.isArray(raw.providers) ? raw.providers : [],
+      evmRpcs: Array.isArray(raw.evmRpcs) ? raw.evmRpcs : [],
       mcpServers: Array.isArray(raw.mcpServers) ? raw.mcpServers : [],
       defaultManager: raw.defaultManager,
       // Merge so an absent block → defaults (autoUpgrade true), per-field overridable.
@@ -216,6 +217,52 @@ export function recordProviderSync(name: string, sync: ProviderSync, file = reso
   const cfg = loadSettings(file);
   const p = cfg.providers.find((x) => x.name === name);
   if (p) p.lastSync = sync;
+  saveSettings(cfg, file);
+  return cfg;
+}
+
+// ---- EVM RPC endpoints ----------------------------------------------------
+
+function normalizeRpcId(id: string, network: string): string {
+  return (id || network || 'evm-rpc').trim().toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') || 'evm-rpc';
+}
+
+export function upsertEvmRpc(input: EvmRpcProfile, file = resolveConfigPath()): IdctlConfig {
+  const cfg = loadSettings(file);
+  const list = cfg.evmRpcs ?? [];
+  const id = normalizeRpcId(input.id, input.network);
+  const i = list.findIndex((x) => x.id === id);
+  const prev = i >= 0 ? list[i] : undefined;
+  const rpc: EvmRpcProfile = {
+    ...(prev ?? {}),
+    ...input,
+    id,
+    network: input.network.trim(),
+    httpsUrl: input.httpsUrl.trim(),
+    enabled: input.enabled !== false,
+    apiKey: input.apiKey !== undefined ? input.apiKey : prev?.apiKey,
+    apiKeyEncrypted: input.apiKeyEncrypted !== undefined ? input.apiKeyEncrypted : prev?.apiKeyEncrypted,
+  };
+  if (!rpc.apiKey) delete rpc.apiKey;
+  if (!rpc.apiKeyEncrypted) delete rpc.apiKeyEncrypted;
+  if (i >= 0) list[i] = rpc;
+  else list.push(rpc);
+  cfg.evmRpcs = list;
+  saveSettings(cfg, file);
+  return cfg;
+}
+
+export function removeEvmRpc(id: string, file = resolveConfigPath()): IdctlConfig {
+  const cfg = loadSettings(file);
+  cfg.evmRpcs = (cfg.evmRpcs ?? []).filter((x) => x.id !== id);
+  saveSettings(cfg, file);
+  return cfg;
+}
+
+export function recordEvmRpcRequest(id: string, lastRequest: EvmRpcRequest, file = resolveConfigPath()): IdctlConfig {
+  const cfg = loadSettings(file);
+  const rpc = (cfg.evmRpcs ?? []).find((x) => x.id === id);
+  if (rpc) rpc.lastRequest = lastRequest;
   saveSettings(cfg, file);
   return cfg;
 }

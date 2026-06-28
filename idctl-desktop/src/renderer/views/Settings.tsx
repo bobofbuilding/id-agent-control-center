@@ -1,6 +1,6 @@
 import { Fragment, useEffect, useState } from 'react';
 import { call, type FleetStore } from '../store.ts';
-import { defaultBaseUrl, kindNeedsKey, type ProviderKind, type ProviderProfile } from '../../../../idctl/src/settings/schema.ts';
+import { defaultBaseUrl, kindNeedsKey, type EvmRpcKeySource, type EvmRpcProfile, type EvmRpcRequest, type ProviderKind, type ProviderProfile } from '../../../../idctl/src/settings/schema.ts';
 import type { ProbeOutcome } from '../../../../idctl/src/settings/ProviderClient.ts';
 import type { DiscoveredServer } from '../../../../idctl/src/settings/localDiscovery.ts';
 import { PROVIDER_CATALOG, findProvider } from '../../../../idctl/src/settings/providerCatalog.ts';
@@ -19,6 +19,7 @@ const KINDS: ProviderKind[] = ['ollama', 'lmstudio', 'openai-compatible', 'anthr
 
 /** Provider profile enriched by the bridge with where its key resolves from. */
 type ProviderRow = ProviderProfile & { keySource?: 'config' | 'env' | 'none'; needsKey?: boolean };
+type EvmRpcRow = Omit<EvmRpcProfile, 'apiKey' | 'apiKeyEncrypted'> & { keySource: EvmRpcKeySource };
 
 function timeAgo(ms: number): string {
   const s = Math.max(0, Math.round((Date.now() - ms) / 1000));
@@ -31,6 +32,13 @@ function timeAgo(ms: number): string {
 
 export function Settings({ store }: { store: FleetStore }) {
   const [providers, setProviders] = useState<ProviderRow[]>([]);
+  const [evmRpcs, setEvmRpcs] = useState<EvmRpcRow[]>([]);
+  const [rpcNetwork, setRpcNetwork] = useState('Ethereum mainnet');
+  const [rpcUrl, setRpcUrl] = useState('https://eth-mainnet.g.alchemy.com/v2/{API_KEY}');
+  const [rpcApiKey, setRpcApiKey] = useState('');
+  const [rpcEditing, setRpcEditing] = useState<string | null>(null);
+  const [rpcBusy, setRpcBusy] = useState<string | null>(null);
+  const [rpcMsg, setRpcMsg] = useState('');
   const [probe, setProbe] = useState<Record<string, ProbeOutcome>>({});
   const [expanded, setExpanded] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -65,6 +73,7 @@ export function Settings({ store }: { store: FleetStore }) {
 
   async function reload() {
     setProviders(await call<ProviderRow[]>('providers:list').catch(() => []));
+    setEvmRpcs(await call<EvmRpcRow[]>('evmRpc:list').catch(() => []));
     setVersion(await call<string>('app:version').catch(() => ''));
     const u = await call<typeof upd>('update:getSettings').catch(() => null);
     setUpd(u);
@@ -162,6 +171,69 @@ export function Settings({ store }: { store: FleetStore }) {
   }
   async function toggle(n: string) {
     setProviders(await call<ProviderRow[]>('providers:toggle', n));
+  }
+  function rpcIdFromNetwork(network: string): string {
+    return network.trim().toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') || 'evm-rpc';
+  }
+  async function saveRpc() {
+    const network = rpcNetwork.trim();
+    const httpsUrl = rpcUrl.trim();
+    if (!network || !httpsUrl) { setRpcMsg('network and HTTPS URL are required'); return; }
+    setRpcBusy('save'); setRpcMsg('');
+    try {
+      setEvmRpcs(await call<EvmRpcRow[]>('evmRpc:save', {
+        id: rpcEditing ?? rpcIdFromNetwork(network),
+        network,
+        httpsUrl,
+        apiKey: rpcApiKey.trim() || undefined,
+        enabled: true,
+      } satisfies EvmRpcProfile));
+      setRpcEditing(null);
+      setRpcApiKey('');
+      setRpcMsg('saved');
+    } catch (err) {
+      setRpcMsg(`save failed: ${err instanceof Error ? err.message : String(err)}`);
+    } finally {
+      setRpcBusy(null);
+    }
+  }
+  function editRpc(rpc: EvmRpcRow) {
+    setRpcEditing(rpc.id);
+    setRpcNetwork(rpc.network);
+    setRpcUrl(rpc.httpsUrl);
+    setRpcApiKey('');
+    setRpcMsg('enter a new key only if you want to replace the linked key');
+  }
+  async function removeRpc(id: string) {
+    if (!window.confirm('Remove this EVM RPC endpoint?')) return;
+    setRpcBusy(id);
+    try {
+      setEvmRpcs(await call<EvmRpcRow[]>('evmRpc:remove', id));
+      if (rpcEditing === id) setRpcEditing(null);
+    } finally {
+      setRpcBusy(null);
+    }
+  }
+  async function probeRpc(id: string) {
+    setRpcBusy(id);
+    try {
+      const r = await call<{ rpcs: EvmRpcRow[]; outcome: EvmRpcRequest }>('evmRpc:probe', id);
+      setEvmRpcs(r.rpcs);
+    } finally {
+      setRpcBusy(null);
+    }
+  }
+  function rpcStatusClass(status?: string): string {
+    if (status === 'available') return 'ok-text';
+    if (status === 'auth-error' || status === 'error') return 'status-error';
+    if (status === 'unreachable') return 'warn-text';
+    return 'muted';
+  }
+  function rpcKeyLabel(source: EvmRpcKeySource): string {
+    if (source === 'encrypted') return 'linked';
+    if (source === 'env') return 'env';
+    if (source === 'config') return 'legacy';
+    return 'public';
   }
 
   // Local LLM discovery: scan localhost for running servers, then one-click add.
@@ -481,6 +553,39 @@ export function Settings({ store }: { store: FleetStore }) {
               ))}
             </select>
           </b>
+        </div>
+      </section>
+
+      <section className="card">
+        <h3>EVM data RPCs</h3>
+        <p className="muted small" style={{ marginTop: -4 }}>
+          JSON-RPC endpoints for chain data availability checks. Public RPCs can leave the key blank; Alchemy/Infura-style URLs can use <span className="mono">{'{API_KEY}'}</span>. Linked keys are encrypted by the desktop app and never shown back here.
+        </p>
+        <div className="row-actions" style={{ gap: 8, flexWrap: 'wrap', alignItems: 'center', marginTop: 8 }}>
+          <input style={{ flex: '1 1 190px' }} placeholder="network, e.g. Base mainnet" value={rpcNetwork} disabled={rpcBusy === 'save'} onChange={(e) => setRpcNetwork(e.target.value)} />
+          <input style={{ flex: '2 1 360px' }} placeholder="https://… JSON-RPC URL" value={rpcUrl} disabled={rpcBusy === 'save'} onChange={(e) => setRpcUrl(e.target.value)} />
+          <input style={{ flex: '1 1 220px' }} type="password" placeholder={rpcEditing ? 'new API key (optional)' : 'API key (optional)'} value={rpcApiKey} disabled={rpcBusy === 'save'} onChange={(e) => setRpcApiKey(e.target.value)} />
+          <button className="btn primary" disabled={rpcBusy === 'save'} onClick={() => void saveRpc()}>{rpcBusy === 'save' ? 'Saving…' : rpcEditing ? 'Update RPC' : 'Add RPC'}</button>
+          {rpcEditing ? <button className="btn" disabled={rpcBusy === 'save'} onClick={() => { setRpcEditing(null); setRpcApiKey(''); setRpcMsg(''); }}>Cancel</button> : null}
+        </div>
+        {rpcMsg ? <div className={`small ${/failed|required/.test(rpcMsg) ? 'status-error' : /saved/.test(rpcMsg) ? 'ok-text' : 'muted'}`} style={{ marginTop: 6 }}>{rpcMsg}</div> : null}
+        <div className="catalog-grid" style={{ marginTop: 12 }}>
+          {evmRpcs.map((rpc) => (
+            <div className="catalog-row" key={rpc.id}>
+              <span className="b">{rpc.network}</span>
+              <span className="mono small grow" title={rpc.httpsUrl}>{rpc.httpsUrl}</span>
+              <span className={`small ${rpc.keySource === 'none' ? 'muted' : 'ok-text'}`}>key: {rpcKeyLabel(rpc.keySource)}</span>
+              <span className={`small ${rpcStatusClass(rpc.lastRequest?.status)}`}>
+                {rpc.lastRequest
+                  ? `${rpc.lastRequest.status}${rpc.lastRequest.blockNumber != null ? ` · block ${rpc.lastRequest.blockNumber.toLocaleString()}` : ''} · ${timeAgo(rpc.lastRequest.at)}`
+                  : 'not checked'}
+              </span>
+              <button className="btn small" disabled={!!rpcBusy} onClick={() => void probeRpc(rpc.id)}>{rpcBusy === rpc.id ? 'Checking…' : 'Check'}</button>
+              <button className="btn small" disabled={!!rpcBusy} onClick={() => editRpc(rpc)}>Edit</button>
+              <button className="btn small icon-danger" disabled={!!rpcBusy} onClick={() => void removeRpc(rpc.id)}>Remove</button>
+            </div>
+          ))}
+          {evmRpcs.length === 0 ? <p className="muted small center pad">No EVM data RPCs configured.</p> : null}
         </div>
       </section>
 
