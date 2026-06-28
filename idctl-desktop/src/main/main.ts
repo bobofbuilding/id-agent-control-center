@@ -23,7 +23,7 @@ import { listDreams, getDream, saveDream, removeDream, type Dream } from './drea
 import { listQuestions, addQuestion, removeQuestion, type BlockerQuestion } from './questionstore.ts';
 import { generateImage, readImage, imageModels, getImageServer, detectImageServer } from './images.ts';
 import { readWiki } from './wiki.ts';
-import { loadSettings, removeEvmRpc, setUpdateSettings, setImageServer, upsertEvmRpc, recordEvmRpcRequest } from '../../../idctl/src/settings/store.ts';
+import { loadSettings, removeEvmRpc, saveSettings, setUpdateSettings, setImageServer, upsertEvmRpc, recordEvmRpcRequest } from '../../../idctl/src/settings/store.ts';
 import type { EvmRpcKeySource, EvmRpcProfile, EvmRpcRequest, ImageServerConfig } from '../../../idctl/src/settings/schema.ts';
 import { startBroker, armBroker, disarmBroker, setWatching, brokerStatus, auditTail, panicBroker, setSupervised, setPaused, confirmAction, pendingActions, setPanicHotkey, mintAgentToken, brokerUrl, stopBroker } from './computeruse/broker.ts';
 import { getPermissions, openPermissionSettings, relaunchApp, type CuPermissionPane } from './computeruse/permissions.ts';
@@ -57,7 +57,7 @@ function decryptSecret(encrypted?: string): string | undefined {
 
 function evmKeySourceOf(rpc: EvmRpcProfile): EvmRpcKeySource {
   if (rpc.apiKeyEncrypted) return 'encrypted';
-  if (rpc.apiKey) return 'config';
+  if (rpc.apiKey || extractEmbeddedRpcKey(rpc.httpsUrl)) return 'config';
   if (process.env[evmEnvKeyName(rpc.id)]) return 'env';
   return 'none';
 }
@@ -68,7 +68,7 @@ function resolveEvmRpcKey(rpc: EvmRpcProfile): string | undefined {
 
 function redactEvmRpc(rpc: EvmRpcProfile): EvmRpcRow {
   const { apiKey: _apiKey, apiKeyEncrypted: _apiKeyEncrypted, ...safe } = rpc;
-  return { ...safe, keySource: evmKeySourceOf(rpc) };
+  return { ...safe, httpsUrl: sanitizeRpcUrlForDisplay(rpc.httpsUrl), keySource: evmKeySourceOf(rpc) };
 }
 
 function normalizeRpcUrlForStorage(httpsUrl: string, apiKey?: string): string {
@@ -79,6 +79,89 @@ function normalizeRpcUrlForStorage(httpsUrl: string, apiKey?: string): string {
   url = url.split(key).join('{API_KEY}');
   if (encoded !== key) url = url.split(encoded).join('{API_KEY}');
   return url;
+}
+
+function isSecretLikeRpcValue(value: string | undefined): value is string {
+  if (!value) return false;
+  if (/^\{API_KEY\}$|^\$API_KEY$|^placeholder$/i.test(value)) return false;
+  return /^[A-Za-z0-9._~:-]{12,}$/.test(value);
+}
+
+function extractEmbeddedRpcKey(httpsUrl: string | undefined): string | undefined {
+  if (!httpsUrl) return undefined;
+  try {
+    const parsed = new URL(httpsUrl.replace(/\{API_KEY\}|\$API_KEY/g, 'placeholder'));
+    const queryNames = ['apikey', 'api_key', 'key', 'token', 'access_token', 'auth', 'x-api-key'];
+    for (const [name, value] of new URLSearchParams(parsed.searchParams)) {
+      if (queryNames.includes(name.toLowerCase()) && isSecretLikeRpcValue(value)) return value;
+    }
+    const parts = parsed.pathname.split('/').filter(Boolean).map((part) => decodeURIComponent(part));
+    for (let i = 1; i < parts.length; i++) {
+      if (/^v[23]$/i.test(parts[i - 1]) && isSecretLikeRpcValue(parts[i])) return parts[i];
+    }
+    if (/quicknode|quiknode/i.test(parsed.hostname)) {
+      const candidate = parts.find(isSecretLikeRpcValue);
+      if (candidate) return candidate;
+    }
+  } catch {
+    return undefined;
+  }
+  return undefined;
+}
+
+function normalizeRpcForStorage(httpsUrl: string, explicitApiKey?: string): { httpsUrl: string; apiKey?: string } {
+  const explicit = explicitApiKey?.trim() || undefined;
+  const embedded = extractEmbeddedRpcKey(httpsUrl);
+  let normalized = normalizeRpcUrlForStorage(httpsUrl, explicit || embedded);
+  if (explicit && embedded && embedded !== explicit) {
+    normalized = normalizeRpcUrlForStorage(normalized, embedded);
+  }
+  return { httpsUrl: normalized, apiKey: explicit || embedded };
+}
+
+function sanitizeRpcUrlForDisplay(httpsUrl: string): string {
+  const embedded = extractEmbeddedRpcKey(httpsUrl);
+  return embedded ? normalizeRpcUrlForStorage(httpsUrl, embedded) : httpsUrl;
+}
+
+function redactRpcSecretText(text: string | undefined, rpc: EvmRpcProfile, apiKey?: string): string | undefined {
+  if (!text) return text;
+  const keys = [apiKey, rpc.apiKey, extractEmbeddedRpcKey(rpc.httpsUrl)].filter((k): k is string => Boolean(k));
+  let out = text;
+  for (const key of keys) {
+    const encoded = encodeURIComponent(key);
+    out = out.split(key).join('{API_KEY}');
+    if (encoded !== key) out = out.split(encoded).join('{API_KEY}');
+  }
+  return out;
+}
+
+function loadEvmRpcsMigratingSecrets(): EvmRpcProfile[] {
+  const cfg = loadSettings();
+  const rpcs = cfg.evmRpcs ?? [];
+  let changed = false;
+  for (const rpc of rpcs) {
+    const legacyKey = rpc.apiKey?.trim();
+    const embeddedKey = extractEmbeddedRpcKey(rpc.httpsUrl);
+    const keyToEncrypt = legacyKey || (!rpc.apiKeyEncrypted ? embeddedKey : undefined);
+    if (keyToEncrypt && !rpc.apiKeyEncrypted) {
+      rpc.apiKeyEncrypted = encryptSecret(keyToEncrypt);
+      changed = true;
+    }
+    if (rpc.apiKey) {
+      delete rpc.apiKey;
+      changed = true;
+    }
+    if (embeddedKey) {
+      rpc.httpsUrl = normalizeRpcUrlForStorage(rpc.httpsUrl, embeddedKey);
+      changed = true;
+    }
+  }
+  if (changed) {
+    cfg.evmRpcs = rpcs;
+    saveSettings(cfg);
+  }
+  return rpcs;
 }
 
 function rpcUrlForRequest(httpsUrl: string, apiKey?: string): string {
@@ -107,7 +190,7 @@ function validateEvmRpcInput(input: EvmRpcProfile): void {
 }
 
 async function probeEvmRpc(id: string): Promise<{ rpcs: EvmRpcRow[]; outcome: EvmRpcRequest }> {
-  const rpc = (loadSettings().evmRpcs ?? []).find((x) => x.id === id);
+  const rpc = loadEvmRpcsMigratingSecrets().find((x) => x.id === id);
   if (!rpc) throw new Error('EVM RPC endpoint not found');
   const key = resolveEvmRpcKey(rpc);
   const started = Date.now();
@@ -123,24 +206,24 @@ async function probeEvmRpc(id: string): Promise<{ rpcs: EvmRpcRow[]; outcome: Ev
     outcome.latencyMs = Date.now() - started;
     if (res.status === 401 || res.status === 403 || body?.error?.code === 401) {
       outcome.status = 'auth-error';
-      outcome.error = body?.error?.message ?? `HTTP ${res.status}`;
+      outcome.error = redactRpcSecretText(body?.error?.message ?? `HTTP ${res.status}`, rpc, key);
     } else if (!res.ok) {
       outcome.status = 'unreachable';
-      outcome.error = body?.error?.message ?? `HTTP ${res.status}`;
+      outcome.error = redactRpcSecretText(body?.error?.message ?? `HTTP ${res.status}`, rpc, key);
     } else if (typeof body?.result === 'string') {
       outcome.status = 'available';
       outcome.blockNumber = Number.parseInt(body.result, 16);
     } else {
       outcome.status = 'error';
-      outcome.error = body?.error?.message ?? 'missing eth_blockNumber result';
+      outcome.error = redactRpcSecretText(body?.error?.message ?? 'missing eth_blockNumber result', rpc, key);
     }
   } catch (err) {
     outcome.latencyMs = Date.now() - started;
     outcome.status = 'unreachable';
-    outcome.error = err instanceof Error ? err.message : String(err);
+    outcome.error = redactRpcSecretText(err instanceof Error ? err.message : String(err), rpc, key);
   }
   recordEvmRpcRequest(id, outcome);
-  return { rpcs: (loadSettings().evmRpcs ?? []).map(redactEvmRpc), outcome };
+  return { rpcs: loadEvmRpcsMigratingSecrets().map(redactEvmRpc), outcome };
 }
 
 // --- window state: reopen the app where/how the user left it ---
@@ -309,25 +392,26 @@ async function appCall(method: string, args: unknown[]): Promise<unknown> {
     case 'update:setSettings':
       return setUpdateSettings((args[0] as Record<string, unknown>) ?? {}).update ?? null;
     case 'evmRpc:list':
-      return (loadSettings().evmRpcs ?? []).map(redactEvmRpc);
+      return loadEvmRpcsMigratingSecrets().map(redactEvmRpc);
     case 'evmRpc:save':
       {
         const input = (args[0] as EvmRpcProfile) ?? {};
         const apiKeyInput = typeof (input as any).apiKey === 'string' ? (input as any).apiKey.trim() : '';
-        const apiKeyEncrypted = apiKeyInput ? encryptSecret(apiKeyInput) : input.apiKeyEncrypted;
+        const normalized = normalizeRpcForStorage(input.httpsUrl ?? '', apiKeyInput);
+        const apiKeyEncrypted = normalized.apiKey ? encryptSecret(normalized.apiKey) : input.apiKeyEncrypted;
         const rpc: EvmRpcProfile = {
           ...input,
-          httpsUrl: normalizeRpcUrlForStorage(input.httpsUrl ?? '', apiKeyInput),
+          httpsUrl: normalized.httpsUrl,
           apiKey: undefined,
           apiKeyEncrypted,
         };
         validateEvmRpcInput(rpc);
         upsertEvmRpc(rpc);
-        return (loadSettings().evmRpcs ?? []).map(redactEvmRpc);
+        return loadEvmRpcsMigratingSecrets().map(redactEvmRpc);
       }
     case 'evmRpc:remove':
       removeEvmRpc(String(args[0] ?? ''));
-      return (loadSettings().evmRpcs ?? []).map(redactEvmRpc);
+      return loadEvmRpcsMigratingSecrets().map(redactEvmRpc);
     case 'evmRpc:probe':
       return probeEvmRpc(String(args[0] ?? ''));
     case 'subs:status':
