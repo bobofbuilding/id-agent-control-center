@@ -120,6 +120,12 @@ export interface IdctlConfig {
    * manager restart (the manager itself doesn't persist it). Client-side only.
    */
   localConcurrency?: number;
+  /**
+   * Optional Headroom pilot policy. This records operator intent and rollout
+   * guardrails only; it does not install Headroom, start a proxy, mutate Brain,
+   * or wrap agents by itself.
+   */
+  headroomPilot?: HeadroomPilotSettings;
 }
 
 /** A local image-generation backend. */
@@ -174,8 +180,57 @@ export interface GoalDriverSettings {
   maxOpenTasksPerGoal?: number;
 }
 
+export type HeadroomPilotMode = 'off' | 'mcp' | 'proxy' | 'mcp-and-proxy';
+export type HeadroomStateIsolation = 'per-agent' | 'per-team';
+export type HeadroomTelemetryMode = 'off' | 'verify-before-pilot' | 'on';
+
+export interface HeadroomPilotSettings {
+  enabled: boolean;
+  mode: HeadroomPilotMode;
+  /** Percentage of selected eligible tasks routed through Headroom during pilot. */
+  canaryPercent: number;
+  /** Percentage of comparable tasks intentionally kept direct for measurement. */
+  holdoutPercent: number;
+  /** Only consider compression/proxy routing above this expected context size. */
+  minContextTokens: number;
+  /** Local state root used by the operator-run Headroom process, if configured. */
+  stateRoot?: string;
+  stateIsolation: HeadroomStateIsolation;
+  telemetry: HeadroomTelemetryMode;
+  /** Content classes that must stay on direct/passthrough routes by policy. */
+  passthroughContent: string[];
+  /** Acceptance checks that must pass before wider rollout. */
+  validationGates: string[];
+  updatedAt?: number;
+}
+
 export function defaultUpdateSettings(): UpdateSettings {
   return { autoUpgrade: true, updateRepo: 'bobofbuilding/id-agent-control-center', checkIntervalHours: 1 };
+}
+
+export function defaultHeadroomPilotSettings(): HeadroomPilotSettings {
+  return {
+    enabled: false,
+    mode: 'off',
+    canaryPercent: 10,
+    holdoutPercent: 20,
+    minContextTokens: 8000,
+    stateIsolation: 'per-agent',
+    telemetry: 'verify-before-pilot',
+    passthroughContent: [
+      'source code under active review',
+      'secrets and auth material',
+      'user/system/security/legal instructions',
+      'validator evidence bundles',
+    ],
+    validationGates: [
+      'Headroom CLI/proxy smoke test passes',
+      'MCP compress/retrieve/stats tools pass smoke tests',
+      'sampled original recovery rate is 100%',
+      'Brain fact promotion cites original source IDs only',
+      'passthrough fallback is verified before canary routing',
+    ],
+  };
 }
 
 /** The id-agents repo's canonical default team. */

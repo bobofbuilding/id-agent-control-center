@@ -9,7 +9,7 @@
 
 import { existsSync, mkdirSync, readFileSync, writeFileSync, statSync, chmodSync, renameSync, unlinkSync } from 'node:fs';
 import { resolveConfigPath, configDir } from './paths.ts';
-import { emptyConfig, defaultUpdateSettings, DEFAULT_TEAM, type EvmRpcProfile, type EvmRpcRequest, type GoalDriverSettings, type IdctlConfig, type ImageServerConfig, type ManagerProfile, type McpServerProfile, type ProjectEntry, type ProviderProfile, type ProviderSync, type UpdateSettings } from './schema.ts';
+import { emptyConfig, defaultHeadroomPilotSettings, defaultUpdateSettings, DEFAULT_TEAM, type EvmRpcProfile, type EvmRpcRequest, type GoalDriverSettings, type HeadroomPilotSettings, type IdctlConfig, type ImageServerConfig, type ManagerProfile, type McpServerProfile, type ProjectEntry, type ProviderProfile, type ProviderSync, type UpdateSettings } from './schema.ts';
 
 function normalizeGoalDriver(input: unknown): GoalDriverSettings | undefined {
   if (!input || typeof input !== 'object') return undefined;
@@ -19,6 +19,45 @@ function normalizeGoalDriver(input: unknown): GoalDriverSettings | undefined {
   if (typeof raw.cadenceMs === 'number' && Number.isFinite(raw.cadenceMs) && raw.cadenceMs > 0) out.cadenceMs = Math.floor(raw.cadenceMs);
   if (typeof raw.maxOpenTasksPerGoal === 'number' && Number.isFinite(raw.maxOpenTasksPerGoal) && raw.maxOpenTasksPerGoal > 0) out.maxOpenTasksPerGoal = Math.floor(raw.maxOpenTasksPerGoal);
   return out;
+}
+
+function clampPercent(value: unknown, fallback: number): number {
+  if (typeof value !== 'number' || !Number.isFinite(value)) return fallback;
+  return Math.max(0, Math.min(100, Math.round(value)));
+}
+
+function cleanStringList(value: unknown, fallback: string[]): string[] {
+  if (!Array.isArray(value)) return fallback;
+  const out = Array.from(new Set(value.map((v) => String(v).trim()).filter(Boolean)));
+  return out.length ? out : fallback;
+}
+
+export function normalizeHeadroomPilot(input: unknown): HeadroomPilotSettings {
+  const d = defaultHeadroomPilotSettings();
+  if (!input || typeof input !== 'object') return d;
+  const raw = input as Partial<HeadroomPilotSettings>;
+  const enabled = raw.enabled === true;
+  const mode = raw.mode === 'mcp' || raw.mode === 'proxy' || raw.mode === 'mcp-and-proxy'
+    ? raw.mode
+    : enabled
+      ? 'mcp'
+      : 'off';
+  const minContextTokens = typeof raw.minContextTokens === 'number' && Number.isFinite(raw.minContextTokens) && raw.minContextTokens > 0
+    ? Math.floor(raw.minContextTokens)
+    : d.minContextTokens;
+  return {
+    enabled,
+    mode: enabled ? mode : 'off',
+    canaryPercent: clampPercent(raw.canaryPercent, d.canaryPercent),
+    holdoutPercent: clampPercent(raw.holdoutPercent, d.holdoutPercent),
+    minContextTokens,
+    stateRoot: typeof raw.stateRoot === 'string' && raw.stateRoot.trim() ? raw.stateRoot.trim() : undefined,
+    stateIsolation: raw.stateIsolation === 'per-team' ? 'per-team' : d.stateIsolation,
+    telemetry: raw.telemetry === 'off' || raw.telemetry === 'on' || raw.telemetry === 'verify-before-pilot' ? raw.telemetry : d.telemetry,
+    passthroughContent: cleanStringList(raw.passthroughContent, d.passthroughContent),
+    validationGates: cleanStringList(raw.validationGates, d.validationGates),
+    updatedAt: typeof raw.updatedAt === 'number' && Number.isFinite(raw.updatedAt) ? raw.updatedAt : undefined,
+  };
 }
 
 export function loadSettings(file = resolveConfigPath()): IdctlConfig {
@@ -63,6 +102,7 @@ export function loadSettings(file = resolveConfigPath()): IdctlConfig {
       localConcurrency: typeof raw.localConcurrency === 'number' && raw.localConcurrency >= 1
         ? Math.floor(raw.localConcurrency)
         : undefined,
+      headroomPilot: normalizeHeadroomPilot(raw.headroomPilot),
     };
     // Validation: at most one default provider.
     let seenDefault = false;
@@ -279,6 +319,17 @@ export function setUpdateSettings(partial: Partial<UpdateSettings>, file = resol
 export function setGoalDriver(partial: Partial<GoalDriverSettings>, file = resolveConfigPath()): IdctlConfig {
   const cfg = loadSettings(file);
   cfg.goalDriver = normalizeGoalDriver({ ...(cfg.goalDriver ?? {}), ...(partial ?? {}) });
+  saveSettings(cfg, file);
+  return cfg;
+}
+
+export function setHeadroomPilot(partial: Partial<HeadroomPilotSettings>, file = resolveConfigPath()): IdctlConfig {
+  const cfg = loadSettings(file);
+  cfg.headroomPilot = normalizeHeadroomPilot({
+    ...(cfg.headroomPilot ?? defaultHeadroomPilotSettings()),
+    ...(partial ?? {}),
+    updatedAt: Date.now(),
+  });
   saveSettings(cfg, file);
   return cfg;
 }

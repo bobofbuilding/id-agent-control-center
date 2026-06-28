@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { call, type FleetStore } from '../store.ts';
 import type { UsageReport, UsageWindow } from '../../../../idctl/src/api/client.ts';
+import type { HeadroomPilotSettings } from '../../../../idctl/src/settings/schema.ts';
 import { AgentTable } from './AgentTable.tsx';
 
 type HeadroomStatus = {
@@ -53,6 +54,8 @@ export function Health({ store }: { store: FleetStore }) {
   const [probing, setProbing] = useState<string | null>(null);
   const [usage, setUsage] = useState<UsageReport | null | undefined>(undefined); // undefined = loading
   const [headroom, setHeadroom] = useState<HeadroomStatus | null | undefined>(undefined);
+  const [pilot, setPilot] = useState<HeadroomPilotSettings | null | undefined>(undefined);
+  const [pilotSaving, setPilotSaving] = useState(false);
   const [usageAt, setUsageAt] = useState<number>(0); // when usage was last refreshed
   const [, setTick] = useState(0); // 1 Hz re-render so "updated Ns ago" stays live
 
@@ -70,9 +73,15 @@ export function Health({ store }: { store: FleetStore }) {
 
   const loadHeadroom = useCallback(async () => {
     try {
-      setHeadroom(await call<HeadroomStatus>('headroom:status'));
+      const [status, policy] = await Promise.all([
+        call<HeadroomStatus>('headroom:status'),
+        call<HeadroomPilotSettings>('headroom:pilot'),
+      ]);
+      setHeadroom(status);
+      setPilot(policy);
     } catch {
       setHeadroom(null);
+      setPilot(null);
     }
   }, []);
   useEffect(() => { void loadHeadroom(); }, [loadHeadroom, store.lastUpdated]);
@@ -96,6 +105,16 @@ export function Health({ store }: { store: FleetStore }) {
     } finally {
       setProbing(null);
       void loadUsage(); // refresh throughput after exercising agents
+    }
+  }
+  async function savePilot(partial: Partial<HeadroomPilotSettings>) {
+    setPilotSaving(true);
+    try {
+      setPilot(await call<HeadroomPilotSettings>('headroom:setPilot', partial));
+    } catch (err) {
+      window.alert(`Headroom pilot update failed: ${err instanceof Error ? err.message : String(err)}`);
+    } finally {
+      setPilotSaving(false);
     }
   }
   // Gauge reads the most recent live throughput, falling back to the 24h average.
@@ -195,6 +214,80 @@ export function Health({ store }: { store: FleetStore }) {
             <b className="muted small">Optional only. Keep source-code, secrets, policy text, and validator evidence on direct routes unless a task explicitly opts in.</b>
           </div>
         )}
+        {pilot ? (
+          <>
+            <div className="kv" style={{ gridTemplateColumns: '150px 1fr', gap: '7px 12px', marginTop: 12 }}>
+              <span>pilot opt-in</span>
+              <b>
+                <input
+                  type="checkbox"
+                  checked={pilot.enabled}
+                  disabled={pilotSaving}
+                  onChange={(e) => void savePilot({ enabled: e.target.checked, mode: e.target.checked ? (pilot.mode === 'off' ? 'mcp' : pilot.mode) : 'off' })}
+                />{' '}
+                <span className={pilot.enabled ? 'ok-text small' : 'muted small'}>{pilot.enabled ? 'enabled for selected canary routes' : 'disabled by default'}</span>
+              </b>
+              <span>mode</span>
+              <b>
+                <select
+                  className="cell-select"
+                  value={pilot.mode}
+                  disabled={pilotSaving || !pilot.enabled}
+                  onChange={(e) => void savePilot({ mode: e.target.value as HeadroomPilotSettings['mode'] })}
+                >
+                  <option value="off">off</option>
+                  <option value="mcp">MCP tools only</option>
+                  <option value="proxy">local proxy route</option>
+                  <option value="mcp-and-proxy">MCP + proxy</option>
+                </select>
+              </b>
+              <span>measurement</span>
+              <b className="row-actions" style={{ justifyContent: 'flex-start', gap: 8, flexWrap: 'wrap' }}>
+                <label className="muted small">canary <input type="number" min={0} max={100} style={{ width: 58 }} value={pilot.canaryPercent} disabled={pilotSaving} onChange={(e) => void savePilot({ canaryPercent: Number(e.target.value) })} />%</label>
+                <label className="muted small">holdout <input type="number" min={0} max={100} style={{ width: 58 }} value={pilot.holdoutPercent} disabled={pilotSaving} onChange={(e) => void savePilot({ holdoutPercent: Number(e.target.value) })} />%</label>
+                <label className="muted small">min context <input type="number" min={1000} step={1000} style={{ width: 84 }} value={pilot.minContextTokens} disabled={pilotSaving} onChange={(e) => void savePilot({ minContextTokens: Number(e.target.value) })} /> tokens</label>
+              </b>
+              <span>state</span>
+              <b className="row-actions" style={{ justifyContent: 'flex-start', gap: 8, flexWrap: 'wrap' }}>
+                <select
+                  className="cell-select"
+                  value={pilot.stateIsolation}
+                  disabled={pilotSaving}
+                  onChange={(e) => void savePilot({ stateIsolation: e.target.value as HeadroomPilotSettings['stateIsolation'] })}
+                >
+                  <option value="per-agent">per agent</option>
+                  <option value="per-team">per team</option>
+                </select>
+                <input
+                  style={{ flex: '1 1 260px' }}
+                  placeholder="optional state root, e.g. ~/.headroom/idacc"
+                  value={pilot.stateRoot ?? ''}
+                  disabled={pilotSaving}
+                  onChange={(e) => void savePilot({ stateRoot: e.target.value })}
+                />
+              </b>
+              <span>telemetry</span>
+              <b>
+                <select
+                  className="cell-select"
+                  value={pilot.telemetry}
+                  disabled={pilotSaving}
+                  style={{ minWidth: 150 }}
+                  onChange={(e) => void savePilot({ telemetry: e.target.value as HeadroomPilotSettings['telemetry'] })}
+                >
+                  <option value="verify-before-pilot">verify build first</option>
+                  <option value="off">force off</option>
+                  <option value="on">operator enabled</option>
+                </select>
+              </b>
+              <span>passthrough</span>
+              <b className="chips">{pilot.passthroughContent.map((x) => <span className="chip tag" key={x}>{x}</span>)}</b>
+              <span>validation gates</span>
+              <b className="muted small">{pilot.validationGates.join(' · ')}</b>
+            </div>
+            {pilotSaving ? <p className="muted small">Saving pilot policy…</p> : null}
+          </>
+        ) : null}
       </section>
 
       {/* The fleet roster is the shared AgentTable — runtime/model dropdowns + lifecycle

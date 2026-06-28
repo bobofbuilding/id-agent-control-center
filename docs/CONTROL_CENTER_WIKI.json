@@ -1154,9 +1154,11 @@
       "sourceFiles": [
         "idctl-desktop/src/renderer/views/Health.tsx",
         "idctl-desktop/src/renderer/views/AgentTable.tsx",
-        "idctl-desktop/src/main/headroom.ts"
+        "idctl-desktop/src/main/headroom.ts",
+        "idctl/src/settings/schema.ts",
+        "idctl/src/settings/store.ts"
       ],
-      "purpose": "Fleet health, local-model token usage, liveness probes, and the full fleet roster with runtime/model/lifecycle controls.",
+      "purpose": "Fleet health, local-model token usage, liveness probes, optional Headroom pilot policy, and the full fleet roster with runtime/model/lifecycle controls.",
       "scope": "Usage spans local-model providers; roster is holistic and grouped by team through AgentTable.",
       "tiles": [
         {
@@ -1170,9 +1172,11 @@
         {
           "id": "headroom-pilot",
           "label": "Headroom pilot",
-          "description": "Read-only local Headroom CLI/proxy status and passthrough guidance for the optional compression pilot.",
+          "description": "Local Headroom CLI/proxy status plus settings-backed pilot guardrails for optional MCP/proxy compression routes.",
           "routesInto": [
-            "headroom:status"
+            "headroom:status",
+            "headroom:pilot",
+            "headroom:setPilot"
           ]
         },
         {
@@ -1265,9 +1269,19 @@
           "id": "headroom-refresh",
           "label": "Refresh",
           "type": "button",
-          "description": "Refreshes local Headroom CLI and proxy status without starting or installing Headroom.",
+          "description": "Refreshes local Headroom CLI/proxy status and pilot policy without starting or installing Headroom.",
           "routesInto": [
-            "headroom:status"
+            "headroom:status",
+            "headroom:pilot"
+          ]
+        },
+        {
+          "id": "headroom-policy",
+          "label": "Headroom pilot policy",
+          "type": "form",
+          "description": "Stores opt-in mode, canary/holdout percentages, context threshold, state isolation, telemetry posture, passthrough classes, and validation gates.",
+          "routesInto": [
+            "headroom:setPilot"
           ]
         },
         {
@@ -1294,7 +1308,7 @@
         {
           "id": "headroom-status",
           "label": "Headroom status",
-          "description": "CLI installed/not installed, proxy reachable/passthrough state, MCP preset pointer, and pilot policy reminders."
+          "description": "CLI installed/not installed, proxy reachable/passthrough state, MCP preset pointer, opt-in mode, canary/holdout policy, passthrough classes, and validation gates."
         }
       ],
       "routing": {
@@ -1307,12 +1321,14 @@
           "runtime:probe",
           "runtime:freshness",
           "headroom:status",
+          "headroom:pilot",
+          "headroom:setPilot",
           "setAgentRuntime",
           "setAgentEffort",
           "coordinator:set"
         ]
       },
-      "body": "# Health\n\nHealth is the live fleet and usage view. It shows running state, token and model usage, provider activity, optional Headroom pilot readiness, and the full agent roster through AgentTable.\n\n## Use it for\n\n- Confirm which agents are running, stopped, busy, or missing from the active fleet.\n- Probe agent liveness, start or stop workers, rebuild where supported, and inspect team membership.\n- Compare current token usage and model/runtime behavior before changing staffing or routing.\n- Check whether the optional local Headroom CLI/proxy is ready before attaching the Headroom MCP preset or routing selected agents through the local proxy.\n\n## Boundary\n\nHealth is optimized for operational status from the store snapshot and all-team aggregate poll. It is the current home for the roster grid that older specs placed on Dashboard, but it is not a long-term analytics warehouse. The Headroom card is read-only and does not install Headroom, start a proxy, attach MCP servers, wrap agents, or promote compressed summaries into Brain facts."
+      "body": "# Health\n\nHealth is the live fleet and usage view. It shows running state, token and model usage, provider activity, optional Headroom pilot readiness/policy, and the full agent roster through AgentTable.\n\n## Use it for\n\n- Confirm which agents are running, stopped, busy, or missing from the active fleet.\n- Probe agent liveness, start or stop workers, rebuild where supported, and inspect team membership.\n- Compare current token usage and model/runtime behavior before changing staffing or routing.\n- Check whether the optional local Headroom CLI/proxy is ready before attaching the Headroom MCP preset or routing selected agents through the local proxy.\n- Record pilot guardrails before a canary: opt-in mode, canary/holdout percentages, minimum context threshold, local state isolation, telemetry posture, passthrough content classes, and validation gates.\n\n## Boundary\n\nHealth is optimized for operational status from the store snapshot and all-team aggregate poll. It is the current home for the roster grid that older specs placed on Dashboard, but it is not a long-term analytics warehouse. The Headroom card stores local pilot policy only; it does not install Headroom, start a proxy, attach MCP servers, wrap agents, or promote compressed summaries into Brain facts."
     },
     {
       "id": "identity",
@@ -2602,5 +2618,5 @@
       "body": "# Wiki\n\nWiki is both the human documentation page and the editable schematic for the Control Center UI. Each article explains the operator purpose of a page; the structured sections below preserve tabs, tiles, fields, controls, displays, routes, and source files for implementation detail.\n\n## Use it for\n\n- Search pages, controls, routes, source files, and notes from inside the desktop app.\n- Confirm how a UI surface is intended to behave before editing code or filing follow-up work.\n- Keep app navigation metadata and human documentation in one reviewed JSON artifact.\n\n## Editing rule\n\nThe desktop app hot-reload polls CONTROL_CENTER_WIKI.json through the main-process wiki bridge. Sidebar labels, icons, order, and visibility still come from pages[].nav for implemented routes, so documentation edits must preserve that metadata and keep every page.body non-empty."
     }
   ],
-  "appVersion": "0.1.211"
+  "appVersion": "0.1.212"
 }

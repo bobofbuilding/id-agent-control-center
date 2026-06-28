@@ -36,13 +36,14 @@ import {
   setTaskDeps,
   setTaskReview,
   setGoalDriver,
+  setHeadroomPilot,
 } from '../../../idctl/src/settings/store.ts';
 import { detectProjectsRoot, scanProjectsRoot } from './projects.ts';
 import { realpathSync } from 'node:fs';
 import { createHash, randomBytes } from 'node:crypto';
 import { ProviderClient } from '../../../idctl/src/settings/ProviderClient.ts';
 import { discoverLocalServers, type DiscoveredServer } from '../../../idctl/src/settings/localDiscovery.ts';
-import { kindNeedsKey, type ProviderProfile, type McpServerProfile, type ProjectEntry } from '../../../idctl/src/settings/schema.ts';
+import { kindNeedsKey, type HeadroomPilotSettings, type ProviderProfile, type McpServerProfile, type ProjectEntry } from '../../../idctl/src/settings/schema.ts';
 import { buildRuntimeCatalog, RUNTIMES, providerKindToRuntimes, isLocalProvider } from '../../../idctl/src/settings/runtimeCatalog.ts';
 import { testMcpServer } from './mcpTest.ts';
 import { headroomStatus } from './headroom.ts';
@@ -558,6 +559,8 @@ const METHODS: Record<string, (...a: any[]) => Promise<unknown>> = {
   probeAll: () => client.probeAll(),
   probeOne: (name: string, team?: string) => (team ? client.withTeam(String(team)) : client).probeOne(String(name)),
   'headroom:status': () => headroomStatus(),
+  'headroom:pilot': async () => loadSettings().headroomPilot,
+  'headroom:setPilot': async (partial: Partial<HeadroomPilotSettings>) => setHeadroomPilot(partial).headroomPilot,
 
   // scheduling
   checkins: () => client.checkins(),

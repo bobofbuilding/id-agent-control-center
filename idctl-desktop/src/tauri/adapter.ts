@@ -12,7 +12,7 @@ import { ProviderClient } from '../../../idctl/src/settings/ProviderClient.ts';
 import { discoverLocalServers, type DiscoveredServer } from '../../../idctl/src/settings/localDiscovery.ts';
 import { SCOPE_PRESETS, TTL_PRESETS } from '../../../idctl/src/keys/types.ts';
 import type { AgentAccount, SessionKey } from '../../../idctl/src/keys/types.ts';
-import { kindNeedsKey, type ProviderProfile, type McpServerProfile, type ProjectEntry } from '../../../idctl/src/settings/schema.ts';
+import { defaultHeadroomPilotSettings, kindNeedsKey, type HeadroomPilotSettings, type ProviderProfile, type McpServerProfile, type ProjectEntry } from '../../../idctl/src/settings/schema.ts';
 import { buildRuntimeCatalog } from '../../../idctl/src/settings/runtimeCatalog.ts';
 import type { McpServerSpec, CreateSkillInput } from '../../../idctl/src/api/client.ts';
 import { secp256k1 } from '@noble/curves/secp256k1.js';
@@ -60,6 +60,30 @@ async function fetchWiki(): Promise<WikiPayload> {
 /** Enrich provider rows with key source (no env in the webview) + needsKey flag. */
 function enrichProviders(list: ProviderProfile[]) {
   return list.map((p) => ({ ...p, keySource: (p.apiKey ? 'config' : 'none') as 'config' | 'env' | 'none', needsKey: kindNeedsKey(p.kind) }));
+}
+
+function headroomPilotState(): HeadroomPilotSettings {
+  const d = defaultHeadroomPilotSettings();
+  const raw = lsGet<Partial<HeadroomPilotSettings>>('idctl.headroomPilot', {});
+  const enabled = raw.enabled === true;
+  const mode = raw.mode === 'mcp' || raw.mode === 'proxy' || raw.mode === 'mcp-and-proxy'
+    ? raw.mode
+    : enabled
+      ? 'mcp'
+      : 'off';
+  return {
+    ...d,
+    ...raw,
+    enabled,
+    mode: enabled ? mode : 'off',
+    canaryPercent: Math.max(0, Math.min(100, Math.round(Number(raw.canaryPercent ?? d.canaryPercent)))),
+    holdoutPercent: Math.max(0, Math.min(100, Math.round(Number(raw.holdoutPercent ?? d.holdoutPercent)))),
+    minContextTokens: Math.max(1, Math.floor(Number(raw.minContextTokens ?? d.minContextTokens))),
+    stateIsolation: raw.stateIsolation === 'per-team' ? 'per-team' : d.stateIsolation,
+    telemetry: raw.telemetry === 'off' || raw.telemetry === 'on' || raw.telemetry === 'verify-before-pilot' ? raw.telemetry : d.telemetry,
+    passthroughContent: Array.isArray(raw.passthroughContent) && raw.passthroughContent.length ? raw.passthroughContent : d.passthroughContent,
+    validationGates: Array.isArray(raw.validationGates) && raw.validationGates.length ? raw.validationGates : d.validationGates,
+  };
 }
 
 // ---- mock keys (localStorage) ----------------------------------------------
@@ -277,6 +301,12 @@ const M: Record<string, (...a: any[]) => Promise<unknown>> = {
     cli: { found: false, error: 'Headroom status requires the Electron main process.' },
     proxy: { url: 'http://127.0.0.1:8787/mcp', reachable: false, error: 'not checked in this shell' },
   }),
+  'headroom:pilot': async () => headroomPilotState(),
+  'headroom:setPilot': async (partial: Partial<HeadroomPilotSettings>) => {
+    const next = { ...headroomPilotState(), ...(partial ?? {}), updatedAt: Date.now() };
+    lsSet('idctl.headroomPilot', next);
+    return headroomPilotState();
+  },
   checkins: () => client.checkins(),
   schedules: () => client.schedules(),
   addHeartbeat: (agent: string, seconds: number, message: string, delivery?: 'internal' | 'talk') => client.addHeartbeat(String(agent), Number(seconds), String(message), delivery),
