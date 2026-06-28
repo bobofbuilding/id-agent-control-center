@@ -663,6 +663,8 @@ export function Teams({ store }: { store: FleetStore }) {
           existingTeams={store.teams.map((t) => t.name)}
           activeTeams={activeTeamNames}
           existingAgents={existingAgentsByTeam}
+          fleetAgents={store.allAgents.length ? store.allAgents : store.agents.map((a) => ({ ...a, team: activeTeam }))}
+          hrOwner={hrOwner}
           providers={providers}
           modelCatalog={modelCatalog}
           skillCatalog={skillCatalog}
@@ -947,6 +949,8 @@ function TeamBuilder({
   existingTeams,
   activeTeams,
   existingAgents,
+  fleetAgents,
+  hrOwner,
   providers,
   modelCatalog,
   skillCatalog,
@@ -962,6 +966,10 @@ function TeamBuilder({
   /** team → its current agent names, so the builder can skip agents that already exist
    *  instead of hard-erroring the whole batch. */
   existingAgents: Record<string, string[]>;
+  /** Holistic active + inactive fleet roster, across teams, for HR/AI planning context. */
+  fleetAgents: HrAgentCandidate[];
+  /** Preferred HR manager helper; may live in another team. */
+  hrOwner?: { name: string; team?: string } | null;
   providers: ProviderRow[];
   modelCatalog: Record<string, string[]>;
   skillCatalog: string[];
@@ -992,9 +1000,14 @@ function TeamBuilder({
   };
 
   // ---- target team (existing or new) ----
-  // Existing-team picker lists only ACTIVE teams (those with running agents); collision-check
-  // below still uses the full `existingTeams` so a new-team name can't clash with an idle one.
-  const teamOptions = useMemo(() => activeTeams.filter(Boolean), [activeTeams]);
+  // Existing-team picker lists the full roster of teams, including inactive ones, so HR can add
+  // agents to an idle team without recreating or duplicating it. Active teams sort first.
+  const teamOptions = useMemo(() => {
+    const active = new Set(activeTeams.filter(Boolean));
+    return [...existingTeams]
+      .filter(Boolean)
+      .sort((a, b) => Number(active.has(b)) - Number(active.has(a)) || a.localeCompare(b));
+  }, [activeTeams, existingTeams]);
   const [teamSel, setTeamSel] = useState<string>(team && existingTeams.includes(team) ? team : '__new__');
   const [newTeam, setNewTeam] = useState(team && !existingTeams.includes(team) ? cleanTeamName(team) : '');
   const [teamTouched, setTeamTouched] = useState(false);
@@ -1077,9 +1090,11 @@ function TeamBuilder({
     if (!spec.trim()) return;
     const runId = ++aiRun.current;
     setAiElapsed(0); setAiBusy(true); setError('');
-    onMessage('asking AI to design the team…');
+    const helper = hrOwner?.name ? `${hrOwner.team ? `${hrOwner.team}/` : ''}${hrOwner.name}` : undefined;
+    const roster = summarizeFleetRoster(fleetAgents, activeTeams);
+    onMessage(helper ? `asking ${helper} to design the team…` : 'asking AI to design the team…');
     try {
-      const r = await call<DesignedTeam>('team:designAI', spec, { runtimes, models: modelCatalog, skills: skillCatalog });
+      const r = await call<DesignedTeam>('team:designAI', spec, { runtimes, models: modelCatalog, skills: skillCatalog, agent: helper, fleetRoster: roster });
       if (aiRun.current !== runId) return; // stopped or superseded — ignore the late reply
       if (r?.agents?.length) {
         const mapped = r.agents.map(toRow);
@@ -1487,6 +1502,24 @@ function describeTemplate(template: TeamTemplate): string {
 function describeConfig(config: ConfigEntry): string {
   const count = countAgents(config.agents);
   return `${config.description ?? 'server config'}${count != null ? ` · ${count} agents` : ''}`;
+}
+
+function summarizeFleetRoster(agents: HrAgentCandidate[], activeTeams: string[]): string {
+  const active = new Set(activeTeams);
+  const byTeam: Record<string, HrAgentCandidate[]> = {};
+  for (const a of agents) (byTeam[a.team ?? 'default'] ??= []).push(a);
+  return Object.entries(byTeam)
+    .sort(([a], [b]) => Number(active.has(b)) - Number(active.has(a)) || a.localeCompare(b))
+    .map(([team, teamAgents]) => {
+      const label = active.has(team) ? 'active' : 'inactive';
+      const names = teamAgents
+        .sort((a, b) => a.name.localeCompare(b.name))
+        .map((a) => `${a.name}${isRunnableAgent(a) ? '' : ` (${a.status || 'stopped'})`}`)
+        .join(', ');
+      return `${team} [${label}]: ${names || '(no agents)'}`;
+    })
+    .join('\n')
+    .slice(0, 6000);
 }
 
 function mcpFromChoice(id: string): McpServerSpec[] | undefined {
