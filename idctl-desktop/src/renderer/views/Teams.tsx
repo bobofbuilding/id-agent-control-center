@@ -45,15 +45,16 @@ function hrAgentKey(a: HrAgentCandidate, fallbackTeam = 'default'): string {
 }
 function resolveHrManagerAgent(store: FleetStore): { name: string; team?: string } | null {
   const candidates: HrAgentCandidate[] = (store.allAgents.length ? store.allAgents : store.agents).filter(isRunnableAgent);
-  const exact = candidates.find((a) => /^hr[-_]?manager$/i.test(a.name));
+  const exactMatches = candidates.filter((a) => /^hr[-_]?manager$/i.test(a.name));
+  const exact = exactMatches.find((a) => a.team === 'legal') ?? exactMatches[0];
   if (exact) return { name: exact.name, team: exact.team ?? store.team };
   const descriptive = candidates.find((a) => /(^|[-_])hr($|[-_])|human[-_]?resources/i.test(a.name));
   if (descriptive) return { name: descriptive.name, team: descriptive.team ?? store.team };
   return null;
 }
 
-async function askHrManagerToDraft(store: FleetStore, prompt: string): Promise<string> {
-  const hr = resolveHrManagerAgent(store);
+async function askHrManagerToDraft(store: FleetStore, prompt: string, owner?: { name: string; team?: string } | null): Promise<string> {
+  const hr = owner ?? resolveHrManagerAgent(store);
   if (!hr) throw new Error('no active HR manager agent found');
   const activeTeam = store.team ?? 'default';
   const target = hr.team && hr.team !== activeTeam ? `${hr.team}/${hr.name}` : hr.name;
@@ -146,6 +147,7 @@ ${COORDINATION_TAIL}`;
 export function Teams({ store }: { store: FleetStore }) {
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<string>('');
+  const hrOwner = useMemo(() => resolveHrManagerAgent(store), [store.allAgents, store.agents, store.team]);
 
   // HR pillars as tabs + the live structure graph.
   const [tab, setTab] = useState<'structure' | 'build' | 'manage' | 'route'>('structure');
@@ -239,7 +241,7 @@ export function Teams({ store }: { store: FleetStore }) {
         'imperative voice, NO preamble, NO markdown headers, NO code fences) for an AI agent named "' + instrTarget + '"' +
         (brief ? ' whose goal is: ' + brief : ' — infer a sensible role from its name') +
         '. Output ONLY the directive text.';
-      const txt = await askHrManagerToDraft(store, meta);
+      const txt = await askHrManagerToDraft(store, meta, hrOwner);
       setInstrText(txt.trim());
       setInstrMsg('drafted ✓ — review, then Save & rebuild');
     } catch (e) {
@@ -306,7 +308,7 @@ export function Teams({ store }: { store: FleetStore }) {
         'NO preamble, NO markdown headers, NO code fences) for an AI agent named "' + selAgentName + '"' +
         (sgInstr.trim() ? ' whose goal is: ' + sgInstr.trim() : ' — infer a sensible role from its name') +
         '. Output ONLY the directive text.';
-      const txt = await askHrManagerToDraft(store, meta);
+      const txt = await askHrManagerToDraft(store, meta, hrOwner);
       setSgInstr(txt.trim()); setSgMsg('drafted ✓ — review, then Save & rebuild');
     } catch (e) { setSgMsg(`HR manager draft failed: ${e instanceof Error ? e.message : String(e)}`); }
     finally { setSgBusy(false); }
@@ -402,9 +404,9 @@ export function Teams({ store }: { store: FleetStore }) {
     }
   }
   // Reassign a local agent to a different team (manager rebuilds it there).
-  async function moveAgentToTeam(agentId: string, agentName: string, toTeam: string) {
-    if (!toTeam || toTeam === activeTeam) return;
-    if (!window.confirm(`Move agent "${agentName}" from "${activeTeam}" to "${toTeam}"?\n\nIt will be rebuilt under the new team and leave ${activeTeam}.`)) return;
+  async function moveAgentToTeam(agentId: string, agentName: string, fromTeam: string, toTeam: string) {
+    if (!toTeam || toTeam === fromTeam) return;
+    if (!window.confirm(`Move agent "${agentName}" from "${fromTeam}" to "${toTeam}"?\n\nIt will be rebuilt under the new team and leave ${fromTeam}.`)) return;
     setBusy(true);
     setMsg(`moving ${agentName} → ${toTeam}…`);
     try {
@@ -523,6 +525,9 @@ export function Teams({ store }: { store: FleetStore }) {
     <div className="view modules">
       <header className="view-head">
         <h1>HR Manager</h1>
+        <span className="muted small" title="Operational owner for HR Manager staffing and instruction-drafting workflows">
+          owner: <b>{hrOwner ? `${hrOwner.team ?? activeTeam}/${hrOwner.name}` : 'unassigned'}</b>
+        </span>
       </header>
       <div className="tabs">
         {([['structure', 'Structure'], ['build', 'Build'], ['manage', 'Manage'], ['route', 'Route']] as const).map(([k, lbl]) => (
@@ -564,7 +569,7 @@ export function Teams({ store }: { store: FleetStore }) {
                     );
                   })()}
                   <select className="cell-select" disabled={busy || selectedAgent.reassignTargets.length === 0} value="" title="Reassign to another team"
-                    onChange={(e) => { const to = e.target.value; e.currentTarget.value = ''; if (to) void moveAgentToTeam(selectedAgent!.agent.id, selectedAgent!.agent.name, to); }}>
+                    onChange={(e) => { const to = e.target.value; e.currentTarget.value = ''; if (to) void moveAgentToTeam(selectedAgent!.agent.id, selectedAgent!.agent.name, selectedAgent!.team, to); }}>
                     <option value="">{selectedAgent.reassignTargets.length === 0 ? 'no other teams' : 'reassign to…'}</option>
                     {selectedAgent.reassignTargets.map((n) => <option key={n} value={n}>{n}</option>)}
                   </select>
@@ -574,7 +579,7 @@ export function Teams({ store }: { store: FleetStore }) {
               </div>
               <div className="muted small" style={{ margin: '8px 0 4px' }}>goals &amp; instructions — appended to this agent’s system prompt</div>
               <div className="row-actions" style={{ gap: 8, marginBottom: 6, alignItems: 'center' }}>
-                <button className="btn small" disabled={sgBusy} onClick={() => void aiDraftSgInstr()}>✦ AI draft</button>
+                <button className="btn small" disabled={sgBusy || !hrOwner} title={hrOwner ? `Ask ${hrOwner.team ?? activeTeam}/${hrOwner.name} to draft` : 'No active HR manager agent found'} onClick={() => void aiDraftSgInstr()}>✦ AI draft</button>
                 {sgInstr.trim() ? <button className="btn small" disabled={sgBusy} onClick={() => setSgInstr('')}>Clear</button> : null}
                 <span className="grow" />
                 {sgMsg ? <span className={`small ${/failed/.test(sgMsg) ? 'status-error' : 'ok-text'}`}>{sgMsg}</span> : null}
@@ -807,7 +812,7 @@ export function Teams({ store }: { store: FleetStore }) {
                     disabled={busy || otherTeams.length === 0}
                     value=""
                     title={otherTeams.length === 0 ? 'No other teams to move to' : `Reassign ${a.name} to another team (rebuilds it there)`}
-                    onChange={(e) => { const to = e.target.value; e.currentTarget.value = ''; void moveAgentToTeam(a.id, a.name, to); }}
+                    onChange={(e) => { const to = e.target.value; e.currentTarget.value = ''; void moveAgentToTeam(a.id, a.name, activeTeam, to); }}
                   >
                     <option value="">{otherTeams.length === 0 ? 'no other teams' : 'reassign to…'}</option>
                     {otherTeams.map((n) => <option key={n} value={n}>{n}</option>)}
@@ -836,7 +841,7 @@ export function Teams({ store }: { store: FleetStore }) {
               <option key={hrAgentKey(a, activeTeam)} value={hrAgentKey(a, activeTeam)}>{a.name} · {a.team ?? activeTeam}</option>
             ))}
           </select>
-          <button className="btn small" disabled={instrBusy} onClick={() => void aiDraftInstr()}>✦ AI draft</button>
+          <button className="btn small" disabled={instrBusy || !hrOwner} title={hrOwner ? `Ask ${hrOwner.team ?? activeTeam}/${hrOwner.name} to draft` : 'No active HR manager agent found'} onClick={() => void aiDraftInstr()}>✦ AI draft</button>
           {instrText.trim() ? <button className="btn small" disabled={instrBusy} onClick={() => setInstrText('')}>Clear</button> : null}
           <span className="grow" />
           {instrMsg ? <span className={`small ${/failed/.test(instrMsg) ? 'status-error' : 'ok-text'}`}>{instrMsg}</span> : null}

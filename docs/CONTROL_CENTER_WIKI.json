@@ -1451,6 +1451,11 @@
       ],
       "purpose": "Org design and fleet HR: build teams, start/stop them, edit hierarchy, agent instructions, and cross-team routing.",
       "scope": "All teams for graph/overview; active team for routing editor and instructions unless a selected agent is explicitly scoped.",
+      "owner": {
+        "team": "legal",
+        "agent": "hr-manager",
+        "responsibility": "Own HR Manager staffing workflows, instruction-drafting behavior, and page optimization proposals; escalate policy or personnel-process questions to legal/general-counsel."
+      },
       "tabs": [
         {
           "id": "structure",
@@ -1743,7 +1748,7 @@
           "team lifecycle manager routes"
         ]
       },
-      "body": "# HR Manager\n\nHR Manager is the organization design and routing workspace. It covers team structure, agent creation, roster management, instructions, and outbound relay topology.\n\n## Tab guide\n\n- Structure: inspect the team graph and leadership shape.\n- Build: draft and create agent rosters.\n- Manage: edit deployed agents and their instructions.\n- Route: inspect how teams delegate across the fleet.\n\n## Operating rule\n\nChanges here affect staffing, instructions, and delegation paths. Review generated drafts before saving, syncing, or rebuilding, and use the graph as a whole-fleet planning aid rather than a view of only the active team. Agent instruction editing is now team-qualified in the picker and save path, so selecting an agent from another team loads, saves, and rebuilds that exact team/agent instead of silently falling back to the active team."
+      "body": "# HR Manager\n\nHR Manager is the organization design and routing workspace. It covers team structure, agent creation, roster management, instructions, and outbound relay topology.\n\n## Owner\n\nThe legal-team `hr-manager` agent owns this page's staffing workflows, instruction-drafting behavior, and optimization proposals. Escalate legal-team policy or personnel-process questions through `legal/general-counsel`.\n\n## Tab guide\n\n- Structure: inspect the team graph and leadership shape.\n- Build: draft and create agent rosters.\n- Manage: edit deployed agents and their instructions.\n- Route: inspect how teams delegate across the fleet.\n\n## Operating rule\n\nChanges here affect staffing, instructions, and delegation paths. Review generated drafts before saving, syncing, or rebuilding, and use the graph as a whole-fleet planning aid rather than a view of only the active team. Agent instruction editing is now team-qualified in the picker and save path, so selecting an agent from another team loads, saves, and rebuilds that exact team/agent instead of silently falling back to the active team."
     },
     {
       "id": "modules",

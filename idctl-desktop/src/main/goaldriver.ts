@@ -27,6 +27,14 @@ export interface GoalDriverSummary {
   errors: string[];
 }
 
+interface GoalLeadTarget {
+  team: string;
+  lead: string;
+  runtime?: string;
+  status?: string;
+  skills: string[];
+}
+
 export const GOAL_DRIVER_DEFAULTS: GoalDriverConfig = {
   enabled: false,
   cadenceMs: 30 * 60 * 1000,
@@ -69,6 +77,32 @@ function pickActiveLead(agents: Pick<Agent, 'name' | 'status'>[]): string | null
     active.find((a) => /manager|coordinator/i.test(a.name)) ??
     active[0]
   ).name;
+}
+
+function isDefaultValidator(name: string): boolean {
+  return /^(coder|researcher)$/i.test(name.trim());
+}
+
+async function resolveGoalLeadTargets(baseClient: ManagerClient, goalTeam?: string): Promise<GoalLeadTarget[]> {
+  const currentTeam = goalTeam || baseClient.team || 'default';
+  const teams = await baseClient.teams().catch(() => []);
+  const candidates = teams.filter((team) => team.name && team.name !== currentTeam && team.name !== 'default');
+  const targets = await Promise.all(
+    candidates.map(async (team): Promise<GoalLeadTarget | null> => {
+      const agents = await baseClient.withTeam(team.name).agents().catch(() => [] as Agent[]);
+      const leadName = pickActiveLead(agents);
+      if (!leadName || isDefaultValidator(leadName)) return null;
+      const lead = agents.find((agent) => agent.name === leadName);
+      return {
+        team: team.name,
+        lead: leadName,
+        runtime: lead?.runtime,
+        status: lead?.status,
+        skills: Array.isArray(lead?.metadata?.skills) ? (lead!.metadata!.skills as string[]) : [],
+      };
+    }),
+  );
+  return targets.filter((target): target is GoalLeadTarget => !!target);
 }
 
 function clip(s: string, n: number): string {
@@ -126,8 +160,38 @@ function annotateSubtask(goal: Goal, st: SubTask): SubTask {
   };
 }
 
+async function createGoalLeadTasks(
+  baseClient: ManagerClient,
+  objective: string,
+  subtasks: SubTask[],
+  targets: GoalLeadTarget[],
+): Promise<{ ok: number; refs: string[] }> {
+  const teamByLead = new Map(targets.map((target) => [target.lead, target.team]));
+  const byTeam = new Map<string, SubTask[]>();
+  for (const st of subtasks) {
+    const team = teamByLead.get(st.agent);
+    if (!team) continue;
+    const list = byTeam.get(team) ?? [];
+    list.push(st);
+    byTeam.set(team, list);
+  }
+
+  const results = await Promise.all(
+    [...byTeam].map(async ([team, teamSubtasks]) =>
+      createAndDispatchPlan(baseClient.withTeam(team), objective, teamSubtasks, {
+        dispatch: true,
+        respectOwners: true,
+      }).catch(() => ({ created: [], dispatched: 0, deferred: 0 })),
+    ),
+  );
+
+  const created = results.flatMap((result) => result.created).filter((task) => task.ok);
+  return { ok: created.length, refs: created.map((task) => task.ref).filter(Boolean) };
+}
+
 async function driveGoal(baseClient: ManagerClient, goal: Goal, cfg: GoalDriverConfig): Promise<{ spawned: number; refs: string[]; note: string }> {
   const teamClient = baseClient.withTeam(goal.team);
+  const goalTeam = goal.team || baseClient.team || 'default';
   const tasks = await teamClient.tasks().catch(() => [] as Task[]);
   const openTagged = tasks.filter((t) => taskBelongsToGoal(t, goal.id) && !taskDone(t));
   const openRefs = openTagged.map(taskRef).filter(Boolean);
@@ -139,22 +203,43 @@ async function driveGoal(baseClient: ManagerClient, goal: Goal, cfg: GoalDriverC
   const lead = pickActiveLead(agents);
   if (!lead) return { spawned: 0, refs: [], note: 'no active lead available' };
 
-  const roster = agents.map((a) => ({
-    name: a.name,
-    runtime: a.runtime,
-    status: a.status,
-    skills: Array.isArray(a.metadata?.skills) ? (a.metadata!.skills as string[]) : [],
+  if (goalTeam !== 'default') {
+    const roster = agents.map((a) => ({
+      name: a.name,
+      runtime: a.runtime,
+      status: a.status,
+      skills: Array.isArray(a.metadata?.skills) ? (a.metadata!.skills as string[]) : [],
+    }));
+    const decomp = await decomposeWork(teamClient, goal.content || goal.idea || goal.title, lead, roster);
+    if (!decomp.ok || !decomp.subtasks.length) return { spawned: 0, refs: [], note: decomp.error || 'no subtasks produced' };
+
+    const subtasks = decomp.subtasks.slice(0, slots).map((st) => annotateSubtask(goal, st));
+    const created = await createAndDispatchPlan(teamClient, goal.content || goal.title, subtasks, { dispatch: true });
+    const ok = created.created.filter((t) => t.ok);
+    return {
+      spawned: ok.length,
+      refs: ok.map((t) => t.ref).filter(Boolean),
+      note: ok.length ? `spawned ${ok.length} task(s)` : 'no tasks created',
+    };
+  }
+
+  const targets = await resolveGoalLeadTargets(baseClient, goal.team);
+  if (!targets.length) return { spawned: 0, refs: [], note: 'no active non-default team leads available' };
+  const roster = targets.map((target) => ({
+    name: target.lead,
+    runtime: target.runtime,
+    status: target.status,
+    skills: target.skills,
   }));
   const decomp = await decomposeWork(teamClient, goal.content || goal.idea || goal.title, lead, roster);
   if (!decomp.ok || !decomp.subtasks.length) return { spawned: 0, refs: [], note: decomp.error || 'no subtasks produced' };
 
   const subtasks = decomp.subtasks.slice(0, slots).map((st) => annotateSubtask(goal, st));
-  const created = await createAndDispatchPlan(teamClient, goal.content || goal.title, subtasks, { dispatch: true });
-  const ok = created.created.filter((t) => t.ok);
+  const created = await createGoalLeadTasks(baseClient, goal.content || goal.title, subtasks, targets);
   return {
-    spawned: ok.length,
-    refs: ok.map((t) => t.ref).filter(Boolean),
-    note: ok.length ? `spawned ${ok.length} task(s)` : 'no tasks created',
+    spawned: created.ok,
+    refs: created.refs,
+    note: created.ok ? `spawned ${created.ok} task(s) to team leads` : 'no team-lead tasks created',
   };
 }
 

@@ -318,6 +318,10 @@ preset (1h / 24h / 7d / 30d / until revoked).
 primary cross-team lead), edit per-agent instructions, and govern cross-team delegation. (File:
 `Teams.tsx`; page title "HR Manager".)
 
+**Owner:** `legal/hr-manager` owns the HR Manager page's staffing workflows, instruction-drafting
+behavior, and future page optimization proposals. Escalate legal-team policy or personnel-process
+questions through `legal/general-counsel`.
+
 **What you can do** — four sub-tabs: **Structure · Build · Manage · Route**, plus header
 **+ From template** and **✦ Build a team**.
 - **AI Team Builder** (describe/paste a spec → live deterministic parse → **✦ Build with AI**
