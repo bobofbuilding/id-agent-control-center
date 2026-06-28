@@ -26,7 +26,7 @@ import { readWiki } from './wiki.ts';
 import { loadSettings, setUpdateSettings, setImageServer } from '../../../idctl/src/settings/store.ts';
 import type { ImageServerConfig } from '../../../idctl/src/settings/schema.ts';
 import { startBroker, armBroker, disarmBroker, setWatching, brokerStatus, auditTail, panicBroker, setSupervised, setPaused, confirmAction, pendingActions, setPanicHotkey, mintAgentToken, brokerUrl, stopBroker } from './computeruse/broker.ts';
-import { getPermissions, openPermissionSettings, relaunchApp } from './computeruse/permissions.ts';
+import { getPermissions, openPermissionSettings, relaunchApp, type CuPermissionPane } from './computeruse/permissions.ts';
 import { driverCapability, getMousePos } from './computeruse/driver.mac.ts';
 
 // Bundled as CommonJS → __dirname is the output dir (out/main/).
@@ -381,7 +381,7 @@ async function appCall(method: string, args: unknown[]): Promise<unknown> {
     case 'cu:permissions':
       return getPermissions();
     case 'cu:openPermission':
-      return openPermissionSettings(args[0] as 'screen' | 'accessibility');
+      return openPermissionSettings(args[0] as CuPermissionPane);
     case 'cu:relaunch':
       relaunchApp();
       return { ok: true };

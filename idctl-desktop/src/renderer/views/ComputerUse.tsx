@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import type { ReactNode } from 'react';
 import { call, type FleetStore } from '../store.ts';
 
 /**
@@ -8,7 +9,15 @@ import { call, type FleetStore } from '../store.ts';
  * the whole capability on and off — and only for agents you've blessed.
  */
 
-interface Perms { screenRecording: string; accessibility: boolean; platform: string }
+type PermissionState = 'granted' | 'denied' | 'restricted' | 'not-determined' | 'unknown';
+interface Perms {
+  screenRecording: PermissionState;
+  accessibility: boolean;
+  inputMonitoring: PermissionState;
+  automation: { status: PermissionState; targets: string[] };
+  tcc: { readable: boolean; error?: string };
+  platform: string;
+}
 interface PendingAction { id: string; agent: string; action: string; preview: string; ts: number; expiresAt: number }
 interface Status { armed: boolean; watching: boolean; port: number; url: string; lastAgent: string; actions: number; serverStaged: boolean; captureFailing: boolean; blessed: string[]; driverOk: boolean; accessibility: boolean; supervised: boolean; paused: boolean; pending: PendingAction[]; panicHotkey: boolean }
 interface FrameMsg { jpegBase64: string; width: number; height: number; ts: number; display?: { bounds: { width: number; height: number } } }
@@ -20,6 +29,54 @@ function agentRuntime(a: { runtime?: string; metadata?: { runtime?: string } }):
   return a.runtime ?? a.metadata?.runtime ?? '';
 }
 function mcpCapable(rt: string): boolean { return /claude|codex/i.test(rt); }
+function permissionText(status: PermissionState | undefined): string {
+  switch (status) {
+    case 'granted': return 'Granted';
+    case 'denied': return 'Denied';
+    case 'restricted': return 'Restricted by macOS policy';
+    case 'not-determined': return 'Not granted yet';
+    case 'unknown': return 'Unknown';
+    default: return 'Checking...';
+  }
+}
+
+function PermissionRow({
+  ok,
+  title,
+  subtitle,
+  detail,
+  pane,
+  showRelaunch,
+  children,
+  onRefresh,
+}: {
+  ok: boolean;
+  title: string;
+  subtitle: string;
+  detail: string;
+  pane: 'screen' | 'accessibility' | 'input-monitoring' | 'automation';
+  showRelaunch?: boolean;
+  children?: ReactNode;
+  onRefresh: () => void;
+}) {
+  return (
+    <div className={`cu-perm ${ok ? 'ok' : 'bad'}`}>
+      <span className="cu-perm-dot" />
+      <div className="cu-perm-body">
+        <b>{title}</b> <span className="muted small">- {subtitle}</span>
+        <div className="muted small">{detail}</div>
+        {!ok ? (
+          <div className="cu-perm-actions">
+            <button className="btn" onClick={() => void call('cu:openPermission', pane)}>Open Settings ↗</button>
+            {showRelaunch ? <button className="btn" onClick={() => void call('cu:relaunch')} title="A grant only takes effect after a restart">Relaunch</button> : null}
+            <button className="btn" onClick={onRefresh}>Re-check</button>
+          </div>
+        ) : null}
+        {children}
+      </div>
+    </div>
+  );
+}
 
 export function ComputerUse({ store }: { store: FleetStore }) {
   const [perms, setPerms] = useState<Perms | null>(null);
@@ -49,7 +106,11 @@ export function ComputerUse({ store }: { store: FleetStore }) {
   const armed = !!status?.armed;
   const srGranted = perms?.screenRecording === 'granted';
   const axGranted = perms?.accessibility === true;
+  const imGranted = perms?.inputMonitoring === 'granted';
+  const automationGranted = perms?.automation?.status === 'granted';
   const recentlyActed = auditLog.length > 0 && Date.now() - auditLog[auditLog.length - 1].ts < 3500;
+  const tccUnreadable = perms?.platform === 'darwin' && perms?.tcc?.readable === false
+    && (perms.inputMonitoring === 'unknown' || perms.automation.status === 'unknown');
 
   async function refresh() {
     const [p, s, at, au] = await Promise.all([
@@ -216,35 +277,47 @@ export function ComputerUse({ store }: { store: FleetStore }) {
         <aside className="cu-side">
           <section className="card">
             <h3>Permissions</h3>
-            <div className={`cu-perm ${srGranted ? 'ok' : 'bad'}`}>
-              <span className="cu-perm-dot" />
-              <div className="cu-perm-body">
-                <b>Screen Recording</b> <span className="muted small">— to capture the screen</span>
-                <div className="muted small">{srGranted ? 'Granted' : `Not granted (${perms?.screenRecording ?? '…'})`}</div>
-                {!srGranted ? (
-                  <div className="cu-perm-actions">
-                    <button className="btn" onClick={() => void call('cu:openPermission', 'screen')}>Open Settings ↗</button>
-                    <button className="btn" onClick={() => void call('cu:relaunch')} title="A grant only takes effect after a restart">Relaunch</button>
-                    <button className="btn" onClick={() => void refresh()}>Re-check</button>
-                  </div>
-                ) : null}
+            <PermissionRow
+              ok={srGranted}
+              title="Screen Recording"
+              subtitle="to capture the screen"
+              detail={srGranted ? 'Granted' : `${permissionText(perms?.screenRecording)} (${perms?.screenRecording ?? 'checking'})`}
+              pane="screen"
+              showRelaunch
+              onRefresh={() => void refresh()}
+            />
+            <PermissionRow
+              ok={axGranted}
+              title="Accessibility"
+              subtitle="required for mouse + keyboard"
+              detail={axGranted ? 'Granted' : 'Not granted - the agent can see the screen but cannot click or type until you grant this.'}
+              pane="accessibility"
+              showRelaunch
+              onRefresh={() => void refresh()}
+            >
+              {status && !status.driverOk ? <div className="cu-msg small">⚠ native input module unavailable in this build</div> : null}
+            </PermissionRow>
+            <PermissionRow
+              ok={imGranted}
+              title="Input Monitoring"
+              subtitle="tracks keyboard-input authority prompts"
+              detail={imGranted ? 'Granted' : permissionText(perms?.inputMonitoring)}
+              pane="input-monitoring"
+              onRefresh={() => void refresh()}
+            />
+            <PermissionRow
+              ok={automationGranted}
+              title="Automation"
+              subtitle="lets IDACC control allowed apps when needed"
+              detail={automationGranted ? `Granted${perms?.automation.targets.length ? ` for ${perms.automation.targets.join(', ')}` : ''}` : permissionText(perms?.automation?.status)}
+              pane="automation"
+              onRefresh={() => void refresh()}
+            />
+            {tccUnreadable ? (
+              <div className="cu-msg small">
+                macOS blocked permission inspection for Input Monitoring/Automation. Open Settings to verify ID Agents Control Center directly.
               </div>
-            </div>
-            <div className={`cu-perm ${axGranted ? 'ok' : 'bad'}`}>
-              <span className="cu-perm-dot" />
-              <div className="cu-perm-body">
-                <b>Accessibility</b> <span className="muted small">— required for mouse + keyboard</span>
-                <div className="muted small">{axGranted ? 'Granted' : 'Not granted — the agent can see the screen but can’t click or type until you grant this.'}</div>
-                {!axGranted ? (
-                  <div className="cu-perm-actions">
-                    <button className="btn" onClick={() => void call('cu:openPermission', 'accessibility')}>Open Settings ↗</button>
-                    <button className="btn" onClick={() => void call('cu:relaunch')} title="A grant only takes effect after a restart">Relaunch</button>
-                    <button className="btn" onClick={() => void refresh()}>Re-check</button>
-                  </div>
-                ) : null}
-                {status && !status.driverOk ? <div className="cu-msg small">⚠ native input module unavailable in this build</div> : null}
-              </div>
-            </div>
+            ) : null}
           </section>
 
           <section className="card">
