@@ -73,6 +73,18 @@ function testDedupeAndFallbacks() {
   assert.equal(r.agents[1].description, 'only role', 'description falls back to role');
 }
 
+function testSuggestions() {
+  const r = sanitizeDesignedTeam({
+    agents: [{ name: 'lead', role: 'coord', description: 'coordinates', lead: true }],
+    suggestions: {
+      agents: ['Skill curator', 'Skill curator', 'Capability auditor'],
+      skills: ['Browser research pack', '', 'Reusable onboarding checklist'],
+    },
+  }, OPTS);
+  assert.deepEqual(r.suggestions?.agents, ['Skill curator', 'Capability auditor']);
+  assert.deepEqual(r.suggestions?.skills, ['Browser research pack', 'Reusable onboarding checklist']);
+}
+
 function testEmptyAndGarbage() {
   assert.deepEqual(sanitizeDesignedTeam({}, OPTS), { team: null, agents: [] });
   assert.deepEqual(sanitizeDesignedTeam({ agents: 'nope' as unknown as unknown[] }, OPTS), { team: null, agents: [] });
@@ -87,5 +99,6 @@ testDropsOffListPicks();
 testModelRequiresMatchingRuntime();
 testSingleLeadGuarantee();
 testDedupeAndFallbacks();
+testSuggestions();
 testEmptyAndGarbage();
 console.log('team design sanitization tests passed');

@@ -1034,6 +1034,7 @@ function TeamBuilder({
   const [rowsDirty, setRowsDirty] = useState(false);
   const [aiBusy, setAiBusy] = useState(false);
   const [aiElapsed, setAiElapsed] = useState(0); // seconds the AI design call has been running
+  const [aiSuggestions, setAiSuggestions] = useState<DesignedTeam['suggestions']>();
   const aiRun = useRef(0); // bumps to invalidate a stale/cancelled design wait
 
   // ---- options applied to every agent ----
@@ -1089,7 +1090,7 @@ function TeamBuilder({
   async function aiDesign() {
     if (!spec.trim()) return;
     const runId = ++aiRun.current;
-    setAiElapsed(0); setAiBusy(true); setError('');
+    setAiElapsed(0); setAiBusy(true); setError(''); setAiSuggestions(undefined);
     const helper = hrOwner?.name ? `${hrOwner.team ? `${hrOwner.team}/` : ''}${hrOwner.name}` : undefined;
     const roster = summarizeFleetRoster(fleetAgents, activeTeams);
     onMessage(helper ? `asking ${helper} to design the team…` : 'asking AI to design the team…');
@@ -1102,7 +1103,9 @@ function TeamBuilder({
         setRows(mapped); setRowsDirty(true);
       }
       if (r?.team && !teamTouched && teamSel === '__new__') setNewTeam((p) => p || r.team || '');
-      onMessage(`AI designed ${r?.agents?.length ?? 0} agent(s)`);
+      setAiSuggestions(r?.suggestions);
+      const suggestionCount = (r?.suggestions?.agents?.length ?? 0) + (r?.suggestions?.skills?.length ?? 0);
+      onMessage(`AI designed ${r?.agents?.length ?? 0} agent(s)${suggestionCount ? ` and suggested ${suggestionCount} fleet improvement(s)` : ''}`);
     } catch (e) {
       if (aiRun.current === runId) setError(`AI design failed: ${e instanceof Error ? e.message : String(e)} — keeping the current roster.`);
     } finally { if (aiRun.current === runId) setAiBusy(false); }
@@ -1425,6 +1428,22 @@ function TeamBuilder({
                 );
               })}
             </div>
+            {aiSuggestions && (aiSuggestions.agents.length || aiSuggestions.skills.length) ? (
+              <div style={{ marginTop: 10, border: '1px solid var(--border, #2a2a2a)', borderRadius: 6, padding: '8px 10px' }}>
+                <div className="b small">HR suggestions for the collective</div>
+                <div className="muted small" style={{ marginTop: 2 }}>Advisory only — add an agent row or create a skill separately before anything changes.</div>
+                {aiSuggestions.agents.length ? (
+                  <div className="small" style={{ marginTop: 6 }}>
+                    <span className="muted">agents: </span>{aiSuggestions.agents.join(' · ')}
+                  </div>
+                ) : null}
+                {aiSuggestions.skills.length ? (
+                  <div className="small" style={{ marginTop: 4 }}>
+                    <span className="muted">skills: </span>{aiSuggestions.skills.join(' · ')}
+                  </div>
+                ) : null}
+              </div>
+            ) : null}
             {reserved.length ? <p className="status-error small">Reserved name(s): <span className="mono">{reserved.join(', ')}</span> — rename.</p> : null}
             {dupes.length ? <p className="status-error small">Duplicate name(s): <span className="mono">{dupes.join(', ')}</span>.</p> : null}
             {error ? <p className="status-error small">{error}</p> : null}

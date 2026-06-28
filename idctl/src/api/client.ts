@@ -43,6 +43,10 @@ export interface DesignedAgent {
 export interface DesignedTeam {
   team: string | null;
   agents: DesignedAgent[];
+  suggestions?: {
+    agents: string[];
+    skills: string[];
+  };
 }
 
 /**
@@ -54,7 +58,7 @@ export interface DesignedTeam {
  * calls it on the model's reply.
  */
 export function sanitizeDesignedTeam(
-  obj: { team?: unknown; agents?: unknown },
+  obj: { team?: unknown; agents?: unknown; suggestions?: unknown },
   opts: { runtimes?: string[]; models?: Record<string, string[]>; skills?: string[] } = {},
 ): DesignedTeam {
   const runtimeSet = new Set((opts.runtimes ?? []).filter(Boolean));
@@ -84,7 +88,19 @@ export function sanitizeDesignedTeam(
   // Guarantee exactly one lead — default to the first agent if the AI named none.
   if (!leadAssigned && agents.length) agents[0].lead = true;
   const team = typeof obj.team === 'string' && obj.team.trim() ? slugName(obj.team) : null;
-  return { team, agents };
+  const suggestions = sanitizeDesignSuggestions(obj.suggestions);
+  return suggestions.agents.length || suggestions.skills.length ? { team, agents, suggestions } : { team, agents };
+}
+
+function sanitizeDesignSuggestions(raw: unknown): { agents: string[]; skills: string[] } {
+  const o = raw && typeof raw === 'object' ? raw as Record<string, unknown> : {};
+  const clean = (items: unknown): string[] => {
+    if (!Array.isArray(items)) return [];
+    return [...new Set(items.map((item) => String(item).replace(/\s+/g, ' ').trim()).filter(Boolean))]
+      .map((item) => item.slice(0, 240))
+      .slice(0, 8);
+  };
+  return { agents: clean(o.agents), skills: clean(o.skills) };
 }
 
 /** Controlled vocabulary for skill auto-categorization. The AI picks tags from
@@ -723,8 +739,9 @@ export class ManagerClient {
       '{"team":"<slug or null>","agents":[{"name":"<lowercase-hyphen-slug>","role":"<one short line>",' +
       '"description":"<full mandate, 1-4 sentences>","runtime":"<one runtime id or empty>",' +
       '"model":"<a model for that runtime or empty>","skills":["<zero or more skill names>"],' +
-      '"lead":<true for exactly ONE coordinator agent, false otherwise>}]}. ' +
+      '"lead":<true for exactly ONE coordinator agent, false otherwise>}],"suggestions":{"agents":["<optional fleet-level agent idea>"],"skills":["<optional reusable skill idea>"]}}. ' +
       'Propose every agent the team needs and nothing more. ' +
+      'You are authorized to make advisory suggestions for additional agents and reusable skills the collective should consider, but suggestions are not approvals to create or install them. ' +
       'Pick runtime ONLY from: ' + (runtimes.join(', ') || '(none available)') + '. ' +
       'Models available per runtime (pick one for the chosen runtime, or leave empty for the default):\n' +
       (modelLines || '  (none)') + '\n' +
@@ -744,7 +761,7 @@ export class ManagerClient {
     const start = reply.indexOf('{');
     const end = reply.lastIndexOf('}');
     if (start < 0 || end <= start) throw new ManagerError('AI design: no JSON object in the reply');
-    let obj: { team?: unknown; agents?: unknown };
+    let obj: { team?: unknown; agents?: unknown; suggestions?: unknown };
     try { obj = JSON.parse(reply.slice(start, end + 1)); }
     catch { throw new ManagerError('AI design: reply was not valid JSON'); }
     return sanitizeDesignedTeam(obj, { runtimes, models: opts.models, skills });
