@@ -8,6 +8,9 @@ Every change pushed or merged to `main` carries its version number in the commit
 subject (`vX.Y.Z: …`), stamped automatically by the `commit-msg` hook — see
 [CONTRIBUTING.md](CONTRIBUTING.md).
 
+## [0.1.208] — 2026-06-28
+- Expand Computer Use permission checks
+
 ## [0.1.207] — 2026-06-28
 - Surface HR team design suggestions
 
