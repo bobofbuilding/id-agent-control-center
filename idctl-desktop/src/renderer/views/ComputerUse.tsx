@@ -350,6 +350,12 @@ export function ComputerUse({ store }: { store: FleetStore }) {
     const found = agents.find((x) => x.id === rendered.id) ?? agents.find((x) => x.name === rendered.name);
     return found ? { ...found, team: expectedTeam } : null;
   }
+  function findFreshTargetById(groups: TeamAgentsGroup[], rendered: { id: string; name: string; team?: string }): ComputerUseTarget | null {
+    const expectedTeam = rendered.team ?? activeTeam;
+    const agents = groups.find((g) => g.team === expectedTeam)?.agents ?? [];
+    const found = agents.find((x) => x.id === rendered.id);
+    return found ? { ...found, team: expectedTeam } : null;
+  }
   async function ensureFreshTarget(rendered: ComputerUseTarget, label: string): Promise<ComputerUseTarget | null> {
     const team = rendered.team ?? activeTeam;
     const groups = await freshGroups();
@@ -451,14 +457,18 @@ export function ComputerUse({ store }: { store: FleetStore }) {
     try {
       const current = await ensureFreshAttached({ ...a, team }, 'Remove');
       if (!current) return;
-      if (!window.confirm(`Remove Computer Use from ${team}/${current.name}?\n\nThis detaches the local computer-use MCP server and rebuilds the agent. If Computer Use is armed, its live blessed list will be refreshed afterward.`)) return;
+      if (!window.confirm(`Remove Computer Use from ${team}/${current.name}?\n\nThis detaches the local computer-use MCP server and rebuilds the agent if that exact agent is still in the current roster. If Computer Use is armed, its live blessed list will be refreshed afterward.`)) return;
       const afterConfirm = await ensureFreshAttached(current, 'Remove');
       if (!afterConfirm) return;
+      const groups = await freshGroups();
+      const exactAgent = findFreshTargetById(groups, { id: afterConfirm.id, name: afterConfirm.name, team });
       await call('cu:detach', afterConfirm.id, afterConfirm.name, team);
-      await call('rebuildAgent', afterConfirm.name, team).catch(() => {});
+      if (exactAgent) await call('rebuildAgent', exactAgent.name, team).catch(() => {});
       await syncArmedBlessedForTeam(team);
       await refresh();
-      setMsg(`Removed computer-use from ${team}/${afterConfirm.name}.`);
+      setMsg(exactAgent
+        ? `Removed computer-use from ${team}/${afterConfirm.name}.`
+        : `Removed stale Computer Use authority for ${team}/${afterConfirm.name}; skipped rebuild because that exact agent is no longer in the current roster.`);
     } catch (e) {
       setMsg(`✗ Couldn't remove from ${team}/${a.name}: ${e instanceof Error ? e.message : e}`);
     } finally { setBusy(false); }

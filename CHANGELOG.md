@@ -8,6 +8,9 @@ Every change pushed or merged to `main` carries its version number in the commit
 subject (`vX.Y.Z: …`), stamped automatically by the `commit-msg` hook — see
 [CONTRIBUTING.md](CONTRIBUTING.md).
 
+## [0.1.296] — 2026-06-29
+- Computer Use exact-agent remove guard
+
 ## [0.1.295] — 2026-06-29
 - Capabilities Brain skill sync stamp
 
