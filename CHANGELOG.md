@@ -8,6 +8,9 @@ Every change pushed or merged to `main` carries its version number in the commit
 subject (`vX.Y.Z: …`), stamped automatically by the `commit-msg` hook — see
 [CONTRIBUTING.md](CONTRIBUTING.md).
 
+## [0.1.261] — 2026-06-29
+- Wiki records staged Brain Skills source/freshness strip and restart boundary.
+
 ## [0.1.260] — 2026-06-29
 - Capabilities Skills catalog flags local-vs-Brain drift after local edits and keeps Sync Brain explicit/additive.
 
