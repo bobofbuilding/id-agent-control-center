@@ -50,6 +50,23 @@ export interface KeyCapabilities {
   live: boolean;
 }
 
+export interface KeyAuthorityTarget {
+  name: string;
+  team?: string;
+}
+
+export interface LegacyKeyAuthority {
+  agent: string;
+  currentAuthorities: string[];
+  source: 'mock-key-provider' | 'tauri-localStorage';
+  account: boolean;
+  deployed: boolean;
+  totalSessions: number;
+  activeSessions: number;
+  nonExpiringSessions: number;
+  note: string;
+}
+
 export interface KeyProvider {
   capabilities(): KeyCapabilities;
   /** All known agent accounts (creates nothing). */

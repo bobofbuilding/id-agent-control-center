@@ -58,6 +58,14 @@ interface BrokerState {
   onPending: ((evt: { kind: 'add' | 'remove'; pending: PendingAction[] }) => void) | null;
 }
 export interface PendingAction { id: string; agent: string; action: string; preview: string; ts: number; expiresAt: number }
+export interface ComputerUseAuthorityTarget { name: string; team?: string }
+export interface LegacyComputerUseAuthority {
+  agent: string;
+  currentAuthorities: string[];
+  tokenCount: number;
+  source: 'computer-use-agent-tokens';
+  note: string;
+}
 const S: BrokerState = { server: null, port: 0, token: '', armed: false, watching: false, onFrame: null, pump: null, lastSig: 0, lastAgent: '', actions: 0, captureFailing: false, blessed: new Set(), team: '', lastShot: null, supervised: true, paused: false, pending: new Map(), onPending: null };
 
 const CONFIRM_TIMEOUT_MS = 60 * 1000; // auto-decline a held action if the user doesn't answer
@@ -160,6 +168,11 @@ function teamFromAuthority(agent: string): string {
   const i = agent.indexOf(':');
   return i > 0 ? agent.slice(0, i).slice(0, 64) : '';
 }
+function currentAuthority(target: ComputerUseAuthorityTarget): string {
+  const name = String(target.name || '');
+  const team = target.team ? String(target.team) : undefined;
+  return team ? `${team}:${name}` : name;
+}
 function loadOrMakeToken(): { token: string } {
   try {
     const j = JSON.parse(readFileSync(sessionFile(), 'utf8'));
@@ -218,6 +231,32 @@ export function revokeAgentToken(agent: string): void {
   let changed = false;
   for (const [tok, a] of [...agentTokens]) if (a === name) { agentTokens.delete(tok); changed = true; }
   if (changed) saveAgentTokens();
+}
+export function legacyAgentTokenReport(targets: ComputerUseAuthorityTarget[]): LegacyComputerUseAuthority[] {
+  if (!agentTokens.size) loadAgentTokens();
+  const byName = new Map<string, Set<string>>();
+  for (const target of targets ?? []) {
+    const name = String(target.name || '').trim();
+    if (!name) continue;
+    byName.set(name, (byName.get(name) ?? new Set()).add(currentAuthority(target)));
+  }
+  const rows: LegacyComputerUseAuthority[] = [];
+  for (const [agent, currentSet] of byName) {
+    if (agent.includes(':')) continue;
+    let tokenCount = 0;
+    for (const authority of agentTokens.values()) {
+      if (authority === agent) tokenCount++;
+    }
+    if (!tokenCount) continue;
+    rows.push({
+      agent,
+      currentAuthorities: [...currentSet].filter((a) => a !== agent).sort(),
+      tokenCount,
+      source: 'computer-use-agent-tokens',
+      note: 'Bare-name Computer Use tokens are blocked by scoped arming. Re-bless the scoped agent before deleting legacy tokens.',
+    });
+  }
+  return rows.filter((row) => row.currentAuthorities.length > 0);
 }
 export function brokerUrl(): string { return `http://127.0.0.1:${S.port || 4180}`; }
 

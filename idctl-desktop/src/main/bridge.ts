@@ -9,7 +9,8 @@ import { ManagerClient } from '../../../idctl/src/api/client.ts';
 import type { Agent } from '../../../idctl/src/api/types.ts';
 import { runOnboarding, type OnboardPlan } from '../../../idctl/src/api/onboard.ts';
 import { loadConfig, type Config } from '../../../idctl/src/config.ts';
-import { getKeyProvider } from '../../../idctl/src/keys/mockProvider.ts';
+import { getKeyProvider, legacyMockAuthorityReport } from '../../../idctl/src/keys/mockProvider.ts';
+import type { KeyAuthorityTarget } from '../../../idctl/src/keys/types.ts';
 import { SCOPE_PRESETS, TTL_PRESETS } from '../../../idctl/src/keys/types.ts';
 import {
   loadSettings,
@@ -883,6 +884,7 @@ const METHODS: Record<string, (...a: any[]) => Promise<unknown>> = {
   // identity & keys (Safe + ERC-4337 session keys; mock today)
   'keys:caps': async () => keys.capabilities(),
   'keys:list': (agents: string[]) => keys.listAccounts(agents ?? []),
+  'keys:legacyAuthority': async (targets: KeyAuthorityTarget[]) => legacyMockAuthorityReport(targets ?? []),
   'keys:ensure': (agent: string, team?: string) => keys.ensureAccount(scopedAgentKey(String(agent), team ? String(team) : undefined)),
   'keys:deploy': async (agent: string, team?: string) => {
     const name = String(agent);

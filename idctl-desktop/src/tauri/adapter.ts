@@ -11,7 +11,7 @@ import type { Agent } from '../../../idctl/src/api/types.ts';
 import { ProviderClient } from '../../../idctl/src/settings/ProviderClient.ts';
 import { discoverLocalServers, type DiscoveredServer } from '../../../idctl/src/settings/localDiscovery.ts';
 import { SCOPE_PRESETS, TTL_PRESETS } from '../../../idctl/src/keys/types.ts';
-import type { AgentAccount, SessionKey } from '../../../idctl/src/keys/types.ts';
+import type { AgentAccount, KeyAuthorityTarget, LegacyKeyAuthority, SessionKey } from '../../../idctl/src/keys/types.ts';
 import { defaultHeadroomPilotSettings, kindNeedsKey, type HeadroomPilotSettings, type ProviderProfile, type McpServerProfile, type ProjectEntry } from '../../../idctl/src/settings/schema.ts';
 import { buildRuntimeCatalog } from '../../../idctl/src/settings/runtimeCatalog.ts';
 import type { McpServerSpec, CreateSkillInput } from '../../../idctl/src/api/client.ts';
@@ -125,6 +125,45 @@ function assembleAccount(agent: string, st: KeysState): AgentAccount {
   return base
     ? { ...base, sessions }
     : { agent, smartAccount: mockAddr('safe:' + agent), owner: OWNER, deployed: false, chainId: CHAIN, sessions };
+}
+function sessionActive(s: SessionKey): boolean {
+  if (s.status === 'revoked') return false;
+  if (s.validUntil === 0) return true;
+  return s.validUntil >= Date.now();
+}
+function currentAuthority(target: KeyAuthorityTarget): string {
+  const name = String(target.name || '');
+  const targetTeam = target.team ? String(target.team) : undefined;
+  return targetTeam ? `${targetTeam}:${name}` : name;
+}
+function legacyKeyAuthorityReport(targets: KeyAuthorityTarget[]): LegacyKeyAuthority[] {
+  const st = keysState();
+  const byName = new Map<string, Set<string>>();
+  for (const target of targets ?? []) {
+    const name = String(target.name || '').trim();
+    if (!name) continue;
+    byName.set(name, (byName.get(name) ?? new Set()).add(currentAuthority(target)));
+  }
+  const rows: LegacyKeyAuthority[] = [];
+  for (const [agent, currentSet] of byName) {
+    if (agent.includes(':')) continue;
+    const account = st.accounts[agent];
+    const sessions = st.sessions[agent] ?? [];
+    if (!account && !sessions.length) continue;
+    const active = sessions.filter(sessionActive);
+    rows.push({
+      agent,
+      currentAuthorities: [...currentSet].filter((a) => a !== agent).sort(),
+      source: 'tauri-localStorage',
+      account: Boolean(account),
+      deployed: Boolean(account?.deployed),
+      totalSessions: sessions.length,
+      activeSessions: active.length,
+      nonExpiringSessions: active.filter((s) => s.validUntil === 0).length,
+      note: 'Bare-name key state is not used by the scoped dashboard. Review before copying, revoking, or deleting it.',
+    });
+  }
+  return rows.filter((row) => row.currentAuthorities.length > 0);
 }
 
 interface ControllerProofRecord {
@@ -440,6 +479,7 @@ const M: Record<string, (...a: any[]) => Promise<unknown>> = {
     const st = keysState();
     return (agents ?? []).map((a) => assembleAccount(a, st));
   },
+  'keys:legacyAuthority': async (targets: KeyAuthorityTarget[]) => legacyKeyAuthorityReport(targets ?? []),
   'keys:ensure': async (agent: string, selectedTeam?: string) => {
     const key = scopedAgentKey(String(agent), selectedTeam ? String(selectedTeam) : undefined);
     const st = keysState();
@@ -536,6 +576,7 @@ const M: Record<string, (...a: any[]) => Promise<unknown>> = {
     const have = new Set(lsGet<ProviderProfile[]>('idctl.providers', []).map((p) => norm(p.baseUrl)));
     return found.map((s: DiscoveredServer) => ({ ...s, alreadyAdded: have.has(norm(s.baseUrl)) }));
   },
+  'cu:legacyAuthority': async () => [],
 };
 
 export async function tauriCall(method: string, args: unknown[] = []): Promise<{ ok: boolean; result?: unknown; error?: string }> {

@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { call, type FleetStore, type TeamAgent } from '../store.ts';
 import type { Agent } from '../../../../idctl/src/api/types.ts';
-import type { AgentAccount, KeyCapabilities, SessionKey, SessionScope } from '../../../../idctl/src/keys/types.ts';
+import type { AgentAccount, KeyAuthorityTarget, KeyCapabilities, LegacyKeyAuthority, SessionKey, SessionScope } from '../../../../idctl/src/keys/types.ts';
 
 type EvidenceState = 'verified' | 'warn' | 'missing' | 'self';
 type IdentityAgent = TeamAgent;
@@ -169,14 +169,16 @@ export function Identity({ store }: { store: FleetStore }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [proofs, setProofs] = useState<Record<string, ControllerProof>>({});
+  const [legacyKeys, setLegacyKeys] = useState<LegacyKeyAuthority[]>([]);
 
   const identityAgents = useMemo(() => {
     const all = store.allAgents.length ? store.allAgents : store.agents.map((a) => ({ ...a, team: store.team ?? 'default' }));
     const sorted = uniqueAgents(all).sort((a, b) => Number(hasWallet(b)) - Number(hasWallet(a)) || (a.team ?? '').localeCompare(b.team ?? '') || a.name.localeCompare(b.name));
     return sorted;
   }, [store.allAgents, store.agents, store.team]);
+  const authorityTargets = useMemo<KeyAuthorityTarget[]>(() => identityAgents.map((a) => ({ name: a.name, team: a.team ?? 'default' })), [identityAgents]);
+  const authorityTargetKey = useMemo(() => authorityTargets.map((a) => `${a.team ?? ''}:${a.name}`).join('|'), [authorityTargets]);
   const accountKeys = useMemo(() => identityAgents.map(agentKey), [identityAgents]);
-  const names = useMemo(() => [...new Set(identityAgents.map((a) => a.name))], [identityAgents]);
   const selAgent = (sel ? identityAgents.find((a) => agentKey(a) === sel) : undefined) ?? identityAgents.find(hasWallet) ?? identityAgents[0];
   const selected = selAgent?.name;
   const selectedKey = selAgent ? agentKey(selAgent) : '';
@@ -219,6 +221,24 @@ export function Identity({ store }: { store: FleetStore }) {
   useEffect(() => {
     void reload();
   }, [accountKeys.join('|')]);
+
+  useEffect(() => {
+    if (!authorityTargets.length) {
+      setLegacyKeys([]);
+      return;
+    }
+    let live = true;
+    call<LegacyKeyAuthority[]>('keys:legacyAuthority', authorityTargets)
+      .then((rows) => {
+        if (live) setLegacyKeys(rows);
+      })
+      .catch(() => {
+        if (live) setLegacyKeys([]);
+      });
+    return () => {
+      live = false;
+    };
+  }, [authorityTargetKey]);
 
   useEffect(() => {
     const nextScope = safeScopes[0]?.idx;
@@ -380,6 +400,29 @@ export function Identity({ store }: { store: FleetStore }) {
                   <span>{error}</span>
                   <button className="btn" onClick={() => setError(null)}>Dismiss</button>
                 </div>
+              ) : null}
+
+              {legacyKeys.length ? (
+                <section className="card identity-legacy" role="status">
+                  <div className="identity-legacy-head">
+                    <h3>Legacy Authority Review</h3>
+                    <StatusPill state="warn" />
+                  </div>
+                  <p className="muted small">
+                    Older bare-name key records were found. They are not treated as current scoped authority, so choose a policy before copying, revoking, or deleting them.
+                  </p>
+                  <div className="risk-list">
+                    {legacyKeys.map((row) => (
+                      <div key={`${row.source}:${row.agent}`} className="risk-row">
+                        <span className="dot warn" />
+                        <b>{row.agent}</b>
+                        <span className="warn-text">
+                          {row.account ? 'account' : 'no account'}{row.deployed ? ' deployed' : ''}; {row.activeSessions}/{row.totalSessions} active sessions{row.nonExpiringSessions ? `, ${row.nonExpiringSessions} non-expiring` : ''}{' -> '}{row.currentAuthorities.join(', ')}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                </section>
               ) : null}
 
               <section className="card identity-gate">

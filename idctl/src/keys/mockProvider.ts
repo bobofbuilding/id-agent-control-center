@@ -12,7 +12,7 @@ import { readFileSync, writeFileSync, mkdirSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 import crypto from 'node:crypto';
 import { configDir, resolveConfigPath } from '../settings/paths.ts';
-import type { AgentAccount, KeyCapabilities, KeyProvider, SessionKey, SessionScope } from './types.ts';
+import type { AgentAccount, KeyAuthorityTarget, KeyCapabilities, KeyProvider, LegacyKeyAuthority, SessionKey, SessionScope } from './types.ts';
 
 const MOCK_CHAIN_ID = 84532; // Base Sepolia (target for the real wiring later)
 const MOCK_OWNER = '0x' + 'a657'.padEnd(40, '0'); // stand-in owner Safe
@@ -29,6 +29,57 @@ function mockAddr(seed: string): string {
 interface MockState {
   accounts: Record<string, Omit<AgentAccount, 'sessions'>>;
   sessions: Record<string, SessionKey[]>;
+}
+
+function sessionActive(s: SessionKey): boolean {
+  if (s.status === 'revoked') return false;
+  if (s.validUntil === 0) return true;
+  return s.validUntil >= Date.now();
+}
+
+function currentAuthority(target: KeyAuthorityTarget): string {
+  const name = String(target.name || '');
+  const team = target.team ? String(target.team) : undefined;
+  return team ? `${team}:${name}` : name;
+}
+
+function loadMockState(): MockState {
+  try {
+    if (existsSync(statePath())) return JSON.parse(readFileSync(statePath(), 'utf8')) as MockState;
+  } catch {
+    /* ignore malformed legacy state */
+  }
+  return { accounts: {}, sessions: {} };
+}
+
+export function legacyMockAuthorityReport(targets: KeyAuthorityTarget[]): LegacyKeyAuthority[] {
+  const st = loadMockState();
+  const byName = new Map<string, Set<string>>();
+  for (const target of targets ?? []) {
+    const name = String(target.name || '').trim();
+    if (!name) continue;
+    byName.set(name, (byName.get(name) ?? new Set()).add(currentAuthority(target)));
+  }
+  const rows: LegacyKeyAuthority[] = [];
+  for (const [agent, currentSet] of byName) {
+    if (agent.includes(':')) continue;
+    const account = st.accounts[agent];
+    const sessions = st.sessions[agent] ?? [];
+    if (!account && !sessions.length) continue;
+    const active = sessions.filter(sessionActive);
+    rows.push({
+      agent,
+      currentAuthorities: [...currentSet].filter((a) => a !== agent).sort(),
+      source: 'mock-key-provider',
+      account: Boolean(account),
+      deployed: Boolean(account?.deployed),
+      totalSessions: sessions.length,
+      activeSessions: active.length,
+      nonExpiringSessions: active.filter((s) => s.validUntil === 0).length,
+      note: 'Bare-name key state is not used by the scoped dashboard. Review before copying, revoking, or deleting it.',
+    });
+  }
+  return rows.filter((row) => row.currentAuthorities.length > 0);
 }
 
 export class MockKeyProvider implements KeyProvider {

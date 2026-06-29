@@ -548,6 +548,9 @@ select:focus, input:focus { border-color: var(--accent); }
 .identity-kv { grid-template-columns: 130px minmax(0, 1fr); }
 .identity-actions { justify-content: flex-start; flex-wrap: wrap; margin-top: 12px; }
 .identity-alert { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: 10px; align-items: center; border: 1px solid color-mix(in srgb, var(--err) 45%, var(--line)); border-radius: 8px; background: color-mix(in srgb, var(--err) 10%, var(--bg)); color: var(--text); padding: 9px 10px; }
+.identity-legacy { border-color: color-mix(in srgb, var(--warn) 44%, var(--line)); background: color-mix(in srgb, var(--warn) 6%, var(--bg)); }
+.identity-legacy-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 4px; }
+.identity-legacy-head h3 { margin: 0; }
 .identity-gate { display: grid; grid-template-columns: minmax(180px, .55fr) minmax(0, 1fr); gap: 18px; align-items: start; }
 .identity-gate h3 { margin-bottom: 6px; }
 .identity-gate p { margin: 0; max-width: 360px; }
@@ -607,6 +610,8 @@ select:focus, input:focus { border-color: var(--accent); }
 .cu-blessed { margin-top: 10px; display: flex; flex-direction: column; gap: 6px; }
 .cu-blessed-row { display: flex; align-items: center; justify-content: space-between; padding: 6px 8px; background: var(--panel-2, rgba(255,255,255,.03)); border: 1px solid var(--border); border-radius: 8px; }
 .cu-msg { margin-top: 8px; color: var(--accent-text, #8ab4ff); }
+.cu-legacy { margin-top: 8px; border: 1px solid color-mix(in srgb, var(--warn) 44%, var(--line)); border-radius: 8px; background: color-mix(in srgb, var(--warn) 7%, var(--bg)); padding: 8px 9px; color: var(--warn); }
+.cu-legacy b { display: block; margin-bottom: 3px; color: var(--text); }
 .cu-safety ul { margin: 6px 0 0; padding-left: 18px; line-height: 1.6; }
 
 /* ── Computer Use · Phase 1 (input + audit) ──────────────────────────── */

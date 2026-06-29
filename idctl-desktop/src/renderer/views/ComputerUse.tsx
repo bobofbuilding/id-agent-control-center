@@ -23,6 +23,7 @@ interface Status { armed: boolean; watching: boolean; port: number; url: string;
 interface FrameMsg { jpegBase64: string; width: number; height: number; ts: number; display?: { bounds: { width: number; height: number } } }
 interface AuditEntry { ts: number; agent: string; action: string; detail: string; decision: 'executed' | 'blocked'; reason?: string }
 type AttachedAgent = { id: string; name: string; team?: string; authority?: string };
+interface LegacyComputerUseAuthority { agent: string; currentAuthorities: string[]; tokenCount: number; source: string; note: string }
 
 const ACT_ICON: Record<string, string> = { screenshot: '📷', mouse_move: '➜', left_click: '🖱', right_click: '🖱', middle_click: '🖱', double_click: '🖱', left_click_drag: '✣', type: '⌨', key: '⌨', scroll: '↕' };
 
@@ -90,6 +91,7 @@ export function ComputerUse({ store }: { store: FleetStore }) {
   const [msg, setMsg] = useState('');
   const [auditLog, setAuditLog] = useState<AuditEntry[]>([]);
   const [pending, setPending] = useState<PendingAction[]>([]);
+  const [legacyAuthority, setLegacyAuthority] = useState<LegacyComputerUseAuthority[]>([]);
   const [panicFlash, setPanicFlash] = useState(false);
   const lastFrameAt = useRef(0);
   const resolvedRef = useRef<Set<string>>(new Set()); // approval ids the user already answered → never resurrect via a stale snapshot
@@ -116,16 +118,19 @@ export function ComputerUse({ store }: { store: FleetStore }) {
     && (perms.inputMonitoring === 'unknown' || perms.automation.status === 'unknown');
 
   async function refresh() {
-    const [p, s, at, au] = await Promise.all([
+    const authorityTargets = eligible.map((a) => ({ name: a.name, team: activeTeam }));
+    const [p, s, at, au, legacy] = await Promise.all([
       call<Perms>('cu:permissions').catch(() => null),
       call<Status>('cu:status').catch(() => null),
       call<AttachedAgent[]>('cu:attached', activeTeam).catch(() => []),
       call<AuditEntry[]>('cu:audit', 40).catch(() => []),
+      call<LegacyComputerUseAuthority[]>('cu:legacyAuthority', authorityTargets).catch(() => []),
     ]);
     if (p) setPerms(p);
     if (s) { setStatus(s); applyPending(s.pending ?? []); }
     setAttached(at ?? []);
     setAuditLog(au ?? []);
+    setLegacyAuthority(legacy ?? []);
   }
 
   async function panic() { setBusy(true); try { await call('cu:panic'); setFrame(''); setFrameMeta(null); await refresh(); } finally { setBusy(false); } }
@@ -352,6 +357,16 @@ export function ComputerUse({ store }: { store: FleetStore }) {
                 ))}
               </div>
             ) : <div className="muted small" style={{ marginTop: 6 }}>No agents blessed yet.</div>}
+            {legacyAuthority.length ? (
+              <div className="cu-legacy small">
+                <b>Legacy authority review</b>
+                {legacyAuthority.map((row) => (
+                  <div key={`${row.source}:${row.agent}`} className="muted">
+                    {row.agent}: {row.tokenCount} old bare-name token{row.tokenCount === 1 ? '' : 's'} blocked by scoped arming{' -> '}{row.currentAuthorities.join(', ')}
+                  </div>
+                ))}
+              </div>
+            ) : null}
             {msg ? <div className="cu-msg small">{msg}</div> : null}
           </section>
 

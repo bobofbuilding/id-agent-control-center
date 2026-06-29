@@ -25,7 +25,7 @@ import { generateImage, readImage, imageModels, getImageServer, detectImageServe
 import { readWiki } from './wiki.ts';
 import { loadSettings, removeEvmRpc, saveSettings, setUpdateSettings, setImageServer, upsertEvmRpc, recordEvmRpcRequest } from '../../../idctl/src/settings/store.ts';
 import type { EvmRpcKeySource, EvmRpcProfile, EvmRpcRequest, ImageServerConfig } from '../../../idctl/src/settings/schema.ts';
-import { startBroker, armBroker, disarmBroker, setWatching, brokerStatus, auditTail, panicBroker, setSupervised, setPaused, confirmAction, pendingActions, setPanicHotkey, mintAgentToken, brokerUrl, stopBroker } from './computeruse/broker.ts';
+import { startBroker, armBroker, disarmBroker, setWatching, brokerStatus, auditTail, panicBroker, setSupervised, setPaused, confirmAction, pendingActions, setPanicHotkey, mintAgentToken, brokerUrl, stopBroker, legacyAgentTokenReport } from './computeruse/broker.ts';
 import { getPermissions, openPermissionSettings, relaunchApp, type CuPermissionPane } from './computeruse/permissions.ts';
 import { driverCapability, getMousePos } from './computeruse/driver.mac.ts';
 import { syncDomainsForMethod, type StoreChangeEvent } from '../shared/syncDomains.ts';
@@ -601,6 +601,8 @@ async function appCall(method: string, args: unknown[]): Promise<unknown> {
       return pendingActions();
     case 'cu:permissions':
       return getPermissions();
+    case 'cu:legacyAuthority':
+      return legacyAgentTokenReport((args[0] as { name: string; team?: string }[] | undefined) ?? []);
     case 'cu:openPermission':
       return openPermissionSettings(args[0] as CuPermissionPane);
     case 'cu:relaunch':
