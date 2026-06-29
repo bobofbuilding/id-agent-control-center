@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { call, resolveCoordinator, type FleetStore } from '../store.ts';
+import { call, resolveCoordinator, useSyncVersion, type FleetStore } from '../store.ts';
 
 /**
  * Goals tab (under Work, left of Plans): capture a goal, let an agent help
@@ -41,6 +41,7 @@ const REFINE_PROMPT = (content: string, instr: string) =>
   `Here is the current goal (Markdown):\n\n${content}\n\nRefine it according to: ${instr}\n\nReturn ONLY the complete updated goal in Markdown (the full statement, not just the changes).`;
 
 export function Goals({ store }: { store: FleetStore }) {
+  const syncVersion = useSyncVersion(['goals', 'work', 'tasks', 'brain']);
   const team = store.team ?? 'default';
   const coordinator = resolveCoordinator(store.agents, store.coordinator) ?? store.agents[0]?.name ?? '';
   const [goals, setGoals] = useState<GoalSummary[]>([]);
@@ -68,12 +69,12 @@ export function Goals({ store }: { store: FleetStore }) {
   const names = useMemo(() => store.agents.map((a) => a.name), [store.agents]);
 
   async function reload() { setGoals(await call<GoalSummary[]>('goals:list', team).catch(() => [])); }
-  useEffect(() => { void reload(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [team, store.lastUpdated]);
+  useEffect(() => { void reload(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [team, store.lastUpdated, syncVersion]);
   async function loadDriver() {
     const cfg = await call<GoalDriverConfig>('goalDriver:getConfig').catch(() => DRIVER_DEFAULTS);
     if (aliveRef.current) setDriverCfg({ ...DRIVER_DEFAULTS, ...(cfg ?? {}) });
   }
-  useEffect(() => { void loadDriver(); }, []);
+  useEffect(() => { void loadDriver(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [syncVersion]);
 
   async function open(id: string) {
     if (detail?.id === id) { setDetail(null); return; } // toggle closed

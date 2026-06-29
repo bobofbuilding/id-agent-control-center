@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { call, type FleetStore } from '../store.ts';
+import { call, useSyncVersion, type FleetStore } from '../store.ts';
 import type { InboxItem } from '../../../../idctl/src/api/types.ts';
 
 type BlockerQuestion = { id: string; question: string; options: string[]; agent: string; taskRef?: string; taskTitle?: string; team: string; createdAt: number };
@@ -27,6 +27,7 @@ function orderByDeps(qs: BlockerQuestion[], deps: Record<string, string[]>): Blo
 }
 
 export function Inbox({ store }: { store: FleetStore }) {
+  const syncVersion = useSyncVersion(['questions', 'inbox', 'tasks', 'work']);
   const team = store.team ?? 'default';
   const [questions, setQuestions] = useState<BlockerQuestion[]>([]);
   const [deps, setDeps] = useState<Record<string, string[]>>({});
@@ -34,7 +35,7 @@ export function Inbox({ store }: { store: FleetStore }) {
     setQuestions(await call<BlockerQuestion[]>('questions:list', team).catch(() => []));
     setDeps(await call<Record<string, string[]>>('tasks:deps').catch(() => ({})));
   }
-  useEffect(() => { void reloadQuestions(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [team, store.lastUpdated]);
+  useEffect(() => { void reloadQuestions(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [team, store.lastUpdated, syncVersion]);
   const ordered = useMemo(() => orderByDeps(questions, deps), [questions, deps]);
 
   const total = store.inbox.length + questions.length;

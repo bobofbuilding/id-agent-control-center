@@ -7,7 +7,7 @@
  */
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react';
 import type { FleetStore } from '../../store.ts';
-import { buildCommands, filterCommands, type Command, type CommandCtx } from '../../dashboard/commands.ts';
+import { buildCommands, filterCommands, initialCommandQuery, slashCommandFromQuery, type Command, type CommandCtx } from '../../dashboard/commands.ts';
 
 export function CommandPalette({
   store, open, onClose, navigate, openDrawer,
@@ -25,7 +25,12 @@ export function CommandPalette({
   const listRef = useRef<HTMLDivElement>(null);
 
   const all = useMemo(() => buildCommands(store), [store]);
-  const results = useMemo(() => filterCommands(all, query), [all, query]);
+  const staticResults = useMemo(() => filterCommands(all, query), [all, query]);
+  const slashCommand = useMemo(() => slashCommandFromQuery(query, store), [query, store]);
+  const results = useMemo(
+    () => slashCommand ? [slashCommand, ...staticResults.filter((c) => c.id !== slashCommand.id)] : staticResults,
+    [slashCommand, staticResults],
+  );
 
   useEffect(() => {
     if (!open) return;
@@ -70,7 +75,7 @@ export function CommandPalette({
           className="cmdk-input"
           placeholder="Type a command or search…  (Esc to close)"
           value={query}
-          onChange={(e) => setQuery(e.target.value)}
+          onChange={(e) => setQuery(initialCommandQuery(e.target.value))}
           onKeyDown={onKey}
           spellCheck={false}
         />

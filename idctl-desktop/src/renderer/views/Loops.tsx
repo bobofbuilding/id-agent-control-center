@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { call, resolveCoordinator, type FleetStore } from '../store.ts';
+import { call, resolveCoordinator, useSyncVersion, type FleetStore } from '../store.ts';
 import type { ScheduleEntry } from '../../../../idctl/src/api/client.ts';
 
 /**
@@ -57,6 +57,7 @@ const DRAFT_PROMPT = (goal: string, names: string[]) =>
   (names.join(', ') || '(none)') + '.\n\nGOAL: ' + goal;
 
 function LoopBuilder({ store, onScheduled }: { store: FleetStore; onScheduled?: () => void }) {
+  const loopSyncVersion = useSyncVersion(['loops', 'work', 'brain']);
   const team = store.team ?? 'default';
   const names = store.agents.map((a) => a.name);
   const coordinator = resolveCoordinator(store.agents, store.coordinator) ?? names[0] ?? '';
@@ -79,7 +80,7 @@ function LoopBuilder({ store, onScheduled }: { store: FleetStore; onScheduled?: 
   const locked = drafting || running || busy;
 
   async function reload() { setChains(await call<LoopSummary[]>('loops:list', team).catch(() => [])); }
-  useEffect(() => { void reload(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [team, store.lastUpdated]);
+  useEffect(() => { void reload(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [team, store.lastUpdated, loopSyncVersion]);
 
   function fix(s: LoopStep): LoopStep { return { agent: names.includes(s.agent) ? s.agent : coordinator, task: String(s.task || '').trim() }; }
 
@@ -289,13 +290,14 @@ function LoopBuilder({ store, onScheduled }: { store: FleetStore; onScheduled?: 
 }
 
 export function Loops({ store }: { store: FleetStore }) {
+  const scheduleSyncVersion = useSyncVersion(['schedules', 'checkins', 'loops', 'work']);
   const [schedules, setSchedules] = useState<ScheduleEntry[]>([]);
   const [busy, setBusy] = useState(false);
   const [running, setRunning] = useState<string | null>(null);
   const [msg, setMsg] = useState('');
 
   async function reload() { setSchedules(await call<ScheduleEntry[]>('schedules').catch(() => [])); }
-  useEffect(() => { void reload(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [store.team, store.lastUpdated]);
+  useEffect(() => { void reload(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [store.team, store.lastUpdated, scheduleSyncVersion]);
 
   const loops = schedules.filter((s) => s.kind === 'calendar');
 

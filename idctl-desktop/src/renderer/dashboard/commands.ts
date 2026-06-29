@@ -33,6 +33,70 @@ export interface Command {
   run: (ctx: CommandCtx) => void | Promise<void>;
 }
 
+const DEFAULT_DASHBOARD_TEAM = 'default';
+const DEFAULT_TEAM_LEAD = 'lead';
+const DEFAULT_SPEAK_COMMAND_BUFFER = `/ask ${DEFAULT_TEAM_LEAD} `;
+const SAFE_AGENT_SPEAK_COMMANDS = new Set(['ask', 'hey']);
+
+export function initialCommandQuery(input: string): string {
+  return input === '/' ? DEFAULT_SPEAK_COMMAND_BUFFER : input;
+}
+
+function parseSlashCommand(input: string): { name: string; args: string[]; raw: string } | null {
+  const raw = input.trim();
+  if (!raw.startsWith('/')) return null;
+  const parts = raw.slice(1).split(/\s+/).filter(Boolean);
+  const name = parts.shift()?.toLowerCase();
+  return name ? { name, args: parts, raw } : null;
+}
+
+function teamNameOf(agent: FleetStore['allAgents'][number]): string | undefined {
+  return agent.team ?? agent.teamName;
+}
+
+export function resolveAgentTargetTeam(
+  commandName: string,
+  targetName: string,
+  allAgents: FleetStore['allAgents'],
+): { teamName?: string; error?: string } {
+  const matches = allAgents.filter((a) => a.name === targetName || a.name.startsWith(`${targetName}.`));
+  if (targetName === DEFAULT_TEAM_LEAD) {
+    const defaultLead = matches.find((m) => teamNameOf(m) === DEFAULT_DASHBOARD_TEAM);
+    if (defaultLead) return { teamName: DEFAULT_DASHBOARD_TEAM };
+  }
+  const distinctTeams = Array.from(new Set(matches.map(teamNameOf).filter(Boolean) as string[]));
+  if (distinctTeams.length === 1) return { teamName: distinctTeams[0] };
+  if (distinctTeams.length > 1) {
+    return { error: `${commandName}: agent "${targetName}" exists in multiple teams (${distinctTeams.join(', ')}). Use a unique agent name or switch context first.` };
+  }
+  if (targetName === DEFAULT_TEAM_LEAD) return { teamName: DEFAULT_DASHBOARD_TEAM };
+  return { error: `${commandName}: agent "${targetName}" not found in any team.` };
+}
+
+export function slashCommandFromQuery(query: string, store: FleetStore): Command | null {
+  const parsed = parseSlashCommand(query);
+  if (!parsed || !SAFE_AGENT_SPEAK_COMMANDS.has(parsed.name)) return null;
+  const targetName = parsed.args[0] ?? '';
+  const message = parsed.args.slice(1).join(' ').trim();
+  if (!targetName || !message) return null;
+  const resolved = resolveAgentTargetTeam(parsed.name, targetName, store.allAgents);
+  return {
+    id: `remote.${parsed.name}`,
+    label: `Send /${parsed.name} to ${targetName}`,
+    group: 'Agents',
+    keywords: 'ask hey lead message chat',
+    hint: resolved.teamName ? resolved.teamName : 'route',
+    run: async (c) => {
+      const route = resolveAgentTargetTeam(parsed.name, targetName, c.store.allAgents);
+      if (route.error) throw new Error(route.error);
+      c.setStatus(`Sending /${parsed.name} to ${targetName}…`);
+      await call('remote', parsed.raw, undefined, route.teamName);
+      c.setStatus(`Sent /${parsed.name} to ${targetName}${route.teamName ? ` (${route.teamName})` : ''}`);
+      c.store.refresh();
+    },
+  };
+}
+
 /** The full-page views the palette can jump to (kept in sync with App's NAV). */
 const VIEWS: { id: string; label: string; kw?: string }[] = [
   { id: 'dashboard', label: 'Dashboard', kw: 'home overview fleet' },

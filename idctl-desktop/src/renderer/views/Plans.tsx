@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { call, resolveCoordinator, type FleetStore } from '../store.ts';
+import { call, resolveCoordinator, useSyncVersion, type FleetStore } from '../store.ts';
 import { useToast } from '../components/toast.tsx';
 
 /**
@@ -79,6 +79,8 @@ const BLOCKERS_PROMPT = (title: string, content: string) =>
   'Only include things that truly need the USER (not work you can just do). Return [] if nothing needs the user. PLAN: ' + title + '\n\n' + content;
 
 export function Plans({ store }: { store: FleetStore }) {
+  const draftSyncVersion = useSyncVersion(['plans', 'work', 'brain']);
+  const brainSyncVersion = useSyncVersion(['brain-plans', 'brain', 'plans', 'work', 'tasks']);
   const team = store.team ?? 'default';
   const coordinator = resolveCoordinator(store.agents, store.coordinator) ?? store.agents[0]?.name ?? '';
   const [plans, setPlans] = useState<PlanSummary[]>([]);
@@ -116,7 +118,7 @@ export function Plans({ store }: { store: FleetStore }) {
     set((prev) => { const n = new Set(prev); if (n.has(v)) n.delete(v); else n.add(v); return n; });
 
   async function reload() { setPlans(await call<PlanSummary[]>('plans:list', team).catch(() => [])); }
-  useEffect(() => { void reload(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [team, store.lastUpdated]);
+  useEffect(() => { void reload(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [team, store.lastUpdated, draftSyncVersion]);
 
   // ---- brain plans (live, read-only content) ----
   const [brain, setBrain] = useState<BrainPlansResp>({ dir: null, plans: [] });
@@ -128,7 +130,7 @@ export function Plans({ store }: { store: FleetStore }) {
     const id = setInterval(() => { void reloadBrain(); }, 10000);
     return () => clearInterval(id);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [team, store.lastUpdated]);
+  }, [team, store.lastUpdated, brainSyncVersion]);
   async function openBrain(file: string) {
     if (brainOpen === file) { setBrainOpen(null); setBrainContent(''); return; }
     setBrainOpen(file); setBrainContent('loading…');

@@ -35,7 +35,7 @@
   },
   "global": {
     "shell": "Electron desktop app. Renderer calls window.idagents.call(method, ...args); preload sends IPC to main; main either handles app-local methods or forwards manager methods through bridge.ts and ManagerClient.",
-    "state": "useFleet in src/renderer/store.ts keeps the live snapshot: connection, manager URL, active team, coordinator, agents, teams, events, inbox, unread chat count, all-team agents, and refresh functions.",
+    "state": "useFleet in src/renderer/store.ts keeps the live snapshot: connection, manager URL, active team, coordinator, agents, teams, events, inbox, unread chat count, all-team agents, and refresh functions. Renderer mutations also emit coarse sync-domain invalidations so mounted Dashboard, Work, Inbox, Projects, and Health views refresh together after plans, goals, loops, schedules, tasks, project, org, and agent-capability changes.",
     "routing": [
       {
         "surface": "Sidebar",
@@ -218,7 +218,9 @@
         ]
       },
       "notes": [
-        "The older static product spec described a dashboard agent grid; in current source that fleet grid lives on Health through AgentTable."
+        "The older static product spec described a dashboard agent grid; in current source that fleet grid lives on Health through AgentTable.",
+        "The command palette accepts /ask and /hey shortcuts; typing / expands to /ask lead and routes the message to the matching lead in the default team when available.",
+        "Dashboard activity and coordination reload on shared sync-domain events from Work, Inbox, project, org, task, chat, and dispatch mutations, so the home view stays aligned with the rest of the app."
       ],
       "body": "# Dashboard\n\nDashboard is the daily command view. It combines lead chat for the selected team with all-team coordination, active task state, recent events, and hierarchy context so an operator can steer work without losing fleet awareness.\n\n## Use it for\n\n- Send a request to the selected team's lead while watching coordination across every running team.\n- Check whether work is moving through the leadership chain before opening the deeper Work or Health pages.\n- Read the event stream when you need fast context on what just changed.\n\n## Watch for\n\nThe Dashboard is not the fleet roster grid. Agent lifecycle controls, probes, and full roster inspection live on Health through AgentTable. If the question is \"who is running?\" use Health; if the question is \"what should the lead do next?\" start here."
     },
@@ -2625,5 +2627,5 @@
       "body": "# Wiki\n\nWiki is both the human documentation page and the editable schematic for the Control Center UI. Each article explains the operator purpose of a page; the structured sections below preserve tabs, tiles, fields, controls, displays, routes, and source files for implementation detail.\n\n## Use it for\n\n- Search pages, controls, routes, source files, and notes from inside the desktop app.\n- Confirm how a UI surface is intended to behave before editing code or filing follow-up work.\n- Keep app navigation metadata and human documentation in one reviewed JSON artifact.\n\n## Editing rule\n\nThe desktop app hot-reload polls CONTROL_CENTER_WIKI.json through the main-process wiki bridge. Sidebar labels, icons, order, and visibility still come from pages[].nav for implemented routes, so documentation edits must preserve that metadata and keep every page.body non-empty."
     }
   ],
-  "appVersion": "0.1.214"
+  "appVersion": "0.1.215"
 }

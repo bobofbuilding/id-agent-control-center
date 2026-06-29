@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { call, resolveCoordinator, type FleetStore, type TeamEvent } from '../store.ts';
+import { call, resolveCoordinator, useSyncVersion, type FleetStore, type TeamEvent } from '../store.ts';
 import { isAgentLive } from '../agentStatus.ts';
 import { Chat } from './Chat.tsx';
 import type { InboxItem, NewsItem, Task } from '../../../../idctl/src/api/types.ts';
@@ -169,6 +169,7 @@ function recentWorkingKeys(events: TeamEvent[]): Set<string> {
  * task. The observation half of the CC refactor (Phase 4): the agents orchestrate, this just shows it.
  */
 function CoordinationTree({ store, events, activeTeams }: { store: FleetStore; events: TeamEvent[]; activeTeams: string[] }) {
+  const syncVersion = useSyncVersion(['org', 'agents', 'tasks', 'work', 'dashboard']);
   const [hier, setHier] = useState<OrgHier>({ primary: null, secondaries: [], coordinators: {}, teams: [] });
   const [tasks, setTasks] = useState<LiteTask[]>([]);
   const [spend, setSpend] = useState<{ total: number; count: number; top?: { agent: string; total: number } } | null>(null);
@@ -184,7 +185,7 @@ function CoordinationTree({ store, events, activeTeams }: { store: FleetStore; e
       setSpend({ total: u.day.total ?? 0, count: u.day.count ?? 0, top });
     }).catch(() => {});
   }, []);
-  useEffect(() => { load(); }, [load, store.lastUpdated]);
+  useEffect(() => { load(); }, [load, store.lastUpdated, syncVersion]);
   useEffect(() => {
     const iv = setInterval(() => { load(); }, 15000);
     return () => clearInterval(iv);
@@ -287,6 +288,7 @@ function CoordinationTree({ store, events, activeTeams }: { store: FleetStore; e
 }
 
 export function Dashboard({ store }: { store: FleetStore }) {
+  const activitySyncVersion = useSyncVersion(['dashboard', 'tasks', 'work', 'inbox', 'chats']);
   // Teams that currently have ≥1 running agent (idle teams hidden from the picker).
   const activeTeams = useMemo(
     () => store.teams.map((t) => t.name).filter((n) => store.allAgents.some((a) => a.team === n && isAgentLive(a.status))),
@@ -329,7 +331,7 @@ export function Dashboard({ store }: { store: FleetStore }) {
       setNews(ns);
     })();
   }, []);
-  useEffect(() => { loadActivity(); }, [loadActivity, store.lastUpdated]);
+  useEffect(() => { loadActivity(); }, [loadActivity, store.lastUpdated, activitySyncVersion]);
   useEffect(() => {
     const iv = setInterval(() => { loadActivity(); }, 15000);
     return () => clearInterval(iv);

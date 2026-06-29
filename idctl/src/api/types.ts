@@ -7,14 +7,31 @@
  * cursor-cli, public-agent-remote).
  */
 
+export interface AgentPluginMetadata {
+  name?: string;
+  path?: string;
+}
+
+export interface AgentMcpServerMetadata {
+  name?: string;
+  transport?: string;
+  command?: string;
+  url?: string;
+}
+
 export interface AgentMetadata {
   runtime?: string;
   description?: string;
   heartbeat?: boolean;
   pid?: number;
   skills?: string[];
-  plugins?: string[];
+  plugins?: Array<AgentPluginMetadata | string>;
+  mcpServers?: AgentMcpServerMetadata[];
+  delegates?: string[];
+  instructions?: string;
   skillmesh_address?: string;
+  skillmesh_key_index?: number;
+  skillmesh_key_path?: string;
   ows_wallet?: string;
   ows_address?: string;
   wallet?: boolean;

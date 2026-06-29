@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { call, resolveCoordinator, type FleetStore } from '../store.ts';
+import { call, resolveCoordinator, useSyncVersion, type FleetStore } from '../store.ts';
 import { useToast } from '../components/toast.tsx';
 import type { ProjectEntry, ProjectStatus } from '../../../../idctl/src/settings/schema.ts';
 
@@ -65,6 +65,7 @@ function GitStatus({ g }: { g?: GitInfo }) {
 }
 
 export function Projects({ store }: { store: FleetStore }) {
+  const syncVersion = useSyncVersion(['projects', 'dashboard', 'brain']);
   const toast = useToast();
   const [projects, setProjects] = useState<ProjectEntry[]>([]);
   const [gitMap, setGitMap] = useState<Record<string, GitInfo>>({});
@@ -158,7 +159,7 @@ export function Projects({ store }: { store: FleetStore }) {
     // projects folder → sync it so the page is populated out of the box.
     if (list.length === 0 && r) void doSync(undefined, true);
   }
-  useEffect(() => { void load(); }, []);
+  useEffect(() => { void load(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [syncVersion]);
 
   type SyncResult = { ok: boolean; root: string | null; added: number; adopted: number; total: number; error?: string };
   /** Scan the workspace projects folder and merge each subfolder into the tracker. */

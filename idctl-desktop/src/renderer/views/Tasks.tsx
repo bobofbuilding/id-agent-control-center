@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type CSSProperties } from 'react';
-import { call, resolveCoordinator, type FleetStore, type TeamAgent } from '../store.ts';
+import { call, resolveCoordinator, useSyncVersion, type FleetStore, type TeamAgent } from '../store.ts';
 import { usePrompt } from '../components/prompt.tsx';
 import { useToast } from '../components/toast.tsx';
 import type { Task } from '../../../../idctl/src/api/types.ts';
@@ -138,6 +138,7 @@ export function Tasks({ store, initialTab }: { store: FleetStore; initialTab?: T
 }
 
 function TasksPanel({ store }: { store: FleetStore }) {
+  const syncVersion = useSyncVersion(['tasks', 'work', 'questions', 'inbox']);
   const [tasks, setTasks] = useState<Task[]>([]);
   const [busy, setBusy] = useState(false);
   const [note, setNote] = useState('');
@@ -278,7 +279,7 @@ function TasksPanel({ store }: { store: FleetStore }) {
   useEffect(() => {
     reload();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [store.team, store.viewAll, store.lastUpdated]);
+  }, [store.team, store.viewAll, store.lastUpdated, syncVersion]);
   // Auto-refresh the board so it stays live as agents claim/complete work.
   useEffect(() => {
     const id = setInterval(() => { void reload(); }, 5000);

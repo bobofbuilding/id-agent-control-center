@@ -4,8 +4,9 @@
  * snapshot poll (agents/teams/inbox) plus a long-poll event cursor.
  */
 
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { Agent, Team, ManagerEvent, InboxItem } from '../../../idctl/src/api/types.ts';
+import { syncDomainsForMethod, type StoreChangeEvent } from '../shared/syncDomains.ts';
 
 export type Connection = 'connecting' | 'online' | 'offline';
 
@@ -22,11 +23,47 @@ export function setTransport(t: Transport): void {
   transport = t;
 }
 
+type StoreChangeListener = (event: StoreChangeEvent) => void;
+const storeChangeListeners = new Set<StoreChangeListener>();
+let transportEventsBound = false;
+
+export function emitStoreChange(event: StoreChangeEvent): void {
+  for (const listener of storeChangeListeners) {
+    try { listener(event); } catch { /* listeners should not break the bus */ }
+  }
+}
+
+export function subscribeStoreChanges(listener: StoreChangeListener): () => void {
+  storeChangeListeners.add(listener);
+  return () => { storeChangeListeners.delete(listener); };
+}
+
+export function bindStoreEvents(api?: { onStoreChange?: (cb: (event: StoreChangeEvent) => void) => () => void }): void {
+  if (transportEventsBound) return;
+  transportEventsBound = true;
+  api?.onStoreChange?.((event) => emitStoreChange(event));
+}
+
+export function useSyncVersion(domains: string | string[]): number {
+  const key = Array.isArray(domains) ? domains.join('|') : domains;
+  const wanted = useMemo(() => new Set(key.split('|').filter(Boolean)), [key]);
+  const [version, setVersion] = useState(0);
+  useEffect(() => subscribeStoreChanges((event) => {
+    if (!event.domains.length) return;
+    if (event.domains.includes('*') || event.domains.some((domain) => wanted.has(domain))) {
+      setVersion((v) => v + 1);
+    }
+  }), [wanted]);
+  return version;
+}
+
 /** Typed call over the active transport. Throws on the error envelope. */
 export async function call<T = unknown>(method: string, ...args: unknown[]): Promise<T> {
   if (!transport) throw new Error('no transport configured');
   const res = await transport(method, args);
   if (!res.ok) throw new Error(res.error || 'manager error');
+  const domains = syncDomainsForMethod(method);
+  if (domains.length) emitStoreChange({ method, domains, at: Date.now() });
   return res.result as T;
 }
 

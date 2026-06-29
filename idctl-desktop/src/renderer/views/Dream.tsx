@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { call, resolveCoordinator, type FleetStore } from '../store.ts';
+import { call, resolveCoordinator, useSyncVersion, type FleetStore } from '../store.ts';
 
 /**
  * Dream tab (under Work). An agent runs an offline "dream" — a reflection pass over
@@ -42,6 +42,7 @@ const SUGGEST_FOCUS_PROMPT =
   'no markdown — e.g. "SkillMesh mainnet readiness blockers" or "where the org keeps duplicating work".';
 
 export function Dream({ store }: { store: FleetStore }) {
+  const syncVersion = useSyncVersion(['dreams', 'work', 'brain']);
   const team = store.team ?? 'default';
   const names = store.agents.map((a) => a.name);
   const coordinator = resolveCoordinator(store.agents, store.coordinator) ?? names[0] ?? '';
@@ -60,7 +61,7 @@ export function Dream({ store }: { store: FleetStore }) {
   const agent = agentSel && names.includes(agentSel) ? agentSel : coordinator;
 
   async function reload() { setDreams(await call<DreamSummary[]>('dreams:list', team).catch(() => [])); }
-  useEffect(() => { void reload(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [team, store.lastUpdated]);
+  useEffect(() => { void reload(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [team, store.lastUpdated, syncVersion]);
 
   async function open(id: string) {
     if (openId === id) { setOpenId(null); setDetail(null); return; }

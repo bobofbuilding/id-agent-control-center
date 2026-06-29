@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { call, type FleetStore } from '../store.ts';
+import { call, useSyncVersion, type FleetStore } from '../store.ts';
 import type { CheckIn, ScheduleEntry } from '../../../../idctl/src/api/client.ts';
 
 /** Schedule panel (a tab under Tasks): heartbeats + supervision check-ins.
@@ -62,6 +62,7 @@ function targetKey(agent: string, team?: string): string {
 }
 
 export function Schedule({ store }: { store: FleetStore }) {
+  const syncVersion = useSyncVersion(['schedules', 'checkins', 'loops', 'work']);
   const [schedules, setSchedules] = useState<ScheduleEntry[]>([]);
   const [allSchedules, setAllSchedules] = useState<TeamSchedule[]>([]);
   const [checkins, setCheckins] = useState<CheckIn[]>([]);
@@ -78,7 +79,7 @@ export function Schedule({ store }: { store: FleetStore }) {
   useEffect(() => {
     reload();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [store.team, store.lastUpdated]);
+  }, [store.team, store.lastUpdated, syncVersion]);
 
   async function act(label: string, fn: () => Promise<unknown>) {
     setBusy(true);

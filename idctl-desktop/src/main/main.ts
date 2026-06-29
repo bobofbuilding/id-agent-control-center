@@ -28,6 +28,7 @@ import type { EvmRpcKeySource, EvmRpcProfile, EvmRpcRequest, ImageServerConfig }
 import { startBroker, armBroker, disarmBroker, setWatching, brokerStatus, auditTail, panicBroker, setSupervised, setPaused, confirmAction, pendingActions, setPanicHotkey, mintAgentToken, brokerUrl, stopBroker } from './computeruse/broker.ts';
 import { getPermissions, openPermissionSettings, relaunchApp, type CuPermissionPane } from './computeruse/permissions.ts';
 import { driverCapability, getMousePos } from './computeruse/driver.mac.ts';
+import { syncDomainsForMethod, type StoreChangeEvent } from '../shared/syncDomains.ts';
 
 // Bundled as CommonJS → __dirname is the output dir (out/main/).
 declare const __dirname: string;
@@ -37,6 +38,13 @@ let brainGraphWin: BrowserWindow | null = null;
 let stopGoalDriver: (() => void) | null = null;
 
 type EvmRpcRow = Omit<EvmRpcProfile, 'apiKey' | 'apiKeyEncrypted'> & { keySource: EvmRpcKeySource };
+
+function publishStoreChange(method: string): void {
+  const domains = syncDomainsForMethod(method);
+  if (!domains.length) return;
+  const event: StoreChangeEvent = { method, domains, at: Date.now() };
+  try { win?.webContents.send('idagents:sync', event); } catch { /* window may be gone */ }
+}
 
 function evmEnvKeyName(id: string): string {
   return `IDCTL_EVM_${id.toUpperCase().replace(/[^A-Z0-9]+/g, '_')}_API_KEY`;
@@ -611,6 +619,7 @@ ipcMain.handle('idagents:call', async (_e, method: string, args: unknown[]) => {
     // this is the single choke point every renderer mutation flows through, so the brain learns
     // config/org/project changes that never reach the manager. Never awaited — can't delay the reply.
     recordControlAction(method, Array.isArray(args) ? args : [], result);
+    publishStoreChange(method);
     return { ok: true, result };
   } catch (err) {
     return { ok: false, error: err instanceof Error ? err.message : String(err) };

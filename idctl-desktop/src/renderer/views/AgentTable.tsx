@@ -63,9 +63,65 @@ function speedOf(a: Agent): string {
   const s = a.metadata?.speed;
   return typeof s === 'string' && s ? s : 'default';
 }
+function runtimeOf(a: Agent): string | undefined {
+  return a.runtime ?? (typeof a.metadata?.runtime === 'string' ? a.metadata.runtime : undefined);
+}
+function metadataNames(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  return value
+    .map((entry) => {
+      if (typeof entry === 'string') return entry;
+      if (entry && typeof entry === 'object') {
+        const row = entry as { name?: unknown; path?: unknown; command?: unknown; url?: unknown };
+        return [row.name, row.path, row.command, row.url].find((v): v is string => typeof v === 'string' && v.trim().length > 0) ?? '';
+      }
+      return '';
+    })
+    .map((s) => s.trim())
+    .filter(Boolean);
+}
 function skillsOf(a: Agent): string[] {
-  const s = a.metadata?.skills;
-  return Array.isArray(s) ? (s as string[]) : [];
+  return metadataNames(a.metadata?.skills);
+}
+function pluginsOf(a: Agent): string[] {
+  return metadataNames(a.metadata?.plugins);
+}
+function mcpServersOf(a: Agent): string[] {
+  return metadataNames(a.metadata?.mcpServers);
+}
+function delegatesOf(a: Agent): string[] {
+  const direct = metadataNames(a.metadata?.delegates);
+  if (direct.length) return direct;
+  return metadataNames((a.metadata as { delegates_to?: unknown } | undefined)?.delegates_to);
+}
+function instructionsOf(a: Agent): string {
+  const i = a.metadata?.instructions;
+  return typeof i === 'string' ? i.trim() : '';
+}
+function descriptionOf(a: Agent): string {
+  const d = a.metadata?.description;
+  return typeof d === 'string' ? d.trim() : '';
+}
+function isRemoteEndpoint(a: Agent): boolean {
+  return a.deploymentShape === 'remote-endpoint' || runtimeOf(a) === 'public-agent-remote';
+}
+function agentHint(a: Agent): string {
+  if (a.last_error) return a.last_error;
+  if (a.health && a.health !== a.status) return a.health;
+  if (!a.port && !isRemoteEndpoint(a)) return 'pending local process';
+  if (isRemoteEndpoint(a) && !a.public_endpoint_url) return 'pending endpoint';
+  return '';
+}
+function timeAgo(ms?: number | null): string {
+  if (!ms) return '—';
+  const delta = Math.max(0, Date.now() - ms);
+  if (delta < 60_000) return `${Math.round(delta / 1000)}s ago`;
+  if (delta < 3_600_000) return `${Math.round(delta / 60_000)}m ago`;
+  if (delta < 86_400_000) return `${Math.round(delta / 3_600_000)}h ago`;
+  return `${Math.round(delta / 86_400_000)}d ago`;
+}
+function chips(values: string[], empty = 'none') {
+  return values.length ? <span className="chips">{values.map((s) => <span className="chip" key={s}>{s}</span>)}</span> : <span className="muted">{empty}</span>;
 }
 
 export function AgentTable({ store, onProbe, probeBusy }: { store: FleetStore; onProbe?: (a: TeamAgent) => void; probeBusy?: string | null }) {
@@ -201,11 +257,12 @@ export function AgentTable({ store, onProbe, probeBusy }: { store: FleetStore; o
   }
 
   const renderRow = (a: TeamAgent) => {
-    const runtimeModels = catalog[a.runtime ?? ''] ?? [];
+    const currentRuntime = runtimeOf(a);
+    const runtimeModels = catalog[currentRuntime ?? ''] ?? [];
     const modelOpts = Array.from(new Set([a.model, ...runtimeModels].filter(Boolean))) as string[];
-    const isLocal = (a.type ?? '') === 'claude' || RUNTIMES.includes(a.runtime ?? '');
-    const runtimeOpts = Array.from(new Set([a.runtime, ...offerableRuntimes(providers, a.runtime ?? undefined)].filter(Boolean))) as string[];
-    const mismatch = runtimeModelMismatch(a.runtime, a.model);
+    const isLocal = (a.type ?? '') === 'claude' || RUNTIMES.includes(currentRuntime ?? '');
+    const runtimeOpts = Array.from(new Set([currentRuntime, ...offerableRuntimes(providers, currentRuntime)].filter(Boolean))) as string[];
+    const mismatch = runtimeModelMismatch(currentRuntime, a.model);
     return (
       <tr key={`${a.team ?? ''}-${a.id}`} className={sel?.id === a.id ? 'sel' : ''} onClick={() => setSelected(a.id)}>
         <td className="b">
@@ -216,11 +273,11 @@ export function AgentTable({ store, onProbe, probeBusy }: { store: FleetStore; o
         <td><span className={`dot ${statusClass(a.status)}`} /> {a.status}</td>
         <td onClick={(e) => e.stopPropagation()}>
           {isLocal ? (
-            <select className="cell-select" value={a.runtime ?? ''} onChange={(e) => void setRuntime(a, e.target.value)}>
+            <select className="cell-select" value={currentRuntime ?? ''} onChange={(e) => void setRuntime(a, e.target.value)}>
               {runtimeOpts.map((r) => <option key={r} value={r}>{runtimeLabel(r)}</option>)}
             </select>
           ) : (
-            <span className="muted" title="remote agents have no switchable runtime">{short(a.runtime ?? a.type)}</span>
+            <span className="muted" title="remote agents have no switchable runtime">{short(currentRuntime ?? a.type)}</span>
           )}
         </td>
         <td onClick={(e) => e.stopPropagation()}>
@@ -230,21 +287,21 @@ export function AgentTable({ store, onProbe, probeBusy }: { store: FleetStore; o
           {mismatch ? <span className="warn-text" title={mismatch} style={{ marginLeft: 4, cursor: 'help' }}>⚠</span> : null}
         </td>
         <td onClick={(e) => e.stopPropagation()}>
-          {runtimeHasEffort(a.runtime) ? (
+          {runtimeHasEffort(currentRuntime) ? (
             <select className="cell-select" value={effortOf(a)} onChange={(e) => void setEffort(a, e.target.value)}
-              title={`Reasoning effort for the ${runtimeLabel(a.runtime ?? '')} runtime — lower spends fewer subscription tokens per turn`}>
+              title={`Reasoning effort for the ${runtimeLabel(currentRuntime ?? '')} runtime — lower spends fewer subscription tokens per turn`}>
               <option value="">default</option>
-              {effortOptions(a.runtime).map((eff) => <option key={eff} value={eff}>{eff}</option>)}
+              {effortOptions(currentRuntime).map((eff) => <option key={eff} value={eff}>{eff}</option>)}
             </select>
           ) : (
             <span className="muted" title="local & cursor runtimes have no reasoning-effort setting">—</span>
           )}
         </td>
         <td onClick={(e) => e.stopPropagation()}>
-          {runtimeHasSpeed(a.runtime) ? (
+          {runtimeHasSpeed(currentRuntime) ? (
             <select className="cell-select" value={speedOf(a)} onChange={(e) => void setSpeed(a, e.target.value)}
-              title={`Output speed for the ${runtimeLabel(a.runtime ?? '')} runtime`}>
-              {speedOptions(a.runtime).map((speed) => <option key={speed} value={speed}>{speed}</option>)}
+              title={`Output speed for the ${runtimeLabel(currentRuntime ?? '')} runtime`}>
+              {speedOptions(currentRuntime).map((speed) => <option key={speed} value={speed}>{speed}</option>)}
             </select>
           ) : (
             <span className="muted" title="this runtime has no output-speed setting">—</span>
@@ -337,13 +394,28 @@ export function AgentTable({ store, onProbe, probeBusy }: { store: FleetStore; o
           <h3>{sel.name}</h3>
           <div className="kv">
             <span>status</span><b><span className={`dot ${statusClass(sel.status)}`} /> {sel.status}</b>
+            {agentHint(sel) ? (<><span>hint</span><b className="warn-text">{agentHint(sel)}</b></>) : null}
             {viewAll ? (<><span>team</span><b>{sel.team ?? '—'}</b></>) : null}
-            <span>runtime</span><b>{sel.runtime ?? sel.type ?? '—'}</b>
+            <span>runtime</span><b>{runtimeOf(sel) ?? sel.type ?? '—'}</b>
             <span>model</span><b>{sel.model ?? '—'}</b>
-            <span>speed</span><b>{runtimeHasSpeed(sel.runtime) ? speedOf(sel) : '—'}</b>
+            {sel.health ? (<><span>health</span><b>{sel.health}</b></>) : null}
+            <span>speed</span><b>{runtimeHasSpeed(runtimeOf(sel)) ? speedOf(sel) : '—'}</b>
             <span>port</span><b>{sel.port || '—'}</b>
+            {descriptionOf(sel) ? (<><span>description</span><b>{descriptionOf(sel)}</b></>) : null}
             <span>skills</span>
-            <b>{skillsOf(sel).length ? <span className="chips">{skillsOf(sel).map((s) => <span className="chip" key={s}>{s}</span>)}</span> : <span className="muted">none</span>}</b>
+            <b>{chips(skillsOf(sel))}</b>
+            <span>plugins</span><b>{chips(pluginsOf(sel))}</b>
+            <span>mcp servers</span><b>{chips(mcpServersOf(sel))}</b>
+            <span>delegates</span><b>{chips(delegatesOf(sel))}</b>
+            <span>instructions</span><b>{instructionsOf(sel) ? <span className="ok-text">present</span> : <span className="muted">none</span>}</b>
+            {isRemoteEndpoint(sel) ? (
+              <>
+                <span>endpoint</span><b className="mono small">{sel.public_endpoint_url ?? '—'}</b>
+                <span>domain</span><b>{sel.customer_domain ?? sel.idchain_domain ?? '—'}</b>
+                <span>last seen</span><b>{timeAgo(sel.last_seen)}</b>
+                <span>failures</span><b>{sel.consecutive_failures ?? 0}</b>
+              </>
+            ) : null}
             <span>workdir</span><b className="mono small">{sel.workingDirectory ?? '—'}</b>
           </div>
         </section>
