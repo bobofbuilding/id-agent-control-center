@@ -1686,8 +1686,13 @@ function TeamBuilder({
   const existingInTeam = useMemo(() => new Set((existingAgents[targetTeam] ?? []).map((n) => slugName(n))), [existingAgents, targetTeam]);
   const alreadyThere = named.filter((r) => existingInTeam.has(r.slug));
   const toCreate = named.filter((r) => !existingInTeam.has(r.slug));
+  const relayPayload: string[] | null =
+    relayMode === 'all' ? ['*'] : relayMode === 'none' ? [] : relayMode === 'select' ? relaySel : null;
+  const builderRelayBlocksDefault = targetTeam === PRIMARY_TEAM && relayBlocksAll(relayPayload);
+  const defaultLeadAvailableForWire = targetTeam !== PRIMARY_TEAM || existingInTeam.has(DEFAULT_LEAD) || named.some((r) => r.slug === DEFAULT_LEAD);
+  const defaultLeadMissingForWire = coordinate && targetTeam === PRIMARY_TEAM && !defaultLeadAvailableForWire;
   const locked = building || aiBusy;
-  const canBuild = !locked && Boolean(targetTeam) && !isReservedName(targetTeam) && toCreate.length > 0 && reserved.length === 0 && dupes.length === 0;
+  const canBuild = !locked && Boolean(targetTeam) && !isReservedName(targetTeam) && toCreate.length > 0 && reserved.length === 0 && dupes.length === 0 && !builderRelayBlocksDefault && !defaultLeadMissingForWire;
   const leadershipBackbone = useMemo(() => assessLeadershipBackbone(fleetAgents, hierarchy), [fleetAgents, hierarchy]);
   const leadershipIssues = leadershipBackboneIssues(leadershipBackbone);
   const blueprintCoverages = useMemo(() => RECOMMENDED_TEAM_BLUEPRINTS.map((bp) => blueprintCoverage(fleetAgents, bp)), [fleetAgents]);
@@ -1785,9 +1790,6 @@ function TeamBuilder({
     }
   }
 
-  const relayPayload: string[] | null =
-    relayMode === 'all' ? ['*'] : relayMode === 'none' ? [] : relayMode === 'select' ? relaySel : null;
-
   function planFor(r: Row): OnboardPlan {
     return {
       name: slugName(r.name),
@@ -1856,6 +1858,8 @@ function TeamBuilder({
     if (isReservedName(targetTeam)) { setError(`“${targetTeam}” is a reserved word — choose another team name.`); return; }
     if (reserved.length) { setError(`Reserved agent name(s): ${reserved.join(', ')} — rename.`); return; }
     if (dupes.length) { setError(`Duplicate agent name(s): ${dupes.join(', ')}.`); return; }
+    if (builderRelayBlocksDefault) { setError(`The ${PRIMARY_TEAM} team needs at least one outbound relay path for ${DEFAULT_LEAD} delegation and validator bounce-backs.`); return; }
+    if (defaultLeadMissingForWire) { setError(`Default-team routing is locked to ${PRIMARY_TEAM}/${DEFAULT_LEAD}. Add a lead row, restore default/lead, or turn off Wire agentic routing for this build.`); return; }
     // Build only the agents that DON'T already exist in the team; the rest are shown as
     // "already in <team>" (informational), not errors. No-op if everything already exists.
     const batch = toCreate;
@@ -1865,7 +1869,7 @@ function TeamBuilder({
     }
     const postSteps = [
       coordinate ? (targetTeam === PRIMARY_TEAM
-        ? 'make the starred lead the default primary, write the default-primary validation preset, and rebuild that lead'
+        ? 'wire default/lead as the default primary, write the default-primary validation preset, and rebuild it'
         : "make the starred lead this team's coordinator, write the delegate-to-teammates preset, and rebuild that lead") : '',
       relayMode !== 'permissive' ? `set cross-team relay to ${describeRelay(relayPayload)}` : '',
     ].filter(Boolean);
@@ -1902,8 +1906,8 @@ function TeamBuilder({
     // Auto-coordination: set the ★ lead as this team's coordinator + apply the preset. Resolve
     // the lead from the FULL roster (it may be an agent that already existed).
     const leadRow = named.find((r) => r.lead) ?? named[0];
-    if (anyOk && coordinate && leadRow) {
-      const leadName = leadRow.slug;
+    const leadName = targetTeam === PRIMARY_TEAM ? DEFAULT_LEAD : leadRow?.slug;
+    if (anyOk && coordinate && leadName) {
       // Tell the lead to delegate to ALL its teammates in the roster (existing + newly added).
       const teammates = named.filter((r) => r.slug !== leadName).map((r) => ({ name: r.slug, role: r.role.trim() }));
       const preset = coordinatorPresetFor(targetTeam, teammates);
@@ -2060,7 +2064,7 @@ function TeamBuilder({
             <div className="muted small" style={{ margin: '14px 0 4px' }}>coordination &amp; routing</div>
             <label className="muted small" style={{ display: 'block' }}>
               <input type="checkbox" checked={coordinate} disabled={locked} onChange={(e) => setCoordinate(e.target.checked)} />{' '}
-              Wire agentic routing — make the ★ lead this team's coordinator and apply the {targetTeam === PRIMARY_TEAM ? 'default-primary validation preset' : 'delegate-to-teammates preset'}
+              Wire agentic routing — {targetTeam === PRIMARY_TEAM ? `make ${PRIMARY_TEAM}/${DEFAULT_LEAD} the default primary` : "make the ★ lead this team's coordinator"} and apply the {targetTeam === PRIMARY_TEAM ? 'default-primary validation preset' : 'delegate-to-teammates preset'}
             </label>
             <p className="muted small" style={{ marginTop: 4, marginBottom: 0 }}>
               With this on, new work is handed to the <b>lead</b>, which checks what's already done, decomposes only the
@@ -2076,11 +2080,16 @@ function TeamBuilder({
                 ['select', 'Selected'],
                 ['none', 'None'],
               ] as [RelayMode, string][]).map(([m, label]) => (
-                <label key={m} className={`relay-mode${relayMode === m ? ' active' : ''}`}>
-                  <input type="radio" name="builder-relay" checked={relayMode === m} disabled={locked} onChange={() => setRelayMode(m)} /> {label}
+                <label key={m} className={`relay-mode${relayMode === m ? ' active' : ''}`} title={targetTeam === PRIMARY_TEAM && m === 'none' ? 'Default leadership needs at least one relay path' : undefined}>
+                  <input type="radio" name="builder-relay" checked={relayMode === m} disabled={locked || (targetTeam === PRIMARY_TEAM && m === 'none')} onChange={() => setRelayMode(m)} /> {label}
                 </label>
               ))}
             </div>
+            {builderRelayBlocksDefault ? (
+              <p className="warn-text small" style={{ marginTop: 6 }}>
+                Default leadership needs at least one outbound relay path; choose Any, All, or Selected with at least one team.
+              </p>
+            ) : null}
             {relayMode === 'select' ? (
               <div className="chips" style={{ marginTop: 8 }}>
                 {relayTargets.length === 0 ? <span className="muted small">No other teams.</span> :
@@ -2121,19 +2130,23 @@ function TeamBuilder({
             {usingNewTeam && isReservedName(targetTeam) ? <p className="status-error small"><span className="mono">{targetTeam}</span> is a reserved word — choose another team name.</p> : null}
             {usingNewTeam && teamExists ? <p className="warn-text small">Team <span className="mono">{targetTeam}</span> exists — these agents will be added to it.</p> : null}
             {targetNeedsBackbone ? <p className="warn-text small">Default return path incomplete — build will ask before adding <span className="mono">{targetTeam}</span>.</p> : null}
+            {defaultLeadMissingForWire ? <p className="warn-text small">Default-team routing is locked to <span className="mono">{PRIMARY_TEAM}/{DEFAULT_LEAD}</span>; add/restore that agent or turn off Wire agentic routing.</p> : null}
 
             <div className="row-actions" style={{ justifyContent: 'space-between', alignItems: 'center', margin: '12px 0 6px' }}>
-              <span className="muted small">roster — ★ marks the lead; ▸ for persona &amp; skills</span>
+              <span className="muted small">roster — {targetTeam === PRIMARY_TEAM ? `${PRIMARY_TEAM}/${DEFAULT_LEAD} is the fixed primary; ` : '★ marks the lead; '}▸ for persona &amp; skills</span>
               <button className="btn small" disabled={locked} onClick={addRow}>＋ add agent</button>
             </div>
             <div style={{ maxHeight: 340, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 6 }}>
               {rows.map((r, i) => {
-                const rowReserved = isReservedName(slugName(r.name));
-                const rowExists = !!slugName(r.name) && existingInTeam.has(slugName(r.name));
+                const rowSlug = slugName(r.name);
+                const rowReserved = isReservedName(rowSlug);
+                const rowExists = !!rowSlug && existingInTeam.has(rowSlug);
+                const leadLocked = targetTeam === PRIMARY_TEAM && rowSlug !== DEFAULT_LEAD;
+                const rowIsEffectiveLead = targetTeam === PRIMARY_TEAM ? rowSlug === DEFAULT_LEAD : r.lead;
                 return (
                   <div key={i} style={{ border: '1px solid var(--border, #2a2a2a)', borderRadius: 6, padding: '6px 6px 8px' }}>
                     <div className="kv" style={{ gridTemplateColumns: '26px 1.2fr 1fr 1fr 24px 24px', gap: 6, alignItems: 'center' }}>
-                      <button className={`chip${r.lead ? ' on' : ''}`} title={r.lead ? 'lead' : 'make lead'} disabled={locked} onClick={() => setLead(i)} style={{ padding: '2px 6px' }}>★</button>
+                      <button className={`chip${rowIsEffectiveLead ? ' on' : ''}`} title={leadLocked ? `${PRIMARY_TEAM} primary is locked to ${PRIMARY_TEAM}/${DEFAULT_LEAD}` : rowIsEffectiveLead ? 'lead' : 'make lead'} disabled={locked || leadLocked} onClick={() => setLead(i)} style={{ padding: '2px 6px' }}>★</button>
                       <input
                         className="mono"
                         style={{ fontSize: 12, ...(rowReserved ? { borderColor: 'var(--danger, #e5484d)' } : {}) }}
