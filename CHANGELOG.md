@@ -8,6 +8,9 @@ Every change pushed or merged to `main` carries its version number in the commit
 subject (`vX.Y.Z: …`), stamped automatically by the `commit-msg` hook — see
 [CONTRIBUTING.md](CONTRIBUTING.md).
 
+## [0.1.225] — 2026-06-29
+- Guard Projects auto-commit checkpoints
+
 ## [0.1.224] — 2026-06-29
 - Make Dashboard observe-first
 

@@ -98,6 +98,24 @@ function diffSummary(d: ProjectDiff | null | undefined): string[] {
   }
   return lines;
 }
+function autoCommitBlockers(g: GitInfo | null | undefined, d: ProjectDiff | null | undefined): string[] {
+  const out: string[] = [];
+  if (!g) out.push('git status unavailable');
+  else if (!g.isRepo) out.push('not a git repository');
+  else {
+    if (!g.remoteUrl) out.push('no remote is linked');
+    if (g.upstreamGone) out.push('tracking branch is gone');
+    if (g.ahead == null || g.behind == null) out.push('fetch/compare state is unknown');
+    else {
+      if (g.behind > 0) out.push(`${g.behind} behind remote`);
+      if (g.ahead > 0) out.push(`${g.ahead} unpushed local commit${g.ahead === 1 ? '' : 's'}`);
+    }
+  }
+  if (!d) out.push('diff unavailable');
+  else if (!d.ok) out.push(`diff unavailable${d.error ? ` (${d.error})` : ''}`);
+  else if (!d.stat && !d.diff && !d.untracked.length) out.push('no working changes');
+  return out;
+}
 
 export function Projects({ store }: { store: FleetStore }) {
   const syncVersion = useSyncVersion(['projects', 'dashboard', 'brain']);
@@ -525,7 +543,7 @@ export function Projects({ store }: { store: FleetStore }) {
   async function setAutoCommitMode(p: ProjectEntry, val: 'off' | 'task' | 'plan') {
     if (val !== 'off' && val !== (p.autoCommit ?? 'off')) {
       const trigger = val === 'plan' ? 'plan-validation tasks' : 'any completed task';
-      if (!window.confirm(`Enable auto-commit for "${p.name}" on ${trigger}?\n\nWhen matching tasks complete and this repo is dirty, IDACC can draft a message, commit all non-ignored changes, and push. Keep this on only for repos where background checkpoints are expected.`)) return;
+      if (!window.confirm(`Enable auto-commit for "${p.name}" on ${trigger}?\n\nWhen matching tasks complete and this repo is dirty, IDACC can draft a message, commit all non-ignored changes, and push only when the branch is exactly in sync with its remote. If the repo is ahead, behind, orphaned, missing a remote, or missing compare data, the background checkpoint is skipped for review. Keep this on only for repos where background checkpoints are expected.`)) return;
     }
     const list = await call<ProjectEntry[]>('projects:save', { ...p, autoCommit: val }).catch(() => projects);
     setProjects(list);
@@ -535,9 +553,21 @@ export function Projects({ store }: { store: FleetStore }) {
   // Fire a checkpoint commit: AI-draft a message from the diff (best-effort), then
   // route the commit & push via the owning team → git-manager (normal request flow).
   async function autoCommitNow(p: ProjectEntry, triggerRef: string, kind: 'task' | 'plan') {
+    const [g, d] = await Promise.all([
+      call<GitInfo>('project:git', p.path!).catch(() => null),
+      call<ProjectDiff>('project:diff', p.path!).catch(() => null),
+    ]);
+    const blockers = autoCommitBlockers(g, d);
+    if (blockers.length) {
+      toast({
+        kind: 'info',
+        text: `Auto-commit skipped for “${p.name}” after task ${triggerRef}: ${blockers.join('; ')}. Use Projects to review and request the commit manually.`,
+        durationMs: 12000,
+      });
+      return;
+    }
     let msg = '';
     try {
-      const d = await call<{ ok: boolean; stat: string; diff: string; untracked: string[]; error?: string }>('project:diff', p.path!).catch(() => null);
       if (d?.ok && lead && (d.stat || d.diff || d.untracked.length)) {
         const ask = `Draft a git commit message for the project "${p.name}". Files (git diff --stat):\n${d.stat || '(none)'}\n\nUntracked: ${d.untracked.join(', ') || 'none'}\n\nDiff:\n${d.diff || '(no tracked changes)'}\n\nReply with ONLY the commit message: a concise imperative subject (≤72 chars), blank line, then 1-4 bullets. No code fences.`;
         const reply = await call<string>('dispatch', `/ask ${lead} ${q(ask)}`).catch(() => '');
@@ -735,7 +765,7 @@ export function Projects({ store }: { store: FleetStore }) {
                   <div className="muted small mono project-path" title={p.path}>{p.path}</div>
                   <div className="muted small" style={{ marginTop: 4, display: 'inline-flex', alignItems: 'center', gap: 5 }}
                     title={p.team
-                      ? `Checkpoint commits: when a ${p.autoCommit === 'plan' ? 'plan-validation ' : ''}task completes in team “${p.team}” and this repo has uncommitted changes, the app requests a commit & push (AI-drafted, throttled to once / 10 min).`
+                      ? `Checkpoint commits: when a ${p.autoCommit === 'plan' ? 'plan-validation ' : ''}task completes in team “${p.team}” and this repo has uncommitted changes, the app requests a commit & push only if the branch is exactly in sync with its remote (AI-drafted, throttled to once / 10 min).`
                       : 'Set a team on this project (Edit) to enable checkpoint auto-commit.'}>
                     ⟳ Auto-commit:
                     <select className="cell-select small" value={p.autoCommit ?? 'off'} disabled={busy || !p.team} onChange={(e) => void setAutoCommitMode(p, e.target.value as 'off' | 'task' | 'plan')}>
