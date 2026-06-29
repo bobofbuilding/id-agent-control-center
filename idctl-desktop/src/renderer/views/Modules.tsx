@@ -46,6 +46,21 @@ type BrainFleetReport = {
     cacheDrift?: { status?: string; liveTotal?: number | null; cachedTotal?: number | null; delta?: number | null };
   };
 } | null;
+type BrainGraphReport = {
+  generatedAt?: string;
+  graph?: {
+    nodeCount?: number;
+    linkCount?: number;
+    directNodeCount?: number;
+    directLinkCount?: number;
+    defaultIncludesNeighbors?: boolean;
+    neighborsParamHonored?: boolean;
+    sourceAuthority?: string;
+    sourceAuthorityLabel?: string;
+    identityBridgeCount?: number;
+    warnings?: string[];
+  };
+} | null;
 type BrainSkillSyncResult = {
   ok: boolean;
   total: number;
@@ -125,6 +140,53 @@ function brainFleetReviewDetail(report: BrainFleetReport): string {
   }
   if ((fleet.warnings ?? []).length) return (fleet.warnings ?? []).join(' ');
   return 'Brain Fleet authority is live.';
+}
+
+function brainGraphContractCurrent(report: BrainGraphReport): boolean {
+  return !!(report?.graph?.sourceAuthority && report.graph.sourceAuthorityLabel && report.graph.neighborsParamHonored);
+}
+
+function brainGraphReviewNeeded(report: BrainGraphReport): boolean {
+  const graph = report?.graph;
+  if (!graph) return true;
+  if (!brainGraphContractCurrent(report)) return true;
+  return (graph.warnings ?? []).length > 0;
+}
+
+function brainGraphStatusLabel(report: BrainGraphReport): string {
+  const graph = report?.graph;
+  if (!graph) return 'Graph --';
+  const count = `${graph.nodeCount ?? 0}n/${graph.linkCount ?? 0}e`;
+  if (brainGraphContractCurrent(report) && !(graph.warnings ?? []).length) return `Graph ${count}`;
+  if (graph.neighborsParamHonored) return `Graph ${count} stale`;
+  return `Graph ${count} review`;
+}
+
+function brainGraphStatusTitle(report: BrainGraphReport): string {
+  const graph = report?.graph;
+  if (!graph) return 'Brain /graph/app/data unavailable; Brain Graph may be offline or stale.';
+  return [
+    `Default neighbors: ${graph.defaultIncludesNeighbors === true ? 'on' : graph.defaultIncludesNeighbors === false ? 'off' : 'unknown'}`,
+    `neighbors=0 honored: ${graph.neighborsParamHonored === true ? 'yes' : graph.neighborsParamHonored === false ? 'no' : 'unknown'}`,
+    `Source authority: ${graph.sourceAuthorityLabel ?? 'missing (Brain service likely needs restart/redeploy to load the current Graph contract)'}`,
+    `Expanded: ${graph.nodeCount ?? 0} nodes / ${graph.linkCount ?? 0} edges`,
+    graph.directNodeCount != null ? `Direct: ${graph.directNodeCount} nodes / ${graph.directLinkCount ?? 0} edges` : '',
+    graph.identityBridgeCount != null ? `Identity bridge links: ${graph.identityBridgeCount}` : '',
+    ...(graph.warnings ?? []),
+  ].filter(Boolean).join('\n');
+}
+
+function brainGraphReviewDetail(report: BrainGraphReport): string {
+  const graph = report?.graph;
+  if (!graph) return 'Brain /graph/app/data is unavailable. Open Brain Graph or check the Brain service before trusting graph search and entity status copy.';
+  if (!graph.neighborsParamHonored) {
+    return 'Brain Graph did not confirm neighbors=0. Filtered graph search may include stale neighbor expansion or miss the direct-match boundary.';
+  }
+  if (!graph.sourceAuthority || !graph.sourceAuthorityLabel) {
+    return `Brain Graph honors the neighbor toggle (${graph.directNodeCount ?? 0} direct vs ${graph.nodeCount ?? 0} expanded nodes), but source-authority labels are missing. Restart/redeploy Brain before treating Graph agent/entity status copy as authoritative.`;
+  }
+  if ((graph.warnings ?? []).length) return (graph.warnings ?? []).join(' ');
+  return 'Brain Graph source contract is current.';
 }
 
 function BrainDashboardLauncher({ compact = false }: { compact?: boolean }) {
@@ -268,6 +330,7 @@ export function Modules({ store }: { store: FleetStore }) {
   const [categorizing, setCategorizing] = useState(false);
   const [brainSkills, setBrainSkills] = useState<BrainSkillSummary>(null);
   const [brainFleet, setBrainFleet] = useState<BrainFleetReport>(null);
+  const [brainGraph, setBrainGraph] = useState<BrainGraphReport>(null);
   const [brainSyncing, setBrainSyncing] = useState(false);
   const [brainDrift, setBrainDrift] = useState<SkillBrainDrift | null>(null);
   const [plugins, setPlugins] = useState<LibraryPluginEntry[]>([]);
@@ -393,6 +456,7 @@ export function Modules({ store }: { store: FleetStore }) {
     setAutoTags(await call<Record<string, string[]>>('skills:autoTags').catch(() => ({})));
     setBrainSkills(await call<BrainSkillSummary>('skills:brainSummary').catch(() => null));
     setBrainFleet(await call<BrainFleetReport>('brain:fleetReport').catch(() => null));
+    setBrainGraph(await call<BrainGraphReport>('brain:graphReport').catch(() => null));
   }
   useEffect(() => {
     reload();
@@ -764,6 +828,10 @@ export function Modules({ store }: { store: FleetStore }) {
   const brainFleetStatus = brainFleetStatusLabel(brainFleet);
   const brainFleetTitle = brainFleetStatusTitle(brainFleet);
   const brainFleetDetail = brainFleetReviewDetail(brainFleet);
+  const brainGraphNeedsReview = brainGraphReviewNeeded(brainGraph);
+  const brainGraphStatus = brainGraphStatusLabel(brainGraph);
+  const brainGraphTitle = brainGraphStatusTitle(brainGraph);
+  const brainGraphDetail = brainGraphReviewDetail(brainGraph);
   const catalogDraft = buildCatalog();
   const customDraft = buildCustom();
   const catalogReplace = catalogDraft ? mcp.find((p) => p.name === catalogDraft.name) : undefined;
@@ -1007,6 +1075,9 @@ export function Modules({ store }: { store: FleetStore }) {
           <span className={`chip ${brainFleetNeedsReview ? 'brain-review' : 'tag'}`} title={brainFleetTitle}>
             {brainFleetStatus}
           </span>
+          <span className={`chip ${brainGraphNeedsReview ? 'brain-review' : 'tag'}`} title={brainGraphTitle}>
+            {brainGraphStatus}
+          </span>
           <button className="btn small" disabled={brainSyncing || skills.length === 0} title="Preview, fresh-read, then upsert the local skill catalog into Brain /skills/index" onClick={() => void syncSkillsToBrain()}>
             {brainSyncing ? 'Syncing…' : 'Preview & sync'}
           </button>
@@ -1037,6 +1108,16 @@ export function Modules({ store }: { store: FleetStore }) {
             <div className="grow">
               <b>Brain fleet authority review</b>
               <div className="muted small">{brainFleetDetail}</div>
+            </div>
+            <BrainDashboardLauncher compact />
+          </div>
+        ) : null}
+
+        {brainGraphNeedsReview ? (
+          <div className="skill-brain-review">
+            <div className="grow">
+              <b>Brain graph contract review</b>
+              <div className="muted small">{brainGraphDetail}</div>
             </div>
             <BrainDashboardLauncher compact />
           </div>

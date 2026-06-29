@@ -110,6 +110,21 @@ export interface BrainFleetReport {
     };
   };
 }
+export interface BrainGraphReport {
+  generatedAt?: string;
+  graph?: {
+    nodeCount?: number;
+    linkCount?: number;
+    directNodeCount?: number;
+    directLinkCount?: number;
+    defaultIncludesNeighbors?: boolean;
+    neighborsParamHonored?: boolean;
+    sourceAuthority?: string;
+    sourceAuthorityLabel?: string;
+    identityBridgeCount?: number;
+    warnings?: string[];
+  };
+}
 export interface SharedMemory {
   content?: string;
   id?: number;
@@ -234,6 +249,61 @@ export class BrainClient {
   /** Read live fleet authority/status contract used by Brain dashboard Fleet/Health/Agents. */
   async fleetReport(): Promise<BrainFleetReport | null> {
     return this.req<BrainFleetReport>('GET', '/fleet-report');
+  }
+
+  /** Read Brain Graph app contract without mutating graph state. */
+  async graphReport(): Promise<BrainGraphReport | null> {
+    type GraphData = {
+      nodes?: unknown[];
+      links?: unknown[];
+      meta?: {
+        includeNeighbors?: boolean;
+        sourceAuthority?: string;
+        sourceAuthorityLabel?: string;
+        identityBridgeCount?: number;
+        nodeCount?: number;
+        linkCount?: number;
+      };
+      data?: {
+        nodes?: unknown[];
+        links?: unknown[];
+        meta?: GraphData['meta'];
+      };
+    };
+    const base = '/graph/app/data?kind=all&q=skill&limit=8&edge_limit=12';
+    const [expanded, direct] = await Promise.all([
+      this.req<GraphData>('GET', base),
+      this.req<GraphData>('GET', `${base}&neighbors=0`),
+    ]);
+    if (!expanded && !direct) return null;
+    const expandedMeta = expanded?.meta ?? expanded?.data?.meta ?? {};
+    const directMeta = direct?.meta ?? direct?.data?.meta ?? {};
+    const expandedNodes = expanded?.nodes ?? expanded?.data?.nodes ?? [];
+    const expandedLinks = expanded?.links ?? expanded?.data?.links ?? [];
+    const directNodes = direct?.nodes ?? direct?.data?.nodes ?? [];
+    const directLinks = direct?.links ?? direct?.data?.links ?? [];
+    const defaultIncludesNeighbors = expandedMeta.includeNeighbors === true;
+    const neighborsParamHonored = directMeta.includeNeighbors === false;
+    const warnings: string[] = [];
+    if (!neighborsParamHonored) warnings.push('Brain Graph did not confirm neighbors=0; filtered graph expansion may be stale.');
+    if (!expandedMeta.sourceAuthority || !expandedMeta.sourceAuthorityLabel) {
+      warnings.push('Brain Graph source-authority labels are missing; restart/redeploy Brain before trusting Graph agent/entity status copy.');
+    }
+    return {
+      generatedAt: new Date().toISOString(),
+      graph: {
+        nodeCount: Number(expandedMeta.nodeCount ?? expandedNodes.length),
+        linkCount: Number(expandedMeta.linkCount ?? expandedLinks.length),
+        directNodeCount: direct ? Number(directMeta.nodeCount ?? directNodes.length) : undefined,
+        directLinkCount: direct ? Number(directMeta.linkCount ?? directLinks.length) : undefined,
+        defaultIncludesNeighbors,
+        neighborsParamHonored,
+        sourceAuthority: expandedMeta.sourceAuthority,
+        sourceAuthorityLabel: expandedMeta.sourceAuthorityLabel,
+        identityBridgeCount: expandedMeta.identityBridgeCount,
+        warnings,
+      },
+    };
   }
 
   /** Upsert keyed memory for an agent id (e.g. 'control-center' / 'team-instructions'). */
