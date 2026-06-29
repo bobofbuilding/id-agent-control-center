@@ -65,6 +65,27 @@ type BrainCoreHealthReport = {
   routeInventory?: { skew?: boolean; missing?: string[]; count?: number; routes?: string[] };
   warnings?: string[];
 } | null;
+type BrainAgentsReport = {
+  generatedAt?: string;
+  route?: string;
+  total?: number;
+  running?: number;
+  source?: string;
+  authority?: string;
+  authoritative?: boolean;
+  statusAuthorityLabel?: string;
+  duplicateNames?: string[];
+  controllerTotal?: number;
+  activeControllerLinks?: number;
+  scopedControllerMatches?: number;
+  bareControllerMatches?: number;
+  ambiguousBareControllerLinks?: number;
+  unlinkedAgents?: number;
+  slaFetchLimit?: number;
+  slaOmitted?: number;
+  cacheDrift?: { status?: string; liveTotal?: number | null; cachedTotal?: number | null; delta?: number | null };
+  warnings?: string[];
+} | null;
 type BrainGraphReport = {
   generatedAt?: string;
   graph?: {
@@ -229,6 +250,62 @@ function brainCoreReviewDetail(report: BrainCoreHealthReport): string {
   }
   if ((report.warnings ?? []).length) return (report.warnings ?? []).join(' ');
   return 'Brain core health is reachable through safe GET /health.';
+}
+
+function brainAgentsNeedsReview(report: BrainAgentsReport): boolean {
+  if (!report) return true;
+  return report.authority !== 'live'
+    || report.authoritative !== true
+    || (report.duplicateNames ?? []).length > 0
+    || (report.ambiguousBareControllerLinks ?? 0) > 0
+    || (report.unlinkedAgents ?? 0) > 0
+    || (report.slaOmitted ?? 0) > 0
+    || (report.warnings ?? []).length > 0;
+}
+
+function brainAgentsStatusLabel(report: BrainAgentsReport): string {
+  if (!report) return 'Agents --';
+  const count = `${report.running ?? 0}/${report.total ?? 0}`;
+  if (report.authority !== 'live') return `Agents ${count} ${report.authority ?? 'unknown'}`;
+  if ((report.unlinkedAgents ?? 0) > 0 || (report.ambiguousBareControllerLinks ?? 0) > 0) return `Agents ${count} review`;
+  return `Agents ${count}`;
+}
+
+function brainAgentsStatusTitle(report: BrainAgentsReport): string {
+  if (!report) return 'Brain Agents report unavailable; Brain Agents dashboard authority and controller fallbacks are not verified.';
+  const linked = (report.scopedControllerMatches ?? 0) + (report.bareControllerMatches ?? 0);
+  return [
+    `Route: ${report.route ?? '/dashboard/agents'}`,
+    `Source: ${report.source ?? 'unknown'} (${report.authority ?? 'unknown'})`,
+    `Status authority: ${report.statusAuthorityLabel ?? 'missing (Brain service likely needs restart/redeploy to expose current authority labels)'}`,
+    `Agents: ${report.running ?? 0}/${report.total ?? 0}`,
+    `Controller links: ${linked}/${report.total ?? 0} matched; ${report.controllerTotal ?? 0} controllers / ${report.activeControllerLinks ?? 0} active links`,
+    report.duplicateNames?.length ? `Duplicate names: ${report.duplicateNames.join(', ')}` : '',
+    report.ambiguousBareControllerLinks ? `Ambiguous bare controller links: ${report.ambiguousBareControllerLinks}` : '',
+    report.unlinkedAgents ? `Unlinked agents: ${report.unlinkedAgents}` : '',
+    report.slaOmitted ? `SLA omitted after first ${report.slaFetchLimit ?? 50} rows: ${report.slaOmitted}` : '',
+    report.cacheDrift?.status === 'drift' ? `Cache drift: live ${report.cacheDrift.liveTotal} vs Brain ${report.cacheDrift.cachedTotal}` : '',
+    ...(report.warnings ?? []),
+  ].filter(Boolean).join('\n');
+}
+
+function brainAgentsReviewDetail(report: BrainAgentsReport): string {
+  if (!report) return 'Brain Agents authority is unavailable. Open IDACC Health for live fleet state before trusting Brain Agents rows.';
+  const linked = (report.scopedControllerMatches ?? 0) + (report.bareControllerMatches ?? 0);
+  if (report.authority !== 'live' || report.authoritative !== true) {
+    return `${report.statusAuthorityLabel ?? 'Brain Agents fleet source is not live-authoritative.'} Use IDACC Health before lifecycle decisions.`;
+  }
+  if ((report.ambiguousBareControllerLinks ?? 0) > 0) {
+    return `${report.ambiguousBareControllerLinks} Brain Agents controller link(s) are bare-name ambiguous. Create scoped team/name or agent-id links before trusting controller fallback copy.`;
+  }
+  if ((report.unlinkedAgents ?? 0) > 0) {
+    return `${report.unlinkedAgents} of ${report.total ?? 0} Brain Agents rows have no scoped accountable-controller link (${linked} matched). Treat controller fallback as incomplete.`;
+  }
+  if ((report.slaOmitted ?? 0) > 0) {
+    return `Brain Agents fetches SLA for the first ${report.slaFetchLimit ?? 50} rows only; ${report.slaOmitted} rows are intentionally unknown, not healthy.`;
+  }
+  if ((report.warnings ?? []).length) return (report.warnings ?? []).join(' ');
+  return 'Brain Agents authority, scoped controller links, and SLA coverage are current.';
 }
 
 function brainSkillContractGaps(report: BrainSkillSummary): string[] {
@@ -454,6 +531,7 @@ export function Modules({ store }: { store: FleetStore }) {
   const [categorizing, setCategorizing] = useState(false);
   const [brainSkills, setBrainSkills] = useState<BrainSkillSummary>(null);
   const [brainCore, setBrainCore] = useState<BrainCoreHealthReport>(null);
+  const [brainAgents, setBrainAgents] = useState<BrainAgentsReport>(null);
   const [brainFleet, setBrainFleet] = useState<BrainFleetReport>(null);
   const [brainGraph, setBrainGraph] = useState<BrainGraphReport>(null);
   const [brainSyncing, setBrainSyncing] = useState(false);
@@ -581,6 +659,7 @@ export function Modules({ store }: { store: FleetStore }) {
     setAutoTags(await call<Record<string, string[]>>('skills:autoTags').catch(() => ({})));
     setBrainSkills(await call<BrainSkillSummary>('skills:brainSummary').catch(() => null));
     setBrainCore(await call<BrainCoreHealthReport>('brain:coreHealth').catch(() => null));
+    setBrainAgents(await call<BrainAgentsReport>('brain:agentsReport').catch(() => null));
     setBrainFleet(await call<BrainFleetReport>('brain:fleetReport').catch(() => null));
     setBrainGraph(await call<BrainGraphReport>('brain:graphReport').catch(() => null));
   }
@@ -969,6 +1048,10 @@ export function Modules({ store }: { store: FleetStore }) {
   const brainFleetStatus = brainFleetStatusLabel(brainFleet);
   const brainFleetTitle = brainFleetStatusTitle(brainFleet);
   const brainFleetDetail = brainFleetReviewDetail(brainFleet);
+  const brainAgentsNeedOperatorReview = brainAgentsNeedsReview(brainAgents);
+  const brainAgentsStatus = brainAgentsStatusLabel(brainAgents);
+  const brainAgentsTitle = brainAgentsStatusTitle(brainAgents);
+  const brainAgentsDetail = brainAgentsReviewDetail(brainAgents);
   const brainGraphNeedsReview = brainGraphReviewNeeded(brainGraph);
   const brainGraphStatus = brainGraphStatusLabel(brainGraph);
   const brainGraphTitle = brainGraphStatusTitle(brainGraph);
@@ -1219,6 +1302,9 @@ export function Modules({ store }: { store: FleetStore }) {
           <span className={`chip ${brainFleetNeedsReview ? 'brain-review' : 'tag'}`} title={brainFleetTitle}>
             {brainFleetStatus}
           </span>
+          <span className={`chip ${brainAgentsNeedOperatorReview ? 'brain-review' : 'tag'}`} title={brainAgentsTitle}>
+            {brainAgentsStatus}
+          </span>
           <span className={`chip ${brainGraphNeedsReview ? 'brain-review' : 'tag'}`} title={brainGraphTitle}>
             {brainGraphStatus}
           </span>
@@ -1264,6 +1350,16 @@ export function Modules({ store }: { store: FleetStore }) {
             <div className="grow">
               <b>Brain fleet authority review</b>
               <div className="muted small">{brainFleetDetail}</div>
+            </div>
+            <BrainDashboardLauncher compact />
+          </div>
+        ) : null}
+
+        {brainAgentsNeedOperatorReview ? (
+          <div className="skill-brain-review">
+            <div className="grow">
+              <b>Brain agents authority review</b>
+              <div className="muted small">{brainAgentsDetail}</div>
             </div>
             <BrainDashboardLauncher compact />
           </div>

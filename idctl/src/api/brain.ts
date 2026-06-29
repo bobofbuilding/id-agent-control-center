@@ -128,6 +128,7 @@ export interface BrainFleetReport {
     managerUrl?: string;
     teamSource?: string;
     warnings?: string[];
+    agents?: BrainFleetAgent[];
     cacheDrift?: {
       status?: string;
       liveTotal?: number | null;
@@ -135,6 +136,15 @@ export interface BrainFleetReport {
       delta?: number | null;
     };
   };
+}
+export interface BrainFleetAgent {
+  id?: string;
+  name?: string;
+  team?: string;
+  status?: string;
+  runtime?: string;
+  model?: string;
+  source?: string;
 }
 export interface BrainGraphReport {
   generatedAt?: string;
@@ -209,6 +219,32 @@ export interface BrainControllerReport {
   total?: number;
   activeLinks?: number;
   controllers?: BrainController[];
+  warnings?: string[];
+}
+export interface BrainAgentsReport {
+  generatedAt?: string;
+  route?: string;
+  total?: number;
+  running?: number;
+  source?: string;
+  authority?: string;
+  authoritative?: boolean;
+  statusAuthorityLabel?: string;
+  duplicateNames?: string[];
+  controllerTotal?: number;
+  activeControllerLinks?: number;
+  scopedControllerMatches?: number;
+  bareControllerMatches?: number;
+  ambiguousBareControllerLinks?: number;
+  unlinkedAgents?: number;
+  slaFetchLimit?: number;
+  slaOmitted?: number;
+  cacheDrift?: {
+    status?: string;
+    liveTotal?: number | null;
+    cachedTotal?: number | null;
+    delta?: number | null;
+  };
   warnings?: string[];
 }
 export interface SharedMemory {
@@ -349,6 +385,91 @@ export class BrainClient {
   /** Read live fleet authority/status contract used by Brain dashboard Fleet/Health/Agents. */
   async fleetReport(): Promise<BrainFleetReport | null> {
     return this.req<BrainFleetReport>('GET', '/fleet-report');
+  }
+
+  /** Read the Brain Agents dashboard authority contract without opening dashboard HTML. */
+  async agentsReport(): Promise<BrainAgentsReport | null> {
+    const [fleetBody, controllerBody] = await Promise.all([
+      this.req<BrainFleetReport>('GET', '/fleet-report'),
+      this.req<{ ok?: boolean; controllers?: BrainController[] }>('GET', '/controllers?limit=200'),
+    ]);
+    const fleet = fleetBody?.fleet;
+    if (!fleet) return null;
+    const agents = Array.isArray(fleet.agents) ? fleet.agents : [];
+    const controllers = Array.isArray(controllerBody?.controllers) ? controllerBody.controllers : [];
+    const authority = fleet.authority
+      ?? (fleet.source === 'brain-cache' ? 'cache' : fleet.source === 'live-manager-partial' ? 'partial' : fleet.source === 'live-manager' ? 'live' : 'unknown');
+    const nameCounts = new Map<string, number>();
+    for (const agent of agents) {
+      const name = String(agent.name ?? '');
+      if (name) nameCounts.set(name, (nameCounts.get(name) ?? 0) + 1);
+    }
+    const duplicateNames = [...nameCounts.entries()].filter(([, count]) => count > 1).map(([name]) => name);
+    const duplicateNameSet = new Set(duplicateNames);
+    const linksFor = (controller: BrainController) => controller.agent_links ?? controller.agentLinks ?? [];
+    const allLinks = controllers.flatMap((controller) => linksFor(controller).map((link) => ({ controller, link })));
+    const activeLinks = allLinks.filter(({ link }) => (link.status ?? 'active') === 'active');
+    let scopedControllerMatches = 0;
+    let bareControllerMatches = 0;
+    let ambiguousBareControllerLinks = 0;
+    let unlinkedAgents = 0;
+    for (const agent of agents) {
+      const name = String(agent.name ?? '');
+      const team = String(agent.team ?? '');
+      const strongIds = new Set([
+        agent.id,
+        team && name ? `${team}:${name}` : null,
+        team && name ? `${team}/${name}` : null,
+      ].filter((value): value is string => Boolean(value)));
+      const bareIds = new Set([name ? `agent:${name}` : null, name || null].filter((value): value is string => Boolean(value)));
+      const hasStrong = activeLinks.some(({ link }) => strongIds.has(link.agent_id ?? link.agentId ?? ''));
+      if (hasStrong) {
+        scopedControllerMatches++;
+        continue;
+      }
+      const hasBare = activeLinks.some(({ link }) => bareIds.has(link.agent_id ?? link.agentId ?? ''));
+      if (hasBare && duplicateNameSet.has(name)) {
+        ambiguousBareControllerLinks++;
+        unlinkedAgents++;
+        continue;
+      }
+      if (hasBare) {
+        bareControllerMatches++;
+        continue;
+      }
+      unlinkedAgents++;
+    }
+    const slaFetchLimit = 50;
+    const warnings = [
+      ...(fleet.warnings ?? []),
+      ...(authority !== 'live' || fleet.authoritative !== true ? [fleet.statusAuthorityLabel ?? 'Brain Agents fleet source is not live-authoritative.'] : []),
+      ...(duplicateNames.length ? [`Same-name Brain agents require scoped telemetry/controller links: ${duplicateNames.join(', ')}.`] : []),
+      ...(ambiguousBareControllerLinks ? [`${ambiguousBareControllerLinks} Brain agent rows have ambiguous bare controller links.`] : []),
+      ...(unlinkedAgents ? [`${unlinkedAgents} Brain agent rows have no scoped accountable controller link.`] : []),
+      ...(Math.max(0, agents.length - slaFetchLimit) ? [`Brain Agents dashboard fetches SLA for first ${slaFetchLimit} rows only; omitted rows are unknown, not healthy.`] : []),
+      ...(!controllerBody ? ['Brain /controllers is unavailable; accountable-controller fallback cannot be verified.'] : []),
+    ];
+    return {
+      generatedAt: new Date().toISOString(),
+      route: '/dashboard/agents',
+      total: fleet.total ?? agents.length,
+      running: fleet.running,
+      source: fleet.source,
+      authority,
+      authoritative: fleet.authoritative,
+      statusAuthorityLabel: fleet.statusAuthorityLabel,
+      duplicateNames,
+      controllerTotal: controllers.length,
+      activeControllerLinks: activeLinks.length,
+      scopedControllerMatches,
+      bareControllerMatches,
+      ambiguousBareControllerLinks,
+      unlinkedAgents,
+      slaFetchLimit,
+      slaOmitted: Math.max(0, agents.length - slaFetchLimit),
+      cacheDrift: fleet.cacheDrift,
+      warnings,
+    };
   }
 
   /** Read Brain Graph app contract without mutating graph state. */
