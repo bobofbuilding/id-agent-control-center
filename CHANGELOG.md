@@ -8,6 +8,9 @@ Every change pushed or merged to `main` carries its version number in the commit
 subject (`vX.Y.Z: …`), stamped automatically by the `commit-msg` hook — see
 [CONTRIBUTING.md](CONTRIBUTING.md).
 
+## [0.1.282] — 2026-06-29
+- Team lead routing validator return path
+
 ## [0.1.281] — 2026-06-29
 - IDACC Brain fleet authority wiki sync
 

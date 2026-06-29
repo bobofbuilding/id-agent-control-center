@@ -269,20 +269,22 @@ export function Plans({ store }: { store: FleetStore }) {
     if (!baseline) throw new Error('plan changed; refreshed');
     const got = await call<{ file: string; content: string } | null>('brain:plan', baseline.file).catch(() => null);
     // Phase 3 (CC refactor): hand the plan to the PRIMARY LEAD to decompose, prune already-done
-    // work, and delegate through its secondary leads — instead of the app mechanically partitioning
-    // and dispatching it (which re-created completed work and burned tokens). Mechanical path below
-    // is the fallback only when no primary lead is online.
+    // work, and delegate to the relevant team leads. The default coder/researcher are validators
+    // on the return path, not execution routers. Mechanical path below is the fallback only when
+    // no primary lead is online.
     const hier = await call<{ primary: { team: string; agent: string } | null }>('coordinator:hierarchy').catch(() => ({ primary: null }));
     const lead = hier.primary?.agent;
-    const leadOnline = !!lead && store.allAgents.some((a) => a.name === lead && !!a.status && !/stop|offline|dead|exit|error|crash|down|disabled|sleep/i.test(a.status));
+    const leadTeam = hier.primary?.team ?? store.team ?? 'default';
+    const leadOnline = !!lead && store.allAgents.some((a) => a.name === lead && (a.team ?? store.team ?? 'default') === leadTeam && !!a.status && !/stop|offline|dead|exit|error|crash|down|disabled|sleep/i.test(a.status));
     if (lead && leadOnline) {
       const fresh = await ensureBrainPlanFresh(baseline, `Dispatch ${baseline.title}`, ['title', 'mtime']);
       if (!fresh) throw new Error('plan changed before dispatch; refreshed');
-      const prompt = `You are the primary lead. Work this plan end to end by DELEGATING through your secondary leads (researcher, coder) to the right teams — don't do it all yourself.\n\n# ${fresh.title}\n\n${got?.content ?? ''}\n\nHow to run it:\n1. FIRST check what is ALREADY DONE (inspect the codebase / brain). Do NOT create tasks to re-build or re-verify completed work — skip anything already shipped.\n2. Decompose only the REMAINING work into concrete tasks with clear owners + dependencies.\n3. Delegate: research/analysis → researcher, build/ops → coder; they assign to their team leads/agents. Create real tasks (\`/task create "<title>" --owner <agent> --description "<what + expected output>"\`) and dispatch.\n4. Keep it lean — one task per real piece of work, no duplicate verify-passes.\n\nReply with a short summary of what you delegated and to whom.`;
+      const prompt = `You are the primary lead. Work this plan end to end by delegating scoped objectives directly to the corresponding team lead(s). Do not use default/coder or default/researcher as execution routers; they validate completed work on the return path.\n\n# ${fresh.title}\n\n${got?.content ?? ''}\n\nHow to run it:\n1. FIRST check what is ALREADY DONE (inspect the codebase / brain). Do NOT create tasks to re-build or re-verify completed work — skip anything already shipped.\n2. Decompose only the REMAINING work into concrete objectives with clear owning team leads + dependencies. Measure the objectives against the active primary goal first, then secondary goals, then this plan.\n3. Delegate each objective to the right team lead with \`/ask <team>/<lead> "<scoped objective>"\`. Team leads own member task creation, parallel delegation, collection, and refinement.\n4. Require every substantial completed-work packet to go through both validators: \`/ask default/coder "<completed work + summary>"\` for implementation/operations/code-quality validation and \`/ask default/researcher "<completed work + summary>"\` for evidence/reasoning/sourcing/policy/completeness validation.\n5. If either validator bounces it, send the feedback back to the responsible team lead for another refinement cycle. If both validate it, consolidate the validated result for the operator.\n6. Keep it lean — one objective per real piece of remaining work, no duplicate verify-passes.\n\nReply with a short summary of which team leads you delegated to and how validation will return.`;
       // Fire-and-forget — the lead decomposes + delegates in the BACKGROUND (don't block the UI
       // waiting up to 15 min for its full reply).
-      await call('dispatch:start', `/ask ${lead} ${qArg(prompt)}`).catch(() => {});
-      return `handed to ${lead} to decompose + delegate (working in background)`;
+      const leadTarget = leadTeam && leadTeam !== (store.team ?? 'default') ? `${leadTeam}/${lead}` : lead;
+      await call('dispatch:start', `/ask ${leadTarget} ${qArg(prompt)}`).catch(() => {});
+      return `handed to ${leadTarget} to decompose + delegate (working in background)`;
     }
     // ---- fallback: mechanical decompose + partition + dispatch (no primary lead online) ----
     const obj = `Implement this plan, end to end:\n\n# ${baseline.title}\n\n${got?.content ?? ''}`;

@@ -44,9 +44,9 @@ const RECOMMENDED_TEAM_BLUEPRINTS: TeamBlueprint[] = [
     description: 'primary lead plus coder/researcher validators',
     spec: `team: default
 
-- **lead** - Primary lead. Receives operator intent, compresses it into an objective, checks it against the active primary goal first and secondary goals second, routes it to the right team lead, and returns only validated summaries.
-- **coder** - Secondary validation lead for implementation, operations, code quality, reproducibility, build/test evidence, and release readiness.
-- **researcher** - Secondary validation lead for evidence, reasoning, sourcing, policy fit, completeness, architecture review, and runbook quality.`,
+- **lead** - Primary lead. Receives operator intent, compresses it into an objective, checks it against the active primary goal first and secondary goals second, routes execution work directly to the appropriate external team lead, and returns only validated summaries. Does not use default/coder or default/researcher as execution workers.
+- **coder** - Secondary validation lead only. Validates completed implementation, operations, code quality, reproducibility, build/test evidence, and release readiness before work returns to default/lead.
+- **researcher** - Secondary validation lead only. Validates completed evidence, reasoning, sourcing, policy fit, completeness, architecture review, and runbook quality before work returns to default/lead.`,
   },
   {
     id: 'operations-team',
@@ -282,6 +282,7 @@ Compressing, decomposing, delegating INDEPENDENT work IN PARALLEL, and summarizi
 const VALIDATION_RETURN_PATH = `RETURN PATH — substantial completed work should flow through the default-team validators before it is treated as final:
 - Send a concise completed-work packet to **default/coder** and **default/researcher** with \`/ask default/coder "<completed work + summary>"\` and \`/ask default/researcher "<completed work + summary>"\`.
 - Ask coder to validate implementation, operations, code quality, and reproducibility. Ask researcher to validate evidence, reasoning, sourcing, policy fit, and completeness.
+- Validators judge the accomplishments against the active primary goal first, then secondary goals, then the original objective.
 - If either validator bounces the work back, refine with the responsible teammate or team lead and repeat the validation pass. Do not dump unvalidated raw work straight to **default/lead** unless the operator explicitly asks for an unvalidated fast path.`;
 
 /** Ready-made "act as the team coordinator" directive with generic coder/researcher
@@ -302,10 +303,29 @@ ${VALIDATION_RETURN_PATH}
 
 ${COORDINATION_TAIL}`;
 
+const DEFAULT_PRIMARY_PRESET = `## Default primary lead coordination
+
+You are the PRIMARY LEAD for the whole fleet. The operator talks to you first; your job is to compress intent into an objective, compare it to the active primary goal first and secondary goals second, then route scoped execution work to the correct team lead.
+
+Default-team **coder** and **researcher** are your validation pair — NOT execution workers. Do not hand them implementation or research tasks to perform. Use them only after a team lead returns completed work.
+
+For any NON-TRIVIAL request:
+
+1. **Compress** — restate the objective, success criteria, and hard constraints in 1-2 lines.
+2. **Route** — choose the corresponding team lead(s), such as engineering-lead, ops-lead, research-lead, onchain-lead, general-counsel, skillmesh-ops-lead, or security-router. Hand each lead a scoped objective with \`/ask <team>/<lead> "<objective>"\`.
+3. **Decompose at the edge** — each team lead owns breaking its objective into member-owned tasks, delegating independent work in parallel, collecting member summaries, and refining the result.
+4. **Validate on return** — when completed work comes back, send the completed-work packet to both default-team validators and wait for their findings before treating it as final.
+5. **Bounce or close** — if either validator rejects the work, return the concrete feedback to the responsible team lead for another refinement cycle. If both validate it, consolidate the findings for the operator.
+
+${VALIDATION_RETURN_PATH}
+
+${COORDINATION_TAIL}`;
+
 /** Roster-aware coordinator directive — names the ACTUAL teammates created in the
  *  batch so the lead delegates to agents that exist (falls back to the generic
  *  coder/researcher preset when there are no teammates). */
-function coordinatorPresetFor(teammates: { name: string; role: string }[]): string {
+function coordinatorPresetFor(team: string, teammates: { name: string; role: string }[]): string {
+  if (team === PRIMARY_TEAM) return DEFAULT_PRIMARY_PRESET;
   if (!teammates.length) return COORDINATOR_PRESET;
   const inline = teammates.map((t) => `**${t.name}**${t.role ? ` (${t.role})` : ''}`).join(', ');
   const bullets = teammates.map((t) => `   - **${t.name}**${t.role ? ` — ${t.role}` : ''}`).join('\n');
@@ -1771,8 +1791,8 @@ function TeamBuilder({
     }
     const postSteps = [
       coordinate ? (targetTeam === PRIMARY_TEAM
-        ? 'make the starred lead the default primary, write the coordination preset, and rebuild that lead'
-        : "make the starred lead this team's coordinator, write the coordination preset, and rebuild that lead") : '',
+        ? 'make the starred lead the default primary, write the default-primary validation preset, and rebuild that lead'
+        : "make the starred lead this team's coordinator, write the delegate-to-teammates preset, and rebuild that lead") : '',
       relayMode !== 'permissive' ? `set cross-team relay to ${describeRelay(relayPayload)}` : '',
     ].filter(Boolean);
     const preflight = await preflightBuildTarget();
@@ -1812,7 +1832,7 @@ function TeamBuilder({
       const leadName = leadRow.slug;
       // Tell the lead to delegate to ALL its teammates in the roster (existing + newly added).
       const teammates = named.filter((r) => r.slug !== leadName).map((r) => ({ name: r.slug, role: r.role.trim() }));
-      const preset = coordinatorPresetFor(teammates);
+      const preset = coordinatorPresetFor(targetTeam, teammates);
       setPost((p) => ({ ...p, coord: 'running', leadName }));
       try {
         const [hierNow, groupsNow] = await Promise.all([
@@ -1966,7 +1986,7 @@ function TeamBuilder({
             <div className="muted small" style={{ margin: '14px 0 4px' }}>coordination &amp; routing</div>
             <label className="muted small" style={{ display: 'block' }}>
               <input type="checkbox" checked={coordinate} disabled={locked} onChange={(e) => setCoordinate(e.target.checked)} />{' '}
-              Wire agentic routing — make the ★ lead this team's coordinator and apply the delegate-to-teammates preset
+              Wire agentic routing — make the ★ lead this team's coordinator and apply the {targetTeam === PRIMARY_TEAM ? 'default-primary validation preset' : 'delegate-to-teammates preset'}
             </label>
             <p className="muted small" style={{ marginTop: 4, marginBottom: 0 }}>
               With this on, new work is handed to the <b>lead</b>, which checks what's already done, decomposes only the
