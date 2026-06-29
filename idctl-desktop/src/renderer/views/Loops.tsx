@@ -39,6 +39,7 @@ type LoopStepResult = { agent: string; task: string; status: 'ok' | 'failed' | '
 type LoopSummary = { id: string; title: string; team: string; steps: number; updatedAt: number; lastRunAt?: number };
 interface Loop { id: string; title: string; goal: string; team: string; steps: LoopStep[]; createdAt: number; updatedAt: number; lastRunAt?: number; lastResults?: LoopStepResult[] }
 type RunState = { idx: number; status: 'running' | 'ok' | 'failed' | 'skipped'; output?: string; error?: string };
+type LoopField = 'title' | 'goal' | 'steps' | 'updatedAt';
 
 function loopId(): string { return `loop_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 7)}`; }
 function clip(s: string, n: number): string { const t = (s || '').replace(/\s+/g, ' ').trim(); return t.length > n ? t.slice(0, n) + '…' : t; }
@@ -63,6 +64,7 @@ function LoopBuilder({ store, onScheduled }: { store: FleetStore; onScheduled?: 
   const coordinator = resolveCoordinator(store.agents, store.coordinator) ?? names[0] ?? '';
   const [chains, setChains] = useState<LoopSummary[]>([]);
   const [editingId, setEditingId] = useState<string | null>(null);
+  const [baseline, setBaseline] = useState<Loop | null>(null);
   const [title, setTitle] = useState('');
   const [goal, setGoal] = useState('');
   const [draftAgent, setDraftAgent] = useState('');
@@ -83,6 +85,44 @@ function LoopBuilder({ store, onScheduled }: { store: FleetStore; onScheduled?: 
   useEffect(() => { void reload(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [team, store.lastUpdated, loopSyncVersion]);
 
   function fix(s: LoopStep): LoopStep { return { agent: names.includes(s.agent) ? s.agent : coordinator, task: String(s.task || '').trim() }; }
+  const changedText = (before: string | number | undefined, after: string | number | undefined) => `${String(before ?? 'none')} -> ${String(after ?? 'none')}`;
+  function stepsStamp(ss: LoopStep[]): string {
+    return JSON.stringify(ss.map((s) => ({ agent: s.agent, task: s.task })));
+  }
+  function loopStamp(l: Loop): Record<LoopField, string | number | undefined> {
+    return { title: l.title, goal: l.goal, steps: stepsStamp(l.steps ?? []), updatedAt: l.updatedAt };
+  }
+  async function ensureLoopFresh(action: string, fields: LoopField[] = ['updatedAt']): Promise<Loop | null> {
+    if (!editingId) return null;
+    const current = await call<Loop | null>('loops:get', editingId).catch(() => null);
+    if (!current) {
+      window.alert(`${action} blocked: this saved loop no longer exists.`);
+      newChain();
+      await reload();
+      return null;
+    }
+    if (!baseline) return current;
+    const before = loopStamp(baseline);
+    const after = loopStamp(current);
+    const changed = fields.filter((field) => String(before[field] ?? '') !== String(after[field] ?? ''));
+    if (changed.length) {
+      window.alert([
+        `${action} blocked: "${baseline.title}" changed since it was opened.`,
+        '',
+        ...changed.map((field) => `- ${field}: ${field === 'steps' ? 'changed' : changedText(before[field], after[field])}`),
+        '',
+        'The loop editor will refresh; review the current chain before applying another change.',
+      ].join('\n'));
+      setBaseline(current);
+      setTitle(current.title);
+      setGoal(current.goal);
+      setSteps(current.steps || []);
+      setResults((current.lastResults || []).map((r, i) => ({ idx: i, status: r.status === 'ok' ? 'ok' : r.status === 'failed' ? 'failed' : 'skipped', output: r.output, error: r.error })));
+      await reload();
+      return null;
+    }
+    return current;
+  }
 
   async function draft() {
     if (!goal.trim()) { setMsg('describe the goal first'); return; }
@@ -107,17 +147,36 @@ function LoopBuilder({ store, onScheduled }: { store: FleetStore; onScheduled?: 
   function moveStep(i: number, dir: -1 | 1) {
     setSteps((ss) => { const j = i + dir; if (j < 0 || j >= ss.length) return ss; const n = [...ss]; [n[i], n[j]] = [n[j], n[i]]; return n; });
   }
-  function newChain() { setEditingId(null); setTitle(''); setGoal(''); setSteps([]); setResults([]); setMsg(''); }
+  function newChain() { setEditingId(null); setBaseline(null); setTitle(''); setGoal(''); setSteps([]); setResults([]); setMsg(''); }
 
-  function buildLoop(extra?: Partial<Loop>): Loop {
+  function buildLoop(extra?: Partial<Loop>, base?: Loop | null): Loop {
     const now = Date.now();
-    return { id: editingId ?? loopId(), title: title.trim() || clip(goal, 60) || 'Untitled loop', goal: goal.trim(), team, steps, createdAt: now, updatedAt: now, ...extra };
+    const saved = base ?? baseline;
+    return {
+      id: editingId ?? saved?.id ?? loopId(),
+      title: title.trim() || clip(goal, 60) || 'Untitled loop',
+      goal: goal.trim(),
+      team,
+      steps,
+      createdAt: saved?.createdAt ?? now,
+      updatedAt: now,
+      lastRunAt: saved?.lastRunAt,
+      lastResults: saved?.lastResults,
+      ...extra,
+    };
   }
   async function save() {
     const valid = steps.map(fix).filter((s) => s.task);
     if (!valid.length) { setMsg('add at least one step with a task'); return; }
+    const current = editingId ? await ensureLoopFresh(`Save loop ${title || editingId}`, ['updatedAt']) : null;
+    if (editingId && !current) return;
     setBusy(true); setMsg('saving…');
-    try { const loop = buildLoop({ steps: valid }); await call('loops:save', loop); setEditingId(loop.id); await reload(); setMsg('saved ✓'); }
+    try {
+      const loop = buildLoop({ steps: valid }, current);
+      await call('loops:save', loop);
+      const saved = await call<Loop | null>('loops:get', loop.id).catch(() => loop);
+      setEditingId(loop.id); setBaseline(saved ?? loop); await reload(); setMsg('saved ✓');
+    }
     catch (e) { setMsg(`save failed: ${e instanceof Error ? e.message : String(e)}`); }
     finally { setBusy(false); }
   }
@@ -125,6 +184,8 @@ function LoopBuilder({ store, onScheduled }: { store: FleetStore; onScheduled?: 
   async function run() {
     const valid = steps.map(fix).filter((s) => s.task);
     if (!valid.length) { setMsg('nothing to run — add steps first'); return; }
+    const current = editingId ? await ensureLoopFresh(`Run loop ${title || editingId}`, ['updatedAt']) : null;
+    if (editingId && !current) return;
     if (!window.confirm(`Run this ${valid.length}-step chain now?\n\nThis sends live /ask requests in sequence and saves the run results.`)) return;
     setRunning(true); setMsg('running the chain…');
     setResults(valid.map((_, i) => ({ idx: i, status: i === 0 ? 'running' : 'skipped' })));
@@ -149,20 +210,31 @@ function LoopBuilder({ store, onScheduled }: { store: FleetStore; onScheduled?: 
     setRunning(false);
     setMsg(failed ? 'chain stopped on a failed step' : 'chain finished ✓');
     // Persist the run (saves the loop if it was unsaved) so it shows under saved chains.
-    try { const loop = buildLoop({ steps: valid, lastRunAt: Date.now(), lastResults: out }); await call('loops:save', loop); setEditingId(loop.id); await reload(); } catch { /* non-fatal */ }
+    try {
+      const loop = buildLoop({ steps: valid, lastRunAt: Date.now(), lastResults: out }, current);
+      await call('loops:save', loop);
+      const saved = await call<Loop | null>('loops:get', loop.id).catch(() => loop);
+      setEditingId(loop.id); setBaseline(saved ?? loop); await reload();
+    } catch { /* non-fatal */ }
   }
 
   async function openSaved(id: string) {
     if (editingId === id) { newChain(); return; }
     const l = await call<Loop | null>('loops:get', id).catch(() => null);
     if (!l) { setMsg('could not load that chain'); return; }
-    setEditingId(l.id); setTitle(l.title); setGoal(l.goal); setSteps(l.steps || []);
+    setEditingId(l.id); setBaseline(l); setTitle(l.title); setGoal(l.goal); setSteps(l.steps || []);
     setResults((l.lastResults || []).map((r, i) => ({ idx: i, status: r.status === 'ok' ? 'ok' : r.status === 'failed' ? 'failed' : 'skipped', output: r.output, error: r.error })));
     setMsg('');
   }
-  async function removeSaved(id: string) {
+  async function removeSaved(c: LoopSummary) {
     if (!window.confirm('Delete this saved loop chain?\n\nThis removes the reusable chain definition, but does not remove any scheduled manager check-ins created from it.')) return;
-    setBusy(true); try { await call('loops:remove', id); if (editingId === id) newChain(); await reload(); } finally { setBusy(false); }
+    const current = await call<Loop | null>('loops:get', c.id).catch(() => null);
+    if (current && current.updatedAt !== c.updatedAt) {
+      window.alert(`Delete blocked: "${c.title}" changed since the saved-chain list rendered.\n\nThe list will refresh; review the current chain before deleting.`);
+      await reload();
+      return;
+    }
+    setBusy(true); try { await call('loops:remove', c.id); if (editingId === c.id) newChain(); await reload(); } finally { setBusy(false); }
   }
 
   /** Compose the chain into one objective the manager can fire on a cadence. A single step is
@@ -185,11 +257,18 @@ function LoopBuilder({ store, onScheduled }: { store: FleetStore; onScheduled?: 
     if (!/^(mon|tue|wed|thu|fri|sat|sun)(,(mon|tue|wed|thu|fri|sat|sun))*$/.test(d)) { setMsg('pick a cadence'); return; }
     if (!/^([01]\d|2[0-3]):[0-5]\d$/.test(time.trim())) { setMsg('time must be HH:MM (24h), e.g. 09:00'); return; }
     const target = valid[0].agent;
+    const current = editingId ? await ensureLoopFresh(`Schedule loop ${title || editingId}`, ['updatedAt']) : null;
+    if (editingId && !current) return;
     if (!window.confirm(`Schedule this loop for ${target} on ${d} at ${time.trim()}?\n\nThis creates a recurring manager check-in that continues until paused or removed.`)) return;
     setBusy(true); setMsg(`scheduling loop for ${target}…`);
     try {
       // Persist the loop first so the steps + schedule are saved, then create the manager check-in.
-      try { const loop = buildLoop({ steps: valid }); await call('loops:save', loop); setEditingId(loop.id); } catch { /* non-fatal */ }
+      try {
+        const loop = buildLoop({ steps: valid }, current);
+        await call('loops:save', loop);
+        const saved = await call<Loop | null>('loops:get', loop.id).catch(() => loop);
+        setEditingId(loop.id); setBaseline(saved ?? loop);
+      } catch { /* non-fatal */ }
       await call('addCalendarCheckin', target, time.trim(), d, composeObjective(valid), { delivery: 'talk' });
       setMsg(`scheduled ✓ — runs on cadence (see Scheduled objectives below)`);
       await reload();
@@ -210,7 +289,7 @@ function LoopBuilder({ store, onScheduled }: { store: FleetStore; onScheduled?: 
           {chains.map((c) => (
             <span key={c.id} className={`chip${editingId === c.id ? ' on' : ''}`} style={{ display: 'inline-flex', gap: 6, alignItems: 'center' }}>
               <button className="link-btn" disabled={locked} title={`${c.steps} step(s) · last run ${agoMs(c.lastRunAt)}`} onClick={() => void openSaved(c.id)}>{c.title}</button>
-              <button className="link-btn" style={{ opacity: 0.6 }} disabled={locked} title="Delete chain" onClick={() => void removeSaved(c.id)}>✕</button>
+              <button className="link-btn" style={{ opacity: 0.6 }} disabled={locked} title="Delete chain" onClick={() => void removeSaved(c)}>✕</button>
             </span>
           ))}
           <button className="btn small" disabled={locked} onClick={newChain}>+ new chain</button>

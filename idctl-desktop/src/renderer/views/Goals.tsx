@@ -144,9 +144,10 @@ export function Goals({ store }: { store: FleetStore }) {
     };
     await call('goals:save', goal);
     if (!aliveRef.current) return;
+    const saved = await call<Goal | null>('goals:get', goal.id).catch(() => goal);
     setIdea(''); setDraft(''); setTitle(''); setShowNew(false); setMsg('goal saved ✓');
     await reload();
-    setDetail(goal);
+    setDetail(saved ?? goal);
   }
 
   /** Refine an existing goal via AI assist (re-uses the saved agent if present). */
@@ -167,7 +168,8 @@ export function Goals({ store }: { store: FleetStore }) {
       const next: Goal = { ...current, content, agent: who, updatedAt: Date.now() };
       await call('goals:save', next);
       if (!aliveRef.current) return;
-      setDetail(next); setRefineInstr(''); setMsg('goal refined ✓');
+      const saved = await call<Goal | null>('goals:get', next.id).catch(() => next);
+      setDetail(saved ?? next); setRefineInstr(''); setMsg('goal refined ✓');
       await reload();
     } catch (err) {
       if (aliveRef.current && genTok.current === tok) setMsg(`refine failed: ${err instanceof Error ? err.message : String(err)}`);
@@ -185,8 +187,9 @@ export function Goals({ store }: { store: FleetStore }) {
     const cur = await ensureGoalFresh(detail, `Update goal ${detail.title}`, ['updatedAt']);
     if (!cur) return;
     const next = { ...cur, ...p, updatedAt: Date.now() };
-    setDetail(next);
     await call('goals:save', next).catch(() => {});
+    const saved = await call<Goal | null>('goals:get', next.id).catch(() => next);
+    setDetail(saved ?? next);
     if (aliveRef.current) await reload();
   }
   async function patchDriver(p: Partial<GoalDriverConfig>) {
