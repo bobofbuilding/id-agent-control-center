@@ -8,6 +8,9 @@ Every change pushed or merged to `main` carries its version number in the commit
 subject (`vX.Y.Z: …`), stamped automatically by the `commit-msg` hook — see
 [CONTRIBUTING.md](CONTRIBUTING.md).
 
+## [0.1.248] — 2026-06-29
+- Brain Learning: make eval replay explicit
+
 ## [0.1.247] — 2026-06-29
 - Brain Health: guard approval triage against stale queue state
 
