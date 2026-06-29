@@ -244,6 +244,9 @@ function relayKey(d: string[] | null): string {
   if (d.length === 0) return 'none';
   return [...d].sort().join(',');
 }
+function relayBlocksAll(d: string[] | null): boolean {
+  return Array.isArray(d) && !d.includes('*') && d.length === 0;
+}
 
 // Human-readable summary of a persisted delegates_to value.
 function describeRelay(d: string[] | null): string {
@@ -650,10 +653,15 @@ export function Teams({ store, focus, onFocusHandled }: { store: FleetStore; foc
   // The payload that would be persisted for the current selection, and whether it differs from what's saved.
   const relayPayload: string[] | null = mode === 'permissive' ? null : delegates ?? [];
   const relayDirty = relayKey(relayPayload) !== relayKey(savedDelegates);
+  const defaultRelayBlocked = activeTeam === PRIMARY_TEAM && relayBlocksAll(relayPayload);
   async function saveRelay() {
     setRelayBusy(true);
     setRelayMsg('checking current policy…');
     try {
+      if (defaultRelayBlocked) {
+        setRelayMsg(`blocked — ${PRIMARY_TEAM}/${DEFAULT_LEAD} and validators need at least one outbound relay path`);
+        return;
+      }
       const fresh = await call<{ delegates_to: string[] | null }>('teamConfig', activeTeam);
       if (relayKey(fresh.delegates_to) !== relayKey(savedDelegates)) {
         setDelegates(fresh.delegates_to);
@@ -728,6 +736,15 @@ export function Teams({ store, focus, onFocusHandled }: { store: FleetStore; foc
         setSavedDelegates(freshTeam.delegates_to);
         setMode(modeOf(freshTeam.delegates_to));
         setMsg(`blocked: ${activeTeam} relay policy changed; review refreshed policy before overriding ${fresh.name}.`);
+        return false;
+      }
+      const isBackbone = isDefaultBackboneAgent(activeTeam, fresh.name);
+      if (isBackbone && relayBlocksAll(delegates)) {
+        setMsg(`blocked: ${activeTeam}/${fresh.name} is part of the default leadership backbone and needs at least one outbound relay path.`);
+        return false;
+      }
+      if (isBackbone && delegates === null && relayBlocksAll(freshTeam.delegates_to)) {
+        setMsg(`blocked: ${activeTeam}/${fresh.name} cannot inherit a blocked default-team relay policy. Repair the team relay first.`);
         return false;
       }
       const current = currentAgentDelegates(fresh);
@@ -827,6 +844,10 @@ export function Teams({ store, focus, onFocusHandled }: { store: FleetStore; foc
     }
   }
   function pickAgentMode(a: HrAgentCandidate, m: RelayMode) {
+    if (isDefaultBackboneAgent(activeTeam, a.name) && m === 'none') {
+      setMsg(`blocked: ${activeTeam}/${a.name} is part of the default leadership backbone and needs at least one outbound relay path.`);
+      return;
+    }
     if (m === 'select') {
       const cur = (a.metadata as { delegates_to?: unknown })?.delegates_to;
       setAgentSel(Array.isArray(cur) && !cur.includes('*') ? (cur as string[]) : []);
@@ -1304,6 +1325,11 @@ export function Teams({ store, focus, onFocusHandled }: { store: FleetStore; foc
           Which teams <b>{activeTeam}</b>'s agents may delegate to (relay work via <span className="mono">/ask &lt;team&gt;/&lt;agent&gt;</span>).
           Unset = permissive (any team).
         </p>
+        {activeTeam === PRIMARY_TEAM ? (
+          <p className={`small ${defaultRelayBlocked ? 'warn-text' : 'muted'}`} style={{ marginTop: -4 }}>
+            Default leadership guard: <b>{PRIMARY_TEAM}/{DEFAULT_LEAD}</b>, <b>{PRIMARY_TEAM}/coder</b>, and <b>{PRIMARY_TEAM}/researcher</b> need at least one outbound relay path for delegation and validator bounce-backs.
+          </p>
+        ) : null}
         <div className="relay-modes">
           {([
             ['permissive', 'Any team (default)'],
@@ -1311,8 +1337,8 @@ export function Teams({ store, focus, onFocusHandled }: { store: FleetStore; foc
             ['select', 'Only selected teams'],
             ['none', 'Blocked (none)'],
           ] as [RelayMode, string][]).map(([m, label]) => (
-            <label key={m} className={`relay-mode${mode === m ? ' active' : ''}`}>
-              <input type="radio" name="relay-mode" checked={mode === m} onChange={() => pickMode(m)} /> {label}
+            <label key={m} className={`relay-mode${mode === m ? ' active' : ''}`} title={activeTeam === PRIMARY_TEAM && m === 'none' ? 'Default leadership needs at least one relay path' : undefined}>
+              <input type="radio" name="relay-mode" checked={mode === m} disabled={activeTeam === PRIMARY_TEAM && m === 'none'} onChange={() => pickMode(m)} /> {label}
             </label>
           ))}
         </div>
@@ -1336,13 +1362,14 @@ export function Teams({ store, focus, onFocusHandled }: { store: FleetStore; foc
           <span className="muted small grow">
             saved: <span className="mono">{describeRelay(savedDelegates)}</span>
             {relayDirty ? <span className="warn-text" style={{ marginLeft: 8 }}>● unsaved changes</span> : null}
+            {defaultRelayBlocked ? <span className="warn-text" style={{ marginLeft: 8 }}>default leadership would be blocked</span> : null}
           </span>
           {relayMsg ? (
             <span className={`small${relayMsg.startsWith('failed') ? ' status-error' : ' ok-text'}`} style={{ marginRight: 10 }}>
               {relayMsg}
             </span>
           ) : null}
-          <button className="btn primary" disabled={relayBusy || !relayDirty} onClick={() => void saveRelay()}>
+          <button className="btn primary" disabled={relayBusy || !relayDirty || defaultRelayBlocked} onClick={() => void saveRelay()}>
             {relayBusy ? 'Saving…' : 'Save relay policy'}
           </button>
         </div>
@@ -1360,6 +1387,7 @@ export function Teams({ store, focus, onFocusHandled }: { store: FleetStore; foc
             const m = agentEditing === a.id ? 'select' : modeOf(Array.isArray(pol) ? (pol as string[]) : null);
             const label =
               m === 'permissive' ? 'inherits team' : m === 'all' ? 'any team' : m === 'none' ? 'blocked' : Array.isArray(pol) ? pol.join(', ') : '';
+            const selectedOverrideWouldBlock = roleLocked && agentEditing === a.id && agentSel.length === 0;
             return (
               <div key={a.id} className="kv" style={{ gridTemplateColumns: '130px 1fr', gap: '4px 12px', marginBottom: 10 }}>
                 <span className="b">{a.name}</span>
@@ -1368,9 +1396,10 @@ export function Teams({ store, focus, onFocusHandled }: { store: FleetStore; foc
                     <option value="permissive">Inherit team</option>
                     <option value="all">Any team (*)</option>
                     <option value="select">Selected teams…</option>
-                    <option value="none">Blocked (none)</option>
+                    <option value="none" disabled={roleLocked}>Blocked (none)</option>
                   </select>
-                  <span className="muted small" style={{ marginLeft: 8 }}>{label}</span>
+                  <span className={roleLocked && m === 'none' ? 'warn-text small' : 'muted small'} style={{ marginLeft: 8 }}>{label}</span>
+                  {roleLocked ? <span className="muted small" style={{ marginLeft: 8 }}>default backbone</span> : null}
                   {agentEditing === a.id ? (
                     <div className="chips" style={{ marginTop: 6 }}>
                       {otherTeams.length === 0 ? (
@@ -1385,7 +1414,8 @@ export function Teams({ store, focus, onFocusHandled }: { store: FleetStore; foc
                           );
                         })
                       )}
-                      <button className="btn" disabled={busy} onClick={() => { void applyAgent(a, agentSel, `${a.name} relay`).then((ok) => { if (ok) setAgentEditing(null); }); }}>
+                      {selectedOverrideWouldBlock ? <span className="warn-text small">choose at least one relay target</span> : null}
+                      <button className="btn" disabled={busy || selectedOverrideWouldBlock} onClick={() => { void applyAgent(a, agentSel, `${a.name} relay`).then((ok) => { if (ok) setAgentEditing(null); }); }}>
                         Save
                       </button>
                       <button className="btn" onClick={() => setAgentEditing(null)}>Cancel</button>
