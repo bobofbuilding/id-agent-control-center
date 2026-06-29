@@ -218,6 +218,8 @@ export function Teams({ store }: { store: FleetStore }) {
 
   // HR pillars as tabs + the live structure graph.
   const [tab, setTab] = useState<'structure' | 'build' | 'manage' | 'route'>('structure');
+  const [managePane, setManagePane] = useState<'teams' | 'instructions'>('teams');
+  const [routePane, setRoutePane] = useState<'overview' | 'relay' | 'hierarchy'>('overview');
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
   const [graphGroups, setGraphGroups] = useState<{ team: string; agents: Agent[] }[]>([]);
   useEffect(() => {
@@ -963,7 +965,7 @@ export function Teams({ store }: { store: FleetStore }) {
                     <option value="">{selectedAgent.reassignTargets.length === 0 ? 'no other teams' : 'reassign to…'}</option>
                     {selectedAgent.reassignTargets.map((n) => <option key={n} value={n}>{n}</option>)}
                   </select>
-                  <button className="btn small" disabled={busy} title="Edit this agent's team relay (switches to its team — a team-wide setting)" onClick={() => { if (selectedAgent!.team !== store.team) void store.setTeam(selectedAgent!.team); setTab('route'); }}>⇄ Routing</button>
+                  <button className="btn small" disabled={busy} title="Edit this agent's team relay (switches to its team — a team-wide setting)" onClick={() => { if (selectedAgent!.team !== store.team) void store.setTeam(selectedAgent!.team); setRoutePane('relay'); setTab('route'); }}>⇄ Routing</button>
                   <button className="btn small" disabled={busy} onClick={() => void rebuildSelectedStructureAgent(selectedAgent!.agent, selectedAgent!.team)}>Rebuild</button>
                 </span>
               </div>
@@ -985,8 +987,8 @@ export function Teams({ store }: { store: FleetStore }) {
                 <h4 style={{ margin: 0 }}>{hier.primary?.team === selectedTeamName ? '⭑ ' : ''}{selectedTeamName} <span className="muted small">· {selectedTeamAgents.length} agents</span></h4>
                 <span className="row-actions" style={{ gap: 6 }}>
                   <button className="btn small primary" onClick={() => setTab('build')}>✦ Build / add agents</button>
-                  <button className="btn small" title="Edit this team's relay (switches to it — a team-wide setting)" onClick={() => { if (selectedTeamName !== store.team) void store.setTeam(selectedTeamName); setTab('route'); }}>⇄ Relay</button>
-                  <button className="btn small" title="Start / stop this team in the Manage tab" onClick={() => setTab('manage')}>⏻ Start / stop</button>
+                  <button className="btn small" title="Edit this team's relay (switches to it — a team-wide setting)" onClick={() => { if (selectedTeamName !== store.team) void store.setTeam(selectedTeamName); setRoutePane('relay'); setTab('route'); }}>⇄ Relay</button>
+                  <button className="btn small" title="Start / stop this team in the Manage tab" onClick={() => { setManagePane('teams'); setTab('manage'); }}>⏻ Start / stop</button>
                 </span>
               </div>
               <p className="muted small" style={{ marginTop: 8 }}>Click an agent in the graph to edit its goals &amp; instructions (no team switch). Turn this team on/off in the <b>Manage</b> tab. The team’s goals live on its lead (the ⭑ coordinator).</p>
@@ -998,10 +1000,18 @@ export function Teams({ store }: { store: FleetStore }) {
       ) : null}
 
       {tab === 'manage' ? (
+        <div className="tabs" style={{ marginTop: -4 }}>
+          {([['teams', 'Team ops'], ['instructions', 'Instructions']] as const).map(([k, lbl]) => (
+            <button key={k} className={`tab${managePane === k ? ' active' : ''}`} onClick={() => setManagePane(k)}>{lbl}</button>
+          ))}
+        </div>
+      ) : null}
+
+      {tab === 'manage' && managePane === 'teams' ? (
       <section className="card">
         <div className="row-actions" style={{ alignItems: 'baseline', marginBottom: 4 }}>
-          <h3 style={{ margin: 0 }}>Teams — turn on / off</h3>
-          <span className="muted small">· start or stop every agent in a team. This is the single place to toggle teams — it doesn't change your active team.</span>
+          <h3 style={{ margin: 0 }}>Team operations</h3>
+          <span className="muted small">· start, stop, probe, or rebuild one team at a time. Instruction editing is in the Instructions mode.</span>
           <span className="grow" />
           {teamOpBusy ? <span className="muted small">working…</span> : teamOpMsg ? <span className={`small ${/fail/.test(teamOpMsg) ? 'status-error' : 'ok-text'}`}>{teamOpMsg}</span> : null}
         </div>
@@ -1060,10 +1070,18 @@ export function Teams({ store }: { store: FleetStore }) {
       ) : null}
 
       {tab === 'route' ? (
+        <div className="tabs" style={{ marginTop: -4 }}>
+          {([['overview', 'Overview'], ['relay', 'Relay policy'], ['hierarchy', 'Hierarchy & sync']] as const).map(([k, lbl]) => (
+            <button key={k} className={`tab${routePane === k ? ' active' : ''}`} onClick={() => setRoutePane(k)}>{lbl}</button>
+          ))}
+        </div>
+      ) : null}
+
+      {tab === 'route' && routePane === 'overview' ? (
       <section className="card">
         <h3>Routing overview <span className="muted small">· every team's outbound relay, at a glance</span></h3>
         <p className="muted small" style={{ marginTop: -4 }}>
-          Who each team may delegate work to (via <span className="mono">/ask &lt;team&gt;/&lt;agent&gt;</span>). <b>Edit</b> jumps the editor below to that team.
+          Who each team may delegate work to (via <span className="mono">/ask &lt;team&gt;/&lt;agent&gt;</span>). <b>Edit</b> opens Relay policy mode for that team.
         </p>
         <table className="grid">
           <thead>
@@ -1085,9 +1103,7 @@ export function Teams({ store }: { store: FleetStore }) {
                     <td className={`small ${cls}`}>{describeRelay(row.delegates)}</td>
                     <td className="muted small">{ags.length}</td>
                     <td>
-                      {row.team === activeTeam ? <span className="muted small">editing ↓</span> : (
-                        <button className="btn small" disabled={busy} title={`Edit ${row.team}'s relay policy below`} onClick={() => void store.setTeam(row.team)}>Edit</button>
-                      )}
+                      <button className="btn small" disabled={busy} title={`Edit ${row.team}'s relay policy`} onClick={() => { if (row.team !== activeTeam) void store.setTeam(row.team); setRoutePane('relay'); }}>Edit</button>
                     </td>
                   </tr>
                 );
@@ -1097,7 +1113,7 @@ export function Teams({ store }: { store: FleetStore }) {
       </section>
       ) : null}
 
-      {tab === 'route' ? (
+      {tab === 'route' && routePane === 'relay' ? (
       <section className="card">
         <h3>Cross-team relay — {activeTeam}</h3>
         <p className="muted small" style={{ marginTop: -4 }}>
@@ -1211,7 +1227,7 @@ export function Teams({ store }: { store: FleetStore }) {
       </section>
       ) : null}
 
-      {tab === 'manage' ? (
+      {tab === 'manage' && managePane === 'instructions' ? (
       <section className="card">
         <h3>Agent instructions — coordination &amp; behavior</h3>
         <p className="muted small" style={{ marginTop: -4 }}>
@@ -1243,7 +1259,7 @@ export function Teams({ store }: { store: FleetStore }) {
       </section>
       ) : null}
 
-      {tab === 'route' ? (
+      {tab === 'route' && routePane === 'hierarchy' ? (
       <section className="card">
         <h3>Lead hierarchy &amp; coordinators</h3>
         <p className="muted small" style={{ marginTop: -4 }}>
