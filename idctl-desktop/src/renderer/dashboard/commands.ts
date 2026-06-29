@@ -126,35 +126,25 @@ export function buildCommands(store: FleetStore): Command[] {
   // ── Control panels (slide-over) ──
   cmds.push({ id: 'panel.quick', label: 'Open quick controls', group: 'Control', keywords: 'drawer panel actions', hint: 'drawer', run: (c) => c.openDrawer('quick') });
 
-  // ── Quick actions (run immediately; brain-recorded via the IPC choke point) ──
+  // ── Owner-page handoffs for high-impact actions ──
+  // Dashboard stays observe/talk first. The owner pages hold the richer previews for
+  // project tracker writes and org hierarchy/goal rewrites; the drawer still exposes
+  // advanced direct shortcuts for operators who explicitly open it.
   cmds.push({
     id: 'projects.sync',
-    label: 'Sync workspace projects',
+    label: 'Open Projects to sync workspace',
     group: 'Projects',
     keywords: 'register import scan folder root',
-    run: async (c) => {
-      if (!window.confirm('Sync workspace projects?\n\nThis scans the workspace and adds or adopts project tracker entries. Review the Projects page afterward if anything new appears.')) return;
-      c.setStatus('Syncing workspace projects…');
-      try {
-        const r = await call<{ ok?: boolean; added?: number; adopted?: number; total?: number; error?: string }>('projects:syncRoot');
-        c.setStatus(r?.ok === false ? `Sync failed: ${r?.error ?? 'unknown'}` : `Synced — ${r?.added ?? 0} added, ${r?.adopted ?? 0} adopted, ${r?.total ?? 0} total`);
-        c.store.refresh();
-      } catch (e) { c.setStatus(`Sync failed: ${e instanceof Error ? e.message : String(e)}`); }
-    },
+    hint: 'review',
+    run: (c) => c.navigate('projects'),
   });
   cmds.push({
     id: 'org.sync',
-    label: 'Org sync now (recompose agent goals)',
+    label: 'Open HR Manager to preview org sync',
     group: 'Org',
     keywords: 'hierarchy leads instructions rebuild brain',
-    run: async (c) => {
-      if (!window.confirm('Run org sync now?\n\nThis recomposes every agent goals file from the hierarchy and brain, and may rebuild idle agents.')) return;
-      c.setStatus('Recomposing org & syncing the brain…');
-      try {
-        const r = await call<{ written?: number; rebuilt?: string[]; brain?: boolean }>('org:sync', {});
-        c.setStatus(`Org synced — ${r?.written ?? 0} goals updated · ${r?.rebuilt?.length ?? 0} rebuilt · brain=${r?.brain ? 'ok' : 'n/a'}`);
-      } catch (e) { c.setStatus(`Org sync failed: ${e instanceof Error ? e.message : String(e)}`); }
-    },
+    hint: 'preview',
+    run: (c) => c.navigate('teams'),
   });
   cmds.push({
     id: 'fleet.probe',

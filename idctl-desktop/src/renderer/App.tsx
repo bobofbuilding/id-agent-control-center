@@ -193,7 +193,7 @@ export function App() {
         navigate={(v) => setView(v as ViewId)}
         openDrawer={(id) => setDrawerPanel(id)}
       />
-      <ControlDrawer store={store} panel={drawerPanel} onClose={() => setDrawerPanel(null)} />
+      <ControlDrawer store={store} panel={drawerPanel} onClose={() => setDrawerPanel(null)} navigate={(v) => setView(v as ViewId)} />
     </div>
     </PromptProvider>
     </ToastProvider>

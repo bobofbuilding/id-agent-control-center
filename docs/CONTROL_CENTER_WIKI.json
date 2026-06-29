@@ -94,8 +94,12 @@
         "visible": true
       },
       "sourceFiles": [
+        "idctl-desktop/src/renderer/App.tsx",
         "idctl-desktop/src/renderer/views/Dashboard.tsx",
         "idctl-desktop/src/renderer/views/Chat.tsx",
+        "idctl-desktop/src/renderer/views/dashboard/CommandPalette.tsx",
+        "idctl-desktop/src/renderer/views/dashboard/ControlDrawer.tsx",
+        "idctl-desktop/src/renderer/dashboard/commands.ts",
         "idctl-desktop/src/renderer/store.ts"
       ],
       "purpose": "Operator home: pick a running team, talk to that team's lead, watch cross-team coordination, and read the live activity feed.",
@@ -185,6 +189,36 @@
             "chat:saveFiles",
             "chat:savePasted"
           ]
+        },
+        {
+          "id": "command-palette-project-sync",
+          "label": "Open Projects to sync workspace",
+          "type": "command",
+          "description": "Routes high-impact workspace sync intent to Projects instead of running a tracker mutation directly from Dashboard.",
+          "routesInto": [
+            "navigate projects"
+          ]
+        },
+        {
+          "id": "command-palette-org-sync",
+          "label": "Open HR Manager to preview org sync",
+          "type": "command",
+          "description": "Routes org-sync intent to HR Manager, where hierarchy and org-sync previews live.",
+          "routesInto": [
+            "navigate teams"
+          ]
+        },
+        {
+          "id": "dashboard-shortcuts",
+          "label": "Dashboard shortcuts",
+          "type": "drawer",
+          "description": "Observe-first drawer: Probe all, Refresh, and owner-page handoff buttons are visible by default; direct project sync and org sync live under Advanced direct shortcuts.",
+          "routesInto": [
+            "probeAll",
+            "projects:syncRoot",
+            "org:preview",
+            "org:sync"
+          ]
         }
       ],
       "displays": [
@@ -220,9 +254,10 @@
       "notes": [
         "The older static product spec described a dashboard agent grid; in current source that fleet grid lives on Health through AgentTable.",
         "The command palette accepts /ask and /hey shortcuts; typing / expands to /ask lead and routes the message to the matching lead in the default team when available.",
+        "Command-palette project/org sync entries now hand off to Projects or HR Manager. The Dashboard drawer keeps direct project/org shortcuts behind an Advanced section, and direct org sync reuses org:preview before apply.",
         "Dashboard activity and coordination reload on shared sync-domain events from Work, Inbox, project, org, task, chat, and dispatch mutations, so the home view stays aligned with the rest of the app."
       ],
-      "body": "# Dashboard\n\nDashboard is the daily command view. It combines lead chat for the selected team with all-team coordination, active task state, recent events, and hierarchy context so an operator can steer work without losing fleet awareness.\n\n## Use it for\n\n- Send a request to the selected team's lead while watching coordination across every running team.\n- Check whether work is moving through the leadership chain before opening the deeper Work or Health pages.\n- Read the event stream when you need fast context on what just changed.\n\n## Watch for\n\nThe Dashboard is not the fleet roster grid. Agent lifecycle controls, probes, and full roster inspection live on Health through AgentTable. If the question is \"who is running?\" use Health; if the question is \"what should the lead do next?\" start here."
+      "body": "# Dashboard\n\nDashboard is the daily command view. It combines lead chat for the selected team with all-team coordination, active task state, recent events, and hierarchy context so an operator can steer work without losing fleet awareness.\n\n## Use it for\n\n- Send a request to the selected team's lead while watching coordination across every running team.\n- Check whether work is moving through the leadership chain before opening the deeper Work or Health pages.\n- Read the event stream when you need fast context on what just changed.\n\n## Current guardrails\n\nDashboard is now observe-first by default. Command-palette project and org sync entries open Projects or HR Manager instead of mutating tracker or hierarchy state immediately. The shortcuts drawer shows Probe all, Refresh, and owner-page handoffs first; direct project sync and org sync are kept under Advanced direct shortcuts, and direct org sync previews affected agents, goal files, brain writes, planned rebuilds, and deferred busy rebuilds before apply. Primary fleet-lead changes are no longer exposed as a Dashboard selector; use HR Manager for the routing diff preview.\n\n## Watch for\n\nThe Dashboard is not the fleet roster grid. Agent lifecycle controls, probes, and full roster inspection live on Health through AgentTable. If the question is \"who is running?\" use Health; if the question is \"what should the lead do next?\" start here."
     },
     {
       "id": "chat",
@@ -2627,12 +2662,12 @@
         "idctl-desktop/src/renderer/views/Settings.tsx"
       ],
       "purpose": "Current audit record for controls that can rewrite live agent, task, project, capability, identity, or provider state and therefore need review, confirmation, or stronger state synchronization.",
-      "scope": "Documentation and implementation record for the current modified build. It records the first full dashboard-page audit, seven conservative guardrail implementation passes, and the policy decisions still needed before more disruptive UX simplification.",
+      "scope": "Documentation and implementation record for the current modified build. It records the first full dashboard-page audit, eight conservative guardrail implementation passes, and the policy decisions still needed before more disruptive UX simplification.",
       "tabs": [
         {
           "id": "dashboard",
           "label": "Dashboard",
-          "description": "Primary-lead selection, org sync, project sync, and command-palette sync actions now require confirmation; the primary-lead selector is keyed by team/name to avoid same-name ambiguity."
+          "description": "Dashboard is now observe-first by default: command-palette project/org sync entries route to owner pages, the shortcuts drawer shows observe and owner-page handoffs first, direct project/org shortcuts sit behind Advanced, direct org sync uses org:preview, and primary-lead changes move to HR Manager."
         },
         {
           "id": "work",
@@ -2708,7 +2743,7 @@
         }
       ],
       "routing": {
-        "decisionStatus": "The audit findings are surfaced. Seven conservative guardrail passes that do not remove workflows are implemented; deeper page simplification and runtime batch-staging should wait for operator policy.",
+        "decisionStatus": "The audit findings are surfaced. Eight conservative guardrail passes are implemented; remaining simplification and runtime batch-staging should wait for operator policy.",
         "implementedFirstPass": [
           "Projects: stopped silent first-run workspace sync; commit/push, git pull, and enabling auto-commit now require explicit confirmation.",
           "Projects: auto-commit remains opt-in per project and the automated checkpoint path reuses the reviewed enablement guardrail instead of prompting mid-background run.",
@@ -2747,14 +2782,18 @@
           "Health: Headroom pilot route, sampling, context threshold, workspace state, state-root, and safety-mode edits are staged locally; Apply policy previews the diff before writing, and Refresh asks before discarding unsaved policy edits.",
           "Health: the Tauri adapter now honors the selected row's team for remote, probe, runtime, effort, and speed calls so all-team roster actions do not fall back to the active team."
         ],
+        "implementedEighthPass": [
+          "Dashboard: command-palette project/org sync commands now open Projects or HR Manager instead of mutating tracker or org state directly.",
+          "Dashboard: shortcuts drawer now defaults to observe actions and owner-page handoffs; direct project/org shortcuts live behind Advanced direct shortcuts.",
+          "Dashboard: direct org sync reuses org:preview before apply, and primary fleet-lead changes are no longer exposed as a Dashboard selector because HR Manager owns the routing diff preview."
+        ],
         "recommendedFirstPass": [
-          "Dashboard: decide whether to remove high-impact mutations from Dashboard entirely or keep them as confirmed shortcuts.",
           "Projects: decide whether auto-commit should remain as an explicit per-project feature or be removed from the UI.",
           "Identity and Computer Use: decide whether legacy bare-name accounts/tokens should stay manual-review only or get an explicit migration assistant.",
           "Identity and Computer Use: consider upgrading from team/name authority to immutable team/id authority if the manager exposes stable cross-team IDs for every shell.",
           "Health: decide whether runtime/model/effort/speed should graduate from confirmed single-field writes to a full batch Apply editor."
         ],
-        "releaseState": "This wiki page documents the current seventh guardrail pass and should ship with the next IDACC release after typecheck and wiki validation pass."
+        "releaseState": "This wiki page documents the current eighth guardrail pass and should ship with the next IDACC release after typecheck and wiki validation pass."
       },
       "notes": [
         "Existing protections already found: delete task, delete project, combine duplicate projects, sign out, RPC removal, model removal, stack install/uninstall, team stop/rebuild, empty-team delete, Identity privileged actions, and Computer Use broker actions have confirmations or gates.",
@@ -2765,10 +2804,11 @@
         "Fifth guardrail pass adds preview-before-apply to Projects pull and manual commit/push.",
         "Sixth guardrail pass adds before/after previews for HR hierarchy and relay routing writes.",
         "Seventh guardrail pass adds richer Health agent-change previews, stages Headroom pilot policy writes behind Apply policy, and keeps Tauri all-team roster actions team-scoped.",
+        "Eighth guardrail pass makes Dashboard observe-first by routing palette mutations to owner pages, hiding direct sync shortcuts behind Advanced, requiring org preview from Dashboard, and moving primary-lead changes to HR Manager.",
         "The guardrail passes favor confirmation prompts over moving controls; the open UX decision is whether to replace confirmed shortcuts with preview-and-apply flows.",
         "Most important simplification: separate status/observation pages from mutation/control surfaces wherever possible."
       ],
-      "body": "# Sync & Guardrails Audit\n\nThis page records the full pass over the dashboard pages in order: Dashboard, Work, Projects, Health, Identity & Keys, HR Manager, Capabilities, Computer Use, and Settings. It now documents the audit findings plus seven conservative guardrail implementation passes.\n\n## Current build state\n\nThe dashboard family is sync-bus aware: dashboard, work, projects, health, brain-backed plans/goals/loops/schedules/dreams, agent capability changes, and org sync emit coarse domain invalidations so mounted pages refresh together after relevant mutations. The guardrail layer now reduces stale writes, surprise mutations, same-name cross-team authority collisions, unreviewed org-sync sidecar/rebuild changes, unreviewed repository mutations, opaque hierarchy/routing edits, and immediate Health policy writes without removing the existing workflows.\n\n## Implemented guardrails\n\n- Dashboard project sync, org sync, command-palette sync, and primary-lead changes now require confirmation; primary-lead selection is team/name keyed.\n- Work now confirms task status writes, owner reassignment, reconcile, redispatch, plan work/status writes, goal autopilot, recurring schedules, loops, and dreams.\n- Projects no longer silently syncs the workspace on first open. Pull and manual commit/push now preview folder, branch, remote, compare target, ahead/behind state, dirty state, tracked diff stats, untracked files, and commit subject where relevant. Enabling auto-commit remains explicit per project.\n- Health now shows current agent status plus before/after or effect summaries before team lead, model/runtime/effort/speed, reset session, stop, and rebuild changes. Headroom pilot policy edits are staged locally and written only through Apply policy after a diff prompt. Tauri all-team roster actions now preserve the selected row's team for remote, probe, runtime, effort, and speed calls.\n- Identity & Keys now keys renderer selection, controller proof cache, backend account IDs, Safe/session actions, and Tauri mock key state by team/name, with controller proof gates and capped finite session-key enforcement still in place.\n- HR Manager now confirms coordinator/primary changes, relay writes, instruction save+rebuild, selected-agent rebuild, Team Builder post-build wiring, and org auto-sync toggles. Coordinator, primary lead, team relay, and per-agent relay writes preview before/after routing diffs; org sync previews affected agents, goal-sidecar writes, brain hierarchy write, planned idle rebuilds, rebuild cap, and deferred rebuilds before apply.\n- Capabilities defaults scope to the active team, confirms multi-agent or cross-team applies, refetches current agent metadata before MCP full-list writes, and confirms MCP registry removal.\n- Computer Use confirms before supervised per-action approval is disabled and now scopes attached agents, broker tokens, MCP env authority, and arm-time blessed state by team/name.\n- Settings confirms coordinator changes, provider default changes, disabling enabled providers, and provider removal; it refuses to disable or remove the last enabled inference backend.\n\n## Remaining hard guardrail candidates\n\n- Dashboard still contains confirmed high-impact shortcuts; decide whether those should move fully to HR Manager/Projects.\n- Health runtime/model/effort/speed controls could become a batch Apply editor instead of confirmed single-field writes.\n- Projects auto-commit should either remain an explicit per-project feature or be removed from the UI.\n- Legacy bare-name Identity accounts and Computer Use tokens should either remain explicit manual-review artifacts or get a migration assistant.\n- If stable immutable cross-team IDs become available everywhere, Identity and Computer Use should consider upgrading authority keys from team/name to team/id.\n\n## UX simplification target\n\nDashboard should stay mostly observe, talk, and refresh. Work should stage or preview bulk redistribution and recurring behavior. Projects should separate tracker edits from repository-changing operations. HR Manager should own hierarchy and org-sync controls. Capabilities should make bulk scope obvious before applying tools across teams. Settings should remain an infrastructure panel, with live routing changes confirmed and impossible-to-run configurations blocked.\n\n## Open operator decisions\n\n- Should high-impact Dashboard actions be removed from Dashboard entirely, or stay there as confirmed shortcuts?\n- Should Projects keep auto-commit as a feature if it is explicit, reviewed, and per-project, or should it be removed from the UI?\n- Should runtime/model/effort/speed changes in Health become a batch Apply editor, or remain dropdown-driven with before/after confirmation?\n- Should legacy bare-name Identity accounts and Computer Use tokens be left for manual review, or should IDACC offer an explicit migration flow?"
+      "body": "# Sync & Guardrails Audit\n\nThis page records the full pass over the dashboard pages in order: Dashboard, Work, Projects, Health, Identity & Keys, HR Manager, Capabilities, Computer Use, and Settings. It now documents the audit findings plus eight conservative guardrail implementation passes.\n\n## Current build state\n\nThe dashboard family is sync-bus aware: dashboard, work, projects, health, brain-backed plans/goals/loops/schedules/dreams, agent capability changes, and org sync emit coarse domain invalidations so mounted pages refresh together after relevant mutations. The guardrail layer now reduces stale writes, surprise mutations, same-name cross-team authority collisions, unreviewed org-sync sidecar/rebuild changes, unreviewed repository mutations, opaque hierarchy/routing edits, immediate Health policy writes, and Dashboard shortcut mutations without removing the existing owner-page workflows.\n\n## Implemented guardrails\n\n- Dashboard is observe-first by default: command-palette project/org sync entries open Projects or HR Manager, the shortcuts drawer shows observe actions and owner-page handoffs first, direct project/org shortcuts live behind Advanced, direct org sync previews affected agents/goals/brain/rebuilds before apply, and primary-lead changes now belong to HR Manager's routing diff preview.\n- Work now confirms task status writes, owner reassignment, reconcile, redispatch, plan work/status writes, goal autopilot, recurring schedules, loops, and dreams.\n- Projects no longer silently syncs the workspace on first open. Pull and manual commit/push now preview folder, branch, remote, compare target, ahead/behind state, dirty state, tracked diff stats, untracked files, and commit subject where relevant. Enabling auto-commit remains explicit per project.\n- Health now shows current agent status plus before/after or effect summaries before team lead, model/runtime/effort/speed, reset session, stop, and rebuild changes. Headroom pilot policy edits are staged locally and written only through Apply policy after a diff prompt. Tauri all-team roster actions now preserve the selected row's team for remote, probe, runtime, effort, and speed calls.\n- Identity & Keys now keys renderer selection, controller proof cache, backend account IDs, Safe/session actions, and Tauri mock key state by team/name, with controller proof gates and capped finite session-key enforcement still in place.\n- HR Manager now confirms coordinator/primary changes, relay writes, instruction save+rebuild, selected-agent rebuild, Team Builder post-build wiring, and org auto-sync toggles. Coordinator, primary lead, team relay, and per-agent relay writes preview before/after routing diffs; org sync previews affected agents, goal-sidecar writes, brain hierarchy write, planned idle rebuilds, rebuild cap, and deferred rebuilds before apply.\n- Capabilities defaults scope to the active team, confirms multi-agent or cross-team applies, refetches current agent metadata before MCP full-list writes, and confirms MCP registry removal.\n- Computer Use confirms before supervised per-action approval is disabled and now scopes attached agents, broker tokens, MCP env authority, and arm-time blessed state by team/name.\n- Settings confirms coordinator changes, provider default changes, disabling enabled providers, and provider removal; it refuses to disable or remove the last enabled inference backend.\n\n## Remaining hard guardrail candidates\n\n- Health runtime/model/effort/speed controls could become a batch Apply editor instead of confirmed single-field writes.\n- Projects auto-commit should either remain an explicit per-project feature or be removed from the UI.\n- Legacy bare-name Identity accounts and Computer Use tokens should either remain explicit manual-review artifacts or get a migration assistant.\n- If stable immutable cross-team IDs become available everywhere, Identity and Computer Use should consider upgrading authority keys from team/name to team/id.\n\n## UX simplification target\n\nDashboard should stay mostly observe, talk, and refresh. Work should stage or preview bulk redistribution and recurring behavior. Projects should separate tracker edits from repository-changing operations. HR Manager should own hierarchy and org-sync controls. Capabilities should make bulk scope obvious before applying tools across teams. Settings should remain an infrastructure panel, with live routing changes confirmed and impossible-to-run configurations blocked.\n\n## Open operator decisions\n\n- Should Projects keep auto-commit as a feature if it is explicit, reviewed, and per-project, or should it be removed from the UI?\n- Should runtime/model/effort/speed changes in Health become a batch Apply editor, or remain dropdown-driven with before/after confirmation?\n- Should legacy bare-name Identity accounts and Computer Use tokens be left for manual review, or should IDACC offer an explicit migration flow?"
     },
     {
       "id": "wiki",
@@ -2831,5 +2871,5 @@
       "body": "# Wiki\n\nWiki is both the human documentation page and the editable schematic for the Control Center UI. Each article explains the operator purpose of a page; the structured sections below preserve tabs, tiles, fields, controls, displays, routes, and source files for implementation detail.\n\n## Use it for\n\n- Search pages, controls, routes, source files, and notes from inside the desktop app.\n- Confirm how a UI surface is intended to behave before editing code or filing follow-up work.\n- Keep app navigation metadata and human documentation in one reviewed JSON artifact.\n\n## Editing rule\n\nThe desktop app hot-reload polls CONTROL_CENTER_WIKI.json through the main-process wiki bridge. Sidebar labels, icons, order, and visibility still come from pages[].nav for implemented routes, so documentation edits must preserve that metadata and keep every page.body non-empty."
     }
   ],
-  "appVersion": "0.1.223"
+  "appVersion": "0.1.224"
 }
