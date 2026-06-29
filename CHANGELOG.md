@@ -8,6 +8,9 @@ Every change pushed or merged to `main` carries its version number in the commit
 subject (`vX.Y.Z: …`), stamped automatically by the `commit-msg` hook — see
 [CONTRIBUTING.md](CONTRIBUTING.md).
 
+## [0.1.262] — 2026-06-29
+- Brain dashboard Fleet and Agents status-authority guardrails.
+
 ## [0.1.261] — 2026-06-29
 - Wiki records staged Brain Skills source/freshness strip and restart boundary.
 
