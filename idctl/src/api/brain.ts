@@ -79,15 +79,41 @@ export interface BrainSkillNode {
   chainable?: boolean;
 }
 export interface BrainSkillIndex {
+  q?: string;
+  domain?: string | null;
+  tag?: string | null;
+  sort?: string;
+  total?: number;
+  counts?: {
+    total?: number;
+    chainable?: number;
+    nonChainable?: number;
+    byDomain?: Record<string, number>;
+    byTag?: Record<string, number>;
+  };
   summary?: {
     totalSkills?: number;
     chainable?: number;
     nonChainable?: number;
     domains?: number;
     tags?: number;
+    averageComputeCost?: number | null;
     maxUseCount?: number;
   };
-  meta?: { generatedAt?: string };
+  facets?: {
+    domains?: unknown[];
+    tags?: unknown[];
+    chainable?: unknown[];
+  };
+  reuseGroups?: unknown[];
+  topNodes?: unknown[];
+  nodes?: unknown[];
+  searchHints?: unknown[];
+  reuseSuggestions?: unknown[];
+  proposalSummary?: Record<string, unknown>;
+  proposalGaps?: unknown[];
+  profile?: string;
+  meta?: { route?: string; profile?: string; generatedAt?: string };
 }
 export interface BrainFleetReport {
   generatedAt?: string;
@@ -242,8 +268,22 @@ export class BrainClient {
 
   /** Read the brain's skill index summary for catalog freshness/status UI. */
   async skillIndex(): Promise<BrainSkillIndex | null> {
-    const r = await this.req<{ data?: BrainSkillIndex }>('GET', '/skills/index?limit=1&sort=popular');
-    return r?.data ?? null;
+    const r = await this.req<{
+      data?: BrainSkillIndex;
+      meta?: BrainSkillIndex['meta'];
+      profile?: string;
+    }>('GET', '/skills/index?limit=1&sort=popular');
+    if (!r?.data) return null;
+    const profile = r.data.profile ?? r.meta?.profile ?? r.profile;
+    return {
+      ...r.data,
+      ...(profile ? { profile } : {}),
+      meta: {
+        ...(r.data.meta ?? {}),
+        ...(r.meta ?? {}),
+        ...(profile ? { profile } : {}),
+      },
+    };
   }
 
   /** Read live fleet authority/status contract used by Brain dashboard Fleet/Health/Agents. */

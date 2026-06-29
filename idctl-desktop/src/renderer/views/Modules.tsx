@@ -25,10 +25,15 @@ const TRANSPORTS: McpTransport[] = ['stdio', 'http', 'sse'];
 interface TestResult { ok?: boolean; tools?: string[]; error?: string; testing?: boolean }
 type TargetAgent = Agent & { team?: string };
 type TeamAgentsGroup = { team: string; agents: Agent[] };
-type BrainSkillStats = { totalSkills?: number; chainable?: number; domains?: number; tags?: number; maxUseCount?: number };
+type BrainSkillStats = { totalSkills?: number; chainable?: number; nonChainable?: number; domains?: number; tags?: number; averageComputeCost?: number | null; maxUseCount?: number };
+type BrainSkillFacet = { domain?: string; tag?: string; name?: string; count?: number };
 type BrainSkillSummary = {
   summary?: BrainSkillStats;
-  meta?: { generatedAt?: string };
+  facets?: { domains?: BrainSkillFacet[]; tags?: BrainSkillFacet[]; chainable?: { value?: boolean; count?: number }[] };
+  reuseGroups?: { kind?: string; key?: string; label?: string; count?: number }[];
+  proposalSummary?: Record<string, unknown>;
+  profile?: string;
+  meta?: { route?: string; profile?: string; generatedAt?: string };
 } | null;
 type BrainFleetReport = {
   generatedAt?: string;
@@ -140,6 +145,36 @@ function brainFleetReviewDetail(report: BrainFleetReport): string {
   }
   if ((fleet.warnings ?? []).length) return (fleet.warnings ?? []).join(' ');
   return 'Brain Fleet authority is live.';
+}
+
+function brainSkillContractGaps(report: BrainSkillSummary): string[] {
+  const gaps: string[] = [];
+  if (!report?.summary) return ['Brain /skills/index is unavailable'];
+  if (report.meta?.route !== '/skills/index') gaps.push('route metadata');
+  if (!(report.profile || report.meta?.profile)) gaps.push('profile label');
+  if (!Array.isArray(report.facets?.domains)) gaps.push('domain facets');
+  if (!Array.isArray(report.facets?.tags)) gaps.push('tag facets');
+  if (!Array.isArray(report.reuseGroups)) gaps.push('reuse groups');
+  if (!report.proposalSummary) gaps.push('proposal summary');
+  return gaps;
+}
+
+function brainSkillContractCurrent(report: BrainSkillSummary): boolean {
+  return brainSkillContractGaps(report).length === 0;
+}
+
+function brainSkillContractDetail(report: BrainSkillSummary): string {
+  const gaps = brainSkillContractGaps(report);
+  if (!report?.summary) {
+    return 'Brain /skills/index is unavailable. Open Brain Skills or check the Brain service before comparing the local catalog with Brain.';
+  }
+  if (gaps.length) {
+    return `Brain /skills/index is missing ${gaps.join(', ')}. Restart/redeploy Brain before treating Skills, Graph, and skill reuse suggestions as fully synced.`;
+  }
+  const domainCount = report.facets?.domains?.length ?? report.summary.domains ?? 0;
+  const tagCount = report.facets?.tags?.length ?? report.summary.tags ?? 0;
+  const reuseCount = report.reuseGroups?.length ?? 0;
+  return `Brain Skills catalog contract is current (${domainCount} domains, ${tagCount} tags, ${reuseCount} reuse groups).`;
 }
 
 function brainGraphContractCurrent(report: BrainGraphReport): boolean {
@@ -802,18 +837,27 @@ export function Modules({ store }: { store: FleetStore }) {
   const brainTotal = brainSkills?.summary?.totalSkills;
   const brainMissingLocal = typeof brainTotal === 'number' && brainTotal < skills.length;
   const brainExtraNodes = typeof brainTotal === 'number' && brainTotal > skills.length;
+  const brainContractCurrent = brainSkillContractCurrent(brainSkills);
+  const brainContractNeedsReview = !brainContractCurrent;
   const brainNeedsLocalSync = !!brainDrift || brainMissingLocal;
+  const brainCatalogNeedsReview = brainNeedsLocalSync || brainContractNeedsReview;
   const brainStatusLabel = !brainSkills?.summary
     ? 'Brain --'
     : brainDrift
       ? 'Brain review'
       : brainMissingLocal
         ? `Brain behind ${brainTotal}/${skills.length}`
-        : brainExtraNodes
-          ? `Brain +${brainTotal - skills.length}`
-          : `Brain ${brainTotal}`;
+        : brainContractNeedsReview
+          ? `Brain ${brainTotal ?? '?'} stale`
+          : brainExtraNodes
+            ? `Brain +${brainTotal - skills.length}`
+            : `Brain ${brainTotal}`;
   const brainStatusTitle = [
     brainSkills?.meta?.generatedAt ? `Brain index generated ${brainSkills.meta.generatedAt}` : 'Brain skill index unavailable',
+    `Contract: ${brainContractCurrent ? 'current' : brainSkillContractGaps(brainSkills).join(', ')}`,
+    brainSkills?.meta?.profile || brainSkills?.profile ? `Profile: ${brainSkills?.meta?.profile ?? brainSkills?.profile ?? ''}` : '',
+    brainSkills?.facets ? `Facets: ${brainSkills.facets.domains?.length ?? 0} domains / ${brainSkills.facets.tags?.length ?? 0} tags` : '',
+    Array.isArray(brainSkills?.reuseGroups) ? `Reuse groups: ${brainSkills?.reuseGroups?.length ?? 0}` : '',
     `Local catalog ${skills.length}${typeof brainTotal === 'number' ? `; Brain index ${brainTotal}` : ''}`,
     brainExtraNodes ? 'Brain may include learned or previously synced skill nodes that are not in the local catalog.' : '',
   ].filter(Boolean).join('\n');
@@ -823,7 +867,9 @@ export function Modules({ store }: { store: FleetStore }) {
       ? `Deleted ${brainDrift.skill} locally. Sync Brain refreshes shared catalog memory, but Brain-only skill nodes are intentionally retained for learned history.`
       : brainDrift?.kind === 'retagged'
         ? 'Skill auto-tags changed locally. Sync Brain to refresh graph tags and the shared skill memory.'
-        : `Local catalog has ${skills.length} skills while Brain reports ${brainTotal ?? 'unknown'}. Sync Brain to upsert current local definitions.`;
+        : brainMissingLocal
+          ? `Local catalog has ${skills.length} skills while Brain reports ${brainTotal ?? 'unknown'}. Sync Brain to upsert current local definitions.`
+          : brainSkillContractDetail(brainSkills);
   const brainFleetNeedsReview = brainFleetReviewNeeded(brainFleet);
   const brainFleetStatus = brainFleetStatusLabel(brainFleet);
   const brainFleetTitle = brainFleetStatusTitle(brainFleet);
@@ -1069,7 +1115,7 @@ export function Modules({ store }: { store: FleetStore }) {
           <span className="chip tag" title="Local SKILL.md folders found in the manager library">
             Local {skills.length}
           </span>
-          <span className={`chip ${brainNeedsLocalSync ? 'brain-review' : brainSkills?.summary ? 'tag' : ''}`} title={brainStatusTitle}>
+          <span className={`chip ${brainCatalogNeedsReview ? 'brain-review' : brainSkills?.summary ? 'tag' : ''}`} title={brainStatusTitle}>
             {brainStatusLabel}
           </span>
           <span className={`chip ${brainFleetNeedsReview ? 'brain-review' : 'tag'}`} title={brainFleetTitle}>
@@ -1090,15 +1136,17 @@ export function Modules({ store }: { store: FleetStore }) {
           Markdown instructions (the <a className="ext-link" href="https://agentskills.io" target="_blank" rel="noreferrer">agentskills.io</a> <span className="mono">SKILL.md</span> standard) that teach an agent <i>how</i> to do things with the tools it already has. Browse, filter by tag, then install on <b>{targetLabel}</b> — applies to every selected agent immediately.
         </p>
 
-        {brainNeedsLocalSync ? (
+        {brainCatalogNeedsReview ? (
           <div className="skill-brain-review">
             <div className="grow">
               <b>Brain catalog review needed</b>
               <div className="muted small">{brainReviewDetail}</div>
             </div>
-            <button className="btn small" disabled={brainSyncing || skills.length === 0} onClick={() => void syncSkillsToBrain()}>
-              {brainSyncing ? 'Syncing…' : 'Preview & sync'}
-            </button>
+            {brainNeedsLocalSync ? (
+              <button className="btn small" disabled={brainSyncing || skills.length === 0} onClick={() => void syncSkillsToBrain()}>
+                {brainSyncing ? 'Syncing…' : 'Preview & sync'}
+              </button>
+            ) : null}
             <BrainDashboardLauncher compact />
           </div>
         ) : null}
