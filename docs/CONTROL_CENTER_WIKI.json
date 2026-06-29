@@ -2598,7 +2598,7 @@
         "idctl-desktop/src/renderer/views/Settings.tsx"
       ],
       "purpose": "Current audit record for controls that can rewrite live agent, task, project, capability, identity, or provider state and therefore need review, confirmation, or stronger state synchronization.",
-      "scope": "Documentation-only page for the current v0.1.215 build. It records the first full dashboard-page audit and the policy decisions that should be resolved before implementing disruptive guardrails.",
+      "scope": "Documentation and implementation record for the current modified build. It records the first full dashboard-page audit, the conservative guardrails now implemented in code, and the policy decisions still needed before more disruptive UX simplification.",
       "tabs": [
         {
           "id": "dashboard",
@@ -2613,7 +2613,7 @@
         {
           "id": "projects",
           "label": "Projects",
-          "description": "Git actions, direct commit/push, auto-commit, first-run workspace sync, repo create/link/fork, and pull actions can change repository or project-tracker state."
+          "description": "Git actions, direct commit/push, auto-commit, repo create/link/fork, and pull actions can change repository or project-tracker state. The modified build no longer silently first-run syncs the workspace and now confirms commit/push, pull, and auto-commit enablement."
         },
         {
           "id": "health",
@@ -2633,17 +2633,17 @@
         {
           "id": "capabilities",
           "label": "Capabilities",
-          "description": "Bulk skill/MCP apply defaults to broad scopes and MCP attach/detach computes a full server list from the current UI snapshot."
+          "description": "Bulk skill/MCP apply now defaults to the active team, confirms multi-agent or cross-team applies, and MCP attach/detach refetches current agent metadata before replacing the full server list."
         },
         {
           "id": "computer-use",
           "label": "Computer Use",
-          "description": "Broker-side arming, blessed agents, per-agent tokens, supervised approvals, pause, disarm, and panic are strong; remaining issues are supervised-mode downgrade confirmation and name-scoped authorization."
+          "description": "Broker-side arming, blessed agents, per-agent tokens, supervised approvals, pause, disarm, and panic are strong; supervised-mode downgrade now confirms, while name-scoped authorization still needs a team/id authority pass."
         },
         {
           "id": "settings",
           "label": "Settings",
-          "description": "Provider default/toggle/remove and coordinator selection are immediate settings writes; provider changes can break future runtime/model routing."
+          "description": "Provider default/toggle/remove changes can break future runtime/model routing and now require confirmation. Coordinator selection remains immediate and should be reviewed in the hierarchy pass."
         }
       ],
       "controls": [
@@ -2679,25 +2679,31 @@
         }
       ],
       "routing": {
-        "decisionStatus": "The audit findings are surfaced. Implementation should wait for operator policy on how much friction to add to one-click workflows.",
+        "decisionStatus": "The audit findings are surfaced. Conservative guardrails that do not remove workflows are implemented; deeper page simplification and hierarchy/runtime staging should wait for operator policy.",
+        "implementedFirstPass": [
+          "Projects: stopped silent first-run workspace sync; commit/push, git pull, and enabling auto-commit now require explicit confirmation.",
+          "Projects: auto-commit remains opt-in per project and the automated checkpoint path reuses the reviewed enablement guardrail instead of prompting mid-background run.",
+          "Capabilities: default scope is now this team, broad or multi-agent applies require confirmation, MCP attach/detach refetches fresh agent metadata before posting a replacement list, and MCP registry removal confirms.",
+          "Computer Use: disabling supervised per-action approval now requires confirmation.",
+          "Settings: provider default changes, disabling enabled providers, and provider removal now require confirmation."
+        ],
         "recommendedFirstPass": [
           "Dashboard: observe/chat/refresh only; confirm or move primary-lead and org-sync actions.",
-          "Projects: review diff, branch, remote, and push intent before commit/push; make background auto-commit opt-in and confirm per project.",
-          "Capabilities: default scope to this team or confirm all-team bulk apply; refetch metadata before MCP full-list writes.",
+          "Projects: add a richer review sheet that shows diff, branch, remote, and push target before commit/push.",
           "Identity and Computer Use: use team/id scoped authority instead of agent-name-only keys.",
           "HR Manager: preview/confirm coordinator, primary lead, relay, instruction+rebuild, and org-sync changes.",
           "Health: stage runtime/model/effort/speed changes and confirm reset/rebuild for active agents.",
-          "Settings: confirm provider removal/default/toggle when it affects defaults, enabled backends, or the last usable backend."
+          "Settings: detect and block disabling or removing the last usable backend."
         ],
-        "releaseState": "This wiki page documents the current v0.1.215 audit state. Code guardrails and a follow-up release should be published after policy decisions are approved."
+        "releaseState": "This wiki page documents the current modified guardrail pass and should ship with the next IDACC release after typecheck and wiki validation pass."
       },
       "notes": [
         "Existing protections already found: delete task, delete project, combine duplicate projects, sign out, RPC removal, model removal, stack install/uninstall, team stop/rebuild, empty-team delete, Identity privileged actions, and Computer Use broker actions have confirmations or gates.",
         "Most dangerous stale-write class found: UI computes a replacement state from a snapshot and sends a wholesale write, especially MCP server lists and git/project automation.",
-        "Most dangerous background automation found: project auto-commit can commit and push after task completion without another user click.",
+        "Most dangerous background automation found: project auto-commit can commit and push after task completion without another user click; the modified build makes enabling that behavior explicit per project.",
         "Most important simplification: separate status/observation pages from mutation/control surfaces wherever possible."
       ],
-      "body": "# Sync & Guardrails Audit\n\nThis page records the first full pass over the dashboard pages in order: Dashboard, Work, Projects, Health, Identity & Keys, HR Manager, Capabilities, Computer Use, and Settings. It is documentation for the current v0.1.215 build state and a decision log for the next guardrail pass.\n\n## Current build state\n\nThe dashboard family is now sync-bus aware: dashboard, work, projects, health, brain-backed plans/goals/loops/schedules/dreams, agent capability changes, and org sync emit coarse domain invalidations so mounted pages refresh together after relevant mutations. That solves the basic page freshness problem, but several controls can still overwrite live state too easily.\n\n## Hard guardrail candidates\n\n- Project commit and push, especially auto-commit from task completion, should require review of diff, branch, remote, and push target before changing a repo.\n- Org sync, primary lead changes, coordinator changes, and relay changes should show the hierarchy and affected agents before applying.\n- MCP attach/detach should refetch current agent metadata before replacing the full MCP server list.\n- Identity and Computer Use should key authority by team/id, not just agent name.\n- Reset session, active-agent rebuild, disabling Computer Use supervised approval, provider removal, and disabling the last usable backend should require an explicit destructive confirmation.\n\n## UX simplification target\n\nDashboard should stay mostly observe, talk, and refresh. Work should stage or preview bulk redistribution and recurring behavior. Projects should separate tracker edits from repository-changing operations. HR Manager should own hierarchy and org-sync controls. Capabilities should make bulk scope obvious before applying tools across teams.\n\n## Open operator decisions\n\n- Should high-impact Dashboard actions be removed from Dashboard entirely, or stay there with confirmation?\n- Should Projects keep auto-commit as a feature if it becomes explicit, reviewed, and per-project, or should it be removed from the UI?\n- Should Capabilities default to this team instead of all teams, or keep all teams with a bulk confirmation?\n- Should runtime/model changes in Health be staged until an Apply button, or remain dropdown-driven with confirmation only for active agents?\n- Should org sync provide a dry-run preview, or is a confirmation with affected-counts enough for the next pass?"
+      "body": "# Sync & Guardrails Audit\n\nThis page records the first full pass over the dashboard pages in order: Dashboard, Work, Projects, Health, Identity & Keys, HR Manager, Capabilities, Computer Use, and Settings. It now documents both the audit findings and the conservative guardrails added in the current modified build.\n\n## Current build state\n\nThe dashboard family is sync-bus aware: dashboard, work, projects, health, brain-backed plans/goals/loops/schedules/dreams, agent capability changes, and org sync emit coarse domain invalidations so mounted pages refresh together after relevant mutations. The next guardrail layer reduces stale writes and surprise mutations without removing the existing workflows.\n\n## Implemented guardrails\n\n- Projects no longer silently sync the workspace on first open. Commit/push, git pull, and enabling auto-commit now require explicit confirmation.\n- Capabilities now defaults scope to the active team. Multi-agent or cross-team applies require confirmation, MCP attach/detach refetches current agent metadata before writing a replacement server list, and MCP registry removal confirms.\n- Computer Use now confirms before supervised per-action approval is disabled.\n- Settings now confirms provider default changes, disabling enabled providers, and provider removal.\n\n## Remaining hard guardrail candidates\n\n- Dashboard primary-lead changes and org sync should move to HR Manager or show affected agents before applying.\n- HR Manager coordinator changes, relay changes, instruction saves with rebuild, and org sync need preview/confirm flows.\n- Health runtime/model/effort/speed changes should be staged or confirmed for active agents; reset session and active rebuild need stronger destructive handling.\n- Identity and Computer Use should key authority by team/id, not just agent name.\n- Projects should grow a richer commit review sheet that shows diff, branch, remote, and push target.\n\n## UX simplification target\n\nDashboard should stay mostly observe, talk, and refresh. Work should stage or preview bulk redistribution and recurring behavior. Projects should separate tracker edits from repository-changing operations. HR Manager should own hierarchy and org-sync controls. Capabilities should make bulk scope obvious before applying tools across teams.\n\n## Open operator decisions\n\n- Should high-impact Dashboard actions be removed from Dashboard entirely, or stay there with confirmation?\n- Should Projects keep auto-commit as a feature if it is explicit, reviewed, and per-project, or should it be removed from the UI?\n- Should runtime/model changes in Health be staged until an Apply button, or remain dropdown-driven with confirmation only for active agents?\n- Should org sync provide a dry-run preview, or is a confirmation with affected-counts enough for the next pass?"
     },
     {
       "id": "wiki",
@@ -2760,5 +2766,5 @@
       "body": "# Wiki\n\nWiki is both the human documentation page and the editable schematic for the Control Center UI. Each article explains the operator purpose of a page; the structured sections below preserve tabs, tiles, fields, controls, displays, routes, and source files for implementation detail.\n\n## Use it for\n\n- Search pages, controls, routes, source files, and notes from inside the desktop app.\n- Confirm how a UI surface is intended to behave before editing code or filing follow-up work.\n- Keep app navigation metadata and human documentation in one reviewed JSON artifact.\n\n## Editing rule\n\nThe desktop app hot-reload polls CONTROL_CENTER_WIKI.json through the main-process wiki bridge. Sidebar labels, icons, order, and visibility still come from pages[].nav for implemented routes, so documentation edits must preserve that metadata and keep every page.body non-empty."
     }
   ],
-  "appVersion": "0.1.216"
+  "appVersion": "0.1.217"
 }

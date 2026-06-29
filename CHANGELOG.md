@@ -8,6 +8,9 @@ Every change pushed or merged to `main` carries its version number in the commit
 subject (`vX.Y.Z: …`), stamped automatically by the `commit-msg` hook — see
 [CONTRIBUTING.md](CONTRIBUTING.md).
 
+## [0.1.217] — 2026-06-29
+- Add conservative guardrails for risky dashboard actions
+
 ## [0.1.216] — 2026-06-29
 - Document sync guardrail audit and open policy decisions
 

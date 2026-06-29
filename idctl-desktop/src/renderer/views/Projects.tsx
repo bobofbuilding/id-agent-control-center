@@ -155,9 +155,7 @@ export function Projects({ store }: { store: FleetStore }) {
     void loadGit(list);
     const r = await call<string | null>('projects:detectRoot').catch(() => null);
     setRoot(r);
-    // First-run convenience: nothing tracked yet but we found the workspace
-    // projects folder → sync it so the page is populated out of the box.
-    if (list.length === 0 && r) void doSync(undefined, true);
+    if (list.length === 0 && r) setNote(`workspace found at ${r} - review, then Sync workspace to track projects`);
   }
   useEffect(() => { void load(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [syncVersion]);
 
@@ -341,9 +339,11 @@ export function Projects({ store }: { store: FleetStore }) {
   const q = (s: string) => `"${s.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`;
   // Publish a change: the project's owning team (default) owns the task and delegates the
   // creds) rather than committing from here. This is the standard "request for change" flow.
-  async function submitCommit(p: ProjectEntry, desc: string) {
+  async function submitCommit(p: ProjectEntry, desc: string, opts: { confirm?: boolean } = {}) {
     if (!desc.trim()) { setNote('describe the change (or use ✨ Draft with AI)'); return; }
     if (!p.path) { setNote('this project has no local folder to commit'); return; }
+    const shouldConfirm = opts.confirm ?? true;
+    if (shouldConfirm && !window.confirm(`Commit and push changes for "${p.name}"?\n\nFolder: ${p.path}\n\nThis stages all non-ignored changes, creates a commit with the reviewed message, and pushes the current branch when possible.`)) return;
     // Commit & push DIRECTLY from the app (reliable) instead of delegating to an agent that may
     // mark the task "done" without the commit ever landing. .gitignore keeps secrets out; the
     // backend self-heals the branch + pulls before committing.
@@ -465,6 +465,10 @@ export function Projects({ store }: { store: FleetStore }) {
   // Set a project's checkpoint auto-commit mode; resets its baseline so we don't
   // immediately fire on tasks that were already complete.
   async function setAutoCommitMode(p: ProjectEntry, val: 'off' | 'task' | 'plan') {
+    if (val !== 'off' && val !== (p.autoCommit ?? 'off')) {
+      const trigger = val === 'plan' ? 'plan-validation tasks' : 'any completed task';
+      if (!window.confirm(`Enable auto-commit for "${p.name}" on ${trigger}?\n\nWhen matching tasks complete and this repo is dirty, IDACC can draft a message, commit all non-ignored changes, and push. Keep this on only for repos where background checkpoints are expected.`)) return;
+    }
     const list = await call<ProjectEntry[]>('projects:save', { ...p, autoCommit: val }).catch(() => projects);
     setProjects(list);
     delete autoSeenRef.current[p.id]; // re-baseline on the next watcher tick
@@ -485,11 +489,12 @@ export function Projects({ store }: { store: FleetStore }) {
     if (!msg) msg = `Checkpoint commit for ${p.name}.`;
     msg = `${msg}\n\n(auto-commit checkpoint — triggered by completed ${kind === 'plan' ? 'plan-validation ' : ''}task ${triggerRef})`;
     toast({ kind: 'info', text: `⟳ Auto-commit checkpoint for “${p.name}” (task ${triggerRef} done) → ${p.team || defaultTeamName} delegates to git-manager` });
-    await submitCommit(p, msg);
+    await submitCommit(p, msg, { confirm: false });
   }
 
   async function runGit(p: ProjectEntry, action: string) {
     if (!p.path) return;
+    if (action === 'pull' && !window.confirm(`Pull latest changes for "${p.name}"?\n\nThis can change files in ${p.path}. It never force-pushes or discards work.`)) return;
     setGitBusy(`${p.id}:${action}`);
     setGitOut((o) => ({ ...o, [p.id]: { action, output: `$ git ${action}…` } }));
     try {

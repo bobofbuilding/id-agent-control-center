@@ -126,7 +126,11 @@ export function ComputerUse({ store }: { store: FleetStore }) {
   }
 
   async function panic() { setBusy(true); try { await call('cu:panic'); setFrame(''); setFrameMeta(null); await refresh(); } finally { setBusy(false); } }
-  async function toggleSupervised() { try { await call('cu:setSupervised', !status?.supervised); } catch (e) { setMsg(`✗ couldn't change mode: ${e instanceof Error ? e.message : e}`); } finally { await refresh(); } }
+  async function toggleSupervised() {
+    const next = status?.supervised === false;
+    if (!next && !window.confirm('Turn off approval for ordinary Computer Use actions?\n\nBlessed agents will be able to click and type without per-action approval. Risky actions still require approval.')) return;
+    try { await call('cu:setSupervised', next); } catch (e) { setMsg(`✗ couldn't change mode: ${e instanceof Error ? e.message : e}`); } finally { await refresh(); }
+  }
   async function togglePause() { try { await call('cu:pause', !status?.paused); } catch (e) { setMsg(`✗ couldn't ${status?.paused ? 'resume' : 'pause'}: ${e instanceof Error ? e.message : e}`); } finally { await refresh(); } }
   async function confirmPending(id: string, allow: boolean) { resolvedRef.current.add(id); setPending((ps) => ps.filter((p) => p.id !== id)); await call('cu:confirm', id, allow).catch(() => {}); }
 

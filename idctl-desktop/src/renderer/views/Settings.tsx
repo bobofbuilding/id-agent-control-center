@@ -167,10 +167,20 @@ export function Settings({ store }: { store: FleetStore }) {
     }
   }
   async function setDefault(n: string) {
+    const p = providers.find((x) => x.name === n);
+    if (p && !p.default && !window.confirm(`Set "${p.name}" as the default inference backend?\n\nAgents without an explicit backend can start using this provider on their next run or rebuild.`)) return;
     setProviders(await call<ProviderRow[]>('providers:setDefault', n));
   }
   async function toggle(n: string) {
+    const p = providers.find((x) => x.name === n);
+    if (p?.enabled && !window.confirm(`Disable inference backend "${p.name}"?\n\nAgents that depend on this provider may lose model options until another backend is enabled or selected.`)) return;
     setProviders(await call<ProviderRow[]>('providers:toggle', n));
+  }
+  async function removeProviderProfile(n: string) {
+    const p = providers.find((x) => x.name === n);
+    const defaultNote = p?.default ? '\n\nIt is currently the default backend.' : '';
+    if (!window.confirm(`Remove inference backend "${n}"?${defaultNote}\n\nAgents that depend on this provider may lose model options until another backend is configured.`)) return;
+    setProviders(await call<ProviderRow[]>('providers:remove', n));
   }
   function rpcIdFromNetwork(network: string): string {
     return network.trim().toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') || 'evm-rpc';
@@ -974,7 +984,7 @@ export function Settings({ store }: { store: FleetStore }) {
                       <button className="btn primary" disabled={busy} onClick={() => void connect(p.name)} title="Validate the key live and sync the model list">
                         Connect &amp; sync
                       </button>
-                      <button className="btn" onClick={() => void call('providers:remove', p.name).then(() => reload())}>
+                      <button className="btn" onClick={() => void removeProviderProfile(p.name)}>
                         ✕
                       </button>
                     </td>

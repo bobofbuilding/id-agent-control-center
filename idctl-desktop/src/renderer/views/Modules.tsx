@@ -23,6 +23,8 @@ function agentRuntime(a: Agent): string | undefined {
 const TRANSPORTS: McpTransport[] = ['stdio', 'http', 'sse'];
 
 interface TestResult { ok?: boolean; tools?: string[]; error?: string; testing?: boolean }
+type TargetAgent = Agent & { team?: string };
+type TeamAgentsGroup = { team: string; agents: Agent[] };
 
 /** Strip the registry-only `enabled` flag to get the on-the-wire spec. */
 function toSpec(p: McpServerProfile): McpServerSpec {
@@ -112,7 +114,7 @@ export function Modules({ store }: { store: FleetStore }) {
   const activeTeam = store.team ?? 'default';
   // Apply scope: this team / all teams / all team leads. Cross-team scopes route each apply to
   // the agent's OWN team.
-  const [scope, setScope] = useState<'team' | 'all' | 'leads'>('all'); // default: every team (all-teams is the standard)
+  const [scope, setScope] = useState<'team' | 'all' | 'leads'>('team');
   const [coords, setCoords] = useState<Record<string, string>>({});
   useEffect(() => { call<{ coordinators?: Record<string, string> }>('coordinator:hierarchy').then((h) => setCoords(h.coordinators ?? {})).catch(() => {}); }, [store.lastUpdated]);
   // Capability gating: an agent can only be a target for the active tab's
@@ -121,7 +123,7 @@ export function Modules({ store }: { store: FleetStore }) {
   // disabled and excluded from every apply/attach/install action.
   const capForTab: RuntimeCapability = TAB_CAPABILITY[tab];
   const agentSupports = (a: Agent) => runtimeSupports(agentRuntime(a), capForTab);
-  const baseAgents: (Agent & { team?: string })[] =
+  const baseAgents: TargetAgent[] =
     scope === 'team' ? store.agents : scope === 'leads' ? store.allAgents.filter((a) => coords[a.team ?? ''] === a.name) : store.allAgents;
   const eligibleAgents = baseAgents.filter(agentSupports);
   const incompatAgents = baseAgents.filter((a) => !agentSupports(a));
@@ -266,11 +268,12 @@ export function Modules({ store }: { store: FleetStore }) {
   }
 
   // Apply an action to every selected agent (sequentially, in the active team).
-  async function applyToTargets(label: string, fn: (a: { id: string; name: string; metadata?: unknown; team?: string }) => Promise<unknown>) {
+  async function applyToTargets(label: string, fn: (a: TargetAgent) => Promise<unknown>) {
     if (targetCount === 0) {
       setNote('select at least one agent above');
       return;
     }
+    if ((scope !== 'team' || targetCount > 1) && !window.confirm(`Apply "${label}" to ${targetLabel}?\n\nScope: ${scope === 'team' ? `team ${activeTeam}` : scope === 'leads' ? 'all team leads' : 'all teams'}. This can change agent capabilities or rebuild running agents.`)) return;
     setBusy(true);
     setNote(`${label} · ${targetCount} agent${targetCount > 1 ? 's' : ''}…`);
     try {
@@ -286,16 +289,37 @@ export function Modules({ store }: { store: FleetStore }) {
   function curMcp(a: { metadata?: unknown }): McpServerSpec[] {
     return ((a.metadata as any)?.mcpServers ?? []) as McpServerSpec[];
   }
+  async function freshAgent(a: TargetAgent): Promise<TargetAgent | null> {
+    const groups = await call<TeamAgentsGroup[]>('agents:allTeams').catch(() => []);
+    for (const g of groups) {
+      const found = g.agents.find((x) => x.id === a.id || (x.name === a.name && (!a.team || g.team === a.team)));
+      if (found) return { ...found, team: g.team };
+    }
+    return null;
+  }
   async function attachServer(p: McpServerProfile) {
     await applyToTargets(`attach ${p.name}`, async (a) => {
-      const next = [...curMcp(a).filter((s) => s.name !== p.name), toSpec(p)];
-      await call<SetMcpResult>('setAgentMcp', a.id, next, teamOf(a));
+      const fresh = await freshAgent(a);
+      if (!fresh) throw new Error(`agent not found: ${a.name}`);
+      const next = [...curMcp(fresh).filter((s) => s.name !== p.name), toSpec(p)];
+      await call<SetMcpResult>('setAgentMcp', fresh.id, next, teamOf(fresh));
     });
   }
   async function detachServer(p: McpServerProfile) {
     await applyToTargets(`detach ${p.name}`, async (a) => {
-      await call<SetMcpResult>('setAgentMcp', a.id, curMcp(a).filter((s) => s.name !== p.name), teamOf(a));
+      const fresh = await freshAgent(a);
+      if (!fresh) throw new Error(`agent not found: ${a.name}`);
+      await call<SetMcpResult>('setAgentMcp', fresh.id, curMcp(fresh).filter((s) => s.name !== p.name), teamOf(fresh));
     });
+  }
+  async function removeMcpProfile(name: string) {
+    if (!window.confirm(`Remove MCP server "${name}" from the registry?\n\nThis does not detach it from agents that already have it, but it will no longer be available to attach from this catalog.`)) return;
+    setBusy(true);
+    try {
+      setMcp(await call<McpServerProfile[]>('mcp:remove', name));
+    } finally {
+      setBusy(false);
+    }
   }
   async function rebuildTargets() {
     await applyToTargets('rebuild', (a) => call('rebuildAgent', a.name, teamOf(a)));
@@ -502,7 +526,7 @@ export function Modules({ store }: { store: FleetStore }) {
                     <button className="btn" disabled={busy || targetCount === 0 || have === targetCount} onClick={() => void attachServer(p)}>Attach</button>
                     <button className="btn" disabled={busy || have === 0} onClick={() => void detachServer(p)}>Detach</button>
                     <button className="btn" disabled={tr?.testing} onClick={() => void runTest(p.name, p)}>{tr?.testing ? '…' : 'Test'}</button>
-                    <button className="btn" onClick={() => void call('mcp:remove', p.name).then(() => reload())}>✕</button>
+                    <button className="btn" onClick={() => void removeMcpProfile(p.name)}>✕</button>
                   </td>
                 </tr>
               );
