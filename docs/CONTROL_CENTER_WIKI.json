@@ -1172,7 +1172,7 @@
         {
           "id": "headroom-pilot",
           "label": "Headroom pilot",
-          "description": "Local Headroom CLI/proxy status plus settings-backed pilot guardrails for optional MCP/proxy compression routes.",
+          "description": "Local Headroom CLI/proxy status plus simplified pilot controls for optional route selection, sampling, workspace state, and trust guardrails.",
           "routesInto": [
             "headroom:status",
             "headroom:pilot",
@@ -1279,7 +1279,7 @@
           "id": "headroom-policy",
           "label": "Headroom pilot policy",
           "type": "form",
-          "description": "Stores opt-in mode, canary/holdout percentages, context threshold, state isolation, telemetry posture, passthrough classes, and validation gates.",
+          "description": "Stores the Enable pilot route, sampling percentages, context threshold, workspace state isolation, and compact Trust & routing guardrails; raw route, proxy URL, state path, safety mode, protected categories, and validation gates live under Advanced.",
           "routesInto": [
             "headroom:setPilot"
           ]
@@ -1308,7 +1308,7 @@
         {
           "id": "headroom-status",
           "label": "Headroom status",
-          "description": "CLI installed/not installed, proxy reachable/passthrough state, MCP preset pointer, opt-in mode, canary/holdout policy, passthrough classes, and validation gates."
+          "description": "CLI installed/not installed, proxy reachable/passthrough state, pilot route, sampling policy, workspace state, and compact Trust & routing summary."
         }
       ],
       "routing": {
@@ -1328,7 +1328,7 @@
           "coordinator:set"
         ]
       },
-      "body": "# Health\n\nHealth is the live fleet and usage view. It shows running state, token and model usage, provider activity, optional Headroom pilot readiness/policy, and the full agent roster through AgentTable.\n\n## Use it for\n\n- Confirm which agents are running, stopped, busy, or missing from the active fleet.\n- Probe agent liveness, start or stop workers, rebuild where supported, and inspect team membership.\n- Compare current token usage and model/runtime behavior before changing staffing or routing.\n- Check whether the optional local Headroom CLI/proxy is ready before attaching the Headroom MCP preset or routing selected agents through the local proxy.\n- Record pilot guardrails before a canary: opt-in mode, canary/holdout percentages, minimum context threshold, local state isolation, telemetry posture, passthrough content classes, and validation gates.\n\n## Boundary\n\nHealth is optimized for operational status from the store snapshot and all-team aggregate poll. It is the current home for the roster grid that older specs placed on Dashboard, but it is not a long-term analytics warehouse. The Headroom card stores local pilot policy only; it does not install Headroom, start a proxy, attach MCP servers, wrap agents, or promote compressed summaries into Brain facts."
+      "body": "# Health\n\nHealth is the live fleet and usage view. It shows running state, token and model usage, provider activity, optional Headroom pilot readiness/policy, and the full agent roster through AgentTable.\n\n## Use it for\n\n- Confirm which agents are running, stopped, busy, or missing from the active fleet.\n- Probe agent liveness, start or stop workers, rebuild where supported, and inspect team membership.\n- Compare current token usage and model/runtime behavior before changing staffing or routing.\n- Check whether the optional local Headroom CLI/proxy is ready before choosing a pilot route.\n- Record pilot guardrails before a canary: Enable pilot route, Sampling, Workspace state, and the compact Trust & routing summary. Raw route/proxy/state path, Safety mode, protected categories, and validation gates live under Advanced.\n\n## Boundary\n\nHealth is optimized for operational status from the store snapshot and all-team aggregate poll. It is the current home for the roster grid that older specs placed on Dashboard, but it is not a long-term analytics warehouse. The Headroom card stores local pilot policy only; it does not install Headroom, start a proxy, attach MCP servers, wrap agents, or promote compressed summaries into Brain facts."
     },
     {
       "id": "identity",

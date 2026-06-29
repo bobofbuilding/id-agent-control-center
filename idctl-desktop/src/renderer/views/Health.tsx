@@ -9,6 +9,19 @@ type HeadroomStatus = {
   proxy: { url: string; reachable: boolean; httpStatus?: number; error?: string };
 };
 
+const HEADROOM_ROUTE_LABEL: Record<HeadroomPilotSettings['mode'], string> = {
+  off: 'Off',
+  mcp: 'MCP tools only',
+  proxy: 'Local proxy route',
+  'mcp-and-proxy': 'MCP + proxy',
+};
+
+const HEADROOM_SAFETY_LABEL: Record<HeadroomPilotSettings['telemetry'], string> = {
+  'verify-before-pilot': 'Verify build first',
+  off: 'Telemetry off',
+  on: 'Operator enabled',
+};
+
 /** Compact number: 1234 → "1.2k", 2_500_000 → "2.5M". */
 function fmt(n: number): string {
   if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
@@ -48,6 +61,24 @@ function WindowCard({ title, w }: { title: string; w: UsageWindow }) {
       </div>
     </div>
   );
+}
+
+function protectedCategoryLabel(category: string): string {
+  const lower = category.toLowerCase();
+  if (lower.includes('source code')) return 'code review';
+  if (lower.includes('secrets') || lower.includes('auth')) return 'secrets/auth';
+  if (lower.includes('instructions')) return 'instructions';
+  if (lower.includes('validator')) return 'validator evidence';
+  const cleaned = category.trim();
+  return cleaned.length > 28 ? `${cleaned.slice(0, 25)}...` : cleaned;
+}
+
+function protectedCategorySummary(categories: string[]): string {
+  const labels = categories.map(protectedCategoryLabel).filter(Boolean);
+  const shown = labels.slice(0, 4).join(', ');
+  const suffix = labels.length > 4 ? `, +${labels.length - 4} more` : '';
+  const count = `${categories.length} protected ${categories.length === 1 ? 'category' : 'categories'}`;
+  return shown ? `${count} (${shown}${suffix})` : count;
 }
 
 export function Health({ store }: { store: FleetStore }) {
@@ -122,6 +153,7 @@ export function Health({ store }: { store: FleetStore }) {
   const gaugeMax = usage ? niceMax(Math.max(gaugeVal, usage.day.avgTps, usage.week.avgTps)) : 100;
   const localAgents = usage?.day.agents ?? [];
   const localModels = usage?.day.models ?? [];
+  const pilotRoute = pilot?.enabled ? pilot.mode : 'off';
 
   return (
     <div className="view">
@@ -202,52 +234,44 @@ export function Health({ store }: { store: FleetStore }) {
             <b className={headroom.cli.found ? 'ok-text' : 'muted'}>
               {headroom.cli.found ? `installed${headroom.cli.version ? ` · ${headroom.cli.version}` : ''}` : 'not installed'}
             </b>
-            <span>MCP preset</span>
-            <b className="muted small">Capabilities → MCP servers → Headroom (context compression)</b>
-            <span>proxy</span>
+            <span>Proxy</span>
             <b className={headroom.proxy.reachable ? 'ok-text' : 'muted'}>
               {headroom.proxy.reachable
-                ? `reachable · ${headroom.proxy.url}${headroom.proxy.httpStatus ? ` · HTTP ${headroom.proxy.httpStatus}` : ''}`
-                : `passthrough recommended · ${headroom.proxy.url}`}
+                ? `reachable${headroom.proxy.httpStatus ? ` · HTTP ${headroom.proxy.httpStatus}` : ''}`
+                : 'passthrough recommended'}
             </b>
-            <span>policy</span>
-            <b className="muted small">Optional only. Keep source-code, secrets, policy text, and validator evidence on direct routes unless a task explicitly opts in.</b>
           </div>
         )}
         {pilot ? (
           <>
             <div className="kv" style={{ gridTemplateColumns: '150px 1fr', gap: '7px 12px', marginTop: 12 }}>
-              <span>pilot opt-in</span>
-              <b>
-                <input
-                  type="checkbox"
-                  checked={pilot.enabled}
-                  disabled={pilotSaving}
-                  onChange={(e) => void savePilot({ enabled: e.target.checked, mode: e.target.checked ? (pilot.mode === 'off' ? 'mcp' : pilot.mode) : 'off' })}
-                />{' '}
-                <span className={pilot.enabled ? 'ok-text small' : 'muted small'}>{pilot.enabled ? 'enabled for selected canary routes' : 'disabled by default'}</span>
-              </b>
-              <span>mode</span>
-              <b>
+              <span>Enable pilot</span>
+              <b className="row-actions" style={{ justifyContent: 'flex-start', gap: 8, flexWrap: 'wrap' }}>
                 <select
                   className="cell-select"
-                  value={pilot.mode}
-                  disabled={pilotSaving || !pilot.enabled}
-                  onChange={(e) => void savePilot({ mode: e.target.value as HeadroomPilotSettings['mode'] })}
+                  value={pilotRoute}
+                  disabled={pilotSaving}
+                  onChange={(e) => {
+                    const mode = e.target.value as HeadroomPilotSettings['mode'];
+                    void savePilot({ mode, enabled: mode !== 'off' });
+                  }}
                 >
                   <option value="off">off</option>
                   <option value="mcp">MCP tools only</option>
                   <option value="proxy">local proxy route</option>
                   <option value="mcp-and-proxy">MCP + proxy</option>
                 </select>
+                <span className={pilot.enabled ? 'ok-text small' : 'muted small'}>
+                  {pilot.enabled ? `enabled: ${HEADROOM_ROUTE_LABEL[pilot.mode]}` : 'disabled by default'}
+                </span>
               </b>
-              <span>measurement</span>
+              <span>Sampling</span>
               <b className="row-actions" style={{ justifyContent: 'flex-start', gap: 8, flexWrap: 'wrap' }}>
                 <label className="muted small">canary <input type="number" min={0} max={100} style={{ width: 58 }} value={pilot.canaryPercent} disabled={pilotSaving} onChange={(e) => void savePilot({ canaryPercent: Number(e.target.value) })} />%</label>
                 <label className="muted small">holdout <input type="number" min={0} max={100} style={{ width: 58 }} value={pilot.holdoutPercent} disabled={pilotSaving} onChange={(e) => void savePilot({ holdoutPercent: Number(e.target.value) })} />%</label>
                 <label className="muted small">min context <input type="number" min={1000} step={1000} style={{ width: 84 }} value={pilot.minContextTokens} disabled={pilotSaving} onChange={(e) => void savePilot({ minContextTokens: Number(e.target.value) })} /> tokens</label>
               </b>
-              <span>state</span>
+              <span>Workspace state</span>
               <b className="row-actions" style={{ justifyContent: 'flex-start', gap: 8, flexWrap: 'wrap' }}>
                 <select
                   className="cell-select"
@@ -258,33 +282,53 @@ export function Health({ store }: { store: FleetStore }) {
                   <option value="per-agent">per agent</option>
                   <option value="per-team">per team</option>
                 </select>
-                <input
-                  style={{ flex: '1 1 260px' }}
-                  placeholder="optional state root, e.g. ~/.headroom/idacc"
-                  value={pilot.stateRoot ?? ''}
-                  disabled={pilotSaving}
-                  onChange={(e) => void savePilot({ stateRoot: e.target.value })}
-                />
+                <span className="muted small">{pilot.stateIsolation === 'per-agent' ? 'separate state per agent' : 'shared within each team'}</span>
               </b>
-              <span>telemetry</span>
-              <b>
-                <select
-                  className="cell-select"
-                  value={pilot.telemetry}
-                  disabled={pilotSaving}
-                  style={{ minWidth: 150 }}
-                  onChange={(e) => void savePilot({ telemetry: e.target.value as HeadroomPilotSettings['telemetry'] })}
-                >
-                  <option value="verify-before-pilot">verify build first</option>
-                  <option value="off">force off</option>
-                  <option value="on">operator enabled</option>
-                </select>
+              <span>Trust &amp; routing</span>
+              <b className="muted small">
+                {protectedCategorySummary(pilot.passthroughContent)} · {pilot.validationGates.length} validation gates · direct fallback
               </b>
-              <span>passthrough</span>
-              <b className="chips">{pilot.passthroughContent.map((x) => <span className="chip tag" key={x}>{x}</span>)}</b>
-              <span>validation gates</span>
-              <b className="muted small">{pilot.validationGates.join(' · ')}</b>
             </div>
+            <details className="headroom-advanced">
+              <summary>Advanced</summary>
+              <div className="kv" style={{ gridTemplateColumns: '150px 1fr', gap: '7px 12px', marginTop: 10 }}>
+                <span>Route</span>
+                <b className="muted small">Capabilities &gt; MCP servers &gt; Headroom (context compression)</b>
+                <span>Raw proxy URL</span>
+                <b className="muted small mono">{headroom?.proxy.url ?? 'unavailable'}</b>
+                <span>Workspace state path</span>
+                <b>
+                  <input
+                    style={{ width: '100%' }}
+                    placeholder="optional state root, e.g. ~/.headroom/idacc"
+                    value={pilot.stateRoot ?? ''}
+                    disabled={pilotSaving}
+                    onChange={(e) => void savePilot({ stateRoot: e.target.value })}
+                  />
+                </b>
+                <span>Safety mode</span>
+                <b className="row-actions" style={{ justifyContent: 'flex-start', gap: 8, flexWrap: 'wrap' }}>
+                  <select
+                    className="cell-select"
+                    value={pilot.telemetry}
+                    disabled={pilotSaving}
+                    style={{ minWidth: 150 }}
+                    onChange={(e) => void savePilot({ telemetry: e.target.value as HeadroomPilotSettings['telemetry'] })}
+                  >
+                    <option value="verify-before-pilot">verify build first</option>
+                    <option value="off">force off</option>
+                    <option value="on">operator enabled</option>
+                  </select>
+                  <span className="muted small">{HEADROOM_SAFETY_LABEL[pilot.telemetry]}</span>
+                </b>
+                <span>Trust &amp; routing</span>
+                <b className="headroom-trust-detail">
+                  <span className="muted small">Optional only. Keep protected content on direct routes unless a task explicitly opts in.</span>
+                  <span className="chips">{pilot.passthroughContent.map((x) => <span className="chip tag" key={x}>{x}</span>)}</span>
+                  <span className="muted small">Validation gates: {pilot.validationGates.join(' · ')}</span>
+                </b>
+              </div>
+            </details>
             {pilotSaving ? <p className="muted small">Saving pilot policy…</p> : null}
           </>
         ) : null}

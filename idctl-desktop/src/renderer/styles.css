@@ -360,6 +360,10 @@ button.chip.incompat:hover { border-color: var(--line); }
 .usage-stat { display: flex; align-items: baseline; gap: 6px; }
 .usage-stat b { font-size: 22px; }
 .usage-agent-row { display: flex; align-items: center; gap: 8px; padding: 2px 0; }
+.headroom-advanced { margin-top: 10px; border-top: 1px solid var(--line); padding-top: 8px; }
+.headroom-advanced summary { cursor: pointer; color: var(--muted); font-size: 12px; font-weight: 600; }
+.headroom-advanced .kv { align-items: start; }
+.headroom-trust-detail { display: flex; flex-direction: column; gap: 7px; align-items: flex-start; }
 
 /* Cross-team relay mode picker */
 .relay-modes { display: flex; flex-wrap: wrap; gap: 8px; }
