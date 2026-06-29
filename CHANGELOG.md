@@ -8,6 +8,9 @@ Every change pushed or merged to `main` carries its version number in the commit
 subject (`vX.Y.Z: …`), stamped automatically by the `commit-msg` hook — see
 [CONTRIBUTING.md](CONTRIBUTING.md).
 
+## [0.1.236] — 2026-06-29
+- Guard Health stale agent actions
+
 ## [0.1.235] — 2026-06-29
 - Guard Health stale agent actions
 
