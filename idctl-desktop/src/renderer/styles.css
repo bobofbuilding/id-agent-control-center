@@ -530,7 +530,27 @@ textarea.composer-input { resize: none; line-height: 1.4; min-height: 38px; max-
 .grid td.row-actions { text-align: right; }
 .issue-row, .add-provider { display: flex; gap: 8px; margin-top: 12px; flex-wrap: wrap; align-items: center; }
 .add-provider input { flex: 1; min-width: 120px; }
+.settings-readiness { display: flex; flex-direction: column; gap: 10px; }
+.settings-readiness-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.settings-readiness-head h3 { margin: 0; }
+.readiness-grid { display: grid; grid-template-columns: repeat(4, minmax(150px, 1fr)); gap: 8px; }
+.readiness-check { border: 1px solid var(--line); border-radius: 8px; background: var(--bg); padding: 9px 10px; min-width: 0; }
+.readiness-check.ok { border-color: color-mix(in srgb, var(--ok) 42%, var(--line)); }
+.readiness-check.warn { border-color: color-mix(in srgb, var(--warn) 48%, var(--line)); }
+.readiness-check.err { border-color: color-mix(in srgb, var(--err) 44%, var(--line)); }
+.readiness-check span { display: block; color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: .04em; }
+.readiness-check b { display: block; margin-top: 2px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.readiness-check small { display: block; margin-top: 2px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.readiness-actions { flex-wrap: wrap; align-items: center; }
 .provider-replace-review { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin-top: 8px; padding: 8px 10px; border: 1px solid var(--warn); border-radius: 6px; background: color-mix(in srgb, var(--warn) 8%, transparent); }
+
+@media (max-width: 980px) {
+  .readiness-grid { grid-template-columns: repeat(2, minmax(150px, 1fr)); }
+}
+
+@media (max-width: 560px) {
+  .readiness-grid { grid-template-columns: 1fr; }
+}
 
 /* Local LLM discovery (scan localhost for running servers). */
 .discover-local { border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; margin-bottom: 12px; background: var(--bg-2); }

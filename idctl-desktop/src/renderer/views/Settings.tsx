@@ -673,6 +673,11 @@ export function Settings({ store }: { store: FleetStore }) {
     }
   }
   async function pullModel() { await pull(pullName); }
+  async function addOllamaBackendFromReadiness() {
+    if (!window.confirm('Add Ollama at http://127.0.0.1:11434 as an enabled inference backend?')) return;
+    const models = await loadOllama();
+    await ensureOllamaBackend(models);
+  }
   /** Is a catalog model already pulled? (handles implicit :latest tags) */
   function modelInstalled(id: string): boolean {
     if (ollamaModels.some((m) => m.name === id)) return true;
@@ -693,13 +698,39 @@ export function Settings({ store }: { store: FleetStore }) {
   const replaceCandidate = findProviderRow(providers, addProviderName);
   const defaultProvider = providers.find((p) => p.default);
   const enabledProviders = providers.filter((p) => p.enabled !== false);
-  const localProviders = providers.filter((p) => p.kind === 'ollama' || p.kind === 'lmstudio' || (p.baseUrl || '').includes('127.0.0.1') || (p.baseUrl || '').includes('localhost'));
-  const syncedProviders = providers.filter((p) => p.lastSync?.status === 'live' || p.lastSync?.status === 'preset');
-  const localBackendReady = localProviders.some((p) => p.enabled !== false);
+  const localProviders = providers.filter(isLocalProvider);
+  const syncedProviders = providers.filter(providerModelReady);
+  const routeReadyProviders = enabledProviders.filter(providerRouteReady);
+  const defaultRouteReady = defaultProvider ? providerRouteReady(defaultProvider) : false;
+  const routeCandidate = defaultRouteReady ? defaultProvider : routeReadyProviders[0];
+  const explicitDefaultNeeded = Boolean(routeCandidate && (!defaultProvider || defaultProvider.name !== routeCandidate.name));
   const starterModel = TOP_LOCAL_MODEL_CATALOG.find((m) => m.id === STARTER_LOCAL_MODEL_ID) ?? TOP_LOCAL_MODEL_CATALOG[0];
+  const starterInstalled = modelInstalled(STARTER_LOCAL_MODEL_ID);
+  const localBackendConfigured = localProviders.some((p) => p.enabled !== false);
+  const localBackendReady = localProviders.some(providerRouteReady) || (localBackendConfigured && starterInstalled);
+  const providersNeedingKeys = enabledProviders.filter((p) => (p.needsKey ?? kindNeedsKey(p.kind)) && !providerKeyReady(p)).length;
+  const syncCandidate = defaultProvider && !defaultRouteReady ? defaultProvider : enabledProviders.find((p) => providerKeyReady(p) && !providerRouteReady(p));
+  const textRuntimeReady = store.connection === 'online' && (defaultRouteReady || routeReadyProviders.length > 0);
+  const readinessState = textRuntimeReady ? 'ready' : store.connection === 'online' ? 'needs backend' : 'manager offline';
+  const readinessTone = textRuntimeReady ? 'ok' : store.connection === 'online' ? 'warn' : 'err';
 
   function providerPort(p: ProviderRow): number | null {
     try { const x = new URL(p.baseUrl).port; return x ? Number(x) : null; } catch { return null; }
+  }
+  function providerStatus(p: ProviderRow): string | undefined {
+    return probe[p.name]?.status ?? p.lastSync?.status;
+  }
+  function providerKeyReady(p: ProviderRow): boolean {
+    return !(p.needsKey ?? kindNeedsKey(p.kind)) || p.keySource === 'config' || p.keySource === 'env';
+  }
+  function providerModelReady(p: ProviderRow): boolean {
+    return (probe[p.name]?.models?.length ?? p.lastSync?.modelCount ?? 0) > 0 || p.lastSync?.status === 'preset';
+  }
+  function providerRouteReady(p: ProviderRow): boolean {
+    return p.enabled !== false && providerKeyReady(p) && (providerStatus(p) === 'live' || p.lastSync?.status === 'preset' || providerModelReady(p));
+  }
+  function isLocalProvider(p: ProviderRow): boolean {
+    return p.kind === 'ollama' || p.kind === 'lmstudio' || (p.baseUrl || '').includes('127.0.0.1') || (p.baseUrl || '').includes('localhost');
   }
   /** Warn if a model is too large for the commanded machine's RAM/disk. */
   function fitWarn(m: LocalModelEntry): { level: 'warn' | 'error'; msg: string } | null {
@@ -785,6 +816,61 @@ export function Settings({ store }: { store: FleetStore }) {
       <header className="view-head">
         <h1>Settings</h1>
       </header>
+
+      <section className="card settings-readiness">
+        <div className="settings-readiness-head">
+          <h3>First-run readiness</h3>
+          <span className={`pill ${readinessTone}`}>{readinessState}</span>
+        </div>
+        <div className="readiness-grid">
+          <div className={`readiness-check ${store.connection === 'online' ? 'ok' : 'err'}`}>
+            <span>Manager</span>
+            <b>{store.connection === 'online' ? 'online' : store.connection}</b>
+            <small className="mono">{store.managerUrl || 'not connected'}</small>
+          </div>
+          <div className={`readiness-check ${defaultRouteReady ? 'ok' : routeReadyProviders.length ? 'warn' : 'err'}`}>
+            <span>Routing</span>
+            <b>{defaultProvider ? defaultProvider.name : routeCandidate ? `auto: ${routeCandidate.name}` : 'no backend'}</b>
+            <small>{defaultRouteReady ? 'explicit default' : routeCandidate ? 'make default to prevent drift' : providers.length ? 'sync or enable a backend' : 'add a backend'}</small>
+          </div>
+          <div className={`readiness-check ${localBackendReady ? 'ok' : localBackendConfigured || starterInstalled ? 'warn' : 'err'}`}>
+            <span>Local runtime</span>
+            <b>{localBackendReady ? 'ready' : localBackendConfigured ? 'needs model/sync' : starterInstalled ? 'model installed' : 'starter missing'}</b>
+            <small>{starterInstalled ? STARTER_LOCAL_MODEL_ID : starterModel ? `${STARTER_LOCAL_MODEL_ID} recommended` : 'Ollama starter'}</small>
+          </div>
+          <div className={`readiness-check ${routeReadyProviders.length ? 'ok' : providers.length ? 'warn' : 'err'}`}>
+            <span>Backends</span>
+            <b>{routeReadyProviders.length}/{enabledProviders.length} ready</b>
+            <small>{providersNeedingKeys ? `${providersNeedingKeys} need keys` : `${syncedProviders.length}/${providers.length} synced`}</small>
+          </div>
+        </div>
+        <div className="row-actions readiness-actions">
+          <span className="muted small grow">This checkpoint mirrors the controls below; guarded writes still confirm against fresh provider state.</span>
+          {!starterInstalled && starterModel ? (
+            <button className="btn small primary" disabled={pulling} onClick={() => void pull(STARTER_LOCAL_MODEL_ID)}>
+              {pulling ? 'Downloading...' : 'Download starter'}
+            </button>
+          ) : null}
+          {starterInstalled && !localBackendConfigured ? (
+            <button className="btn small" disabled={busy} onClick={() => void addOllamaBackendFromReadiness()}>
+              Add Ollama backend
+            </button>
+          ) : null}
+          {syncCandidate ? (
+            <button className="btn small" disabled={busy} onClick={() => void connect(syncCandidate.name)}>
+              Sync {syncCandidate.name}
+            </button>
+          ) : null}
+          {explicitDefaultNeeded && routeCandidate ? (
+            <button className="btn small" disabled={busy} onClick={() => void setDefault(routeCandidate.name)}>
+              Make {routeCandidate.name} default
+            </button>
+          ) : null}
+          <button className="btn small" disabled={discovering} onClick={() => void runDiscover()}>
+            {discovering ? 'Scanning...' : 'Scan running'}
+          </button>
+        </div>
+      </section>
 
       <section className="card">
         <h3>Hardware — compute on the commanded machine</h3>
