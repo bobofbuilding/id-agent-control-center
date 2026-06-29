@@ -105,7 +105,6 @@ export interface FleetStore {
   refresh: () => void;
   refreshChatUnread: () => Promise<void>;
   setTeam: (team: string) => Promise<void>;
-  setCoordinator: (agent: string) => Promise<void>;
 }
 
 const EVENT_BUFFER = 1000;
@@ -153,11 +152,6 @@ export function useFleet(): FleetStore {
     setStreamEpoch((e) => e + 1); // restart the event cursor for the new team
     refresh();
   }, [refresh]);
-
-  const setCoordinator = useCallback(async (agent: string) => {
-    await call('coordinator:set', team ?? 'default', agent);
-    setCoordinatorState(agent);
-  }, [team]);
 
   // Snapshot poll.
   useEffect(() => {
@@ -256,5 +250,5 @@ export function useFleet(): FleetStore {
     return () => { alive = false; clearTimeout(timer); };
   }, [tick]);
 
-  return { connection, managerUrl, team, coordinator, agents, teams, events, inbox, chatUnread, lastError, lastUpdated, viewAll, allAgents, refresh, refreshChatUnread, setTeam, setCoordinator };
+  return { connection, managerUrl, team, coordinator, agents, teams, events, inbox, chatUnread, lastError, lastUpdated, viewAll, allAgents, refresh, refreshChatUnread, setTeam };
 }

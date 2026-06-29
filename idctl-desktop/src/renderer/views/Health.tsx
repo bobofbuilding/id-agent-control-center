@@ -120,7 +120,7 @@ function describePilotChanges(before: HeadroomPilotSettings, afterDraft: Headroo
   return rows;
 }
 
-export function Health({ store }: { store: FleetStore }) {
+export function Health({ store, navigate }: { store: FleetStore; navigate?: (view: string) => void }) {
   const [probing, setProbing] = useState<string | null>(null);
   const [usage, setUsage] = useState<UsageReport | null | undefined>(undefined); // undefined = loading
   const [headroom, setHeadroom] = useState<HeadroomStatus | null | undefined>(undefined);
@@ -410,7 +410,7 @@ export function Health({ store }: { store: FleetStore }) {
 
       {/* The fleet roster is the shared AgentTable — runtime/model dropdowns + lifecycle
           actions + per-row Probe, live & holistic (all teams grouped in "All teams" view). */}
-      <AgentTable store={store} onProbe={(a) => void probe(a.name, store.viewAll ? a.team : undefined)} probeBusy={probing} />
+      <AgentTable store={store} onProbe={(a) => void probe(a.name, store.viewAll ? a.team : undefined)} probeBusy={probing} navigate={navigate} />
     </div>
   );
 }

@@ -222,7 +222,7 @@ function Router({ view, store, navigate, wiki, wikiError, wikiQuery, setWikiQuer
     case 'tasks':
       return <Tasks store={store} />;
     case 'health':
-      return <Health store={store} />;
+      return <Health store={store} navigate={(v) => { if (isViewId(v)) navigate(v); }} />;
     case 'identity':
       return <Identity store={store} />;
     case 'schedule':

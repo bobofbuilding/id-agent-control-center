@@ -185,7 +185,7 @@ function cooldownTitle(row: RuntimeCooldown): string {
   return [cooldownLabel(row), row.resetText ? `reset: ${row.resetText}` : '', row.message ?? ''].filter(Boolean).join('\n');
 }
 
-export function AgentTable({ store, onProbe, probeBusy }: { store: FleetStore; onProbe?: (a: TeamAgent) => void; probeBusy?: string | null }) {
+export function AgentTable({ store, onProbe, probeBusy, navigate }: { store: FleetStore; onProbe?: (a: TeamAgent) => void; probeBusy?: string | null; navigate?: (view: string) => void }) {
   const cols = onProbe ? 9 : 8;
   const [selected, setSelected] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
@@ -232,7 +232,7 @@ export function AgentTable({ store, onProbe, probeBusy }: { store: FleetStore; o
     call<RuntimeCooldown[]>('runtime:cooldowns').then(setRuntimeCooldowns).catch(() => setRuntimeCooldowns([]));
   }, [store.lastUpdated]);
 
-  // ★ set an agent as its team's coordinator (lead) — works per-team in the holistic view.
+  // ★ marks the team's coordinator (lead); routing changes live in HR Manager.
   const teamFor = (a: TeamAgent) => a.team ?? store.team ?? 'default';
   const isLead = (a: TeamAgent) => (coords[teamFor(a)] ?? (teamFor(a) === store.team ? store.coordinator : undefined)) === a.name;
   const draftKeyFor = (a: TeamAgent) => `${teamFor(a)}:${a.id}`;
@@ -436,26 +436,6 @@ export function AgentTable({ store, onProbe, probeBusy }: { store: FleetStore; o
     const active = isActive(a) ? '\n\nThis agent is currently running; the change may restart or redirect live work.' : '';
     return window.confirm(`${label} for ${team}/${a.name}?\n\n${detail}\n\n${state}${diff}${impact}${active}`);
   }
-  async function makeLead(a: TeamAgent) {
-    const fresh = await ensureAgentFresh(a, 'setting team lead');
-    if (!fresh) return;
-    const team = teamFor(fresh);
-    const hierarchy = await call<{ coordinators?: Record<string, string> }>('coordinator:hierarchy').catch(() => null);
-    const before = hierarchy?.coordinators?.[team] ?? coords[team] ?? (team === store.team ? store.coordinator : undefined);
-    if (before === fresh.name) {
-      setCoords((c) => ({ ...c, [team]: fresh.name }));
-      return;
-    }
-    if (!confirmAgentChange(
-      fresh,
-      'Set team lead',
-      `This changes ${team}'s coordinator routing.`,
-      [['coordinator', before, fresh.name]],
-      [`Future team-level messages route to ${fresh.name} by default`],
-    )) return;
-    try { await call('coordinator:set', team, fresh.name); setCoords((c) => ({ ...c, [team]: fresh.name })); store.refresh(); }
-    catch (err) { window.alert(`couldn't set lead: ${err instanceof Error ? err.message : String(err)}`); }
-  }
   useEffect(() => {
     call<Record<string, string[]>>('runtime:probe').then(setCatalog).catch(() => {});
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -549,8 +529,9 @@ export function AgentTable({ store, onProbe, probeBusy }: { store: FleetStore; o
     return (
       <tr key={`${a.team ?? ''}-${a.id}`} className={`${sel?.id === a.id ? 'sel' : ''}${draft ? ' config-staged' : ''}`} onClick={() => setSelected(a.id)}>
         <td className="b">
-          <button className={`star${isLead(a) ? ' on' : ''}`} title={isLead(a) ? `${a.name} is ${teamFor(a)}'s lead` : `Make ${a.name} the lead of ${teamFor(a)}`}
-            onClick={(e) => { e.stopPropagation(); if (!isLead(a)) void makeLead(a); }} style={{ marginRight: 5 }}>{isLead(a) ? '★' : '☆'}</button>
+          <span className={`star readonly${isLead(a) ? ' on' : ''}`} title={isLead(a) ? `${a.name} is ${teamFor(a)}'s lead` : 'Lead changes live in HR Manager'} style={{ marginRight: 5 }}>
+            {isLead(a) ? '★' : ''}
+          </span>
           {a.name}
         </td>
         <td><span className={`dot ${statusClass(a.status)}`} /> {a.status}</td>
@@ -631,6 +612,7 @@ export function AgentTable({ store, onProbe, probeBusy }: { store: FleetStore; o
           <button className="btn small" onClick={() => setShowModels((v) => !v)} title="Show each runtime's model list, where it comes from, and when it was last refreshed">
             {showModels ? 'Hide models' : `Models${freshness.length ? ` (${freshness.filter((f) => f.count).length})` : ''}`}
           </button>
+          {navigate ? <button className="btn small" onClick={() => navigate('teams')} title="Change team coordinators and primary routing in HR Manager">Open HR Manager</button> : null}
           <button className="btn" disabled={!!busy} onClick={() => void probeRuntimes()} title="Probe each runtime's backing inference provider for its newest available models (also auto-refreshes every 6h)">Probe runtimes</button>
         </div>
         {showModels ? (
