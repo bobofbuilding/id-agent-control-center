@@ -116,6 +116,41 @@ function autoCommitBlockers(g: GitInfo | null | undefined, d: ProjectDiff | null
   else if (!d.stat && !d.diff && !d.untracked.length) out.push('no working changes');
   return out;
 }
+function projectStamp(p: ProjectEntry): string {
+  return JSON.stringify({
+    id: p.id,
+    name: p.name,
+    status: p.status,
+    description: p.description ?? '',
+    team: p.team ?? '',
+    tags: p.tags ?? [],
+    links: p.links ?? [],
+    path: p.path ?? '',
+    notes: p.notes ?? '',
+    autoCommit: p.autoCommit ?? 'off',
+    createdAt: p.createdAt ?? 0,
+    updatedAt: p.updatedAt ?? 0,
+  });
+}
+const normProjectKey = (s?: string) => (s || '').trim().replace(/\/+$/, '').toLowerCase();
+function duplicateKeyOf(p: ProjectEntry): string {
+  return normProjectKey(p.path) || normProjectKey((p.links ?? [])[0]) || `name:${normProjectKey(p.name)}`;
+}
+function duplicateProjectGroups(list: ProjectEntry[]): ProjectEntry[][] {
+  const groups = new Map<string, ProjectEntry[]>();
+  for (const p of list) {
+    const k = duplicateKeyOf(p);
+    if (!k) continue;
+    (groups.get(k) ?? groups.set(k, []).get(k)!).push(p);
+  }
+  return [...groups.values()].filter((g) => g.length > 1);
+}
+function duplicateGroupsStamp(groups: ProjectEntry[][]): string {
+  return groups.map((g) => g.map(projectStamp).sort().join('|')).sort().join('\n');
+}
+function uniqStrings(arr: string[]): string[] {
+  return arr.filter((v, i, a) => v && a.indexOf(v) === i);
+}
 
 export function Projects({ store }: { store: FleetStore }) {
   const syncVersion = useSyncVersion(['projects', 'dashboard', 'brain']);
@@ -126,6 +161,7 @@ export function Projects({ store }: { store: FleetStore }) {
   const [gitBusy, setGitBusy] = useState<string | null>(null);
   const [filter, setFilter] = useState<ProjectStatus | 'all'>('all');
   const [editing, setEditing] = useState<string | null>(null); // project id, 'new', or null
+  const [editBaseline, setEditBaseline] = useState<ProjectEntry | null>(null);
   const [form, setForm] = useState(BLANK);
   const [busy, setBusy] = useState(false);
   const [note, setNote] = useState('');
@@ -156,11 +192,7 @@ export function Projects({ store }: { store: FleetStore }) {
   // How many duplicate entries exist (same folder, or same primary repo) — drives the
   // "Combine duplicates" button. Each group of N counts N-1 extras.
   const dupCount = useMemo(() => {
-    const norm = (s?: string) => (s || '').trim().replace(/\/+$/, '').toLowerCase();
-    const keyOf = (p: ProjectEntry) => norm(p.path) || norm((p.links ?? [])[0]) || `name:${norm(p.name)}`;
-    const seen = new Map<string, number>();
-    for (const p of projects) seen.set(keyOf(p), (seen.get(keyOf(p)) ?? 0) + 1);
-    return [...seen.values()].reduce((n, c) => n + Math.max(0, c - 1), 0);
+    return duplicateProjectGroups(projects).reduce((n, g) => n + g.length - 1, 0);
   }, [projects]);
 
   // Checkpoint auto-commit watcher: poll every team's tasks; when a NEW matching
@@ -202,10 +234,46 @@ export function Projects({ store }: { store: FleetStore }) {
     );
     setGitMap(Object.fromEntries(pairs));
   }
-  async function load() {
-    const list = await call<ProjectEntry[]>('projects:list').catch(() => []);
+  function replaceProjects(list: ProjectEntry[]) {
     setProjects(list);
     void loadGit(list);
+  }
+  async function freshProjects(): Promise<ProjectEntry[]> {
+    return call<ProjectEntry[]>('projects:list');
+  }
+  async function ensureProjectFresh(p: ProjectEntry, action: string, opts: { quiet?: boolean } = {}): Promise<ProjectEntry | null> {
+    const list = await freshProjects().catch(() => null);
+    if (!list) {
+      const msg = `Could not verify "${p.name}" before ${action}. Refresh Projects and try again.`;
+      setNote(msg);
+      if (!opts.quiet) window.alert(msg);
+      return null;
+    }
+    const current = list.find((x) => x.id === p.id);
+    if (!current) {
+      replaceProjects(list);
+      const msg = `"${p.name}" no longer exists. Projects has been refreshed.`;
+      setNote(msg);
+      if (!opts.quiet) window.alert(msg);
+      return null;
+    }
+    if (projectStamp(current) !== projectStamp(p)) {
+      replaceProjects(list);
+      const msg = `"${p.name}" changed before ${action}. Projects has been refreshed; review the latest row before writing.`;
+      setNote(msg);
+      if (!opts.quiet) window.alert(msg);
+      return null;
+    }
+    return current;
+  }
+  async function currentProject(id: string): Promise<{ current: ProjectEntry | null; list: ProjectEntry[] } | null> {
+    const list = await freshProjects().catch(() => null);
+    if (!list) return null;
+    return { current: list.find((p) => p.id === id) ?? null, list };
+  }
+  async function load() {
+    const list = await call<ProjectEntry[]>('projects:list').catch(() => []);
+    replaceProjects(list);
     const r = await call<string | null>('projects:detectRoot').catch(() => null);
     setRoot(r);
     if (list.length === 0 && r) setNote(`workspace found at ${r} - review, then Sync workspace to track projects`);
@@ -222,8 +290,7 @@ export function Projects({ store }: { store: FleetStore }) {
       if (res.root) setRoot(res.root);
       if (!res.ok) { setNote(res.error ? `sync: ${res.error}` : 'no projects folder found'); return; }
       const list = await call<ProjectEntry[]>('projects:list').catch(() => []);
-      setProjects(list);
-      void loadGit(list);
+      replaceProjects(list);
       const parts: string[] = [];
       if (res.added) parts.push(`${res.added} added`);
       if (res.adopted) parts.push(`${res.adopted} linked`);
@@ -249,9 +316,10 @@ export function Projects({ store }: { store: FleetStore }) {
     return c;
   }, [projects]);
 
-  function openNew() { setForm({ ...BLANK, team: defaultTeamName }); setEditing('new'); setNote(''); }
+  function openNew() { setForm({ ...BLANK, team: defaultTeamName }); setEditBaseline(null); setEditing('new'); setNote(''); }
   function openEdit(p: ProjectEntry) {
     setForm({ name: p.name, status: p.status, description: p.description ?? '', team: p.team ?? '', tags: (p.tags ?? []).join(', '), links: (p.links ?? []).join('\n'), path: p.path ?? '', notes: p.notes ?? '' });
+    setEditBaseline(p);
     setEditing(p.id); setNote('');
   }
   /** Pick a folder and pre-fill name/description from its README. */
@@ -273,6 +341,7 @@ export function Projects({ store }: { store: FleetStore }) {
     if (!p) return;
     const r = await call<Readme>('project:readme', p).catch((): Readme => ({ found: false }));
     setForm({ ...BLANK, team: defaultTeamName, path: p, name: r?.name || '', description: r?.description || '' });
+    setEditBaseline(null);
     setEditing('new');
     setNote(r?.found ? 'imported folder — README read; review and Save' : 'imported folder (no README found)');
   }
@@ -310,6 +379,7 @@ export function Projects({ store }: { store: FleetStore }) {
           : url.replace(/^https?:\/\//i, '').replace(/\.git$/i, ''),
       });
       setGhOpen(false); setGhUrl('');
+      setEditBaseline(null);
       setEditing('new');
       const src = meta.ok && meta.description ? 'GitHub' : readme.found ? 'README' : 'folder';
       setNote(ghMode === 'fork'
@@ -353,9 +423,11 @@ export function Projects({ store }: { store: FleetStore }) {
     setBusy(true);
     try {
       const now = Date.now();
-      const existing = editing && editing !== 'new' ? projects.find((p) => p.id === editing) : undefined;
+      const baseline = editing && editing !== 'new' ? editBaseline ?? projects.find((p) => p.id === editing) : undefined;
+      const fresh = baseline ? await ensureProjectFresh(baseline, 'saving') : null;
+      if (baseline && !fresh) return;
       const entry: ProjectEntry = {
-        id: existing?.id ?? newId(),
+        id: fresh?.id ?? newId(),
         name,
         status: form.status,
         description: form.description.trim() || undefined,
@@ -364,25 +436,31 @@ export function Projects({ store }: { store: FleetStore }) {
         links: splitList(form.links),
         path: form.path.trim() || undefined,
         notes: form.notes.trim() || undefined,
-        createdAt: existing?.createdAt ?? now,
+        autoCommit: fresh?.autoCommit,
+        createdAt: fresh?.createdAt ?? now,
         updatedAt: now,
       };
       const list = await call<ProjectEntry[]>('projects:save', entry);
-      setProjects(list);
-      void loadGit(list);
+      replaceProjects(list);
       setEditing(null);
+      setEditBaseline(null);
       setNote(`saved ${name} ✓`);
     } finally {
       setBusy(false);
     }
   }
   async function setStatus(p: ProjectEntry, status: ProjectStatus) {
-    setProjects(await call<ProjectEntry[]>('projects:save', { ...p, status, updatedAt: Date.now() }));
+    const fresh = await ensureProjectFresh(p, 'changing status');
+    if (!fresh) return;
+    const list = await call<ProjectEntry[]>('projects:save', { ...fresh, status, updatedAt: Date.now() });
+    replaceProjects(list);
   }
-  async function remove(id: string) {
+  async function remove(p: ProjectEntry) {
     setBusy(true);
     try {
-      setProjects(await call<ProjectEntry[]>('projects:remove', id));
+      const fresh = await ensureProjectFresh(p, 'deleting');
+      if (!fresh) return;
+      replaceProjects(await call<ProjectEntry[]>('projects:remove', fresh.id));
       setConfirmDel(null);
       setNote('deleted ✓');
     } finally {
@@ -392,24 +470,29 @@ export function Projects({ store }: { store: FleetStore }) {
   const q = (s: string) => `"${s.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`;
   // Publish a change: the project's owning team (default) owns the task and delegates the
   // creds) rather than committing from here. This is the standard "request for change" flow.
-  async function submitCommit(p: ProjectEntry, desc: string, opts: { confirm?: boolean } = {}) {
+  async function submitCommit(p: ProjectEntry, desc: string, opts: { confirm?: boolean; quietStale?: boolean } = {}) {
     if (!desc.trim()) { setNote('describe the change (or use ✨ Draft with AI)'); return; }
-    if (!p.path) { setNote('this project has no local folder to commit'); return; }
+    const fresh = await ensureProjectFresh(p, 'committing and pushing', { quiet: opts.quietStale });
+    if (!fresh) {
+      if (opts.quietStale) toast({ kind: 'info', text: `Commit skipped because "${p.name}" changed before the write. Review Projects and retry.`, durationMs: 10000 });
+      return;
+    }
+    if (!fresh.path) { setNote('this project has no local folder to commit'); return; }
     const shouldConfirm = opts.confirm ?? true;
     if (shouldConfirm) {
       const [g, d] = await Promise.all([
-        call<GitInfo>('project:git', p.path).catch(() => null),
-        call<ProjectDiff>('project:diff', p.path).catch(() => null),
+        call<GitInfo>('project:git', fresh.path).catch(() => null),
+        call<ProjectDiff>('project:diff', fresh.path).catch(() => null),
       ]);
       if (d?.ok && !d.stat && !d.diff && !d.untracked.length) {
-        setNote(`nothing to commit for ${p.name}`);
+        setNote(`nothing to commit for ${fresh.name}`);
         return;
       }
       const subject = desc.trim().split('\n').find(Boolean) ?? '(empty message)';
       const preview = [
-        `Commit and push changes for "${p.name}"?`,
+        `Commit and push changes for "${fresh.name}"?`,
         '',
-        `Folder: ${p.path}`,
+        `Folder: ${fresh.path}`,
         ...gitSummary(g),
         '',
         ...diffSummary(d),
@@ -423,15 +506,16 @@ export function Projects({ store }: { store: FleetStore }) {
     // Commit & push DIRECTLY from the app (reliable) instead of delegating to an agent that may
     // mark the task "done" without the commit ever landing. .gitignore keeps secrets out; the
     // backend self-heals the branch + pulls before committing.
-    const t = toast({ kind: 'progress', text: `Committing & pushing “${p.name}”…` });
+    const t = toast({ kind: 'progress', text: `Committing & pushing “${fresh.name}”…` });
     try {
-      const r = await call<{ ok: boolean; output: string; committed: boolean; pushed: boolean }>('project:commit', p.path, desc.trim());
+      const r = await call<{ ok: boolean; output: string; committed: boolean; pushed: boolean }>('project:commit', fresh.path, desc.trim());
       if (!r.ok) { t.update({ kind: 'error', text: `Commit failed: ${r.output}` }); return; }
-      if (!r.committed) t.update({ kind: 'info', text: `Nothing to commit — “${p.name}” is already clean` });
-      else if (r.pushed) t.update({ kind: 'success', text: `Committed & pushed “${p.name}” ✓` });
-      else t.update({ kind: 'info', text: `Committed “${p.name}” locally — ${r.output}` });
+      if (!r.committed) t.update({ kind: 'info', text: `Nothing to commit — “${fresh.name}” is already clean` });
+      else if (r.pushed) t.update({ kind: 'success', text: `Committed & pushed “${fresh.name}” ✓` });
+      else t.update({ kind: 'info', text: `Committed “${fresh.name}” locally — ${r.output}` });
       setCommitFor(null); setCommitMsg('');
-      void loadGit(projects); // refresh the project's git status badge
+      const latest = await currentProject(fresh.id);
+      if (latest) replaceProjects(latest.list);
     } catch (e) {
       t.update({ kind: 'error', text: `Commit failed: ${e instanceof Error ? e.message : String(e)}` });
     }
@@ -443,10 +527,12 @@ export function Projects({ store }: { store: FleetStore }) {
     if (!lead) { setNote('no team lead online to draft with'); return; }
     setDrafting(true);
     try {
-      const d = await call<{ ok: boolean; stat: string; diff: string; untracked: string[]; error?: string }>('project:diff', p.path).catch(() => null);
+      const fresh = await ensureProjectFresh(p, 'drafting commit');
+      if (!fresh?.path) return;
+      const d = await call<{ ok: boolean; stat: string; diff: string; untracked: string[]; error?: string }>('project:diff', fresh.path).catch(() => null);
       if (!d || !d.ok) { setNote(`couldn't read the diff: ${d?.error ?? 'unknown'}`); return; }
       if (!d.stat && !d.diff && !d.untracked.length) { setNote('no working changes to summarize'); return; }
-      const ask = `Draft a git commit message for the project "${p.name}". Working changes below.\n\nFiles changed (git diff --stat):\n${d.stat || '(none tracked)'}\n\nUntracked files: ${d.untracked.join(', ') || 'none'}\n\nDiff:\n${d.diff || '(no tracked changes)'}\n\nReply with ONLY the commit message: a concise imperative subject line (≤72 chars), then a blank line, then 1-4 short bullet points. No code fences, no preamble.`;
+      const ask = `Draft a git commit message for the project "${fresh.name}". Working changes below.\n\nFiles changed (git diff --stat):\n${d.stat || '(none tracked)'}\n\nUntracked files: ${d.untracked.join(', ') || 'none'}\n\nDiff:\n${d.diff || '(no tracked changes)'}\n\nReply with ONLY the commit message: a concise imperative subject line (≤72 chars), then a blank line, then 1-4 short bullet points. No code fences, no preamble.`;
       const reply = await call<string>('dispatch', `/ask ${lead} ${q(ask)}`).catch(() => '');
       const clean = String(reply || '').replace(/^```[a-z]*\n?/i, '').replace(/```$/,'').trim();
       if (!clean) { setNote(`${lead} didn't return a draft — write one manually`); return; }
@@ -459,21 +545,31 @@ export function Projects({ store }: { store: FleetStore }) {
   // Create a GitHub repo for a folder-only project and connect it as origin (SSH).
   async function createRepo(p: ProjectEntry) {
     if (!p.path) return;
-    const name = (repoName || p.name || '').trim();
-    if (!name) { setNote('enter a repo name'); return; }
     setBusy(true);
-    const t = toast({ kind: 'progress', text: `Creating GitHub repo “${name}”…` });
+    let t: ReturnType<typeof toast> | null = null;
     try {
-      const r = await call<{ ok: boolean; slug?: string; htmlUrl?: string; error?: string }>('project:createRepo', p.path, { name, description: p.description || undefined, private: repoPrivate });
+      const fresh = await ensureProjectFresh(p, 'creating a GitHub repo');
+      if (!fresh?.path) return;
+      const name = (repoName || fresh.name || '').trim();
+      if (!name) { setNote('enter a repo name'); return; }
+      t = toast({ kind: 'progress', text: `Creating GitHub repo “${name}”…` });
+      const r = await call<{ ok: boolean; slug?: string; htmlUrl?: string; error?: string }>('project:createRepo', fresh.path, { name, description: fresh.description || undefined, private: repoPrivate });
       if (!r.ok) { t.update({ kind: 'error', text: `Create repo failed: ${r.error}` }); setNote(`create repo failed: ${r.error}`); return; }
-      const links = [r.slug ?? '', ...((p.links ?? []) as string[])].filter(Boolean).filter((v, i, a) => a.indexOf(v) === i);
-      const list = await call<ProjectEntry[]>('projects:save', { ...p, links });
-      setProjects(list); void loadGit(list);
+      const latest = await currentProject(fresh.id);
+      if (!latest) { t.update({ kind: 'info', text: `Created ${r.slug} ✓ — refresh Projects to attach the repo link.` }); return; }
+      if (!latest.current) {
+        replaceProjects(latest.list);
+        t.update({ kind: 'info', text: `Created ${r.slug} ✓, but the project row was removed before metadata could be saved.` });
+        return;
+      }
+      const links = uniqStrings([r.slug ?? '', ...((latest.current.links ?? []) as string[])]);
+      const list = await call<ProjectEntry[]>('projects:save', { ...latest.current, links, updatedAt: Date.now() });
+      replaceProjects(list);
       t.update({ kind: 'success', text: `Created ${r.slug} ✓ — origin connected. Use ⤴ Request commit to push your files.` });
       setRepoFor(null); setRepoName('');
-      setCommitFor(p.id); setCommitMsg(''); // open the composer so they can push content right away
+      setCommitFor(latest.current.id); setCommitMsg(''); // open the composer so they can push content right away
     } catch (e) {
-      t.update({ kind: 'error', text: `Create repo failed: ${e instanceof Error ? e.message : String(e)}` });
+      t?.update({ kind: 'error', text: `Create repo failed: ${e instanceof Error ? e.message : String(e)}` });
     } finally { setBusy(false); }
   }
   // Link a folder-only project to an EXISTING GitHub repo: connect origin + fetch.
@@ -482,57 +578,82 @@ export function Projects({ store }: { store: FleetStore }) {
     const url = linkUrl.trim();
     if (!/github\.com[/:][^/\s]+\/[^/\s]+/i.test(url)) { setNote('paste an existing GitHub repo URL'); return; }
     setBusy(true);
-    const t = toast({ kind: 'progress', text: `Linking “${p.name}” to ${url}…` });
+    let t: ReturnType<typeof toast> | null = null;
     try {
-      const r = await call<{ ok: boolean; slug?: string; remoteUrl?: string; error?: string }>('project:linkRepo', p.path, url);
+      const fresh = await ensureProjectFresh(p, 'linking a GitHub repo');
+      if (!fresh?.path) return;
+      t = toast({ kind: 'progress', text: `Linking “${fresh.name}” to ${url}…` });
+      const r = await call<{ ok: boolean; slug?: string; remoteUrl?: string; error?: string }>('project:linkRepo', fresh.path, url);
       if (!r.ok) { t.update({ kind: 'error', text: `Link failed: ${r.error}` }); setNote(`link failed: ${r.error}`); return; }
       const link = (r.slug ? `github.com/${r.slug}` : url.replace(/^https?:\/\//i, '').replace(/\.git$/i, ''));
-      const links = [link, ...((p.links ?? []) as string[])].filter(Boolean).filter((v, i, a) => a.indexOf(v) === i);
-      const list = await call<ProjectEntry[]>('projects:save', { ...p, links });
-      setProjects(list); void loadGit(list);
+      const latest = await currentProject(fresh.id);
+      if (!latest) { t.update({ kind: 'info', text: `Linked ${r.slug} ✓ — refresh Projects to attach the repo link.` }); return; }
+      if (!latest.current) {
+        replaceProjects(latest.list);
+        t.update({ kind: 'info', text: `Linked ${r.slug} ✓, but the project row was removed before metadata could be saved.` });
+        return;
+      }
+      const links = uniqStrings([link, ...((latest.current.links ?? []) as string[])]);
+      const list = await call<ProjectEntry[]>('projects:save', { ...latest.current, links, updatedAt: Date.now() });
+      replaceProjects(list);
       t.update({ kind: 'success', text: `Linked ${r.slug} ✓ — origin connected + fetched. Pull to sync, then ⤴ Request commit.` });
       setLinkFor(null); setLinkUrl('');
     } catch (e) {
-      t.update({ kind: 'error', text: `Link failed: ${e instanceof Error ? e.message : String(e)}` });
+      t?.update({ kind: 'error', text: `Link failed: ${e instanceof Error ? e.message : String(e)}` });
     } finally { setBusy(false); }
   }
   // Combine duplicate projects: group entries that point at the SAME folder (or same
   // primary repo link), keep the richest one, merge the others' metadata in, drop them.
   async function combineDuplicates() {
-    const norm = (s?: string) => (s || '').trim().replace(/\/+$/, '').toLowerCase();
-    const keyOf = (p: ProjectEntry) => norm(p.path) || norm((p.links ?? [])[0]) || `name:${norm(p.name)}`;
-    const groups = new Map<string, ProjectEntry[]>();
-    for (const p of projects) {
-      const k = keyOf(p);
-      if (!k) continue;
-      (groups.get(k) ?? groups.set(k, []).get(k)!).push(p);
+    const firstList = await freshProjects().catch(() => null);
+    if (!firstList) {
+      setNote('could not verify duplicate projects; refresh and try again');
+      return;
     }
-    const dups = [...groups.values()].filter((g) => g.length > 1);
+    replaceProjects(firstList);
+    const dups = duplicateProjectGroups(firstList);
     if (!dups.length) { setNote('no duplicate projects found (same folder or repo)'); return; }
     const total = dups.reduce((n, g) => n + g.length - 1, 0);
-    if (!window.confirm(`Combine ${dups.length} duplicate group(s) — merge ${total} extra entr${total === 1 ? 'y' : 'ies'} into their primary and remove the duplicates? Folders are left untouched.`)) return;
+    const expectedStamp = duplicateGroupsStamp(dups);
+    const previewGroups = dups.slice(0, 5).map((g) => `- ${g.map((p) => p.name).join(' + ')}`);
+    const more = dups.length > previewGroups.length ? [`- ...and ${dups.length - previewGroups.length} more group(s)`] : [];
+    if (!window.confirm([
+      `Combine ${dups.length} duplicate group(s) — merge ${total} extra entr${total === 1 ? 'y' : 'ies'} into their primary and remove the duplicates?`,
+      '',
+      ...previewGroups,
+      ...more,
+      '',
+      'Folders are left untouched. The duplicate set will be checked again before writing.',
+    ].join('\n'))) return;
     setBusy(true);
     const t = toast({ kind: 'progress', text: `Combining ${total} duplicate${total === 1 ? '' : 's'}…` });
     try {
+      const latestList = await freshProjects();
+      const latestDups = duplicateProjectGroups(latestList);
+      if (duplicateGroupsStamp(latestDups) !== expectedStamp) {
+        replaceProjects(latestList);
+        t.update({ kind: 'info', text: 'Duplicate set changed before combine. Projects refreshed; review and try again.' });
+        return;
+      }
       const score = (p: ProjectEntry) => (p.path ? 4 : 0) + (p.description ? 2 : 0) + (p.team ? 1 : 0) + (p.links ?? []).length + (p.tags ?? []).length + (p.notes ? 1 : 0);
-      let list = projects;
-      for (const g of dups) {
+      let list = latestList;
+      for (const g of latestDups) {
         const keep = [...g].sort((a, b) => score(b) - score(a) || (a.createdAt ?? 0) - (b.createdAt ?? 0))[0];
         const drop = g.filter((p) => p.id !== keep.id);
-        const uniq = (arr: string[]) => arr.filter((v, i, a) => v && a.indexOf(v) === i);
         const merged: ProjectEntry = {
           ...keep,
           description: keep.description || drop.find((d) => d.description)?.description || '',
           team: keep.team || drop.find((d) => d.team)?.team,
           path: keep.path || drop.find((d) => d.path)?.path,
-          tags: uniq([...(keep.tags ?? []), ...drop.flatMap((d) => d.tags ?? [])]),
-          links: uniq([...(keep.links ?? []), ...drop.flatMap((d) => d.links ?? [])]),
+          tags: uniqStrings([...(keep.tags ?? []), ...drop.flatMap((d) => d.tags ?? [])]),
+          links: uniqStrings([...(keep.links ?? []), ...drop.flatMap((d) => d.links ?? [])]),
           notes: [keep.notes, ...drop.map((d) => d.notes)].filter(Boolean).join('\n').trim() || undefined,
+          updatedAt: Date.now(),
         };
         list = await call<ProjectEntry[]>('projects:save', merged);
         for (const d of drop) list = await call<ProjectEntry[]>('projects:remove', d.id);
       }
-      setProjects(list); void loadGit(list);
+      replaceProjects(list);
       t.update({ kind: 'success', text: `Combined ${total} duplicate${total === 1 ? '' : 's'} ✓` });
     } catch (e) {
       t.update({ kind: 'error', text: `Combine failed: ${e instanceof Error ? e.message : String(e)}` });
@@ -541,27 +662,34 @@ export function Projects({ store }: { store: FleetStore }) {
   // Set a project's checkpoint auto-commit mode; resets its baseline so we don't
   // immediately fire on tasks that were already complete.
   async function setAutoCommitMode(p: ProjectEntry, val: 'off' | 'task' | 'plan') {
-    if (val !== 'off' && val !== (p.autoCommit ?? 'off')) {
+    const fresh = await ensureProjectFresh(p, 'changing auto-commit');
+    if (!fresh) return;
+    if (val !== 'off' && val !== (fresh.autoCommit ?? 'off')) {
       const trigger = val === 'plan' ? 'plan-validation tasks' : 'any completed task';
-      if (!window.confirm(`Enable auto-commit for "${p.name}" on ${trigger}?\n\nWhen matching tasks complete and this repo is dirty, IDACC can draft a message, commit all non-ignored changes, and push only when the branch is exactly in sync with its remote. If the repo is ahead, behind, orphaned, missing a remote, or missing compare data, the background checkpoint is skipped for review. Keep this on only for repos where background checkpoints are expected.`)) return;
+      if (!window.confirm(`Enable auto-commit for "${fresh.name}" on ${trigger}?\n\nWhen matching tasks complete and this repo is dirty, IDACC can draft a message, commit all non-ignored changes, and push only when the branch is exactly in sync with its remote. If the repo is ahead, behind, orphaned, missing a remote, or missing compare data, the background checkpoint is skipped for review. Keep this on only for repos where background checkpoints are expected.`)) return;
     }
-    const list = await call<ProjectEntry[]>('projects:save', { ...p, autoCommit: val }).catch(() => projects);
-    setProjects(list);
-    delete autoSeenRef.current[p.id]; // re-baseline on the next watcher tick
-    setNote(val === 'off' ? `auto-commit off for ${p.name}` : `auto-commit on (${val === 'plan' ? 'plan validation' : 'any task'}) for ${p.name} — needs a team + uncommitted changes`);
+    const list = await call<ProjectEntry[]>('projects:save', { ...fresh, autoCommit: val, updatedAt: Date.now() }).catch(() => projects);
+    replaceProjects(list);
+    delete autoSeenRef.current[fresh.id]; // re-baseline on the next watcher tick
+    setNote(val === 'off' ? `auto-commit off for ${fresh.name}` : `auto-commit on (${val === 'plan' ? 'plan validation' : 'any task'}) for ${fresh.name} — needs a team + uncommitted changes`);
   }
   // Fire a checkpoint commit: AI-draft a message from the diff (best-effort), then
   // route the commit & push via the owning team → git-manager (normal request flow).
   async function autoCommitNow(p: ProjectEntry, triggerRef: string, kind: 'task' | 'plan') {
+    const fresh = await ensureProjectFresh(p, 'auto-commit checkpoint', { quiet: true });
+    if (!fresh?.path) {
+      toast({ kind: 'info', text: `Auto-commit skipped for “${p.name}”: project changed before the checkpoint.`, durationMs: 10000 });
+      return;
+    }
     const [g, d] = await Promise.all([
-      call<GitInfo>('project:git', p.path!).catch(() => null),
-      call<ProjectDiff>('project:diff', p.path!).catch(() => null),
+      call<GitInfo>('project:git', fresh.path).catch(() => null),
+      call<ProjectDiff>('project:diff', fresh.path).catch(() => null),
     ]);
     const blockers = autoCommitBlockers(g, d);
     if (blockers.length) {
       toast({
         kind: 'info',
-        text: `Auto-commit skipped for “${p.name}” after task ${triggerRef}: ${blockers.join('; ')}. Use Projects to review and request the commit manually.`,
+        text: `Auto-commit skipped for “${fresh.name}” after task ${triggerRef}: ${blockers.join('; ')}. Use Projects to review and request the commit manually.`,
         durationMs: 12000,
       });
       return;
@@ -569,28 +697,30 @@ export function Projects({ store }: { store: FleetStore }) {
     let msg = '';
     try {
       if (d?.ok && lead && (d.stat || d.diff || d.untracked.length)) {
-        const ask = `Draft a git commit message for the project "${p.name}". Files (git diff --stat):\n${d.stat || '(none)'}\n\nUntracked: ${d.untracked.join(', ') || 'none'}\n\nDiff:\n${d.diff || '(no tracked changes)'}\n\nReply with ONLY the commit message: a concise imperative subject (≤72 chars), blank line, then 1-4 bullets. No code fences.`;
+        const ask = `Draft a git commit message for the project "${fresh.name}". Files (git diff --stat):\n${d.stat || '(none)'}\n\nUntracked: ${d.untracked.join(', ') || 'none'}\n\nDiff:\n${d.diff || '(no tracked changes)'}\n\nReply with ONLY the commit message: a concise imperative subject (≤72 chars), blank line, then 1-4 bullets. No code fences.`;
         const reply = await call<string>('dispatch', `/ask ${lead} ${q(ask)}`).catch(() => '');
         msg = String(reply || '').replace(/^```[a-z]*\n?/i, '').replace(/```$/, '').trim();
       }
     } catch { /* fall back to a generic message */ }
-    if (!msg) msg = `Checkpoint commit for ${p.name}.`;
+    if (!msg) msg = `Checkpoint commit for ${fresh.name}.`;
     msg = `${msg}\n\n(auto-commit checkpoint — triggered by completed ${kind === 'plan' ? 'plan-validation ' : ''}task ${triggerRef})`;
-    toast({ kind: 'info', text: `⟳ Auto-commit checkpoint for “${p.name}” (task ${triggerRef} done) → ${p.team || defaultTeamName} delegates to git-manager` });
-    await submitCommit(p, msg, { confirm: false });
+    toast({ kind: 'info', text: `⟳ Auto-commit checkpoint for “${fresh.name}” (task ${triggerRef} done) → ${fresh.team || defaultTeamName} delegates to git-manager` });
+    await submitCommit(fresh, msg, { confirm: false, quietStale: true });
   }
 
   async function runGit(p: ProjectEntry, action: string) {
     if (!p.path) return;
+    const fresh = await ensureProjectFresh(p, `running git ${action}`);
+    if (!fresh?.path) return;
     if (action === 'pull') {
       const [g, d] = await Promise.all([
-        call<GitInfo>('project:git', p.path).catch(() => null),
-        call<ProjectDiff>('project:diff', p.path).catch(() => null),
+        call<GitInfo>('project:git', fresh.path).catch(() => null),
+        call<ProjectDiff>('project:diff', fresh.path).catch(() => null),
       ]);
       const preview = [
-        `Pull latest changes for "${p.name}"?`,
+        `Pull latest changes for "${fresh.name}"?`,
         '',
-        `Folder: ${p.path}`,
+        `Folder: ${fresh.path}`,
         ...gitSummary(g),
         '',
         ...diffSummary(d),
@@ -599,16 +729,21 @@ export function Projects({ store }: { store: FleetStore }) {
       ].join('\n');
       if (!window.confirm(preview)) return;
     }
-    setGitBusy(`${p.id}:${action}`);
-    setGitOut((o) => ({ ...o, [p.id]: { action, output: `$ git ${action}…` } }));
+    setGitBusy(`${fresh.id}:${action}`);
+    setGitOut((o) => ({ ...o, [fresh.id]: { action, output: `$ git ${action}…` } }));
     try {
-      const r = await call<{ ok: boolean; output: string }>('project:gitRun', p.path, action);
-      setGitOut((o) => ({ ...o, [p.id]: { action, output: r.output } }));
-      const g = await call<GitInfo>('project:git', p.path).catch(() => null);
-      if (g) setGitMap((m) => ({ ...m, [p.id]: g }));
+      const r = await call<{ ok: boolean; output: string }>('project:gitRun', fresh.path, action);
+      setGitOut((o) => ({ ...o, [fresh.id]: { action, output: r.output } }));
+      const g = await call<GitInfo>('project:git', fresh.path).catch(() => null);
+      if (g) setGitMap((m) => ({ ...m, [fresh.id]: g }));
     } finally {
       setGitBusy(null);
     }
+  }
+  async function openProjectFolder(p: ProjectEntry) {
+    if (!p.path) return;
+    const fresh = await ensureProjectFresh(p, 'opening folder');
+    if (fresh?.path) void call('project:openFolder', fresh.path);
   }
 
   /** The new/edit form body — rendered at the top for a new project, or inline
@@ -653,7 +788,7 @@ export function Projects({ store }: { store: FleetStore }) {
             <button className="btn" disabled={busy} title={`Have ${lead} write a cleaner description + tags`} onClick={() => void refineWithLead()}>✨ Refine with lead</button>
           ) : null}
           <span className="grow" />
-          <button className="btn" disabled={busy} onClick={() => setEditing(null)}>Cancel</button>
+          <button className="btn" disabled={busy} onClick={() => { setEditing(null); setEditBaseline(null); }}>Cancel</button>
           <button className="btn primary" disabled={busy || !form.name.trim()} onClick={() => void save()}>Save</button>
         </div>
       </>
@@ -669,7 +804,18 @@ export function Projects({ store }: { store: FleetStore }) {
           {dupCount > 0 ? <button className="btn" disabled={busy} title="Merge projects that point at the same folder or repo into one (folders left untouched)" onClick={() => void combineDuplicates()}>⧉ Combine duplicates ({dupCount})</button> : null}
           <button className="btn" disabled={busy} onClick={() => { setGhOpen((v) => !v); setNote(''); }}>{ghOpen ? '− Cancel' : '⤓ Add from GitHub'}</button>
           <button className="btn" disabled={busy} onClick={() => void importFolder()}>Import folder…</button>
-          <button className="btn primary" disabled={busy} onClick={() => (editing === 'new' ? setEditing(null) : openNew())}>
+          <button
+            className="btn primary"
+            disabled={busy}
+            onClick={() => {
+              if (editing === 'new') {
+                setEditing(null);
+                setEditBaseline(null);
+              } else {
+                openNew();
+              }
+            }}
+          >
             {editing === 'new' ? '− Cancel' : '+ New project'}
           </button>
         </div>
@@ -741,7 +887,7 @@ export function Projects({ store }: { store: FleetStore }) {
                 <button className="btn" disabled={busy} onClick={() => openEdit(p)}>Edit</button>
                 {confirmDel === p.id ? (
                   <>
-                    <button className="btn icon-danger" disabled={busy} onClick={() => void remove(p.id)}>Delete?</button>
+                    <button className="btn icon-danger" disabled={busy} onClick={() => void remove(p)}>Delete?</button>
                     <button className="btn" disabled={busy} onClick={() => setConfirmDel(null)}>Cancel</button>
                   </>
                 ) : (
@@ -760,7 +906,7 @@ export function Projects({ store }: { store: FleetStore }) {
                       <button className="btn small" title="Create a NEW GitHub repo for this folder and connect it as origin (SSH)" onClick={() => { setRepoFor(repoFor === p.id ? null : p.id); setRepoName(p.name || ''); setLinkFor(null); setNote(''); }}>{repoFor === p.id ? '− Cancel' : '＋ Create GitHub repo'}</button>
                     </>) : null}
                     <button className="btn small primary" title="Commit & push this project's changes — optionally let AI draft the message (the owning team delegates the push to git-manager)" onClick={() => { setCommitFor(commitFor === p.id ? null : p.id); setCommitMsg(''); setNote(''); }}>{commitFor === p.id ? '− Cancel' : '⤴ Request commit'}</button>
-                    <button className="btn small" title="Open folder" onClick={() => void call('project:openFolder', p.path)}>open ↗</button>
+                    <button className="btn small" title="Open folder" onClick={() => void openProjectFolder(p)}>open ↗</button>
                   </div>
                   <div className="muted small mono project-path" title={p.path}>{p.path}</div>
                   <div className="muted small" style={{ marginTop: 4, display: 'inline-flex', alignItems: 'center', gap: 5 }}
