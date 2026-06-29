@@ -156,6 +156,14 @@ input, textarea { -webkit-user-select: text; user-select: text; }
 }
 .cell-select:hover { border-color: var(--muted); }
 .cell-select.mismatch { border-color: var(--warn); color: var(--warn); }
+.grid tr.config-staged td { background: color-mix(in srgb, var(--warn) 8%, transparent); }
+.agent-config-draft {
+  display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+  border: 1px solid color-mix(in srgb, var(--warn) 44%, var(--line));
+  border-radius: 8px; background: color-mix(in srgb, var(--warn) 6%, var(--bg));
+  padding: 8px 10px; margin: 0 0 8px;
+}
+.agent-config-draft b { color: var(--text); }
 
 /* Lead hierarchy (#10) */
 .hierarchy { display: flex; flex-direction: column; gap: 5px; }

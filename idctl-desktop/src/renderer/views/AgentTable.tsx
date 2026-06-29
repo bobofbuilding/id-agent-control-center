@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { call, agentsLeadFirst, type FleetStore, type TeamAgent } from '../store.ts';
 import { statusClass } from '../agentStatus.ts';
 import type { Agent } from '../../../../idctl/src/api/types.ts';
@@ -13,6 +13,16 @@ import { RUNTIMES, offerableRuntimes, effortOptions, runtimeHasEffort, speedOpti
 
 type ProviderRow = { kind: string; enabled?: boolean; keySource?: string; lastSync?: { status?: string } };
 type RuntimeFreshness = { runtime: string; count: number; source: 'codex-cache' | 'provider' | 'curated' | 'none'; provider?: string; lastCheckedMs: number | null };
+type AgentConfigState = { runtime?: string; model?: string; effort: string; speed: string };
+interface AgentConfigDraft {
+  key: string;
+  id: string;
+  name: string;
+  team: string;
+  status: string;
+  baseline: AgentConfigState;
+  next: AgentConfigState;
+}
 const SOURCE_LABEL: Record<RuntimeFreshness['source'], string> = {
   'codex-cache': 'codex CLI cache', provider: 'live provider sync', curated: 'curated fallback', none: 'no models',
 };
@@ -138,7 +148,8 @@ export function AgentTable({ store, onProbe, probeBusy }: { store: FleetStore; o
   const [showStopped, setShowStopped] = useState(false); // by default the grid shows only running agents
   const [freshness, setFreshness] = useState<RuntimeFreshness[]>([]);
   const [showModels, setShowModels] = useState(false);
-  const modelRefs = useRef<Record<string, HTMLSelectElement | null>>({});
+  const [configDrafts, setConfigDrafts] = useState<Record<string, AgentConfigDraft>>({});
+  const configDraftList = Object.values(configDrafts);
   const viewAll = store.viewAll;
   const orderedAgents = agentsLeadFirst(store.agents, store.coordinator);
   const shown: TeamAgent[] = viewAll ? store.allAgents : orderedAgents;
@@ -171,6 +182,114 @@ export function AgentTable({ store, onProbe, probeBusy }: { store: FleetStore; o
   // ★ set an agent as its team's coordinator (lead) — works per-team in the holistic view.
   const teamFor = (a: TeamAgent) => a.team ?? store.team ?? 'default';
   const isLead = (a: TeamAgent) => (coords[teamFor(a)] ?? (teamFor(a) === store.team ? store.coordinator : undefined)) === a.name;
+  const draftKeyFor = (a: TeamAgent) => `${teamFor(a)}:${a.id}`;
+  function configOf(a: TeamAgent): AgentConfigState {
+    return { runtime: runtimeOf(a), model: a.model, effort: effortOf(a), speed: speedOf(a) };
+  }
+  function configChanges(from: AgentConfigState, to: AgentConfigState): Array<[string, string | undefined, string | undefined]> {
+    return ([
+      ['runtime', from.runtime, to.runtime],
+      ['model', from.model, to.model],
+      ['effort', from.effort, to.effort],
+      ['speed', from.speed, to.speed],
+    ] as Array<[string, string | undefined, string | undefined]>).filter(([, before, after]) => String(before ?? '') !== String(after ?? ''));
+  }
+  function sameConfig(a: AgentConfigState, b: AgentConfigState): boolean {
+    return configChanges(a, b).length === 0;
+  }
+  function stageConfig(a: TeamAgent, partial: Partial<AgentConfigState>) {
+    const key = draftKeyFor(a);
+    setConfigDrafts((prev) => {
+      const baseline = prev[key]?.baseline ?? configOf(a);
+      const next = { ...(prev[key]?.next ?? baseline), ...partial };
+      const out = { ...prev };
+      if (sameConfig(baseline, next)) delete out[key];
+      else out[key] = { key, id: a.id, name: a.name, team: teamFor(a), status: a.status, baseline, next };
+      return out;
+    });
+  }
+  function stageRuntime(a: TeamAgent, runtime: string) {
+    if (!runtime) return;
+    const key = draftKeyFor(a);
+    setConfigDrafts((prev) => {
+      const baseline = prev[key]?.baseline ?? configOf(a);
+      const current = prev[key]?.next ?? baseline;
+      const models = catalog[runtime] ?? [];
+      const model = !current.model || runtimeModelMismatch(runtime, current.model) ? models[0] ?? current.model : current.model;
+      const effort = !runtimeHasEffort(runtime)
+        ? baseline.effort
+        : current.effort && !effortOptions(runtime).includes(current.effort) ? '' : current.effort;
+      const speed = !runtimeHasSpeed(runtime)
+        ? baseline.speed
+        : speedOptions(runtime).includes(current.speed) ? current.speed : speedOptions(runtime)[0] ?? 'default';
+      const next = { ...current, runtime, model, effort, speed };
+      const out = { ...prev };
+      if (sameConfig(baseline, next)) delete out[key];
+      else out[key] = { key, id: a.id, name: a.name, team: teamFor(a), status: a.status, baseline, next };
+      return out;
+    });
+  }
+  async function applyConfigDrafts() {
+    const drafts = Object.values(configDrafts);
+    if (!drafts.length) return;
+    const currentByKey = new Map(shown.map((a) => [draftKeyFor(a), a]));
+    const staleRows = drafts.flatMap((d) => {
+      const current = currentByKey.get(d.key);
+      if (!current) return [`${d.team}/${d.name}: agent is no longer visible in the fleet snapshot`];
+      const reasons = configChanges(d.baseline, configOf(current)).map(([field, before, after]) => `${field} changed from ${displayValue(before)} to ${displayValue(after)}`);
+      if (current.name !== d.name) reasons.push(`name changed from ${d.name} to ${current.name}`);
+      if (current.status !== d.status) reasons.push(`status changed from ${d.status} to ${current.status}`);
+      return reasons.length ? [`${d.team}/${d.name}: ${reasons.join('; ')}`] : [];
+    });
+    if (staleRows.length) {
+      window.alert([
+        'Staged Health config is stale.',
+        '',
+        ...staleRows.slice(0, 8).map((row) => `- ${row}`),
+        staleRows.length > 8 ? `- +${staleRows.length - 8} more` : '',
+        '',
+        'Discard and re-stage from the current fleet snapshot before applying.',
+      ].filter(Boolean).join('\n'));
+      return;
+    }
+    const summaries = drafts.flatMap((d) => configChanges(d.baseline, d.next).map(([field, before, after]) => `${d.team}/${d.name} ${field}: ${displayValue(before)} -> ${displayValue(after)}`));
+    if (!summaries.length) {
+      setConfigDrafts({});
+      return;
+    }
+    if (!window.confirm([
+      'Apply staged Health config changes?',
+      '',
+      ...summaries.slice(0, 14).map((row) => `- ${row}`),
+      summaries.length > 14 ? `- +${summaries.length - 14} more` : '',
+      '',
+      'This writes manager config and rebuilds each touched agent once so the new runtime settings are picked up.',
+    ].filter(Boolean).join('\n'))) return;
+    setBusy('apply config changes');
+    try {
+      for (const d of drafts) {
+        if (String(d.baseline.runtime ?? '') !== String(d.next.runtime ?? '') && d.next.runtime) {
+          await call('setAgentRuntime', d.id, d.next.runtime, d.team);
+        }
+        if (String(d.baseline.model ?? '') !== String(d.next.model ?? '') && d.next.model) {
+          await call('remote', `/model ${d.name} ${d.next.model}`, undefined, d.team);
+        }
+        if (String(d.baseline.effort ?? '') !== String(d.next.effort ?? '')) {
+          await call('setAgentEffort', d.id, d.next.effort, d.team);
+        }
+        if (String(d.baseline.speed ?? '') !== String(d.next.speed ?? '')) {
+          await call('setAgentSpeed', d.id, d.next.speed, d.team);
+        }
+        await call('remote', `/agent ${d.name} rebuild`, undefined, d.team);
+      }
+      setConfigDrafts({});
+      store.refresh();
+      setBusy(null);
+    } catch (err) {
+      setBusy(`config apply failed — ${err instanceof Error ? err.message : String(err)}`);
+      setTimeout(() => setBusy(null), 5000);
+    }
+  }
   function confirmAgentChange(
     a: TeamAgent,
     label: string,
@@ -225,32 +344,13 @@ export function AgentTable({ store, onProbe, probeBusy }: { store: FleetStore; o
     catch (err) { window.alert(`${label} failed: ${err instanceof Error ? err.message : String(err)}`); }
     finally { setBusy(null); }
   }
-  async function setModel(a: TeamAgent, model: string) {
-    if (!model || model === a.model) return;
-    const team = teamOf(a);
-    const currentRuntime = runtimeOf(a);
-    const mismatch = runtimeModelMismatch(currentRuntime, model);
-    if (!confirmAgentChange(
-      a,
-      `Switch model to ${short(model)}`,
-      'This updates the model and rebuilds the agent harness.',
-      [['model', a.model, model]],
-      [
-        'Write the selected model through the manager',
-        'Rebuild the agent harness so the new model is loaded',
-        ...(mismatch ? [`Keep the current runtime even though the selected model may not match it: ${mismatch}`] : []),
-      ],
-    )) return;
-    setBusy(`model ${a.name}`);
-    try {
-      await call('remote', `/model ${a.name} ${model}`, undefined, team);
-      await call('remote', `/agent ${a.name} rebuild`, undefined, team);
-      store.refresh(); setBusy(null);
-    } catch (err) { setBusy(`model change failed — ${err instanceof Error ? err.message : String(err)}`); setTimeout(() => setBusy(null), 4000); }
-  }
   function action(a: TeamAgent, act: string) {
     if (!act) return;
     const team = teamOf(a);
+    if ((act === 'Start' || act === 'Rebuild') && configDrafts[draftKeyFor(a)]) {
+      window.alert(`Apply or discard staged config for ${teamFor(a)}/${a.name} before ${act.toLowerCase()}ing it.`);
+      return;
+    }
     if (act === 'Delete') {
       if (window.confirm(`Delete agent "${a.name}"? Working files are left in place.`)) void run(`delete ${a.name}`, `/delete ${a.name}`, team);
       return;
@@ -277,89 +377,20 @@ export function AgentTable({ store, onProbe, probeBusy }: { store: FleetStore; o
     )) return;
     void run(`${act} ${a.name}`, `/agent ${a.name} ${act.toLowerCase()}`, team);
   }
-  async function setEffort(a: TeamAgent, effort: string) {
-    if (effort === effortOf(a)) return;
-    const team = teamOf(a);
-    if (!confirmAgentChange(
-      a,
-      `Set effort to ${effort || 'default'}`,
-      'This changes the reasoning effort and rebuilds the agent harness.',
-      [['effort', effortOf(a), effort || 'default']],
-      [
-        'Write reasoning-effort metadata',
-        'Rebuild the agent harness so the setting is picked up on launch',
-      ],
-    )) return;
-    setBusy(`effort ${a.name}`);
-    try {
-      await call('setAgentEffort', a.id, effort, team);
-      // Rebuild so the agent's harness picks up the new ID_AGENT_EFFORT on its next launch.
-      await call('remote', `/agent ${a.name} rebuild`, undefined, team);
-      store.refresh(); setBusy(null);
-    } catch (err) { setBusy(`effort change failed — ${err instanceof Error ? err.message : String(err)}`); setTimeout(() => setBusy(null), 4000); }
-  }
-  async function setSpeed(a: TeamAgent, speed: string) {
-    if (speed === speedOf(a)) return;
-    const team = teamOf(a);
-    if (!confirmAgentChange(
-      a,
-      `Set speed to ${speed}`,
-      'This changes output speed and rebuilds the agent harness.',
-      [['speed', speedOf(a), speed]],
-      [
-        'Write output-speed metadata',
-        'Rebuild the agent harness so the setting is picked up on launch',
-      ],
-    )) return;
-    setBusy(`speed ${a.name}`);
-    try {
-      await call('setAgentSpeed', a.id, speed, team);
-      // Rebuild so the agent's harness picks up the new ID_AGENT_SPEED on its next launch.
-      await call('remote', `/agent ${a.name} rebuild`, undefined, team);
-      store.refresh(); setBusy(null);
-    } catch (err) { setBusy(`speed change failed — ${err instanceof Error ? err.message : String(err)}`); setTimeout(() => setBusy(null), 4000); }
-  }
-  async function setRuntime(a: TeamAgent, runtime: string) {
-    const currentRuntime = runtimeOf(a);
-    if (!runtime || runtime === currentRuntime) return;
-    const team = teamOf(a);
-    const models = catalog[runtime] ?? [];
-    const model = !a.model || runtimeModelMismatch(runtime, a.model) ? models[0] ?? a.model : a.model;
-    const effects = [
-      'Write the selected runtime through the manager',
-      model && model !== a.model ? `Switch model to ${model} because the current model does not match the new runtime` : 'Keep the current model',
-      'Rebuild the agent harness so runtime/config changes take effect',
-    ];
-    if (!confirmAgentChange(
-      a,
-      `Switch runtime to ${runtimeLabel(runtime)}`,
-      'This may also switch the model and rebuild the agent harness.',
-      [
-        ['runtime', currentRuntime, runtime],
-        ...(model && model !== a.model ? [['model', a.model, model] as [string, string | undefined, string | undefined]] : []),
-      ],
-      effects,
-    )) return;
-    setBusy(`runtime ${a.name}`);
-    try {
-      await call('setAgentRuntime', a.id, runtime, team);
-      if (model && model !== a.model) await call('remote', `/model ${a.name} ${model}`, undefined, team);
-      store.refresh();
-      setTimeout(() => { try { modelRefs.current[a.id]?.showPicker?.(); } catch { /* no activation */ } }, 250);
-      await call('remote', `/agent ${a.name} rebuild`, undefined, team);
-      store.refresh(); setBusy(null);
-    } catch (err) { setBusy(`runtime change failed — ${err instanceof Error ? err.message : String(err)}`); setTimeout(() => setBusy(null), 4000); }
-  }
-
   const renderRow = (a: TeamAgent) => {
     const currentRuntime = runtimeOf(a);
-    const runtimeModels = catalog[currentRuntime ?? ''] ?? [];
-    const modelOpts = Array.from(new Set([a.model, ...runtimeModels].filter(Boolean))) as string[];
+    const draft = configDrafts[draftKeyFor(a)];
+    const displayRuntime = draft?.next.runtime ?? currentRuntime;
+    const displayModel = draft?.next.model ?? a.model;
+    const displayEffort = draft?.next.effort ?? effortOf(a);
+    const displaySpeed = draft?.next.speed ?? speedOf(a);
+    const runtimeModels = catalog[displayRuntime ?? ''] ?? [];
+    const modelOpts = Array.from(new Set([displayModel, ...runtimeModels].filter(Boolean))) as string[];
     const isLocal = (a.type ?? '') === 'claude' || RUNTIMES.includes(currentRuntime ?? '');
     const runtimeOpts = Array.from(new Set([currentRuntime, ...offerableRuntimes(providers, currentRuntime)].filter(Boolean))) as string[];
-    const mismatch = runtimeModelMismatch(currentRuntime, a.model);
+    const mismatch = runtimeModelMismatch(displayRuntime, displayModel);
     return (
-      <tr key={`${a.team ?? ''}-${a.id}`} className={sel?.id === a.id ? 'sel' : ''} onClick={() => setSelected(a.id)}>
+      <tr key={`${a.team ?? ''}-${a.id}`} className={`${sel?.id === a.id ? 'sel' : ''}${draft ? ' config-staged' : ''}`} onClick={() => setSelected(a.id)}>
         <td className="b">
           <button className={`star${isLead(a) ? ' on' : ''}`} title={isLead(a) ? `${a.name} is ${teamFor(a)}'s lead` : `Make ${a.name} the lead of ${teamFor(a)}`}
             onClick={(e) => { e.stopPropagation(); if (!isLead(a)) void makeLead(a); }} style={{ marginRight: 5 }}>{isLead(a) ? '★' : '☆'}</button>
@@ -368,7 +399,7 @@ export function AgentTable({ store, onProbe, probeBusy }: { store: FleetStore; o
         <td><span className={`dot ${statusClass(a.status)}`} /> {a.status}</td>
         <td onClick={(e) => e.stopPropagation()}>
           {isLocal ? (
-            <select className="cell-select" value={currentRuntime ?? ''} onChange={(e) => void setRuntime(a, e.target.value)}>
+            <select className="cell-select" value={displayRuntime ?? ''} onChange={(e) => stageRuntime(a, e.target.value)}>
               {runtimeOpts.map((r) => <option key={r} value={r}>{runtimeLabel(r)}</option>)}
             </select>
           ) : (
@@ -376,27 +407,27 @@ export function AgentTable({ store, onProbe, probeBusy }: { store: FleetStore; o
           )}
         </td>
         <td onClick={(e) => e.stopPropagation()}>
-          <select ref={(el) => { modelRefs.current[a.id] = el; }} className={`cell-select${mismatch ? ' mismatch' : ''}`} value={a.model ?? ''} onChange={(e) => void setModel(a, e.target.value)} title={mismatch ?? undefined}>
+          <select className={`cell-select${mismatch ? ' mismatch' : ''}`} value={displayModel ?? ''} onChange={(e) => stageConfig(a, { model: e.target.value })} title={mismatch ?? undefined}>
             {modelOpts.map((m) => <option key={m} value={m}>{short(m)}</option>)}
           </select>
           {mismatch ? <span className="warn-text" title={mismatch} style={{ marginLeft: 4, cursor: 'help' }}>⚠</span> : null}
         </td>
         <td onClick={(e) => e.stopPropagation()}>
-          {runtimeHasEffort(currentRuntime) ? (
-            <select className="cell-select" value={effortOf(a)} onChange={(e) => void setEffort(a, e.target.value)}
-              title={`Reasoning effort for the ${runtimeLabel(currentRuntime ?? '')} runtime — lower spends fewer subscription tokens per turn`}>
+          {runtimeHasEffort(displayRuntime) ? (
+            <select className="cell-select" value={displayEffort} onChange={(e) => stageConfig(a, { effort: e.target.value })}
+              title={`Reasoning effort for the ${runtimeLabel(displayRuntime ?? '')} runtime — lower spends fewer subscription tokens per turn`}>
               <option value="">default</option>
-              {effortOptions(currentRuntime).map((eff) => <option key={eff} value={eff}>{eff}</option>)}
+              {effortOptions(displayRuntime).map((eff) => <option key={eff} value={eff}>{eff}</option>)}
             </select>
           ) : (
             <span className="muted" title="local & cursor runtimes have no reasoning-effort setting">—</span>
           )}
         </td>
         <td onClick={(e) => e.stopPropagation()}>
-          {runtimeHasSpeed(currentRuntime) ? (
-            <select className="cell-select" value={speedOf(a)} onChange={(e) => void setSpeed(a, e.target.value)}
-              title={`Output speed for the ${runtimeLabel(currentRuntime ?? '')} runtime`}>
-              {speedOptions(currentRuntime).map((speed) => <option key={speed} value={speed}>{speed}</option>)}
+          {runtimeHasSpeed(displayRuntime) ? (
+            <select className="cell-select" value={displaySpeed} onChange={(e) => stageConfig(a, { speed: e.target.value })}
+              title={`Output speed for the ${runtimeLabel(displayRuntime ?? '')} runtime`}>
+              {speedOptions(displayRuntime).map((speed) => <option key={speed} value={speed}>{speed}</option>)}
             </select>
           ) : (
             <span className="muted" title="this runtime has no output-speed setting">—</span>
@@ -456,6 +487,15 @@ export function AgentTable({ store, onProbe, probeBusy }: { store: FleetStore; o
               </div>
             ))}
             {freshness.length === 0 ? <div className="muted small">Loading model freshness…</div> : null}
+          </div>
+        ) : null}
+        {configDraftList.length ? (
+          <div className="agent-config-draft">
+            <b>{configDraftList.length} staged config change{configDraftList.length === 1 ? '' : 's'}</b>
+            <span className="muted small">Apply reviews the full diff, blocks stale rows, and rebuilds each touched agent once.</span>
+            <span className="grow" />
+            <button className="btn small" disabled={!!busy} onClick={() => setConfigDrafts({})}>Discard</button>
+            <button className="btn primary small" disabled={!!busy} onClick={() => void applyConfigDrafts()}>Apply changes</button>
           </div>
         ) : null}
         <table className="grid">
