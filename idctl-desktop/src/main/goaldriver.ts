@@ -116,6 +116,13 @@ function activeAutopilotGoals(): Goal[] {
     .filter((g): g is Goal => !!g && g.status === 'active' && g.autopilot === true);
 }
 
+function saveGoalDriverMetadata(goalId: string, driver: NonNullable<Goal['driver']>): boolean {
+  const latest = getGoal(goalId);
+  if (!latest) return false;
+  saveGoal({ ...latest, driver });
+  return true;
+}
+
 function teamGoalInstructions(team: string, goals: Goal[]): string {
   if (!goals.length) return '';
   const lines = goals.map((g) => `- ${g.title || g.id} (${g.id}): ${clip(g.content || g.idea || '', 220)}`);
@@ -258,19 +265,16 @@ export async function runGoalDriverOnce(getClient: () => ManagerClient, rawCfg: 
       const result = await driveGoal(client, goal, cfg);
       summary.drivenGoals++;
       summary.tasksSpawned += result.spawned;
-      saveGoal({
-        ...goal,
-        driver: {
-          lastRunAt: Date.now(),
-          taskRefs: result.refs,
-          note: result.note,
-        },
+      saveGoalDriverMetadata(goal.id, {
+        lastRunAt: Date.now(),
+        taskRefs: result.refs,
+        note: result.note,
       });
     } catch (e) {
       const note = e instanceof Error ? e.message : String(e);
       summary.errors.push(`${goal.id}: ${note}`);
       try {
-        saveGoal({ ...goal, driver: { ...(goal.driver ?? {}), lastRunAt: Date.now(), note } });
+        saveGoalDriverMetadata(goal.id, { ...(goal.driver ?? {}), lastRunAt: Date.now(), note });
       } catch {
         /* best-effort */
       }

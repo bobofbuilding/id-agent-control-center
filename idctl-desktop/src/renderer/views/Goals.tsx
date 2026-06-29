@@ -15,6 +15,7 @@ interface Goal {
   createdAt: number; updatedAt: number;
 }
 type GoalSummary = { id: string; title: string; status: GoalStatus; agent?: string; team: string; updatedAt: number; autopilot?: boolean };
+type GoalField = 'title' | 'status' | 'autopilot' | 'content' | 'updatedAt';
 interface GoalDriverConfig { enabled: boolean; cadenceMs: number; maxOpenTasksPerGoal: number }
 interface GoalDriverSummary { enabled: boolean; consideredGoals: number; drivenGoals: number; tasksSpawned: number; teamsSynced: number; errors: string[] }
 
@@ -67,6 +68,35 @@ export function Goals({ store }: { store: FleetStore }) {
   const genAgent = (agent && store.agents.some((a) => a.name === agent) ? agent : coordinator);
   const okContent = (s: string) => { const t = (s || '').trim(); return t && t !== '(empty reply)' && t !== '(no reply)' ? t : ''; };
   const names = useMemo(() => store.agents.map((a) => a.name), [store.agents]);
+  const changedText = (before: string | number | boolean | undefined, after: string | number | boolean | undefined) => `${String(before ?? 'none')} -> ${String(after ?? 'none')}`;
+  function goalStamp(g: Goal): Record<GoalField, string | number | boolean | undefined> {
+    return { title: g.title, status: g.status, autopilot: !!g.autopilot, content: g.content, updatedAt: g.updatedAt };
+  }
+  async function ensureGoalFresh(g: Goal, action: string, fields: GoalField[] = ['updatedAt']): Promise<Goal | null> {
+    const current = await call<Goal | null>('goals:get', g.id).catch(() => null);
+    if (!current) {
+      window.alert(`${action} blocked: this goal no longer exists.`);
+      setDetail(null);
+      await reload();
+      return null;
+    }
+    const before = goalStamp(g);
+    const after = goalStamp(current);
+    const changed = fields.filter((field) => String(before[field] ?? '') !== String(after[field] ?? ''));
+    if (changed.length) {
+      window.alert([
+        `${action} blocked: "${g.title}" changed since this editor was opened.`,
+        '',
+        ...changed.map((field) => `- ${field}: ${field === 'content' ? 'changed' : changedText(before[field], after[field])}`),
+        '',
+        'The goal will refresh; review the current goal before applying another change.',
+      ].join('\n'));
+      setDetail(current);
+      await reload();
+      return null;
+    }
+    return current;
+  }
 
   async function reload() { setGoals(await call<GoalSummary[]>('goals:list', team).catch(() => [])); }
   useEffect(() => { void reload(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [team, store.lastUpdated, syncVersion]);
@@ -123,14 +153,18 @@ export function Goals({ store }: { store: FleetStore }) {
   async function refine() {
     const instr = refineInstr.trim();
     if (!detail || !instr) return;
-    const who = detail.agent && store.agents.some((a) => a.name === detail.agent) ? detail.agent : genAgent;
+    const base = await ensureGoalFresh(detail, `Refine goal ${detail.title}`, ['updatedAt']);
+    if (!base) return;
+    const who = base.agent && store.agents.some((a) => a.name === base.agent) ? base.agent : genAgent;
     const tok = ++genTok.current;
     setBusy(true); setMsg(`refining with ${who}…`);
     try {
-      const content = okContent(await call<string>('dispatch', `/ask ${who} ${qArg(REFINE_PROMPT(detail.content, instr))}`));
+      const content = okContent(await call<string>('dispatch', `/ask ${who} ${qArg(REFINE_PROMPT(base.content, instr))}`));
       if (genTok.current !== tok) return; // cancelled
       if (!content) { if (aliveRef.current) setMsg('agent returned an empty revision — kept the current goal'); return; }
-      const next: Goal = { ...detail, content, agent: who, updatedAt: Date.now() };
+      const current = await ensureGoalFresh(base, `Refine goal ${base.title}`, ['updatedAt']);
+      if (!current) return;
+      const next: Goal = { ...current, content, agent: who, updatedAt: Date.now() };
       await call('goals:save', next);
       if (!aliveRef.current) return;
       setDetail(next); setRefineInstr(''); setMsg('goal refined ✓');
@@ -148,17 +182,21 @@ export function Goals({ store }: { store: FleetStore }) {
     if (!detail) return;
     if (p.status && p.status !== detail.status && !window.confirm(`Change goal "${detail.title}" status to ${p.status}?\n\nThis writes the saved goal lifecycle state.`)) return;
     if (p.autopilot === true && !detail.autopilot && !window.confirm(`Enable Autopilot for "${detail.title}"?\n\nWhen the master driver is on, this goal can spawn or sync work on its cadence.`)) return;
-    const cur = (await call<Goal | null>('goals:get', detail.id).catch(() => null)) ?? detail;
+    const cur = await ensureGoalFresh(detail, `Update goal ${detail.title}`, ['updatedAt']);
+    if (!cur) return;
     const next = { ...cur, ...p, updatedAt: Date.now() };
     setDetail(next);
     await call('goals:save', next).catch(() => {});
     if (aliveRef.current) await reload();
   }
   async function patchDriver(p: Partial<GoalDriverConfig>) {
-    if (p.enabled === true && !driverCfg.enabled && !window.confirm('Enable the goal Autopilot master?\n\nActive goals with Autopilot on can spawn tasks or sync team instructions on the configured cadence.')) return;
     setDriverBusy(true);
     try {
-      const next = await call<GoalDriverConfig>('goalDriver:setConfig', { ...driverCfg, ...p });
+      const current = await call<GoalDriverConfig>('goalDriver:getConfig').catch(() => driverCfg);
+      const activeGoals = await call<GoalSummary[]>('goals:list').catch(() => goals);
+      const enabledCount = activeGoals.filter((g) => g.status === 'active' && g.autopilot).length;
+      if (p.enabled === true && !current.enabled && !window.confirm(`Enable the goal Autopilot master?\n\n${enabledCount} active goal${enabledCount === 1 ? '' : 's'} across all teams currently have Autopilot on. When enabled, the driver can spawn tasks or sync team instructions on its cadence.`)) return;
+      const next = await call<GoalDriverConfig>('goalDriver:setConfig', { ...current, ...p });
       if (!aliveRef.current) return;
       setDriverCfg({ ...DRIVER_DEFAULTS, ...(next ?? {}) });
       setMsg('goal driver settings saved');
@@ -169,7 +207,10 @@ export function Goals({ store }: { store: FleetStore }) {
     }
   }
   async function runDriverNow() {
-    if (!window.confirm('Run the goal driver now?\n\nThis can spawn task work and sync team instructions for active Autopilot goals.')) return;
+    const current = await call<GoalDriverConfig>('goalDriver:getConfig').catch(() => driverCfg);
+    const activeGoals = await call<GoalSummary[]>('goals:list').catch(() => goals);
+    const enabledCount = activeGoals.filter((g) => g.status === 'active' && g.autopilot).length;
+    if (!window.confirm(`Run the goal driver now?\n\nCurrent master: ${current.enabled ? 'enabled' : 'disabled'}\nActive Autopilot goals across all teams: ${enabledCount}\nTask cap per goal: ${current.maxOpenTasksPerGoal}\n\nThis can spawn task work and sync team instructions for active Autopilot goals.`)) return;
     setDriverBusy(true);
     setMsg('running goal driver...');
     try {
@@ -186,7 +227,9 @@ export function Goals({ store }: { store: FleetStore }) {
   }
   async function remove() {
     if (!detail) return;
-    await call('goals:remove', detail.id).catch(() => {});
+    const current = await ensureGoalFresh(detail, `Delete goal ${detail.title}`, ['updatedAt']);
+    if (!current) return;
+    await call('goals:remove', current.id).catch(() => {});
     setDetail(null); setConfirmDel(false); setMsg('goal deleted ✓');
     await reload();
   }
