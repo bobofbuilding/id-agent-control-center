@@ -19,6 +19,10 @@ export interface BrainPlan {
   notes?: string;
   mtime?: number; // plan file's last-modified time (epoch ms) — "last updated"
 }
+export interface BrainPlanStatusExpectation {
+  status?: string;
+  mtime?: number;
+}
 
 /** Resolve the brain plans dir from the projects root. Falls back to the saved
  *  `projectsRoot` setting (what the Projects page configures) when no explicit
@@ -166,7 +170,12 @@ export function createBrainPlan(title: string, content: string, configured?: str
   }
 }
 
-export function setBrainPlanStatus(file: string, status: string, configured?: string): { ok: boolean; from?: string; to?: string; error?: string } {
+export function setBrainPlanStatus(
+  file: string,
+  status: string,
+  configured?: string,
+  expected?: BrainPlanStatusExpectation,
+): { ok: boolean; from?: string; to?: string; error?: string; stale?: boolean; current?: { status?: string; mtime?: number } } {
   const dir = brainPlansDir(configured);
   if (!dir) return { ok: false, error: 'brain plans dir not found' };
   const safe = basename(String(file || ''));
@@ -176,6 +185,8 @@ export function setBrainPlanStatus(file: string, status: string, configured?: st
   const readme = join(dir, 'README.md');
   if (!existsSync(readme)) return { ok: false, error: 'README not found' };
   try {
+    const planPath = resolve(dir, safe);
+    const currentMtime = planPath.startsWith(resolve(dir)) && existsSync(planPath) ? statSync(planPath).mtimeMs : undefined;
     const lines = readFileSync(readme, 'utf8').split(/\r?\n/);
     let from: string | undefined;
     let changed = false;
@@ -185,6 +196,18 @@ export function setBrainPlanStatus(file: string, status: string, configured?: st
       const parts = line.split('|'); // ['', ' # ', ' [t](f) ', ' status ', ' effort ', ' notes ', '']
       if (parts.length < 6) continue; // not the expected table shape
       from = parts[3].trim();
+      const expectedStatus = String(expected?.status ?? '').trim();
+      const expectedMtime = typeof expected?.mtime === 'number' ? expected.mtime : undefined;
+      const statusChanged = !!expectedStatus && from !== expectedStatus;
+      const mtimeChanged = expectedMtime != null && (currentMtime == null || Math.abs(currentMtime - expectedMtime) > 0.5);
+      if (statusChanged || mtimeChanged) {
+        return {
+          ok: false,
+          error: 'plan changed since it was reviewed; refresh before writing status',
+          stale: true,
+          current: { status: from, mtime: currentMtime },
+        };
+      }
       parts[3] = ` ${label} `;
       lines[i] = parts.join('|');
       changed = true;

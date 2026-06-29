@@ -23,6 +23,8 @@ interface Plan {
 type PlanSummary = { id: string; title: string; status: PlanStatus; version: number; agent?: string; team: string; createdAt: number; updatedAt: number; tags?: string[] };
 type BrainPlan = { num?: string; title: string; file: string; status?: string; effort?: string; notes?: string; mtime?: number };
 type BrainPlansResp = { dir: string | null; plans: BrainPlan[] };
+type BrainPlanField = 'title' | 'status' | 'mtime';
+type DraftPlanField = 'title' | 'status' | 'version' | 'updatedAt' | 'content' | 'tags';
 type SortMode = 'recent' | 'title' | 'status';
 
 // Auto-decompose IPC shapes (mirror main/work.ts) for "compile into tasks".
@@ -142,7 +144,67 @@ export function Plans({ store }: { store: FleetStore }) {
   const [busyFile, setBusyFile] = useState<string | null>(null); // one brain-plan action at a time
   const [audit, setAudit] = useState<Record<string, { from?: string; to?: string; summary: string }>>({});
   const [blockers, setBlockers] = useState<Record<string, string>>({});
-  type StatusWrite = { ok: boolean; from?: string; to?: string; error?: string };
+  type StatusWrite = { ok: boolean; from?: string; to?: string; error?: string; stale?: boolean; current?: { status?: string; mtime?: number } };
+  const changedText = (before: string | number | undefined, after: string | number | undefined) => `${String(before || 'none')} -> ${String(after || 'none')}`;
+  function brainStamp(p: BrainPlan): Record<BrainPlanField, string | number | undefined> {
+    return { title: p.title, status: p.status ?? '', mtime: p.mtime };
+  }
+  async function ensureBrainPlanFresh(p: BrainPlan, action: string, fields: BrainPlanField[] = ['title', 'status', 'mtime'], quiet = false): Promise<BrainPlan | null> {
+    const current = (await call<BrainPlansResp>('brain:plans').catch(() => ({ dir: null, plans: [] }))).plans.find((x) => x.file === p.file) ?? null;
+    if (!current) {
+      if (!quiet) {
+        window.alert(`${action} blocked: this brain plan no longer exists in the live plan index.`);
+        await reloadBrain();
+      }
+      return null;
+    }
+    const before = brainStamp(p);
+    const after = brainStamp(current);
+    const changed = fields.filter((field) => String(before[field] ?? '') !== String(after[field] ?? ''));
+    if (changed.length) {
+      if (!quiet) {
+        window.alert([
+          `${action} blocked: "${p.title}" changed since this card was rendered.`,
+          '',
+          ...changed.map((field) => `- ${field}: ${changedText(before[field], after[field])}`),
+          '',
+          'Plans will refresh; review the current brain plan before applying another change.',
+        ].join('\n'));
+        await reloadBrain();
+      }
+      return null;
+    }
+    return current;
+  }
+  function draftStamp(p: Plan): Record<DraftPlanField, string | number | undefined> {
+    return { title: p.title, status: p.status, version: p.version, updatedAt: p.updatedAt, content: p.content, tags: JSON.stringify(p.tags ?? []) };
+  }
+  async function ensureDraftPlanFresh(p: Plan, action: string, fields: DraftPlanField[] = ['version', 'updatedAt']): Promise<Plan | null> {
+    const current = await call<Plan | null>('plans:get', p.id).catch(() => null);
+    if (!current) {
+      window.alert(`${action} blocked: this draft plan no longer exists.`);
+      await reload();
+      setDetail(null);
+      return null;
+    }
+    const before = draftStamp(p);
+    const after = draftStamp(current);
+    const changed = fields.filter((field) => String(before[field] ?? '') !== String(after[field] ?? ''));
+    if (changed.length) {
+      window.alert([
+        `${action} blocked: "${p.title}" changed since this editor was opened.`,
+        '',
+        ...changed.map((field) => `- ${field}: ${field === 'content' ? 'changed' : changedText(before[field], after[field])}`),
+        '',
+        'The draft will refresh; review the current plan before applying another change.',
+      ].join('\n'));
+      setDetail(current);
+      setTagInput((current.tags ?? []).join(', '));
+      await reload();
+      return null;
+    }
+    return current;
+  }
 
   // ── Unified "Work" pipeline: AUDIT → FIND BLOCKERS → COMPILE & DISPATCH ──────────
   // One button. The plan is first audited (real status refreshed), then scanned for
@@ -151,36 +213,45 @@ export function Plans({ store }: { store: FleetStore }) {
   async function auditCore(p: BrainPlan): Promise<string> {
     const who = genAgent;
     if (!who) return 'no agent to audit';
-    const got = await call<{ file: string; content: string } | null>('brain:plan', p.file).catch(() => null);
-    const reply = okContent(await call<string>('dispatch', `/ask ${who} ${qArg(AUDIT_PROMPT(p.title, got?.content ?? ''))}`));
+    const baseline = await ensureBrainPlanFresh(p, `Audit ${p.title}`);
+    if (!baseline) throw new Error('plan changed; refreshed');
+    const got = await call<{ file: string; content: string } | null>('brain:plan', baseline.file).catch(() => null);
+    const reply = okContent(await call<string>('dispatch', `/ask ${who} ${qArg(AUDIT_PROMPT(baseline.title, got?.content ?? ''))}`));
     const a = reply.indexOf('{'); const b = reply.lastIndexOf('}');
     const obj = a >= 0 && b > a ? (() => { try { return JSON.parse(reply.slice(a, b + 1)); } catch { return null; } })() : null;
     const status = String(obj?.status ?? '').trim();
     const summary = String(obj?.summary ?? '').trim() || reply.slice(0, 300);
-    if (!status) { if (aliveRef.current) setAudit((m) => ({ ...m, [p.file]: { summary } })); return 'no clear status'; }
-    const res = await call<StatusWrite>('brain:setPlanStatus', p.file, status).catch((): StatusWrite => ({ ok: false, error: 'write failed' }));
-    if (aliveRef.current) setAudit((m) => ({ ...m, [p.file]: { from: res.from, to: res.to, summary } }));
+    if (!status) { if (aliveRef.current) setAudit((m) => ({ ...m, [baseline.file]: { summary } })); return 'no clear status'; }
+    const fresh = await ensureBrainPlanFresh(baseline, `Audit ${baseline.title}`);
+    if (!fresh) throw new Error('plan changed while audit was running; refreshed');
+    const res = await call<StatusWrite>('brain:setPlanStatus', fresh.file, status, null, { status: fresh.status, mtime: fresh.mtime }).catch((): StatusWrite => ({ ok: false, error: 'write failed' }));
+    if (res.stale) { await reloadBrain(); throw new Error(res.error ?? 'plan changed while writing status; refreshed'); }
+    if (aliveRef.current) setAudit((m) => ({ ...m, [fresh.file]: { from: res.from, to: res.to, summary } }));
     await reloadBrain();
     return res.ok ? `${res.from} → ${res.to}` : 'audit (write failed)';
   }
   async function blockersCore(p: BrainPlan): Promise<string> {
     const who = genAgent;
     if (!who) return 'no agent';
-    const got = await call<{ file: string; content: string } | null>('brain:plan', p.file).catch(() => null);
-    const reply = okContent(await call<string>('dispatch', `/ask ${who} ${qArg(BLOCKERS_PROMPT(p.title, got?.content ?? ''))}`));
+    const baseline = await ensureBrainPlanFresh(p, `Scan blockers for ${p.title}`, ['title', 'mtime']);
+    if (!baseline) throw new Error('plan changed; refreshed');
+    const got = await call<{ file: string; content: string } | null>('brain:plan', baseline.file).catch(() => null);
+    const reply = okContent(await call<string>('dispatch', `/ask ${who} ${qArg(BLOCKERS_PROMPT(baseline.title, got?.content ?? ''))}`));
     // Route anything needing the USER to the Inbox as a decision (option or comment),
     // instead of dumping text into the plan card.
     const a = reply.indexOf('['); const b = reply.lastIndexOf(']');
     const arr = a >= 0 && b > a ? (() => { try { return JSON.parse(reply.slice(a, b + 1)); } catch { return []; } })() : [];
+    const fresh = await ensureBrainPlanFresh(baseline, `Scan blockers for ${baseline.title}`, ['title', 'mtime']);
+    if (!fresh) throw new Error('plan changed while blocker scan was running; refreshed');
     let added = 0;
     for (const it of (Array.isArray(arr) ? arr : [])) {
       const question = String(it?.question ?? '').trim();
       if (!question) continue;
       const options = (Array.isArray(it?.options) ? it.options : []).map((o: unknown) => String(o)).filter(Boolean);
-      await call('questions:add', { question, options: options.length ? options : ['Acknowledge'], agent: who, taskRef: p.title, taskTitle: p.title, team: store.team ?? 'default' }).catch(() => {});
+      await call('questions:add', { question, options: options.length ? options : ['Acknowledge'], agent: who, taskRef: fresh.title, taskTitle: fresh.title, team: store.team ?? 'default' }).catch(() => {});
       added++;
     }
-    if (aliveRef.current) setBlockers((m) => ({ ...m, [p.file]: added ? `${added} decision${added === 1 ? '' : 's'} → Inbox` : 'nothing needs you' }));
+    if (aliveRef.current) setBlockers((m) => ({ ...m, [fresh.file]: added ? `${added} decision${added === 1 ? '' : 's'} → Inbox` : 'nothing needs you' }));
     return added ? `${added} → Inbox` : 'no blockers';
   }
   // Compile the plan + dispatch to ALL active teams/agents — no selection. The primary
@@ -194,7 +265,9 @@ export function Plans({ store }: { store: FleetStore }) {
   // clusters run in parallel on different teams; each team balances its slice across its
   // own agents. Result: one plan, split across the whole active fleet — never duplicated.
   async function dispatchCore(p: BrainPlan): Promise<string> {
-    const got = await call<{ file: string; content: string } | null>('brain:plan', p.file).catch(() => null);
+    const baseline = await ensureBrainPlanFresh(p, `Dispatch ${p.title}`, ['title', 'mtime']);
+    if (!baseline) throw new Error('plan changed; refreshed');
+    const got = await call<{ file: string; content: string } | null>('brain:plan', baseline.file).catch(() => null);
     // Phase 3 (CC refactor): hand the plan to the PRIMARY LEAD to decompose, prune already-done
     // work, and delegate through its secondary leads — instead of the app mechanically partitioning
     // and dispatching it (which re-created completed work and burned tokens). Mechanical path below
@@ -203,19 +276,23 @@ export function Plans({ store }: { store: FleetStore }) {
     const lead = hier.primary?.agent;
     const leadOnline = !!lead && store.allAgents.some((a) => a.name === lead && !!a.status && !/stop|offline|dead|exit|error|crash|down|disabled|sleep/i.test(a.status));
     if (lead && leadOnline) {
-      const prompt = `You are the primary lead. Work this plan end to end by DELEGATING through your secondary leads (researcher, coder) to the right teams — don't do it all yourself.\n\n# ${p.title}\n\n${got?.content ?? ''}\n\nHow to run it:\n1. FIRST check what is ALREADY DONE (inspect the codebase / brain). Do NOT create tasks to re-build or re-verify completed work — skip anything already shipped.\n2. Decompose only the REMAINING work into concrete tasks with clear owners + dependencies.\n3. Delegate: research/analysis → researcher, build/ops → coder; they assign to their team leads/agents. Create real tasks (\`/task create "<title>" --owner <agent> --description "<what + expected output>"\`) and dispatch.\n4. Keep it lean — one task per real piece of work, no duplicate verify-passes.\n\nReply with a short summary of what you delegated and to whom.`;
+      const fresh = await ensureBrainPlanFresh(baseline, `Dispatch ${baseline.title}`, ['title', 'mtime']);
+      if (!fresh) throw new Error('plan changed before dispatch; refreshed');
+      const prompt = `You are the primary lead. Work this plan end to end by DELEGATING through your secondary leads (researcher, coder) to the right teams — don't do it all yourself.\n\n# ${fresh.title}\n\n${got?.content ?? ''}\n\nHow to run it:\n1. FIRST check what is ALREADY DONE (inspect the codebase / brain). Do NOT create tasks to re-build or re-verify completed work — skip anything already shipped.\n2. Decompose only the REMAINING work into concrete tasks with clear owners + dependencies.\n3. Delegate: research/analysis → researcher, build/ops → coder; they assign to their team leads/agents. Create real tasks (\`/task create "<title>" --owner <agent> --description "<what + expected output>"\`) and dispatch.\n4. Keep it lean — one task per real piece of work, no duplicate verify-passes.\n\nReply with a short summary of what you delegated and to whom.`;
       // Fire-and-forget — the lead decomposes + delegates in the BACKGROUND (don't block the UI
       // waiting up to 15 min for its full reply).
       await call('dispatch:start', `/ask ${lead} ${qArg(prompt)}`).catch(() => {});
       return `handed to ${lead} to decompose + delegate (working in background)`;
     }
     // ---- fallback: mechanical decompose + partition + dispatch (no primary lead online) ----
-    const obj = `Implement this plan, end to end:\n\n# ${p.title}\n\n${got?.content ?? ''}`;
+    const obj = `Implement this plan, end to end:\n\n# ${baseline.title}\n\n${got?.content ?? ''}`;
     const who = genAgent;
     if (!who) return 'no agent to compile';
     // 1) Decompose ONCE → sub-tasks (+ dependency edges).
     const dec = await call<DecomposeResult>('work:decompose', obj, who).catch((): DecomposeResult => ({ ok: false, subtasks: [], raw: '', error: 'decompose failed' }));
     if (!dec.ok || !dec.subtasks.length) return dec.error || 'could not split into tasks';
+    const fresh = await ensureBrainPlanFresh(baseline, `Dispatch ${baseline.title}`, ['title', 'mtime']);
+    if (!fresh) throw new Error('plan changed while decomposition was running; refreshed');
     const subs = dec.subtasks;
     const N = subs.length;
     // 2) Active teams with a running lead + their capacity (running-agent count).
@@ -260,41 +337,47 @@ export function Plans({ store }: { store: FleetStore }) {
   // One button → all three phases, single live toast.
   async function runWork(p: BrainPlan) {
     if (busyFile) return;
-    if (!window.confirm(`Work plan "${p.title}" now?\n\nThis audits and may rewrite the plan status, creates blocker questions, and delegates remaining work to agents or teams.`)) return;
-    setBusyFile(p.file);
-    const t = toast({ kind: 'progress', text: `Working “${p.title}” — auditing status…` });
+    const fresh = await ensureBrainPlanFresh(p, `Work ${p.title}`);
+    if (!fresh) return;
+    if (!window.confirm(`Work plan "${fresh.title}" now?\n\nThis audits and may rewrite the plan status, creates blocker questions, and delegates remaining work to agents or teams.`)) return;
+    setBusyFile(fresh.file);
+    const t = toast({ kind: 'progress', text: `Working “${fresh.title}” — auditing status…` });
     try {
-      const a = await auditCore(p);
-      t.update({ kind: 'progress', text: `Working “${p.title}” — scanning for blockers… (${a})` });
-      const b = await blockersCore(p);
-      t.update({ kind: 'progress', text: `Working “${p.title}” — handing to the lead to decompose & delegate…` });
-      const d = await dispatchCore(p);
-      t.update({ kind: 'success', text: `“${p.title}” ✓ audited (${a}) · ${b} · ${d}` });
+      const a = await auditCore(fresh);
+      t.update({ kind: 'progress', text: `Working “${fresh.title}” — scanning for blockers… (${a})` });
+      const b = await blockersCore(fresh);
+      t.update({ kind: 'progress', text: `Working “${fresh.title}” — handing to the lead to decompose & delegate…` });
+      const d = await dispatchCore(fresh);
+      t.update({ kind: 'success', text: `“${fresh.title}” ✓ audited (${a}) · ${b} · ${d}` });
       if (aliveRef.current) setMsg(`audited (${a}) · ${b} · ${d}`);
     } catch (err) {
       const m = err instanceof Error ? err.message : String(err);
-      t.update({ kind: 'error', text: `“${p.title}” work failed: ${m}` });
+      t.update({ kind: 'error', text: `“${fresh.title}” work failed: ${m}` });
       if (aliveRef.current) setMsg(`work failed: ${m}`);
     } finally { if (aliveRef.current) setBusyFile(null); }
   }
 
   async function setBrainPending(p: BrainPlan) {
-    if (!window.confirm(`Set "${p.title}" back to PENDING?\n\nThis writes the live brain plan status and can make it eligible for future work loops.`)) return;
-    setBusyFile(p.file); setMsg(`marking “${p.title}” pending…`);
+    const fresh = await ensureBrainPlanFresh(p, `Set ${p.title} pending`);
+    if (!fresh) return;
+    if (!window.confirm(`Set "${fresh.title}" back to PENDING?\n\nThis writes the live brain plan status and can make it eligible for future work loops.`)) return;
+    setBusyFile(fresh.file); setMsg(`marking “${fresh.title}” pending…`);
     try {
-      const res = await call<StatusWrite>('brain:setPlanStatus', p.file, 'PENDING').catch((): StatusWrite => ({ ok: false, error: 'write failed' }));
-      if (aliveRef.current) setMsg(res.ok ? `“${p.title}” → ⏳ PENDING ✓` : `failed: ${res.error ?? 'n/a'}`);
+      const res = await call<StatusWrite>('brain:setPlanStatus', fresh.file, 'PENDING', null, { status: fresh.status, mtime: fresh.mtime }).catch((): StatusWrite => ({ ok: false, error: 'write failed' }));
+      if (aliveRef.current) setMsg(res.ok ? `“${fresh.title}” → ⏳ PENDING ✓` : `failed: ${res.error ?? 'n/a'}`);
       await reloadBrain();
     } finally { if (aliveRef.current) setBusyFile(null); }
   }
   // Mark a brain plan DONE directly (writes the status back to the plan file + index). Done
   // plans auto-move to the "Archived · Done" group below.
   async function setBrainDone(p: BrainPlan) {
-    if (!window.confirm(`Mark "${p.title}" DONE?\n\nThis writes the live brain plan status and moves it into the done/archive group.`)) return;
-    setBusyFile(p.file); setMsg(`marking “${p.title}” done…`);
+    const fresh = await ensureBrainPlanFresh(p, `Mark ${p.title} done`);
+    if (!fresh) return;
+    if (!window.confirm(`Mark "${fresh.title}" DONE?\n\nThis writes the live brain plan status and moves it into the done/archive group.`)) return;
+    setBusyFile(fresh.file); setMsg(`marking “${fresh.title}” done…`);
     try {
-      const res = await call<StatusWrite>('brain:setPlanStatus', p.file, 'DONE').catch((): StatusWrite => ({ ok: false, error: 'write failed' }));
-      if (aliveRef.current) setMsg(res.ok ? `“${p.title}” → ✅ DONE ✓` : `failed: ${res.error ?? 'n/a'}`);
+      const res = await call<StatusWrite>('brain:setPlanStatus', fresh.file, 'DONE', null, { status: fresh.status, mtime: fresh.mtime }).catch((): StatusWrite => ({ ok: false, error: 'write failed' }));
+      if (aliveRef.current) setMsg(res.ok ? `“${fresh.title}” → ✅ DONE ✓` : `failed: ${res.error ?? 'n/a'}`);
       await reloadBrain();
     } finally { if (aliveRef.current) setBusyFile(null); }
   }
@@ -349,9 +432,11 @@ export function Plans({ store }: { store: FleetStore }) {
       const content = okContent(await call<string>('dispatch', `/ask ${who} ${qArg(UPDATE_PROMPT(base.content, instr))}`));
       if (genTok.current !== tok) return;
       if (!content) { if (aliveRef.current) setMsg('agent returned an empty revision — kept the current version'); return; }
+      const current = await ensureDraftPlanFresh(base, `Update plan ${base.title}`, ['version', 'updatedAt', 'content']);
+      if (!current) return;
       const now = Date.now();
-      const version = base.version + 1;
-      const next: Plan = { ...base, content, version, agent: who, revisions: [...base.revisions, { version, at: now, note: instr, content }], updatedAt: now };
+      const version = current.version + 1;
+      const next: Plan = { ...current, content, version, agent: who, revisions: [...current.revisions, { version, at: now, note: instr, content }], updatedAt: now };
       await call('plans:save', next);
       if (!aliveRef.current) return;
       setDetail(next); setUpdInstr(''); setViewVer(null); setMsg(`updated to v${version} ✓`);
@@ -384,6 +469,7 @@ export function Plans({ store }: { store: FleetStore }) {
    *  visible so you can finalize it and Promote it into the live brain plans (→ ⏳ pending). */
   async function patchPlan(p: Partial<Plan>) {
     if (!detail) return;
+    if (p.status && p.status !== detail.status && !window.confirm(`Change draft plan "${detail.title}" status to ${p.status}?\n\nThis writes the saved draft lifecycle state.`)) return;
     const cur = (await call<Plan | null>('plans:get', detail.id).catch(() => null)) ?? detail;
     const next: Plan = { ...cur, ...p, updatedAt: Date.now() };
     setDetail(next);
@@ -396,15 +482,18 @@ export function Plans({ store }: { store: FleetStore }) {
   // note linking the new plan. This is the draft → "active plan (pending)" handoff.
   async function promoteDraft() {
     if (!detail) return;
-    if (!window.confirm(`Promote "${detail.title}" to a live brain plan?\n\nThis writes a new brain plan at PENDING and marks the draft as promoted.`)) return;
-    setBusy(true); setMsg(`promoting “${clip(detail.title, 40)}” to a live plan…`);
+    const current = await ensureDraftPlanFresh(detail, `Promote plan ${detail.title}`, ['title', 'status', 'version', 'updatedAt', 'content', 'tags']);
+    if (!current) return;
+    if (!window.confirm(`Promote "${current.title}" to a live brain plan?\n\nThis writes a new brain plan at PENDING and marks the draft as promoted.`)) return;
+    setBusy(true); setMsg(`promoting “${clip(current.title, 40)}” to a live plan…`);
     try {
-      const res = await call<{ ok: boolean; file?: string; num?: string; committed?: boolean; error?: string }>('brain:createPlan', detail.title, detail.content);
+      const res = await call<{ ok: boolean; file?: string; num?: string; committed?: boolean; error?: string }>('brain:createPlan', current.title, current.content);
       if (!res?.ok) { if (aliveRef.current) setMsg(`promote failed: ${res?.error ?? 'could not write the brain plan'}`); return; }
       // Keep the draft VISIBLE as a finalized, promoted record (status done) + tag it with the
       // brain plan number so it links to its live counterpart (and can't be re-promoted into a dupe).
       const tag = `→ plan ${res.num}`;
-      const filed: Plan = { ...detail, status: 'done', tags: [...new Set([...(detail.tags ?? []), tag])], updatedAt: Date.now() };
+      const latest = (await call<Plan | null>('plans:get', current.id).catch(() => null)) ?? current;
+      const filed: Plan = { ...latest, status: 'done', tags: [...new Set([...(latest.tags ?? []), tag])], updatedAt: Date.now() };
       await call('plans:save', filed).catch(() => {});
       setDetail(filed);
       await reloadBrain();
@@ -416,7 +505,9 @@ export function Plans({ store }: { store: FleetStore }) {
   }
   async function remove() {
     if (!detail) return;
-    await call('plans:remove', detail.id).catch(() => {});
+    const current = await ensureDraftPlanFresh(detail, `Delete plan ${detail.title}`, ['version', 'updatedAt']);
+    if (!current) return;
+    await call('plans:remove', current.id).catch(() => {});
     setDetail(null); setConfirmDel(false); setMsg('plan deleted ✓');
     await reload();
   }

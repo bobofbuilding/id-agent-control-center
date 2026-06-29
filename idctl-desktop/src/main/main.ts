@@ -534,7 +534,12 @@ async function appCall(method: string, args: unknown[]): Promise<unknown> {
     case 'brain:plan':
       return getBrainPlan(args[0] as string, args[1] as string | undefined);
     case 'brain:setPlanStatus':
-      return setBrainPlanStatus(args[0] as string, args[1] as string, args[2] as string | undefined);
+      return setBrainPlanStatus(
+        args[0] as string,
+        args[1] as string,
+        args[2] == null ? undefined : String(args[2]),
+        args[3] as { status?: string; mtime?: number } | undefined,
+      );
     case 'brain:createPlan':
       return createBrainPlan(args[0] as string, args[1] as string, args[2] as string | undefined);
     // Loops: saved sequential agent→task chains (definition + last-run results).
