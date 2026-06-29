@@ -21,8 +21,20 @@ type TeamAgentsGroup = { team: string; agents: Agent[] };
 type HrHierarchy = { primary: { team: string; agent: string } | null; coordinators: Record<string, string> };
 type OrgCfg = { enabled?: boolean; autoRebuild?: boolean };
 type TeamBlueprint = { id: string; team: string; label: string; description: string; spec: string };
+type BlueprintCoverage = TeamBlueprint & { present: number; total: number; missing: string[]; complete: boolean };
+type LeadershipBackbone = {
+  ready: boolean;
+  missingAgents: string[];
+  primaryOk: boolean;
+  coordinatorOk: boolean;
+  primaryLabel: string;
+  coordinatorLabel: string;
+};
 
 const PRIMARY_TEAM = 'default';
+const DEFAULT_LEAD = 'lead';
+const DEFAULT_VALIDATORS = ['coder', 'researcher'];
+const DEFAULT_BACKBONE_AGENTS = [DEFAULT_LEAD, ...DEFAULT_VALIDATORS];
 const RECOMMENDED_TEAM_BLUEPRINTS: TeamBlueprint[] = [
   {
     id: 'default-leadership',
@@ -118,6 +130,41 @@ function hrAgentKey(a: HrAgentCandidate, fallbackTeam = 'default'): string {
 }
 function sortedKey(values: string[]): string {
   return [...new Set(values.map(String).filter(Boolean))].sort().join('|');
+}
+
+function blueprintAgentNames(bp: TeamBlueprint): string[] {
+  return [...bp.spec.matchAll(/-\s+\*\*([^*]+)\*\*/g)].map((m) => slugName(m[1])).filter(Boolean);
+}
+
+function blueprintCoverage(agents: HrAgentCandidate[], bp: TeamBlueprint): BlueprintCoverage {
+  const existing = new Set(agents.filter((a) => (a.team ?? PRIMARY_TEAM) === bp.team).map((a) => slugName(a.name)));
+  const expected = blueprintAgentNames(bp);
+  const missing = expected.filter((name) => !existing.has(name));
+  return { ...bp, total: expected.length, present: expected.length - missing.length, missing, complete: expected.length > 0 && missing.length === 0 };
+}
+
+function assessLeadershipBackbone(agents: HrAgentCandidate[], hierarchy: HrHierarchy): LeadershipBackbone {
+  const defaultAgents = new Set(agents.filter((a) => (a.team ?? PRIMARY_TEAM) === PRIMARY_TEAM).map((a) => slugName(a.name)));
+  const missingAgents = DEFAULT_BACKBONE_AGENTS.filter((name) => !defaultAgents.has(name));
+  const primaryOk = hierarchy.primary?.team === PRIMARY_TEAM && hierarchy.primary.agent === DEFAULT_LEAD;
+  const coordinator = hierarchy.coordinators[PRIMARY_TEAM] ?? (hierarchy.primary?.team === PRIMARY_TEAM ? hierarchy.primary.agent : '');
+  const coordinatorOk = coordinator === DEFAULT_LEAD;
+  return {
+    ready: missingAgents.length === 0 && primaryOk && coordinatorOk,
+    missingAgents,
+    primaryOk,
+    coordinatorOk,
+    primaryLabel: primaryLabel(hierarchy.primary),
+    coordinatorLabel: coordinator ? `${PRIMARY_TEAM}/${coordinator}` : '(none)',
+  };
+}
+
+function leadershipBackboneIssues(backbone: LeadershipBackbone): string[] {
+  return [
+    ...backbone.missingAgents.map((name) => `${PRIMARY_TEAM}/${name}`),
+    ...(backbone.coordinatorOk ? [] : [`coordinator ${backbone.coordinatorLabel} -> ${PRIMARY_TEAM}/${DEFAULT_LEAD}`]),
+    ...(backbone.primaryOk ? [] : [`primary ${backbone.primaryLabel} -> ${PRIMARY_TEAM}/${DEFAULT_LEAD}`]),
+  ];
 }
 function agentNameKey(agents: Agent[]): string {
   return sortedKey(agents.map((a) => slugName(a.name)));
@@ -1126,6 +1173,7 @@ export function Teams({ store }: { store: FleetStore }) {
           activeTeams={activeTeamNames}
           existingAgents={existingAgentsByTeam}
           fleetAgents={store.allAgents.length ? store.allAgents : store.agents.map((a) => ({ ...a, team: activeTeam }))}
+          hierarchy={hier}
           hrOwner={hrOwner}
           providers={providers}
           modelCatalog={modelCatalog}
@@ -1418,6 +1466,7 @@ function TeamBuilder({
   activeTeams,
   existingAgents,
   fleetAgents,
+  hierarchy,
   hrOwner,
   providers,
   modelCatalog,
@@ -1436,6 +1485,7 @@ function TeamBuilder({
   existingAgents: Record<string, string[]>;
   /** Holistic active + inactive fleet roster, across teams, for HR/AI planning context. */
   fleetAgents: HrAgentCandidate[];
+  hierarchy: HrHierarchy;
   /** Preferred HR manager helper; may live in another team. */
   hrOwner?: { name: string; team?: string } | null;
   providers: ProviderRow[];
@@ -1535,6 +1585,10 @@ function TeamBuilder({
   const toCreate = named.filter((r) => !existingInTeam.has(r.slug));
   const locked = building || aiBusy;
   const canBuild = !locked && Boolean(targetTeam) && !isReservedName(targetTeam) && toCreate.length > 0 && reserved.length === 0 && dupes.length === 0;
+  const leadershipBackbone = useMemo(() => assessLeadershipBackbone(fleetAgents, hierarchy), [fleetAgents, hierarchy]);
+  const leadershipIssues = leadershipBackboneIssues(leadershipBackbone);
+  const blueprintCoverages = useMemo(() => RECOMMENDED_TEAM_BLUEPRINTS.map((bp) => blueprintCoverage(fleetAgents, bp)), [fleetAgents]);
+  const targetNeedsBackbone = Boolean(targetTeam) && targetTeam !== PRIMARY_TEAM && !leadershipBackbone.ready;
 
   // Live deterministic parse as the user types a spec — until they hand-edit or AI runs.
   useEffect(() => {
@@ -1652,6 +1706,7 @@ function TeamBuilder({
     hierarchy: HrHierarchy;
     hierarchyStamp: string;
     relayStamp: string;
+    leadershipBackbone: LeadershipBackbone;
   };
   async function preflightBuildTarget(): Promise<BuilderPreflight | null> {
     setError('');
@@ -1683,11 +1738,13 @@ function TeamBuilder({
         .then((r) => r.delegates_to)
         .catch(() => null);
     }
+    const freshFleetAgents = groupsNow.flatMap((g) => g.agents.map((a) => ({ ...a, team: g.team })));
     return {
       targetTeam,
       hierarchy: hierarchyNow,
       hierarchyStamp: hierarchyStamp(hierarchyNow),
       relayStamp: relayKey(relayBefore),
+      leadershipBackbone: assessLeadershipBackbone(freshFleetAgents, hierarchyNow),
     };
   }
 
@@ -1704,12 +1761,17 @@ function TeamBuilder({
       return;
     }
     const postSteps = [
-      coordinate ? "make the starred lead this team's coordinator, write the coordination preset, and rebuild that lead" : '',
+      coordinate ? (targetTeam === PRIMARY_TEAM
+        ? 'make the starred lead the default primary, write the coordination preset, and rebuild that lead'
+        : "make the starred lead this team's coordinator, write the coordination preset, and rebuild that lead") : '',
       relayMode !== 'permissive' ? `set cross-team relay to ${describeRelay(relayPayload)}` : '',
     ].filter(Boolean);
     const preflight = await preflightBuildTarget();
     if (!preflight) return;
-    if (!window.confirm(`Build ${batch.length} agent${batch.length === 1 ? '' : 's'} in ${targetTeam}?\n\nThis onboards and starts new agents${heartbeat ? ', adds heartbeats' : ''}${probeAfter ? ', and probes them' : ''}.${postSteps.length ? `\n\nAfter build it will also ${postSteps.join('; ')}.` : ''}`)) return;
+    const backboneWarning = targetTeam !== PRIMARY_TEAM && !preflight.leadershipBackbone.ready
+      ? `\n\nDefault leadership return path is incomplete:\n- ${leadershipBackboneIssues(preflight.leadershipBackbone).join('\n- ')}\n\nContinue only if you intend to build this team before wiring the default primary and validators.`
+      : '';
+    if (!window.confirm(`Build ${batch.length} agent${batch.length === 1 ? '' : 's'} in ${targetTeam}?\n\nThis onboards and starts new agents${heartbeat ? ', adds heartbeats' : ''}${probeAfter ? ', and probes them' : ''}.${postSteps.length ? `\n\nAfter build it will also ${postSteps.join('; ')}.` : ''}${backboneWarning}`)) return;
     setBuilding(true); onBusy(true); setError(''); setPost({});
     onMessage(`adding ${batch.length} new agent(s) to ${targetTeam}${alreadyThere.length ? ` (${alreadyThere.length} already there)` : ''}…`);
     // Freeze a plan per agent so a later "retry" re-runs the exact same spec.
@@ -1755,6 +1817,7 @@ function TeamBuilder({
           throw new Error(`${preflight.targetTeam}/${leadName} is not in the current roster after build`);
         }
         await call('coordinator:set', targetTeam, leadName);
+        if (targetTeam === PRIMARY_TEAM) await call('coordinator:setPrimary', targetTeam, leadName);
         await call('agent:setInstructions', leadName, preset, targetTeam);
         await call('rebuildAgent', leadName, targetTeam).catch(() => {});
         setPost((p) => ({ ...p, coord: 'ok', leadName }));
@@ -1812,6 +1875,31 @@ function TeamBuilder({
         <div className="create-team-layout">
           {/* LEFT: describe + batch options + coordination/relay */}
           <div>
+            <div className="preflight-box" style={{ marginTop: 0, marginBottom: 12, padding: '10px 12px' }}>
+              <div className="row-actions" style={{ alignItems: 'center', gap: 8 }}>
+                <b className="small">Preloaded teams</b>
+                <span className="grow" />
+                <span className={`small ${leadershipBackbone.ready ? 'ok-text' : 'warn-text'}`}>
+                  default leadership: {leadershipBackbone.ready ? 'ready' : 'incomplete'}
+                </span>
+              </div>
+              <div className="chips" style={{ marginTop: 8 }}>
+                {blueprintCoverages.map((bp) => (
+                  <button key={bp.id} className={`chip${bp.complete ? ' tag' : ''}`} disabled={locked} title={bp.complete ? `${bp.label} is already present` : `Missing: ${bp.missing.join(', ') || 'unknown'}`} onClick={() => applyStartSource(`bp:${bp.id}`)}>
+                    {bp.complete ? '✓ ' : '＋ '}{bp.label} {bp.present}/{bp.total}
+                  </button>
+                ))}
+              </div>
+              {!leadershipBackbone.ready ? (
+                <div className="warn-text small" style={{ marginTop: 6 }}>
+                  Missing return-path pieces: {leadershipIssues.join(', ')}
+                </div>
+              ) : (
+                <div className="muted small" style={{ marginTop: 6 }}>
+                  primary {leadershipBackbone.primaryLabel} · coordinator {leadershipBackbone.coordinatorLabel}
+                </div>
+              )}
+            </div>
             <div className="row-actions" style={{ gap: 6, marginBottom: 6, alignItems: 'center' }}>
               <span className="muted small">start from</span>
               <select className="cell-select" disabled={locked} value="" onChange={(e) => {
@@ -1929,6 +2017,7 @@ function TeamBuilder({
             {usingNewTeam && newTeam && targetTeam !== newTeam ? <p className="muted small">Will create as <span className="mono">{targetTeam}</span>.</p> : null}
             {usingNewTeam && isReservedName(targetTeam) ? <p className="status-error small"><span className="mono">{targetTeam}</span> is a reserved word — choose another team name.</p> : null}
             {usingNewTeam && teamExists ? <p className="warn-text small">Team <span className="mono">{targetTeam}</span> exists — these agents will be added to it.</p> : null}
+            {targetNeedsBackbone ? <p className="warn-text small">Default return path incomplete — build will ask before adding <span className="mono">{targetTeam}</span>.</p> : null}
 
             <div className="row-actions" style={{ justifyContent: 'space-between', alignItems: 'center', margin: '12px 0 6px' }}>
               <span className="muted small">roster — ★ marks the lead; ▸ for persona &amp; skills</span>
@@ -2041,7 +2130,7 @@ function TeamBuilder({
               <div className="onboard-step" style={{ gridTemplateColumns: '26px minmax(140px, 1fr) minmax(0, 2fr)' }}>
                 <span className={`step-dot ${postCls(post.coord)}`}>{postMark(post.coord)}</span>
                 <span className="step-label mono">coordinator</span>
-                <span className={`small ${post.coord === 'failed' ? 'status-error' : 'muted'}`}>{post.coord === 'failed' ? post.coordErr : `${post.leadName ?? 'lead'} → team coordinator + preset`}</span>
+                <span className={`small ${post.coord === 'failed' ? 'status-error' : 'muted'}`}>{post.coord === 'failed' ? post.coordErr : targetTeam === PRIMARY_TEAM ? `${post.leadName ?? 'lead'} → default primary + preset` : `${post.leadName ?? 'lead'} → team coordinator + preset`}</span>
               </div>
             ) : null}
             {post.relay ? (
