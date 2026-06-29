@@ -119,6 +119,9 @@ function describePilotChanges(before: HeadroomPilotSettings, afterDraft: Headroo
   push('Safety mode', HEADROOM_SAFETY_LABEL[before.telemetry], HEADROOM_SAFETY_LABEL[after.telemetry]);
   return rows;
 }
+function pilotStamp(pilot: HeadroomPilotSettings): string {
+  return JSON.stringify(normalizePilot(pilot));
+}
 
 export function Health({ store, navigate }: { store: FleetStore; navigate?: (view: string) => void }) {
   const [probing, setProbing] = useState<string | null>(null);
@@ -188,6 +191,17 @@ export function Health({ store, navigate }: { store: FleetStore; navigate?: (vie
     const next = normalizePilot(pilotDraft);
     const changes = describePilotChanges(pilot, next);
     if (!changes.length) return;
+    const reviewedPilot = await call<HeadroomPilotSettings>('headroom:pilot').catch(() => null);
+    if (!reviewedPilot) {
+      window.alert('Could not verify the current Headroom pilot policy before applying. Refresh Health and try again.');
+      return;
+    }
+    if (pilotStamp(reviewedPilot) !== pilotStamp(pilot)) {
+      setPilot(reviewedPilot);
+      setPilotDraft(reviewedPilot);
+      window.alert('Headroom pilot policy changed since this page rendered. Health refreshed the current policy; review and stage the change again.');
+      return;
+    }
     const ok = window.confirm([
       'Apply Headroom pilot policy?',
       '',
@@ -197,6 +211,17 @@ export function Health({ store, navigate }: { store: FleetStore; navigate?: (vie
       'This stores local pilot policy and can affect future Headroom routing choices. It does not install Headroom, start the proxy, or mutate Brain facts.',
     ].join('\n'));
     if (!ok) return;
+    const latestPilot = await call<HeadroomPilotSettings>('headroom:pilot').catch(() => null);
+    if (!latestPilot) {
+      window.alert('Could not verify the Headroom pilot policy after the review prompt. No policy was written.');
+      return;
+    }
+    if (pilotStamp(latestPilot) !== pilotStamp(pilot)) {
+      setPilot(latestPilot);
+      setPilotDraft(latestPilot);
+      window.alert('Headroom pilot policy changed after the review prompt. No policy was written; review the refreshed policy and try again.');
+      return;
+    }
     setPilotSaving(true);
     try {
       const saved = await call<HeadroomPilotSettings>('headroom:setPilot', next);

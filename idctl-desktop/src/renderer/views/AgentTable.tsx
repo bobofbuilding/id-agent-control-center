@@ -471,7 +471,6 @@ export function AgentTable({ store, onProbe, probeBusy, navigate }: { store: Fle
     }
     const fresh = await ensureAgentFresh(a, act.toLowerCase());
     if (!fresh) return;
-    const team = teamOf(fresh);
     if (act === 'Delete') {
       if (confirmAgentChange(
         fresh,
@@ -479,7 +478,11 @@ export function AgentTable({ store, onProbe, probeBusy, navigate }: { store: Fle
         'This removes the agent from the manager roster. Working files are left in place.',
         [],
         ['Remove this agent from future routing and Health views'],
-      )) await run(`delete ${fresh.name}`, `/delete ${fresh.name}`, team);
+      )) {
+        const afterConfirm = await ensureAgentFresh(fresh, 'deleting after review');
+        if (!afterConfirm) return;
+        await run(`delete ${afterConfirm.name}`, `/delete ${afterConfirm.name}`, teamOf(afterConfirm));
+      }
       return;
     }
     if (act === 'Reset session') {
@@ -492,7 +495,9 @@ export function AgentTable({ store, onProbe, probeBusy, navigate }: { store: Fle
         [],
         ['Drop accumulated session context for future turns'],
       )) return;
-      await run(`reset session ${fresh.name}`, `/clear ${fresh.name}`, team);
+      const afterConfirm = await ensureAgentFresh(fresh, 'resetting session after review');
+      if (!afterConfirm) return;
+      await run(`reset session ${afterConfirm.name}`, `/clear ${afterConfirm.name}`, teamOf(afterConfirm));
       return;
     }
     if (act === 'Probe') {
@@ -510,7 +515,10 @@ export function AgentTable({ store, onProbe, probeBusy, navigate }: { store: Fle
       [],
       [act === 'Start' ? 'Start this agent process' : act === 'Stop' ? 'Stop this agent process' : 'Restart this agent process with current runtime/config'],
     )) return;
-    await run(`${act} ${fresh.name}`, `/agent ${fresh.name} ${act.toLowerCase()}`, team);
+    const afterConfirmAction = act === 'Start' ? 'starting after review' : act === 'Stop' ? 'stopping after review' : 'rebuilding after review';
+    const afterConfirm = await ensureAgentFresh(fresh, afterConfirmAction);
+    if (!afterConfirm) return;
+    await run(`${act} ${afterConfirm.name}`, `/agent ${afterConfirm.name} ${act.toLowerCase()}`, teamOf(afterConfirm));
   }
   const renderRow = (a: TeamAgent) => {
     const currentRuntime = runtimeOf(a);
