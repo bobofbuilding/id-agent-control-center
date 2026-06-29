@@ -30,6 +30,7 @@ const CADENCES = [
 
 function qArg(s: string): string { return `"${s.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`; }
 function clip(s: string, n: number): string { const t = s.replace(/\s+/g, ' ').trim(); return t.length > n ? t.slice(0, n) + '…' : t; }
+function cadenceLabel(ms: number): string { return CADENCES.find((c) => c.value === ms)?.label ?? `${Math.max(1, Math.round(ms / 60000))}m`; }
 function newId(): string { return `goal_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 7)}`; }
 function ago(ts: number): string {
   const s = Math.max(0, Math.round((Date.now() - ts) / 1000));
@@ -192,14 +193,64 @@ export function Goals({ store }: { store: FleetStore }) {
     setDetail(saved ?? next);
     if (aliveRef.current) await reload();
   }
+  async function driverPreflight(): Promise<{ cfg: GoalDriverConfig; activeGoals: GoalSummary[] }> {
+    const cfg = { ...DRIVER_DEFAULTS, ...(await call<GoalDriverConfig>('goalDriver:getConfig').catch(() => driverCfg)) };
+    const allGoals = await call<GoalSummary[]>('goals:list').catch(() => goals);
+    return {
+      cfg,
+      activeGoals: allGoals.filter((g) => g.status === 'active' && g.autopilot),
+    };
+  }
+  function goalSummaryStamp(list: GoalSummary[]): string {
+    return [...list].map((g) => `${g.team}:${g.id}:${g.updatedAt}:${g.status}:${g.autopilot ? 1 : 0}`).sort().join('|');
+  }
+  function driverConfigStamp(cfg: GoalDriverConfig): string {
+    return `${cfg.enabled ? 1 : 0}:${cfg.cadenceMs}:${cfg.maxOpenTasksPerGoal}`;
+  }
+  function activeGoalPreview(list: GoalSummary[]): string {
+    if (!list.length) return '- none';
+    const rows = list.slice(0, 8).map((g) => `- ${g.team || 'default'} / ${g.title}`);
+    const rest = list.length - rows.length;
+    return rest > 0 ? `${rows.join('\n')}\n- ... ${rest} more` : rows.join('\n');
+  }
+  function driverChangeReview(current: GoalDriverConfig, next: GoalDriverConfig, activeGoals: GoalSummary[]): string | null {
+    const changes: string[] = [];
+    if (next.enabled !== current.enabled) changes.push(`Master: ${current.enabled ? 'enabled' : 'disabled'} -> ${next.enabled ? 'enabled' : 'disabled'}`);
+    if (next.cadenceMs !== current.cadenceMs) changes.push(`Cadence: ${cadenceLabel(current.cadenceMs)} -> ${cadenceLabel(next.cadenceMs)}`);
+    if (next.maxOpenTasksPerGoal !== current.maxOpenTasksPerGoal) changes.push(`Task cap per goal: ${current.maxOpenTasksPerGoal} -> ${next.maxOpenTasksPerGoal}`);
+    const increasesActivity = (next.enabled && !current.enabled)
+      || (current.enabled && activeGoals.length > 0 && next.cadenceMs < current.cadenceMs)
+      || (current.enabled && activeGoals.length > 0 && next.maxOpenTasksPerGoal > current.maxOpenTasksPerGoal);
+    if (!increasesActivity) return null;
+    return [
+      'Apply goal Autopilot driver change?',
+      '',
+      ...changes,
+      '',
+      `Active Autopilot goals across all teams: ${activeGoals.length}`,
+      activeGoalPreview(activeGoals),
+      '',
+      'This can spawn tasks or sync team instructions on the next driver run.',
+    ].join('\n');
+  }
   async function patchDriver(p: Partial<GoalDriverConfig>) {
     setDriverBusy(true);
     try {
-      const current = await call<GoalDriverConfig>('goalDriver:getConfig').catch(() => driverCfg);
-      const activeGoals = await call<GoalSummary[]>('goals:list').catch(() => goals);
-      const enabledCount = activeGoals.filter((g) => g.status === 'active' && g.autopilot).length;
-      if (p.enabled === true && !current.enabled && !window.confirm(`Enable the goal Autopilot master?\n\n${enabledCount} active goal${enabledCount === 1 ? '' : 's'} across all teams currently have Autopilot on. When enabled, the driver can spawn tasks or sync team instructions on its cadence.`)) return;
-      const next = await call<GoalDriverConfig>('goalDriver:setConfig', { ...current, ...p });
+      const pre = await driverPreflight();
+      const target = { ...pre.cfg, ...p };
+      const review = driverChangeReview(pre.cfg, target, pre.activeGoals);
+      let base = pre.cfg;
+      if (review) {
+        if (!window.confirm(review)) return;
+        const fresh = await driverPreflight();
+        if (driverConfigStamp(fresh.cfg) !== driverConfigStamp(pre.cfg) || goalSummaryStamp(fresh.activeGoals) !== goalSummaryStamp(pre.activeGoals)) {
+          setDriverCfg(fresh.cfg);
+          setMsg('goal driver change blocked: driver settings or active Autopilot goals changed during review');
+          return;
+        }
+        base = fresh.cfg;
+      }
+      const next = await call<GoalDriverConfig>('goalDriver:setConfig', { ...base, ...p });
       if (!aliveRef.current) return;
       setDriverCfg({ ...DRIVER_DEFAULTS, ...(next ?? {}) });
       setMsg('goal driver settings saved');
@@ -210,10 +261,24 @@ export function Goals({ store }: { store: FleetStore }) {
     }
   }
   async function runDriverNow() {
-    const current = await call<GoalDriverConfig>('goalDriver:getConfig').catch(() => driverCfg);
-    const activeGoals = await call<GoalSummary[]>('goals:list').catch(() => goals);
-    const enabledCount = activeGoals.filter((g) => g.status === 'active' && g.autopilot).length;
-    if (!window.confirm(`Run the goal driver now?\n\nCurrent master: ${current.enabled ? 'enabled' : 'disabled'}\nActive Autopilot goals across all teams: ${enabledCount}\nTask cap per goal: ${current.maxOpenTasksPerGoal}\n\nThis can spawn task work and sync team instructions for active Autopilot goals.`)) return;
+    const pre = await driverPreflight();
+    if (!window.confirm([
+      'Run the goal driver now?',
+      '',
+      `Current master: ${pre.cfg.enabled ? 'enabled' : 'disabled'}`,
+      `Cadence: ${cadenceLabel(pre.cfg.cadenceMs)}`,
+      `Task cap per goal: ${pre.cfg.maxOpenTasksPerGoal}`,
+      `Active Autopilot goals across all teams: ${pre.activeGoals.length}`,
+      activeGoalPreview(pre.activeGoals),
+      '',
+      'This can spawn task work and sync team instructions for active Autopilot goals.',
+    ].join('\n'))) return;
+    const fresh = await driverPreflight();
+    if (driverConfigStamp(fresh.cfg) !== driverConfigStamp(pre.cfg) || goalSummaryStamp(fresh.activeGoals) !== goalSummaryStamp(pre.activeGoals)) {
+      setDriverCfg(fresh.cfg);
+      setMsg('goal driver run blocked: driver settings or active Autopilot goals changed during review');
+      return;
+    }
     setDriverBusy(true);
     setMsg('running goal driver...');
     try {
