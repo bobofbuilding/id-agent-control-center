@@ -20,8 +20,76 @@ type TeamSource =
 type TeamAgentsGroup = { team: string; agents: Agent[] };
 type HrHierarchy = { primary: { team: string; agent: string } | null; coordinators: Record<string, string> };
 type OrgCfg = { enabled?: boolean; autoRebuild?: boolean };
+type TeamBlueprint = { id: string; team: string; label: string; description: string; spec: string };
 
 const PRIMARY_TEAM = 'default';
+const RECOMMENDED_TEAM_BLUEPRINTS: TeamBlueprint[] = [
+  {
+    id: 'default-leadership',
+    team: 'default',
+    label: 'Default leadership',
+    description: 'primary lead plus coder/researcher validators',
+    spec: `team: default
+
+- **lead** - Primary lead. Receives operator intent, compresses it into an objective, checks it against the active primary goal first and secondary goals second, routes it to the right team lead, and returns only validated summaries.
+- **coder** - Secondary validation lead for implementation, operations, code quality, reproducibility, build/test evidence, and release readiness.
+- **researcher** - Secondary validation lead for evidence, reasoning, sourcing, policy fit, completeness, architecture review, and runbook quality.`,
+  },
+  {
+    id: 'operations-team',
+    team: 'operations',
+    label: 'Operations team',
+    description: 'git, release, monitoring, maintenance, wiki/content ops',
+    spec: `team: operations
+
+- **ops-lead** - Coordinator for operational work. Breaks requests into specialist tasks, delegates in parallel, reports one concise status, and escalates production deploys, deletes, mainnet, or release ambiguity.
+- **git-manager** - Owns non-destructive git hygiene for project repositories: status, intentional staging, commits, branch sync, conflict surfacing, and push coordination.
+- **deployer** - Runs build/test/release readiness, cuts versioned releases, prepares deploys, and confirms before production changes.
+- **monitor** - Watches service and agent health, probes failures, tails logs, and reports incidents with next steps.
+- **maintainer** - Handles low-risk dependency updates, cleanup, maintenance scripts, and reversible chores.
+- **content-ops** - Keeps IDACC wiki and release documentation current with shipped behavior.
+- **content-moderator** - Performs safety, compliance, and policy-fit screening before content is published or routed onward.`,
+  },
+  {
+    id: 'engineering-team',
+    team: 'engineering',
+    label: 'Engineering team',
+    description: 'product engineering, testing, architecture, delivery',
+    spec: `team: engineering
+
+- **engineering-lead** - Coordinator for implementation objectives. Distills product or platform goals into independent work packets, delegates to engineers, collects summaries, and returns accomplishments for default-team validation.
+- **frontend-engineer** - Builds and verifies polished UI, stateful controls, accessibility, responsive layout, and browser behavior.
+- **backend-engineer** - Owns services, APIs, persistence, migrations, integrations, and runtime reliability.
+- **qa-engineer** - Designs focused test coverage, reproduces bugs, validates fixes, and checks release readiness.
+- **architect** - Reviews system boundaries, data flow, scaling constraints, and cross-team technical tradeoffs.`,
+  },
+  {
+    id: 'research-team',
+    team: 'research',
+    label: 'Research team',
+    description: 'source gathering, analysis, verification, synthesis',
+    spec: `team: research
+
+- **research-lead** - Coordinator for research objectives. Breaks questions into sub-questions, delegates gathering, analysis, verification, and writing, then returns a verified findings packet.
+- **web-researcher** - Finds current authoritative sources, extracts facts with dates and URLs, and avoids unsupported analysis.
+- **analyst** - Compares evidence, evaluates tradeoffs, identifies gaps, and labels confidence levels.
+- **fact-checker** - Independently verifies claims against sources and marks supported, weak, or unsupported statements.
+- **writer** - Turns verified findings into a clear report for the intended audience with concise citations.`,
+  },
+  {
+    id: 'onchain-team',
+    team: 'onchain',
+    label: 'Onchain team',
+    description: 'wallets, contracts, protocol research, transaction safety',
+    spec: `team: onchain
+
+- **onchain-lead** - Coordinator for wallet, contract, protocol, and transaction-safety objectives. Delegates specialist work and escalates irreversible or value-moving actions.
+- **wallet-engineer** - Reviews wallet flows, account abstraction, session keys, signing boundaries, and transaction simulation requirements.
+- **contract-auditor** - Reviews smart contracts, upgrade paths, permissions, invariants, and adversarial failure modes.
+- **protocol-researcher** - Tracks chain/protocol behavior, standards, infrastructure providers, and ecosystem changes with sourced findings.
+- **risk-analyst** - Evaluates operational, custody, MEV, oracle, bridge, and production-risk posture before onchain execution.`,
+  },
+];
 
 const HB_INTERVALS = [
   { label: '5 min', s: 300 },
@@ -1528,6 +1596,38 @@ function TeamBuilder({
   }
   function pickTeam(v: string) { setTeamTouched(true); setTeamSel(v); }
 
+  function applyStartSource(value: string) {
+    if (!value) return;
+    const [kind, ...rest] = value.split(':');
+    const name = rest.join(':');
+    let nextSpec = '';
+    let targetHint = '';
+    if (kind === 'bp') {
+      const bp = RECOMMENDED_TEAM_BLUEPRINTS.find((x) => x.id === name);
+      if (!bp) return;
+      nextSpec = bp.spec;
+      targetHint = bp.team;
+    } else {
+      const src = kind === 'tpl' ? templates.find((x) => x.name === name) : configs.find((x) => x.name === name);
+      const desc = src && typeof (src as { description?: unknown }).description === 'string' ? (src as { description?: string }).description : '';
+      nextSpec = `Base this team on the "${name}" ${kind === 'tpl' ? 'library template' : 'saved config'}${desc ? ` (${desc})` : ''}: recreate its roster — a lead coordinator plus workers — and adjust as needed.`;
+      targetHint = cleanTeamName(name);
+    }
+    setRowsDirty(false);
+    setAiSuggestions(undefined);
+    setError('');
+    setSpec(nextSpec);
+    if (!teamTouched && targetHint) {
+      if (existingTeams.includes(targetHint)) {
+        setTeamSel(targetHint);
+        setNewTeam('');
+      } else {
+        setTeamSel('__new__');
+        setNewTeam(targetHint);
+      }
+    }
+  }
+
   const relayPayload: string[] | null =
     relayMode === 'all' ? ['*'] : relayMode === 'none' ? [] : relayMode === 'select' ? relaySel : null;
 
@@ -1716,15 +1816,14 @@ function TeamBuilder({
               <span className="muted small">start from</span>
               <select className="cell-select" disabled={locked} value="" onChange={(e) => {
                 const v = e.target.value; e.currentTarget.value = '';
-                if (!v) return;
-                const [kind, name] = v.split(':');
-                const src = kind === 'tpl' ? templates.find((x) => x.name === name) : configs.find((x) => x.name === name);
-                const desc = src && typeof (src as { description?: unknown }).description === 'string' ? (src as { description?: string }).description : '';
-                setSpec(`Base this team on the "${name}" ${kind === 'tpl' ? 'library template' : 'saved config'}${desc ? ` (${desc})` : ''}: recreate its roster — a lead coordinator plus workers — and adjust as needed.`);
+                applyStartSource(v);
               }}>
                 <option value="">blank — describe below</option>
-                {templates.length ? <optgroup label="Templates">{templates.map((t) => <option key={`tpl:${t.name}`} value={`tpl:${t.name}`}>{t.name}</option>)}</optgroup> : null}
-                {configs.length ? <optgroup label="Saved configs">{configs.map((c) => <option key={`cfg:${c.name}`} value={`cfg:${c.name}`}>{c.name}</option>)}</optgroup> : null}
+                <optgroup label="Recommended blueprints">
+                  {RECOMMENDED_TEAM_BLUEPRINTS.map((bp) => <option key={`bp:${bp.id}`} value={`bp:${bp.id}`}>{bp.label} — {bp.description}</option>)}
+                </optgroup>
+                {templates.length ? <optgroup label="Manager templates">{templates.map((t) => <option key={`tpl:${t.name}`} value={`tpl:${t.name}`}>{t.name} — {describeTemplate(t)}</option>)}</optgroup> : null}
+                {configs.length ? <optgroup label="Saved configs">{configs.map((c) => <option key={`cfg:${c.name}`} value={`cfg:${c.name}`}>{c.name} — {describeConfig(c)}</option>)}</optgroup> : null}
               </select>
             </div>
             <div className="muted small" style={{ marginBottom: 6 }}>describe the team you want — or paste a spec</div>
