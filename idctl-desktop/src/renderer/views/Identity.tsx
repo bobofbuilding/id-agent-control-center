@@ -159,6 +159,30 @@ function activeSessionSort(a: SessionKey, b: SessionKey): number {
   return b.createdAt - a.createdAt;
 }
 
+function identityAgentStamp(a: IdentityAgent): string {
+  return JSON.stringify({
+    id: a.id,
+    name: a.name,
+    team: a.team ?? 'default',
+    status: a.status ?? '',
+    runtime: a.runtime ?? '',
+    model: a.model ?? '',
+    domain: identityValue(a, 'idchain_domain'),
+    wallet: controllerWallet(a),
+  });
+}
+
+function sessionStamp(s: SessionKey): string {
+  return JSON.stringify({
+    id: s.id,
+    address: s.address,
+    status: s.status,
+    validUntil: s.validUntil,
+    scope: s.scope.label,
+    spendLimitWei: s.scope.spendLimitWei,
+  });
+}
+
 export function Identity({ store }: { store: FleetStore }) {
   const [caps, setCaps] = useState<KeyCapabilities | null>(null);
   const [accounts, setAccounts] = useState<Record<string, AgentAccount>>({});
@@ -202,6 +226,51 @@ export function Identity({ store }: { store: FleetStore }) {
   const issueBlocked = !controllerVerified || isUnsafeScope(issueScope) || isUnsafeTtl(issueTtl);
   const review = useMemo(() => reviewRows(selAgent, acct, domain, wallet, controllerVerified), [selAgent, acct, domain, wallet, controllerVerified]);
   const readyCount = review.filter((r) => r.state === 'verified').length;
+
+  async function freshIdentityAgents(): Promise<IdentityAgent[] | null> {
+    const groups = await call<{ team: string; agents: Agent[] }[]>('agents:allTeams').catch(() => null);
+    if (groups) return uniqueAgents(groups.flatMap((g) => g.agents.map((a) => ({ ...a, team: g.team }))));
+    const ag = await call<Agent[]>('agents').catch(() => null);
+    return ag ? uniqueAgents(ag.map((a) => ({ ...a, team: store.team ?? 'default' }))) : null;
+  }
+
+  function findFreshIdentityAgent(list: IdentityAgent[], a: IdentityAgent): IdentityAgent | undefined {
+    const team = a.team ?? 'default';
+    return list.find((x) => (x.team ?? 'default') === team && x.id === a.id)
+      ?? list.find((x) => (x.team ?? 'default') === team && x.name === a.name);
+  }
+
+  async function ensureSelectedFresh(action: string): Promise<IdentityAgent | null> {
+    if (!selAgent) {
+      setError('Select an agent first.');
+      return null;
+    }
+    const list = await freshIdentityAgents();
+    if (!list) {
+      setError(`Could not verify the current agent before ${action}. Refresh and try again.`);
+      return null;
+    }
+    const current = findFreshIdentityAgent(list, selAgent);
+    if (!current) {
+      setError(`${selectedTeam ?? 'default'}/${selected ?? 'agent'} is no longer in the fleet snapshot. Refreshing Identity.`);
+      store.refresh();
+      return null;
+    }
+    if (identityAgentStamp(current) !== identityAgentStamp(selAgent)) {
+      setError(`${selectedTeam ?? 'default'}/${selected ?? 'agent'} changed before ${action}. Refreshing Identity; review the current row before retrying.`);
+      store.refresh();
+      return null;
+    }
+    return current;
+  }
+
+  async function latestAccountFor(key: string): Promise<AgentAccount | null> {
+    const list = await call<AgentAccount[]>('keys:list', [key]).catch(() => null);
+    if (!list) return null;
+    const next = list[0] ?? null;
+    setAccounts((prev) => next ? { ...prev, [next.agent]: next } : prev);
+    return next;
+  }
 
   async function reload() {
     if (accountKeys.length === 0) return;
@@ -273,12 +342,15 @@ export function Identity({ store }: { store: FleetStore }) {
     }
   }
 
-  async function identityAction(agent: string, action: 'register' | 'provision', team?: string) {
-    if (!window.confirm(`${action === 'register' ? 'Register identity' : 'Provision wallet'} for ${team ?? 'default'}/${agent}?\n\n${action === 'register' ? 'This writes the public identity binding for the selected controller wallet.' : 'This creates or binds a controller wallet for the agent.'}`)) return;
+  async function identityAction(action: 'register' | 'provision') {
+    const fresh = await ensureSelectedFresh(action === 'register' ? 'registering identity' : 'provisioning wallet');
+    if (!fresh) return;
+    const team = fresh.team ?? 'default';
+    if (!window.confirm(`${action === 'register' ? 'Register identity' : 'Provision wallet'} for ${team}/${fresh.name}?\n\n${action === 'register' ? 'This writes the public identity binding for the selected controller wallet.' : 'This creates or binds a controller wallet for the agent.'}`)) return;
     setError(null);
     setBusy(true);
     try {
-      await call(action === 'register' ? 'identity:register' : 'wallet:provision', agent, team);
+      await call(action === 'register' ? 'identity:register' : 'wallet:provision', fresh.name, team);
       store.refresh();
       await reload();
     } catch (err) {
@@ -289,12 +361,16 @@ export function Identity({ store }: { store: FleetStore }) {
   }
 
   async function startChallenge() {
-    if (!selected || !wallet) return;
+    const fresh = await ensureSelectedFresh('starting controller challenge');
+    if (!fresh) return;
+    const currentWallet = controllerWallet(fresh);
+    if (!currentWallet) return;
+    const key = agentKey(fresh);
     setError(null);
     setBusy(true);
     try {
-      const challenge = await call<ControllerProof>('identity:controllerChallenge', selected, wallet, selectedTeam);
-      setProofs((prev) => ({ ...prev, [selectedKey]: challenge }));
+      const challenge = await call<ControllerProof>('identity:controllerChallenge', fresh.name, currentWallet, fresh.team);
+      setProofs((prev) => ({ ...prev, [key]: challenge }));
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to start controller challenge');
     } finally {
@@ -311,16 +387,21 @@ export function Identity({ store }: { store: FleetStore }) {
   }
 
   async function verifyControllerProof() {
-    if (!selected || !proof) return;
-    if (!isSignatureLike(proof.signature)) {
+    const fresh = await ensureSelectedFresh('verifying controller proof');
+    if (!fresh) return;
+    const key = agentKey(fresh);
+    const currentProof = proofs[key];
+    const currentWallet = controllerWallet(fresh);
+    if (!currentProof) return;
+    if (!isSignatureLike(currentProof.signature)) {
       setError('Paste a 0x-prefixed 65-byte signature from the controller wallet.');
       return;
     }
     setError(null);
     setBusy(true);
     try {
-      const verified = await call<ControllerProof>('identity:controllerVerify', selected, wallet, proof.signature, selectedTeam);
-      setProofs((prev) => ({ ...prev, [selectedKey]: verified }));
+      const verified = await call<ControllerProof>('identity:controllerVerify', fresh.name, currentWallet, currentProof.signature, fresh.team);
+      setProofs((prev) => ({ ...prev, [key]: verified }));
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to verify controller signature');
     } finally {
@@ -328,21 +409,52 @@ export function Identity({ store }: { store: FleetStore }) {
     }
   }
 
-  function requireControllerProof(label: string, fn: () => void) {
-    if (!controllerVerified) {
-      setError(`${label} requires a fresh signed controller-wallet challenge.`);
-      return;
-    }
-    fn();
+  async function createAccount() {
+    const fresh = await ensureSelectedFresh('creating account');
+    if (!fresh) return;
+    const team = fresh.team ?? 'default';
+    if (!window.confirm(`Create account for ${team}/${fresh.name}?\n\nThis ensures a smart-account record for the selected agent.`)) return;
+    await act('keys:ensure', fresh.name, team);
   }
 
-  function issueSession() {
-    if (!presets || !selected || issueBlocked) {
+  async function deployAccount() {
+    const fresh = await ensureSelectedFresh('deploying account');
+    if (!fresh) return;
+    const key = agentKey(fresh);
+    const latest = await latestAccountFor(key);
+    if (latest?.deployed) {
+      setError('Account is already deployed. Identity has refreshed the latest account state.');
+      return;
+    }
+    const team = fresh.team ?? 'default';
+    if (!window.confirm(`Deploy account for ${team}/${fresh.name}?\n\nThis deploys the selected smart account using the verified controller authority.`)) return;
+    await act('keys:deploy', fresh.name, team);
+  }
+
+  async function issueSession() {
+    const fresh = await ensureSelectedFresh('issuing session key');
+    if (!presets || !fresh || issueBlocked) {
       setError(controllerVerified ? 'Choose a capped scope and finite TTL.' : 'Issue session key requires a signed controller-wallet challenge first.');
       return;
     }
-    if (!window.confirm(`Issue session key for ${selectedTeam ?? 'default'}/${selected}?\n\nScope: ${issueScope?.label ?? 'unknown'}\nTTL: ${issueTtl?.label ?? 'unknown'}\n\nThis creates a live spend-capped delegated key until it expires or is revoked.`)) return;
-    void act('keys:issue', selected, scopeIdx, presets.ttls[ttlIdx].ms, selectedTeam);
+    const team = fresh.team ?? 'default';
+    if (!window.confirm(`Issue session key for ${team}/${fresh.name}?\n\nScope: ${issueScope?.label ?? 'unknown'}\nTTL: ${issueTtl?.label ?? 'unknown'}\n\nThis creates a live spend-capped delegated key until it expires or is revoked.`)) return;
+    await act('keys:issue', fresh.name, scopeIdx, presets.ttls[ttlIdx].ms, team);
+  }
+
+  async function revokeSession(s: SessionKey) {
+    const fresh = await ensureSelectedFresh('revoking session key');
+    if (!fresh) return;
+    const key = agentKey(fresh);
+    const latest = await latestAccountFor(key);
+    const current = latest?.sessions.find((row) => row.id === s.id);
+    if (!current || current.status !== 'active' || sessionStamp(current) !== sessionStamp(s)) {
+      setError('Session key changed before revoke. Identity has refreshed the latest account state; review and retry.');
+      return;
+    }
+    const team = fresh.team ?? 'default';
+    if (!window.confirm(`Revoke session key ${shortAddr(current.address)}?\n\nThis disables the active delegated key for ${team}/${fresh.name}.`)) return;
+    await act('keys:revoke', fresh.name, current.id, team);
   }
 
   return (
@@ -450,8 +562,8 @@ export function Identity({ store }: { store: FleetStore }) {
                     </>
                   ) : null}
                   <div className="row-actions identity-actions">
-                    <button className="btn" disabled={busy || !wallet} onClick={startChallenge}>New challenge</button>
-                    <button className="btn primary" disabled={busy || !proof || !proof.signature || controllerVerified} onClick={verifyControllerProof}>Verify signature</button>
+                    <button className="btn" disabled={busy || !wallet} onClick={() => void startChallenge()}>New challenge</button>
+                    <button className="btn primary" disabled={busy || !proof || !proof.signature || controllerVerified} onClick={() => void verifyControllerProof()}>Verify signature</button>
                   </div>
                 </div>
               </section>
@@ -471,23 +583,17 @@ export function Identity({ store }: { store: FleetStore }) {
                   </div>
                   <div className="row-actions identity-actions">
                     {!wallet ? (
-                      <button className="btn" disabled={busy} onClick={() => void identityAction(selected!, 'provision', selectedTeam)}>
+                      <button className="btn" disabled={busy} onClick={() => void identityAction('provision')}>
                         Provision wallet
                       </button>
                     ) : null}
-                    <button className="btn" disabled={busy} onClick={() => {
-                      if (!window.confirm(`Create account for ${selectedTeam ?? 'default'}/${selected}?\n\nThis ensures a smart-account record for the selected agent.`)) return;
-                      void act('keys:ensure', selected, selectedTeam);
-                    }}>
+                    <button className="btn" disabled={busy} onClick={() => void createAccount()}>
                       Create account
                     </button>
-                    <button className="btn" disabled={busy || !controllerVerified} onClick={() => requireControllerProof('Register identity', () => void identityAction(selected!, 'register', selectedTeam))}>
+                    <button className="btn" disabled={busy || !controllerVerified} onClick={() => void identityAction('register')}>
                       Register identity
                     </button>
-                    <button className="btn primary" disabled={busy || acct.deployed || !controllerVerified} onClick={() => requireControllerProof('Deploy account', () => {
-                      if (!window.confirm(`Deploy account for ${selectedTeam ?? 'default'}/${selected}?\n\nThis deploys the selected smart account using the verified controller authority.`)) return;
-                      void act('keys:deploy', selected, selectedTeam);
-                    })}>
+                    <button className="btn primary" disabled={busy || acct.deployed || !controllerVerified} onClick={() => void deployAccount()}>
                       Deploy
                     </button>
                   </div>
@@ -532,10 +638,7 @@ export function Identity({ store }: { store: FleetStore }) {
                         </td>
                         <td className="row-actions">
                           {s.status === 'active' ? (
-                            <button className="btn" disabled={busy || !controllerVerified} onClick={() => requireControllerProof('Revoke session key', () => {
-                              if (!window.confirm(`Revoke session key ${shortAddr(s.address)}?\n\nThis disables the active delegated key for ${selectedTeam ?? 'default'}/${selected}.`)) return;
-                              void act('keys:revoke', selected, s.id, selectedTeam);
-                            })}>
+                            <button className="btn" disabled={busy || !controllerVerified} onClick={() => void revokeSession(s)}>
                               Revoke
                             </button>
                           ) : null}
@@ -568,7 +671,7 @@ export function Identity({ store }: { store: FleetStore }) {
                         </option>
                       ))}
                     </select>
-                    <button className="btn primary" disabled={busy || issueBlocked} onClick={issueSession}>
+                    <button className="btn primary" disabled={busy || issueBlocked} onClick={() => void issueSession()}>
                       Issue scoped key
                     </button>
                   </div>
