@@ -8,6 +8,9 @@ Every change pushed or merged to `main` carries its version number in the commit
 subject (`vX.Y.Z: …`), stamped automatically by the `commit-msg` hook — see
 [CONTRIBUTING.md](CONTRIBUTING.md).
 
+## [0.1.267] — 2026-06-29
+- Brain Graph live Fleet overlay guardrails
+
 ## [0.1.266] — 2026-06-29
 - Brain Agents SLA coverage and Graph status-authority guardrails
 
