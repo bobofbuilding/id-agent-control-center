@@ -30,6 +30,22 @@ type BrainSkillSummary = {
   summary?: BrainSkillStats;
   meta?: { generatedAt?: string };
 } | null;
+type BrainFleetReport = {
+  generatedAt?: string;
+  fleet?: {
+    source?: string;
+    total?: number;
+    running?: number;
+    authority?: string;
+    authoritative?: boolean;
+    activeLabel?: string;
+    statusAuthorityLabel?: string;
+    managerUrl?: string;
+    teamSource?: string;
+    warnings?: string[];
+    cacheDrift?: { status?: string; liveTotal?: number | null; cachedTotal?: number | null; delta?: number | null };
+  };
+} | null;
 type BrainSkillSyncResult = {
   ok: boolean;
   total: number;
@@ -52,6 +68,63 @@ const BRAIN_DASHBOARD_TABS: { tab: BrainDashboardTab; label: string; path: strin
 
 function brainDashboardTabForPath(pathname: string): BrainDashboardTab | null {
   return BRAIN_DASHBOARD_TABS.find((x) => x.path === pathname)?.tab ?? null;
+}
+
+function brainFleetAuthority(report: BrainFleetReport): string {
+  const source = report?.fleet?.source ?? '';
+  return report?.fleet?.authority
+    ?? (source === 'brain-cache' ? 'cache' : source === 'live-manager-partial' ? 'partial' : source === 'live-manager' ? 'live-unversioned' : 'unknown');
+}
+
+function brainFleetContractCurrent(report: BrainFleetReport): boolean {
+  return !!(report?.fleet?.authority && report.fleet.statusAuthorityLabel);
+}
+
+function brainFleetReviewNeeded(report: BrainFleetReport): boolean {
+  const fleet = report?.fleet;
+  if (!fleet) return true;
+  if (!brainFleetContractCurrent(report)) return true;
+  if (fleet.authority !== 'live' || fleet.authoritative !== true) return true;
+  return (fleet.warnings ?? []).length > 0;
+}
+
+function brainFleetStatusLabel(report: BrainFleetReport): string {
+  const fleet = report?.fleet;
+  if (!fleet) return 'Fleet --';
+  const count = `${fleet.running ?? 0}/${fleet.total ?? 0}`;
+  const authority = brainFleetAuthority(report);
+  if (authority === 'live-unversioned') return `Fleet ${count} live (stale)`;
+  if (authority === 'live') return `Fleet ${count} live`;
+  if (authority === 'partial') return `Fleet ${count} partial`;
+  if (authority === 'cache') return `Fleet ${count} cache`;
+  return `Fleet ${count} ${authority}`;
+}
+
+function brainFleetStatusTitle(report: BrainFleetReport): string {
+  const fleet = report?.fleet;
+  if (!fleet) return 'Brain /fleet-report unavailable; Brain dashboard tabs may be offline or stale.';
+  return [
+    `Source: ${fleet.source ?? 'unknown'}`,
+    `Status authority: ${fleet.statusAuthorityLabel ?? 'missing (Brain service likely needs restart/redeploy to load the current dashboard contract)'}`,
+    `Count: ${fleet.running ?? 0}/${fleet.total ?? 0}`,
+    fleet.managerUrl ? `Manager: ${fleet.managerUrl}` : '',
+    fleet.teamSource ? `Teams: ${fleet.teamSource}` : '',
+    fleet.cacheDrift?.status === 'drift' ? `Cache drift: live ${fleet.cacheDrift.liveTotal} vs Brain ${fleet.cacheDrift.cachedTotal}` : '',
+    ...(fleet.warnings ?? []),
+  ].filter(Boolean).join('\n');
+}
+
+function brainFleetReviewDetail(report: BrainFleetReport): string {
+  const fleet = report?.fleet;
+  if (!fleet) return 'Brain /fleet-report is unavailable. Open Brain Fleet or check the Brain service before comparing dashboard counts.';
+  if (!brainFleetContractCurrent(report)) {
+    return `Brain reports ${fleet.running ?? 0}/${fleet.total ?? 0} from ${fleet.source ?? 'unknown'}, but authority labels are missing. Restart/redeploy Brain before trusting dashboard-tab authority copy.`;
+  }
+  if (fleet.authority !== 'live' || fleet.authoritative !== true) {
+    return `${fleet.statusAuthorityLabel ?? 'Brain fleet source is not live-authoritative.'} Counts may be partial or cache-only.`;
+  }
+  if ((fleet.warnings ?? []).length) return (fleet.warnings ?? []).join(' ');
+  return 'Brain Fleet authority is live.';
 }
 
 function BrainDashboardLauncher({ compact = false }: { compact?: boolean }) {
@@ -194,6 +267,7 @@ export function Modules({ store }: { store: FleetStore }) {
   const [autoTags, setAutoTags] = useState<Record<string, string[]>>({});
   const [categorizing, setCategorizing] = useState(false);
   const [brainSkills, setBrainSkills] = useState<BrainSkillSummary>(null);
+  const [brainFleet, setBrainFleet] = useState<BrainFleetReport>(null);
   const [brainSyncing, setBrainSyncing] = useState(false);
   const [brainDrift, setBrainDrift] = useState<SkillBrainDrift | null>(null);
   const [plugins, setPlugins] = useState<LibraryPluginEntry[]>([]);
@@ -318,6 +392,7 @@ export function Modules({ store }: { store: FleetStore }) {
     setPlugins(await call<LibraryPluginEntry[]>('libraryPlugins').catch(() => []));
     setAutoTags(await call<Record<string, string[]>>('skills:autoTags').catch(() => ({})));
     setBrainSkills(await call<BrainSkillSummary>('skills:brainSummary').catch(() => null));
+    setBrainFleet(await call<BrainFleetReport>('brain:fleetReport').catch(() => null));
   }
   useEffect(() => {
     reload();
@@ -685,6 +760,10 @@ export function Modules({ store }: { store: FleetStore }) {
       : brainDrift?.kind === 'retagged'
         ? 'Skill auto-tags changed locally. Sync Brain to refresh graph tags and the shared skill memory.'
         : `Local catalog has ${skills.length} skills while Brain reports ${brainTotal ?? 'unknown'}. Sync Brain to upsert current local definitions.`;
+  const brainFleetNeedsReview = brainFleetReviewNeeded(brainFleet);
+  const brainFleetStatus = brainFleetStatusLabel(brainFleet);
+  const brainFleetTitle = brainFleetStatusTitle(brainFleet);
+  const brainFleetDetail = brainFleetReviewDetail(brainFleet);
   const catalogDraft = buildCatalog();
   const customDraft = buildCustom();
   const catalogReplace = catalogDraft ? mcp.find((p) => p.name === catalogDraft.name) : undefined;
@@ -925,6 +1004,9 @@ export function Modules({ store }: { store: FleetStore }) {
           <span className={`chip ${brainNeedsLocalSync ? 'brain-review' : brainSkills?.summary ? 'tag' : ''}`} title={brainStatusTitle}>
             {brainStatusLabel}
           </span>
+          <span className={`chip ${brainFleetNeedsReview ? 'brain-review' : 'tag'}`} title={brainFleetTitle}>
+            {brainFleetStatus}
+          </span>
           <button className="btn small" disabled={brainSyncing || skills.length === 0} title="Preview, fresh-read, then upsert the local skill catalog into Brain /skills/index" onClick={() => void syncSkillsToBrain()}>
             {brainSyncing ? 'Syncing…' : 'Preview & sync'}
           </button>
@@ -946,6 +1028,16 @@ export function Modules({ store }: { store: FleetStore }) {
             <button className="btn small" disabled={brainSyncing || skills.length === 0} onClick={() => void syncSkillsToBrain()}>
               {brainSyncing ? 'Syncing…' : 'Preview & sync'}
             </button>
+            <BrainDashboardLauncher compact />
+          </div>
+        ) : null}
+
+        {brainFleetNeedsReview ? (
+          <div className="skill-brain-review">
+            <div className="grow">
+              <b>Brain fleet authority review</b>
+              <div className="muted small">{brainFleetDetail}</div>
+            </div>
             <BrainDashboardLauncher compact />
           </div>
         ) : null}

@@ -8,7 +8,7 @@
 import { ManagerClient } from '../../../idctl/src/api/client.ts';
 import type { Agent } from '../../../idctl/src/api/types.ts';
 import { brain } from '../../../idctl/src/api/brain.ts';
-import type { BrainSkillIndex, BrainSkillNode } from '../../../idctl/src/api/brain.ts';
+import type { BrainFleetReport, BrainSkillIndex, BrainSkillNode } from '../../../idctl/src/api/brain.ts';
 import { runOnboarding, type OnboardPlan } from '../../../idctl/src/api/onboard.ts';
 import { loadConfig, type Config } from '../../../idctl/src/config.ts';
 import { getKeyProvider, legacyMockAuthorityReport } from '../../../idctl/src/keys/mockProvider.ts';
@@ -843,6 +843,7 @@ const METHODS: Record<string, (...a: any[]) => Promise<unknown>> = {
     return loadSettings().skillTags ?? {};
   },
   'skills:brainSummary': async (): Promise<BrainSkillIndex | null> => brain.skillIndex(),
+  'brain:fleetReport': async (): Promise<BrainFleetReport | null> => brain.fleetReport(),
   'skills:syncBrain': async (opts?: { catalogStamp?: string }) => {
     const skills = await client.librarySkills();
     const autoTags = loadSettings().skillTags ?? {};

@@ -89,6 +89,27 @@ export interface BrainSkillIndex {
   };
   meta?: { generatedAt?: string };
 }
+export interface BrainFleetReport {
+  generatedAt?: string;
+  fleet?: {
+    source?: string;
+    total?: number;
+    running?: number;
+    authority?: string;
+    authoritative?: boolean;
+    activeLabel?: string;
+    statusAuthorityLabel?: string;
+    managerUrl?: string;
+    teamSource?: string;
+    warnings?: string[];
+    cacheDrift?: {
+      status?: string;
+      liveTotal?: number | null;
+      cachedTotal?: number | null;
+      delta?: number | null;
+    };
+  };
+}
 export interface SharedMemory {
   content?: string;
   id?: number;
@@ -208,6 +229,11 @@ export class BrainClient {
   async skillIndex(): Promise<BrainSkillIndex | null> {
     const r = await this.req<{ data?: BrainSkillIndex }>('GET', '/skills/index?limit=1&sort=popular');
     return r?.data ?? null;
+  }
+
+  /** Read live fleet authority/status contract used by Brain dashboard Fleet/Health/Agents. */
+  async fleetReport(): Promise<BrainFleetReport | null> {
+    return this.req<BrainFleetReport>('GET', '/fleet-report');
   }
 
   /** Upsert keyed memory for an agent id (e.g. 'control-center' / 'team-instructions'). */
