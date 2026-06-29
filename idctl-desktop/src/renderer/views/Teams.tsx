@@ -21,6 +21,8 @@ type TeamAgentsGroup = { team: string; agents: Agent[] };
 type HrHierarchy = { primary: { team: string; agent: string } | null; coordinators: Record<string, string> };
 type OrgCfg = { enabled?: boolean; autoRebuild?: boolean };
 
+const PRIMARY_TEAM = 'default';
+
 const HB_INTERVALS = [
   { label: '5 min', s: 300 },
   { label: '15 min', s: 900 },
@@ -687,6 +689,10 @@ export function Teams({ store }: { store: FleetStore }) {
   }
   async function makePrimary() {
     const team = store.team ?? 'default';
+    if (team !== PRIMARY_TEAM) {
+      setMsg(`Make primary blocked: the fleet primary is locked to the ${PRIMARY_TEAM} team. Set ${team}'s coordinator here, then use relay/org sync so default/lead can delegate to it.`);
+      return;
+    }
     const freshHier = await ensureHierarchyFresh('Make primary');
     if (!freshHier) return;
     const teamAgents = agentsForTeam(await freshHrGroups(), team);
@@ -731,6 +737,10 @@ export function Teams({ store }: { store: FleetStore }) {
   /** Promote a specific team's coordinator to the primary cross-team lead. */
   async function makePrimaryFor(team: string, agent: string) {
     if (!agent) return;
+    if (team !== PRIMARY_TEAM) {
+      setMsg(`Promote primary blocked: ${team}/${agent} can be a team coordinator, but the fleet primary is locked to ${PRIMARY_TEAM}.`);
+      return;
+    }
     const freshHier = await ensureHierarchyFresh('Promote primary');
     if (!freshHier) return;
     const freshAgent = await ensureHierarchyAgent('Promote primary', team, agent);
@@ -909,7 +919,7 @@ export function Teams({ store }: { store: FleetStore }) {
         <section className="card">
           <div className="row-actions" style={{ justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
             <h3 style={{ margin: 0 }}>Team structure — live</h3>
-            <button className="btn" disabled={busy} onClick={() => void makePrimary()} title="Make the active team's coordinator the top of the cross-team hierarchy">
+            <button className="btn" disabled={busy || activeTeam !== PRIMARY_TEAM} onClick={() => void makePrimary()} title={activeTeam === PRIMARY_TEAM ? "Make the default team's coordinator the top of the cross-team hierarchy" : "The fleet primary is locked to the default team"}>
               ⭑ Make “{activeTeam}” the primary lead
             </button>
           </div>
@@ -1228,8 +1238,8 @@ export function Teams({ store }: { store: FleetStore }) {
       <section className="card">
         <h3>Lead hierarchy &amp; coordinators</h3>
         <p className="muted small" style={{ marginTop: -4 }}>
-          Each team has a <b>coordinator</b> (its lead); one is the <b>primary</b> across teams — it delegates to each
-          team's coordinator, which delegates to its workers. Pick a coordinator for any team, or promote one to primary.
+          Each team has a <b>coordinator</b> (its lead). The fleet <b>primary</b> is locked to the <b>default</b> team;
+          it delegates to each other team's coordinator, which delegates to its workers. Pick coordinators here, then sync the org.
         </p>
         <div className="kv" style={{ gridTemplateColumns: 'minmax(120px,1fr) 220px 120px', gap: '6px 12px', alignItems: 'center' }}>
           <span className="muted small">team</span>
@@ -1250,9 +1260,9 @@ export function Teams({ store }: { store: FleetStore }) {
                 {isPrimary ? (
                   <span className="ok-text small">⭑ primary</span>
                 ) : (
-                  <button className="btn small" disabled={busy || !coord}
-                    title={coord ? `Make ${t.name}/${coord} the primary cross-team lead` : 'Set a coordinator first'}
-                    onClick={() => void makePrimaryFor(t.name, coord)}>make primary</button>
+                  <button className="btn small" disabled={busy || !coord || t.name !== PRIMARY_TEAM}
+                    title={t.name !== PRIMARY_TEAM ? `Primary is locked to ${PRIMARY_TEAM}; ${t.name}/${coord || 'lead'} can remain a team coordinator` : coord ? `Make ${t.name}/${coord} the primary cross-team lead` : 'Set a coordinator first'}
+                    onClick={() => void makePrimaryFor(t.name, coord)}>{t.name === PRIMARY_TEAM ? 'make primary' : 'default only'}</button>
                 )}
               </Fragment>
             );
@@ -1260,7 +1270,7 @@ export function Teams({ store }: { store: FleetStore }) {
         </div>
         {!hier.primary ? (
           <p className="muted small" style={{ marginTop: 8 }}>
-            No primary lead yet — promote one team's coordinator to delegate across teams (via <code>/ask &lt;team&gt;/&lt;agent&gt;</code>).
+            No primary lead yet — set the <b>default</b> team coordinator, then make default primary so it delegates across teams.
           </p>
         ) : null}
 
@@ -1278,11 +1288,11 @@ export function Teams({ store }: { store: FleetStore }) {
             <button className="btn small" disabled={orgBusy} onClick={() => void syncOrgNow()} title="Preview affected agents, then recompose goals from the hierarchy + brain">{orgBusy ? 'working…' : 'Preview & sync'}</button>
           </div>
           <p className="muted small" style={{ marginTop: 4 }}>
-            Each agent's <b>goals &amp; instructions</b> file is composed from its place in the org: <b>primary</b> (<code>{hier.primary?.agent ?? 'unset'}</code>) ← <b>secondary leads</b> ← team leads ← workers. Secondary leads delegate down and relay sequenced status up to the primary. Brain <code>team-instruction</code> memories are embedded, and the hierarchy is written back to the brain.
+            Each agent's <b>goals &amp; instructions</b> file is composed from its place in the org: <b>primary</b> (<code>{hier.primary?.agent ?? 'unset'}</code>) → team leads → workers, then completed work flows back through the default-team validators (<b>coder</b> and <b>researcher</b>) before returning to the primary. Brain <code>team-instruction</code> memories are embedded, and the hierarchy is written back to the brain.
           </p>
           <div className="kv" style={{ gridTemplateColumns: 'minmax(110px,160px) 1fr', gap: '4px 12px', alignItems: 'center', marginTop: 6 }}>
             <span className="muted small">secondary lead</span>
-            <span className="muted small">delegates to (team leads)</span>
+            <span className="muted small">validates completed work from</span>
             {secondaries.length ? secondaries.map((s) => (
               <Fragment key={s.agent}>
                 <span className="b">{s.agent} <span className="muted small">· {s.team}</span></span>
@@ -1306,7 +1316,7 @@ export function Teams({ store }: { store: FleetStore }) {
  * let AI (or a deterministic parse) draft the roster with a per-agent runtime,
  * model and skills, review/edit it, then build every agent in one pass via
  * `onboard:run` (which carries each agent's persona). After the agents land it can
- * auto-wire coordination (make the ★ lead the primary coordinator + apply the
+ * auto-wire coordination (make the ★ lead the team coordinator + apply the
  * delegate-to-teammates preset) and the new team's cross-team relay policy.
  */
 function TeamBuilder({
@@ -1569,7 +1579,7 @@ function TeamBuilder({
       return;
     }
     const postSteps = [
-      coordinate ? 'promote the starred lead to primary coordinator, write the coordination preset, and rebuild that lead' : '',
+      coordinate ? "make the starred lead this team's coordinator, write the coordination preset, and rebuild that lead" : '',
       relayMode !== 'permissive' ? `set cross-team relay to ${describeRelay(relayPayload)}` : '',
     ].filter(Boolean);
     const preflight = await preflightBuildTarget();
@@ -1599,7 +1609,7 @@ function TeamBuilder({
         setResults((rs) => rs.map((x) => (x.name === nm ? { ...x, running: false, error: err instanceof Error ? err.message : String(err) } : x)));
       }
     }
-    // Auto-coordination: promote the ★ lead to primary coordinator + apply the preset. Resolve
+    // Auto-coordination: set the ★ lead as this team's coordinator + apply the preset. Resolve
     // the lead from the FULL roster (it may be an agent that already existed).
     const leadRow = named.find((r) => r.lead) ?? named[0];
     if (anyOk && coordinate && leadRow) {
@@ -1619,7 +1629,7 @@ function TeamBuilder({
         if (!findHrAgent(groupsNow, preflight.targetTeam, { name: leadName })) {
           throw new Error(`${preflight.targetTeam}/${leadName} is not in the current roster after build`);
         }
-        await call('coordinator:setPrimary', targetTeam, leadName);
+        await call('coordinator:set', targetTeam, leadName);
         await call('agent:setInstructions', leadName, preset, targetTeam);
         await call('rebuildAgent', leadName, targetTeam).catch(() => {});
         setPost((p) => ({ ...p, coord: 'ok', leadName }));
@@ -1907,7 +1917,7 @@ function TeamBuilder({
               <div className="onboard-step" style={{ gridTemplateColumns: '26px minmax(140px, 1fr) minmax(0, 2fr)' }}>
                 <span className={`step-dot ${postCls(post.coord)}`}>{postMark(post.coord)}</span>
                 <span className="step-label mono">coordinator</span>
-                <span className={`small ${post.coord === 'failed' ? 'status-error' : 'muted'}`}>{post.coord === 'failed' ? post.coordErr : `${post.leadName ?? 'lead'} → primary coordinator + preset`}</span>
+                <span className={`small ${post.coord === 'failed' ? 'status-error' : 'muted'}`}>{post.coord === 'failed' ? post.coordErr : `${post.leadName ?? 'lead'} → team coordinator + preset`}</span>
               </div>
             ) : null}
             {post.relay ? (
