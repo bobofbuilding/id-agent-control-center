@@ -527,6 +527,9 @@ textarea.composer-input { resize: none; line-height: 1.4; min-height: 38px; max-
 .star { background: transparent; border: 0; color: var(--muted); cursor: pointer; font-size: 15px; padding: 4px 6px; }
 .star:hover { color: var(--warn); }
 .star.on { color: var(--warn); }
+.star.readonly { cursor: default; min-width: 25px; text-align: center; }
+.star.readonly:hover { color: var(--muted); }
+.star.readonly.on:hover { color: var(--warn); }
 
 /* Action cells / rows */
 .row-actions { display: flex; gap: 6px; justify-content: flex-end; }

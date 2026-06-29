@@ -168,7 +168,7 @@ function ChatImage({ path }: { path: string }) {
   return <img className="chat-img" src={url} alt="generated" />;
 }
 
-export function Chat({ store, embedded = false, lockTarget, teamOverride }: { store: FleetStore; embedded?: boolean; lockTarget?: string; teamOverride?: string }) {
+export function Chat({ store, embedded = false, lockTarget, teamOverride, navigate }: { store: FleetStore; embedded?: boolean; lockTarget?: string; teamOverride?: string; navigate?: (view: string) => void }) {
   // teamOverride pins this chat to a specific team (independent of the global
   // active team) — its agents, lead, sessions and dispatch all scope to it.
   const team = teamOverride ?? store.team ?? 'default';
@@ -1100,12 +1100,13 @@ export function Chat({ store, embedded = false, lockTarget, teamOverride }: { st
           {orderedAgents.map((a) => (
             <div key={a.id} className={`target-row${a.name === target ? ' active' : ''}`}>
               <button className="target" onClick={() => setTarget(a.name)}>{a.name}</button>
-              <button className={`star${a.name === store.coordinator ? ' on' : ''}`} title={a.name === store.coordinator ? 'team coordinator (lead)' : 'set as coordinator (lead)'} onClick={() => void store.setCoordinator(a.name)}>
-                {a.name === store.coordinator ? '★' : '☆'}
-              </button>
+              <span className={`star readonly${a.name === store.coordinator ? ' on' : ''}`} title={a.name === store.coordinator ? 'team coordinator (lead)' : 'Coordinator changes live in HR Manager'}>
+                {a.name === store.coordinator ? '★' : ''}
+              </span>
             </div>
           ))}
-          <p className="muted small" style={{ marginTop: 8 }}>★ = coordinator. Chat defaults to it; name it anything.</p>
+          <p className="muted small" style={{ marginTop: 8 }}>★ = coordinator. Change leads in HR Manager.</p>
+          {navigate ? <button className="btn small" type="button" onClick={() => navigate('teams')}>Open HR Manager</button> : null}
         </aside>
         ) : null}
       </div>
