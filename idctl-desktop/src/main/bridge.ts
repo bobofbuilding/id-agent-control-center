@@ -49,7 +49,7 @@ import { testMcpServer } from './mcpTest.ts';
 import { headroomStatus } from './headroom.ts';
 import { decomposeWork, createAndDispatchPlan, fanOutObjective, teamLeads, triageUnassigned, type SubTask } from './work.ts';
 import { normalizeGoalDriverConfig, runGoalDriverOnce, startGoalDriverLoop, type GoalDriverConfig } from './goaldriver.ts';
-import { buildOrgHierarchy, syncOrg, startOrgSyncLoop } from './orgSync.ts';
+import { buildOrgHierarchy, previewOrgSync, syncOrg, startOrgSyncLoop } from './orgSync.ts';
 import { readFileSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { homedir } from 'node:os';
@@ -988,6 +988,7 @@ export async function call(method: string, args: unknown[] = []): Promise<unknow
   }
   // ---- Org sync (reactive goals & instructions) ----
   if (method === 'org:hierarchy') return buildOrgHierarchy(client);
+  if (method === 'org:preview') return previewOrgSync(client, (args[0] as { autoRebuild?: boolean }) ?? {});
   if (method === 'org:sync') return syncOrg(client, (args[0] as { autoRebuild?: boolean }) ?? {});
   if (method === 'org:getSecondaryLeads') return getSecondaryLeads();
   if (method === 'org:setSecondaryLeads') {

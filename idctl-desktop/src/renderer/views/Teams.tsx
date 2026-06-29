@@ -483,10 +483,35 @@ export function Teams({ store }: { store: FleetStore }) {
 
   // ---- Reactive Org Sync: each agent's goals file composed from the hierarchy + brain ----
   type SecLead = { agent: string; team: string; leadsTeams: string[] };
+  type OrgPreview = {
+    agents: number;
+    changed: number;
+    rebuilt: string[];
+    brain: boolean;
+    skippedBusy: number;
+    autoRebuild: boolean;
+    rebuildLimit: number;
+    changedAgents: { team: string; agent: string; status?: string; rebuild: boolean; reason?: string }[];
+  };
   const [orgCfg, setOrgCfg] = useState<{ enabled?: boolean; autoRebuild?: boolean }>({ enabled: true, autoRebuild: true });
   const [secondaries, setSecondaries] = useState<SecLead[]>([]);
   const [orgBusy, setOrgBusy] = useState(false);
   const [orgResult, setOrgResult] = useState<string | null>(null);
+  function formatOrgPreview(p: OrgPreview): string {
+    const sample = p.changedAgents.slice(0, 8).map((a) =>
+      `- ${a.team}/${a.agent}${a.rebuild ? ' -> rebuild' : a.reason ? ` -> ${a.reason}` : ''}${a.status ? ` (${a.status})` : ''}`,
+    );
+    const more = p.changedAgents.length > sample.length ? [`- ...and ${p.changedAgents.length - sample.length} more`] : [];
+    return [
+      'Org sync preview',
+      `Agents scanned: ${p.agents}`,
+      `Goal files that would change: ${p.changed}`,
+      `Brain hierarchy write: ${p.brain ? 'yes' : 'no'}`,
+      `Auto-rebuild: ${p.autoRebuild ? `yes, ${p.rebuilt.length}/${p.rebuildLimit} planned` : 'off'}`,
+      p.skippedBusy ? `Deferred rebuilds: ${p.skippedBusy}` : 'Deferred rebuilds: 0',
+      ...(sample.length ? ['', 'Affected agents:', ...sample, ...more] : []),
+    ].join('\n');
+  }
   async function loadOrg() {
     setOrgCfg(await call<{ enabled?: boolean; autoRebuild?: boolean }>('org:getConfig').catch(() => ({ enabled: true, autoRebuild: true })));
     setSecondaries(await call<{ secondaries: SecLead[] }>('org:hierarchy').then((h) => h.secondaries ?? []).catch(() => []));
@@ -499,11 +524,19 @@ export function Teams({ store }: { store: FleetStore }) {
     setOrgCfg(next);
   }
   async function syncOrgNow() {
-    if (!window.confirm(`Run org sync now?\n\nThis recomposes goals for every agent from the hierarchy and brain${orgCfg.autoRebuild !== false ? ', and may rebuild idle agents' : ''}.`)) return;
-    setOrgBusy(true); setOrgResult('syncing…');
+    setOrgBusy(true); setOrgResult('previewing…');
     try {
-      const r = await call<{ agents: number; written: number; rebuilt: string[]; brain: boolean; skippedBusy: number }>('org:sync', { autoRebuild: orgCfg.autoRebuild !== false });
-      setOrgResult(`synced ${r.agents} agents · ${r.written} goals updated · rebuilt ${r.rebuilt.length}${r.skippedBusy ? ` · ${r.skippedBusy} deferred (busy)` : ''} · brain ${r.brain ? '✓' : '—'}`);
+      const opts = { autoRebuild: orgCfg.autoRebuild !== false };
+      const preview = await call<OrgPreview>('org:preview', opts);
+      const previewText = formatOrgPreview(preview);
+      if (!window.confirm(`${previewText}\n\nApply this org sync now?`)) {
+        setOrgResult(`preview only:\n${previewText}`);
+        return;
+      }
+      setOrgResult('syncing…');
+      const r = await call<{ agents: number; written: number; rebuilt: string[]; brain: boolean; skippedBusy: number }>('org:sync', opts);
+      const rebuilt = r.rebuilt.length ? ` (${r.rebuilt.slice(0, 5).join(', ')}${r.rebuilt.length > 5 ? ', ...' : ''})` : '';
+      setOrgResult(`synced ${r.agents} agents · ${r.written} goals updated · rebuilt ${r.rebuilt.length}${rebuilt}${r.skippedBusy ? ` · ${r.skippedBusy} deferred (busy)` : ''} · brain ${r.brain ? '✓' : '—'}`);
       store.refresh();
     } catch (err) { setOrgResult(`sync failed: ${err instanceof Error ? err.message : String(err)}`); }
     finally { setOrgBusy(false); }
@@ -923,7 +956,7 @@ export function Teams({ store }: { store: FleetStore }) {
             <label className="muted small" style={{ display: 'inline-flex', alignItems: 'center', gap: 5, cursor: 'pointer' }} title="Rebuild an agent when its goals change AND it's idle (so the new file takes effect)">
               <input type="checkbox" checked={orgCfg.autoRebuild !== false} onChange={(e) => void toggleOrg({ autoRebuild: e.target.checked })} /> auto-rebuild
             </label>
-            <button className="btn small" disabled={orgBusy} onClick={() => void syncOrgNow()} title="Recompose every agent's goals file now from the hierarchy + brain">{orgBusy ? 'syncing…' : 'Sync now'}</button>
+            <button className="btn small" disabled={orgBusy} onClick={() => void syncOrgNow()} title="Preview affected agents, then recompose goals from the hierarchy + brain">{orgBusy ? 'working…' : 'Preview & sync'}</button>
           </div>
           <p className="muted small" style={{ marginTop: 4 }}>
             Each agent's <b>goals &amp; instructions</b> file is composed from its place in the org: <b>primary</b> (<code>{hier.primary?.agent ?? 'unset'}</code>) ← <b>secondary leads</b> ← team leads ← workers. Secondary leads delegate down and relay sequenced status up to the primary. Brain <code>team-instruction</code> memories are embedded, and the hierarchy is written back to the brain.
@@ -938,7 +971,7 @@ export function Teams({ store }: { store: FleetStore }) {
               </Fragment>
             )) : <><span className="muted small">—</span><span className="muted small">defaults to researcher + coder on default</span></>}
           </div>
-          {orgResult ? <p className="muted small" style={{ marginTop: 6 }}>{orgResult}</p> : null}
+          {orgResult ? <p className="muted small" style={{ marginTop: 6, whiteSpace: 'pre-wrap' }}>{orgResult}</p> : null}
         </div>
       </section>
       ) : null}

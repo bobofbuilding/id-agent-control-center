@@ -44,6 +44,41 @@ export interface OrgSyncResult {
   skippedBusy: number; // changed sidecars whose agent was mid-task (rebuild deferred)
 }
 
+export interface OrgSyncPreviewAgent {
+  team: string;
+  agent: string;
+  status?: string;
+  changed: boolean;
+  rebuild: boolean;
+  reason?: string;
+}
+
+export interface OrgSyncPreview {
+  hierarchy: OrgHierarchy;
+  agents: number;
+  changed: number;
+  rebuilt: string[];
+  brain: boolean;
+  skippedBusy: number;
+  autoRebuild: boolean;
+  rebuildLimit: number;
+  changedAgents: OrgSyncPreviewAgent[];
+}
+
+interface OrgSyncCandidate extends OrgSyncPreviewAgent {
+  current: string;
+  next: string;
+}
+
+interface OrgSyncPlan {
+  hierarchy: OrgHierarchy;
+  agents: number;
+  candidates: OrgSyncCandidate[];
+  rebuilt: string[];
+  skippedBusy: number;
+  autoRebuild: boolean;
+}
+
 function secondaryDomainTeams(teams: string[]): { research: string[]; coder: string[] } {
   const others = teams.filter((t) => t !== 'default' && t !== 'public').sort((a, b) => a.localeCompare(b));
   const research = others.filter((t) => /research|security|intel|analy|audit/i.test(t));
@@ -237,8 +272,12 @@ function upsertOrgBlock(existing: string, block: string): string {
 }
 
 /** An agent is "idle" (safe to rebuild) when it doesn't currently own a task that's being worked. */
-function isAgentIdle(agentName: string, tasks: Task[]): boolean {
-  return !tasks.some((t) => t.ownerName === agentName && /doing|progress|active|start|claim/i.test(t.status));
+function isAgentIdle(agentName: string, team: string, tasks: Task[]): boolean {
+  return !tasks.some((t) =>
+    t.ownerName === agentName &&
+    (!t.teamName || t.teamName === team) &&
+    /doing|progress|active|start|claim/i.test(t.status),
+  );
 }
 
 // A query event whose latest status is one of these is FINISHED; anything else (dispatched /
@@ -272,11 +311,76 @@ async function collectQueryBusy(client: ManagerClient, teams: string[]): Promise
           const prev = latest.get(agent);
           if (!prev || seq >= prev.seq) latest.set(agent, { seq, status: topic.slice('query:'.length) });
         }
-        for (const [agent, { status }] of latest) if (!QUERY_DONE_RE.test(status)) busy.add(agent);
+        for (const [agent, { status }] of latest) if (!QUERY_DONE_RE.test(status)) busy.add(`${team}/${agent}`);
       } catch { /* best-effort */ }
     }),
   );
   return busy;
+}
+
+async function buildOrgSyncPlan(client: ManagerClient, opts: { autoRebuild?: boolean } = {}): Promise<OrgSyncPlan> {
+  const autoRebuild = opts.autoRebuild !== false;
+  const hierarchy = await buildOrgHierarchy(client);
+
+  const rosters: Record<string, string[]> = {};
+  const all: { agent: Agent; team: string }[] = [];
+  for (const team of hierarchy.teams) {
+    const ags = await client.withTeam(team).agents().catch(() => [] as Agent[]);
+    rosters[team] = ags.filter((a) => isActiveStatus(a.status)).map((a) => a.name);
+    for (const a of ags) all.push({ agent: a, team });
+  }
+
+  const brainByTeam: Record<string, string[]> = {};
+  for (const team of hierarchy.teams) brainByTeam[team] = await brainInstructions(team);
+  const tasks = await client.tasks().catch(() => [] as Task[]);
+  const queryBusy = autoRebuild ? await collectQueryBusy(client, hierarchy.teams) : new Set<string>();
+
+  let skippedBusy = 0;
+  const rebuilt: string[] = [];
+  const candidates: OrgSyncCandidate[] = [];
+  for (const { agent, team } of all) {
+    const block = composeOrgBlock(agent.name, team, hierarchy, rosters, brainByTeam[team] ?? []);
+    const tc = client.withTeam(team);
+    const current = await tc.agentInstructions(agent.name).catch(() => '');
+    const next = upsertOrgBlock(current, block);
+    const changed = next.trim() !== current.trim();
+    let rebuild = false;
+    let reason: string | undefined;
+
+    if (changed) {
+      if (!autoRebuild) reason = 'auto-rebuild off';
+      else if (!isActiveStatus(agent.status)) reason = 'not running';
+      else if (!isAgentIdle(agent.name, team, tasks)) { reason = 'task busy'; skippedBusy++; }
+      else if (queryBusy.has(`${team}/${agent.name}`)) { reason = 'query busy'; skippedBusy++; }
+      else if (rebuilt.length >= MAX_REBUILDS_PER_PASS) { reason = 'rebuild cap'; skippedBusy++; }
+      else {
+        rebuild = true;
+        rebuilt.push(`${team}/${agent.name}`);
+      }
+    }
+
+    candidates.push({ team, agent: agent.name, status: agent.status, current, next, changed, rebuild, reason });
+  }
+
+  return { hierarchy, agents: all.length, candidates, rebuilt, skippedBusy, autoRebuild };
+}
+
+export async function previewOrgSync(client: ManagerClient, opts: { autoRebuild?: boolean } = {}): Promise<OrgSyncPreview> {
+  const plan = await buildOrgSyncPlan(client, opts);
+  const changedAgents = plan.candidates
+    .filter((c) => c.changed)
+    .map(({ team, agent, status, changed, rebuild, reason }) => ({ team, agent, status, changed, rebuild, reason }));
+  return {
+    hierarchy: plan.hierarchy,
+    agents: plan.agents,
+    changed: changedAgents.length,
+    rebuilt: plan.rebuilt,
+    brain: true,
+    skippedBusy: plan.skippedBusy,
+    autoRebuild: plan.autoRebuild,
+    rebuildLimit: MAX_REBUILDS_PER_PASS,
+    changedAgents,
+  };
 }
 
 /**
@@ -284,42 +388,21 @@ async function collectQueryBusy(client: ManagerClient, teams: string[]): Promise
  * (smart policy) rebuild a changed agent only if it's idle — rate-limited per pass.
  */
 export async function syncOrg(client: ManagerClient, opts: { autoRebuild?: boolean } = {}): Promise<OrgSyncResult> {
-  const autoRebuild = opts.autoRebuild !== false;
-  const hier = await buildOrgHierarchy(client);
-
-  const rosters: Record<string, string[]> = {};
-  const all: { agent: Agent; team: string }[] = [];
-  for (const team of hier.teams) {
-    const ags = await client.withTeam(team).agents().catch(() => [] as Agent[]);
-    rosters[team] = ags.filter((a) => isActiveStatus(a.status)).map((a) => a.name);
-    for (const a of ags) all.push({ agent: a, team });
-  }
-  const brainByTeam: Record<string, string[]> = {};
-  for (const team of hier.teams) brainByTeam[team] = await brainInstructions(team);
-  const tasks = await client.tasks().catch(() => [] as Task[]);
-  // Agents mid-chat-query (a rebuild would cancel the query → "the query was lost. Please resend.").
-  const queryBusy = autoRebuild ? await collectQueryBusy(client, hier.teams) : new Set<string>();
-  const brain = await writeOrgToBrain(hier);
+  const plan = await buildOrgSyncPlan(client, opts);
+  const brain = await writeOrgToBrain(plan.hierarchy);
 
   let written = 0;
-  let skippedBusy = 0;
   const rebuilt: string[] = [];
-  for (const { agent, team } of all) {
-    const block = composeOrgBlock(agent.name, team, hier, rosters, brainByTeam[team] ?? []);
-    const tc = client.withTeam(team);
-    const current = await tc.agentInstructions(agent.name).catch(() => '');
-    const next = upsertOrgBlock(current, block);
-    if (next.trim() === current.trim()) continue;
-    await tc.setAgentInstructions(agent.name, next).catch(() => {});
+  for (const candidate of plan.candidates) {
+    if (!candidate.changed) continue;
+    const tc = client.withTeam(candidate.team);
+    await tc.setAgentInstructions(candidate.agent, candidate.next).catch(() => {});
     written++;
-    if (!autoRebuild || !isActiveStatus(agent.status)) continue;
-    if (!isAgentIdle(agent.name, tasks)) { skippedBusy++; continue; }   // mid-task → defer to next natural rebuild
-    if (queryBusy.has(agent.name)) { skippedBusy++; continue; }         // mid-chat-query → defer (rebuild would lose the reply)
-    if (rebuilt.length >= MAX_REBUILDS_PER_PASS) { skippedBusy++; continue; }
-    await tc.remote(`/agent ${agent.name} rebuild`).catch(() => {});
-    rebuilt.push(agent.name);
+    if (!candidate.rebuild) continue;
+    await tc.remote(`/agent ${candidate.agent} rebuild`).catch(() => {});
+    rebuilt.push(`${candidate.team}/${candidate.agent}`);
   }
-  return { hierarchy: hier, agents: all.length, written, rebuilt, brain, skippedBusy };
+  return { hierarchy: plan.hierarchy, agents: plan.agents, written, rebuilt, brain, skippedBusy: plan.skippedBusy };
 }
 
 /**
