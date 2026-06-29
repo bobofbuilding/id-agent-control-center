@@ -22,6 +22,38 @@ interface ReviewRow {
   note: string;
 }
 
+interface BrainControllerLink {
+  agent_id?: string;
+  agentId?: string;
+  role?: string;
+  authority_level?: string;
+  authorityLevel?: string;
+  status?: string;
+}
+
+interface BrainController {
+  controller_id?: string;
+  controllerId?: string;
+  scope_user_id?: string;
+  type?: string;
+  label?: string;
+  name?: string;
+  primary_wallet?: string;
+  primaryWallet?: string;
+  status?: string;
+  agent_links?: BrainControllerLink[];
+  agentLinks?: BrainControllerLink[];
+}
+
+type BrainControllerReport = {
+  generatedAt?: string;
+  route?: string;
+  total?: number;
+  activeLinks?: number;
+  controllers?: BrainController[];
+  warnings?: string[];
+} | null;
+
 function shortAddr(a?: string): string {
   return a ? `${a.slice(0, 6)}...${a.slice(-4)}` : '-';
 }
@@ -180,6 +212,48 @@ function identityAgentStamp(a: IdentityAgent): string {
   });
 }
 
+function brainControllerLinks(c: BrainController): BrainControllerLink[] {
+  return c.agent_links ?? c.agentLinks ?? [];
+}
+
+function brainLinkAgentId(link: BrainControllerLink): string {
+  return String(link.agent_id ?? link.agentId ?? '').trim();
+}
+
+function brainControllerName(c: BrainController | undefined): string {
+  if (!c) return 'none';
+  return c.label || c.name || c.controller_id || c.controllerId || 'unnamed controller';
+}
+
+function brainControllerForAgent(
+  report: BrainControllerReport,
+  agent: IdentityAgent | undefined,
+  duplicateNames: Set<string>,
+): { state: EvidenceState; note: string; controller?: BrainController; ambiguous?: boolean } {
+  if (!agent) return { state: 'missing', note: 'select an agent' };
+  if (!report) return { state: 'warn', note: 'Brain /controllers unavailable; Brain Agents controller fallbacks are not verified' };
+  const controllers = report.controllers ?? [];
+  const team = agent.team ?? 'default';
+  const strongIds = new Set([
+    agent.id,
+    `${team}/${agent.name}`,
+    `${team}:${agent.name}`,
+    `agent:${team}/${agent.name}`,
+    `agent:${team}:${agent.name}`,
+  ].filter(Boolean));
+  const bareIds = new Set([agent.name, `agent:${agent.name}`]);
+  const strong = controllers.find((c) => brainControllerLinks(c).some((link) => strongIds.has(brainLinkAgentId(link)) && (link.status ?? 'active') === 'active'));
+  if (strong) return { state: 'verified', note: `Brain controller linked: ${brainControllerName(strong)}`, controller: strong };
+  const bare = controllers.find((c) => brainControllerLinks(c).some((link) => bareIds.has(brainLinkAgentId(link)) && (link.status ?? 'active') === 'active'));
+  if (bare) {
+    if (duplicateNames.has(agent.name)) {
+      return { state: 'warn', note: `Bare Brain controller link is ambiguous for duplicate agent name ${agent.name}`, controller: bare, ambiguous: true };
+    }
+    return { state: 'self', note: `Brain controller linked by bare agent id: ${brainControllerName(bare)}`, controller: bare };
+  }
+  return { state: 'warn', note: `No active Brain controller link for ${team}/${agent.name}` };
+}
+
 function sessionStamp(s: SessionKey): string {
   return JSON.stringify({
     id: s.id,
@@ -203,12 +277,18 @@ export function Identity({ store }: { store: FleetStore }) {
   const [legacyMsg, setLegacyMsg] = useState<string | null>(null);
   const [proofs, setProofs] = useState<Record<string, ControllerProof>>({});
   const [legacyKeys, setLegacyKeys] = useState<LegacyKeyAuthority[]>([]);
+  const [brainControllers, setBrainControllers] = useState<BrainControllerReport>(null);
 
   const identityAgents = useMemo(() => {
     const all = store.allAgents.length ? store.allAgents : store.agents.map((a) => ({ ...a, team: store.team ?? 'default' }));
     const sorted = uniqueAgents(all).sort((a, b) => Number(hasWallet(b)) - Number(hasWallet(a)) || (a.team ?? '').localeCompare(b.team ?? '') || a.name.localeCompare(b.name));
     return sorted;
   }, [store.allAgents, store.agents, store.team]);
+  const duplicateNames = useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const agent of identityAgents) counts.set(agent.name, (counts.get(agent.name) ?? 0) + 1);
+    return new Set([...counts.entries()].filter(([, count]) => count > 1).map(([name]) => name));
+  }, [identityAgents]);
   const authorityTargets = useMemo<KeyAuthorityTarget[]>(() => identityAgents.map((a) => ({ name: a.name, team: a.team ?? 'default' })), [identityAgents]);
   const authorityTargetKey = useMemo(() => authorityTargets.map((a) => `${a.team ?? ''}:${a.name}`).join('|'), [authorityTargets]);
   const accountKeys = useMemo(() => identityAgents.map(agentKey), [identityAgents]);
@@ -235,6 +315,28 @@ export function Identity({ store }: { store: FleetStore }) {
   const issueBlocked = !controllerVerified || isUnsafeScope(issueScope) || isUnsafeTtl(issueTtl);
   const review = useMemo(() => reviewRows(selAgent, acct, domain, wallet, controllerVerified), [selAgent, acct, domain, wallet, controllerVerified]);
   const readyCount = review.filter((r) => r.state === 'verified').length;
+  const brainSelectedController = useMemo(() => brainControllerForAgent(brainControllers, selAgent, duplicateNames), [brainControllers, selAgent, duplicateNames]);
+  const brainControllerMatches = useMemo(
+    () => identityAgents.map((agent) => brainControllerForAgent(brainControllers, agent, duplicateNames)),
+    [brainControllers, identityAgents, duplicateNames],
+  );
+  const brainLinkedAgents = brainControllerMatches.filter((match) => match.state === 'verified' || match.state === 'self').length;
+  const brainAmbiguousLinks = brainControllerMatches.filter((match) => match.ambiguous).length;
+  const brainControllerNeedsReview = !brainControllers || (brainControllers.activeLinks ?? 0) === 0 || brainSelectedController.state === 'warn' || brainAmbiguousLinks > 0;
+  const brainControllerLabel = brainControllers
+    ? `Brain controllers ${brainLinkedAgents}/${identityAgents.length}`
+    : 'Brain controllers --';
+  const brainControllerTitle = brainControllers
+    ? [
+      `Route: ${brainControllers.route ?? '/controllers'}`,
+      `Controllers: ${brainControllers.total ?? 0}`,
+      `Active links: ${brainControllers.activeLinks ?? 0}`,
+      `Linked current agents: ${brainLinkedAgents}/${identityAgents.length}`,
+      brainAmbiguousLinks ? `Ambiguous bare-name links: ${brainAmbiguousLinks}` : '',
+      brainControllers.generatedAt ? `Read: ${brainControllers.generatedAt}` : '',
+      ...(brainControllers.warnings ?? []),
+    ].filter(Boolean).join('\n')
+    : 'Brain /controllers unavailable; Brain Agents controller fallback should not be trusted.';
 
   async function freshIdentityAgents(): Promise<IdentityAgent[] | null> {
     const groups = await call<{ team: string; agents: Agent[] }[]>('agents:allTeams').catch(() => null);
@@ -295,6 +397,20 @@ export function Identity({ store }: { store: FleetStore }) {
     call<KeyCapabilities>('keys:caps').then(setCaps).catch((err) => setError(err instanceof Error ? err.message : 'Failed to load key capabilities'));
     call<{ scopes: SessionScope[]; ttls: { label: string; ms: number }[] }>('keys:presets').then(setPresets).catch((err) => setError(err instanceof Error ? err.message : 'Failed to load key presets'));
   }, []);
+
+  useEffect(() => {
+    let live = true;
+    call<BrainControllerReport>('brain:controllerReport')
+      .then((report) => {
+        if (live) setBrainControllers(report);
+      })
+      .catch(() => {
+        if (live) setBrainControllers(null);
+      });
+    return () => {
+      live = false;
+    };
+  }, [store.lastUpdated]);
 
   useEffect(() => {
     void reload();
@@ -482,7 +598,10 @@ export function Identity({ store }: { store: FleetStore }) {
           <h1>Identity & Keys</h1>
           <div className="muted small">Verify controller control, manage the agent account, and issue only scoped session keys.</div>
         </div>
-        <span className={caps?.live ? 'ok-text' : 'warn-text'}>{mockProviderWarning(caps)}</span>
+        <div className="identity-head-status">
+          <span className={caps?.live ? 'ok-text' : 'warn-text'}>{mockProviderWarning(caps)}</span>
+          <span className={brainControllerNeedsReview ? 'warn-text' : 'ok-text'} title={brainControllerTitle}>{brainControllerLabel}</span>
+        </div>
       </header>
 
       <div className="cols identity-shell">
@@ -573,6 +692,37 @@ export function Identity({ store }: { store: FleetStore }) {
                   {legacyMsg ? <div className="muted small" style={{ marginTop: 8 }}>{legacyMsg}</div> : null}
                 </section>
               ) : null}
+
+              <section className={`card ${brainControllerNeedsReview ? 'identity-legacy' : ''}`} role="status">
+                <div className="identity-legacy-head">
+                  <h3>Brain Controller Sync</h3>
+                  <StatusPill state={brainSelectedController.state} />
+                </div>
+                <p className="muted small">
+                  Read-only Brain <span className="mono">/controllers</span> evidence for accountable identity. It does not create, link, revoke, or promote controller records.
+                </p>
+                <div className="risk-list">
+                  <div className="risk-row">
+                    <span className={`dot ${dotTone(brainSelectedController.state)}`} />
+                    <b>Selected agent</b>
+                    <span className={statusTone(brainSelectedController.state)}>{brainSelectedController.note}</span>
+                  </div>
+                  <div className="risk-row">
+                    <span className={`dot ${brainControllers && (brainControllers.activeLinks ?? 0) > 0 ? 'ok' : 'warn'}`} />
+                    <b>Brain links</b>
+                    <span className={brainControllers && (brainControllers.activeLinks ?? 0) > 0 ? 'ok-text' : 'warn-text'}>
+                      {brainControllers ? `${brainControllers.activeLinks ?? 0} active links across ${brainControllers.total ?? 0} controllers; ${brainLinkedAgents}/${identityAgents.length} current agents matched` : 'route unavailable'}
+                    </span>
+                  </div>
+                  <div className="risk-row">
+                    <span className={`dot ${brainAmbiguousLinks ? 'warn' : 'ok'}`} />
+                    <b>Fallback safety</b>
+                    <span className={brainAmbiguousLinks ? 'warn-text' : 'muted'}>
+                      {brainAmbiguousLinks ? `${brainAmbiguousLinks} bare-name Brain link${brainAmbiguousLinks === 1 ? '' : 's'} ambiguous across duplicate agent names` : 'Scoped or unique matches only; bare duplicate links stay review-only.'}
+                    </span>
+                  </div>
+                </div>
+              </section>
 
               <section className="card identity-gate">
                 <div>

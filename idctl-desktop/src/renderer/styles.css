@@ -574,6 +574,7 @@ select:focus, input:focus { border-color: var(--accent); }
 
 /* Identity & Keys */
 .identity-view { gap: 12px; }
+.identity-head-status { display: flex; flex-direction: column; align-items: flex-end; gap: 4px; text-align: right; }
 .identity-shell { align-items: flex-start; }
 .identity-agents { width: 250px; flex: 0 0 250px; position: sticky; top: 0; max-height: calc(100vh - 118px); overflow: auto; }
 .identity-agents .target { display: flex; flex-direction: column; gap: 1px; width: 100%; }

@@ -151,6 +151,39 @@ export interface BrainGraphReport {
     warnings?: string[];
   };
 }
+export interface BrainControllerLink {
+  id?: number;
+  controller_id?: string;
+  controllerId?: string;
+  agent_id?: string;
+  agentId?: string;
+  role?: string;
+  authority_level?: string;
+  authorityLevel?: string;
+  status?: string;
+  metadata?: Record<string, unknown>;
+}
+export interface BrainController {
+  controller_id?: string;
+  controllerId?: string;
+  scope_user_id?: string;
+  type?: string;
+  label?: string;
+  name?: string;
+  primary_wallet?: string;
+  primaryWallet?: string;
+  status?: string;
+  agent_links?: BrainControllerLink[];
+  agentLinks?: BrainControllerLink[];
+}
+export interface BrainControllerReport {
+  generatedAt?: string;
+  route?: string;
+  total?: number;
+  activeLinks?: number;
+  controllers?: BrainController[];
+  warnings?: string[];
+}
 export interface SharedMemory {
   content?: string;
   id?: number;
@@ -343,6 +376,24 @@ export class BrainClient {
         identityBridgeCount: expandedMeta.identityBridgeCount,
         warnings,
       },
+    };
+  }
+
+  /** Read Brain accountable-controller links for Identity/Agents status review. */
+  async controllerReport(): Promise<BrainControllerReport | null> {
+    const r = await this.req<{ ok?: boolean; controllers?: BrainController[] }>('GET', '/controllers?limit=200');
+    if (!r || !Array.isArray(r.controllers)) return null;
+    const activeLinks = r.controllers.reduce((count, controller) => {
+      const links = controller.agent_links ?? controller.agentLinks ?? [];
+      return count + links.filter((link) => (link.status ?? 'active') === 'active').length;
+    }, 0);
+    return {
+      generatedAt: new Date().toISOString(),
+      route: '/controllers',
+      total: r.controllers.length,
+      activeLinks,
+      controllers: r.controllers,
+      warnings: [],
     };
   }
 
