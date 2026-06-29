@@ -60,6 +60,28 @@ type TeamSchedule = ScheduleEntry & { team?: string };
 function targetKey(agent: string, team?: string): string {
   return `${team ?? 'default'}/${agent}`;
 }
+function scheduleStamp(s: TeamSchedule): string {
+  return JSON.stringify({
+    active: !!s.active,
+    intervalSeconds: s.intervalSeconds ?? null,
+    targets: [...(s.targets ?? [])].sort(),
+    message: s.message ?? '',
+  });
+}
+function checkinStamp(c: CheckIn): string {
+  return JSON.stringify({
+    status: String(c.status ?? ''),
+    taskStatus: String(c.linkedTask?.status ?? ''),
+    taskGone: !!c.linkedTask?.gone,
+  });
+}
+function checkinId(c: CheckIn): string {
+  return String(c.id ?? '');
+}
+function linkedTaskState(c: CheckIn): string {
+  if (c.linkedTask?.gone) return 'gone';
+  return String(c.linkedTask?.status ?? 'unknown');
+}
 
 export function Schedule({ store }: { store: FleetStore }) {
   const syncVersion = useSyncVersion(['schedules', 'checkins', 'loops', 'work']);
@@ -98,6 +120,83 @@ export function Schedule({ store }: { store: FleetStore }) {
     if (!window.confirm(`${label}?\n\n${detail}`)) return;
     await act(label, fn);
   }
+  async function freshSchedules(): Promise<TeamSchedule[]> {
+    const all = await call<TeamSchedule[]>('schedules:allTeams').catch(() => [] as TeamSchedule[]);
+    if (all.length) return all;
+    const local = await call<ScheduleEntry[]>('schedules').catch(() => [] as ScheduleEntry[]);
+    return local.map((s) => ({ ...s, team: store.team ?? 'default' }));
+  }
+  function schedulesForAgent(list: TeamSchedule[], agent: string, team?: string): TeamSchedule[] {
+    return list.filter((s) => s.kind === 'heartbeat' && s.targets.includes(agent) && (!team || s.team === team));
+  }
+  function scheduleIds(list: TeamSchedule[]): string {
+    return list.map((s) => `${s.team ?? 'default'}:${s.id}:${scheduleStamp(s)}`).sort().join('|');
+  }
+  async function ensureHeartbeatFresh(agent: string, team: string | undefined, rendered: TeamSchedule[], action: string): Promise<TeamSchedule[] | null> {
+    const fresh = schedulesForAgent(await freshSchedules(), agent, team);
+    if (scheduleIds(rendered) !== scheduleIds(fresh)) {
+      window.alert([
+        `${action} blocked: the heartbeat for ${team ? `${team}/` : ''}${agent} changed since this row rendered.`,
+        '',
+        `Shown: ${rendered.length ? rendered.map((s) => `${fmtInterval(s.intervalSeconds)} ${s.active ? 'active' : 'paused'}`).join(', ') : 'off'}`,
+        `Current: ${fresh.length ? fresh.map((s) => `${fmtInterval(s.intervalSeconds)} ${s.active ? 'active' : 'paused'}`).join(', ') : 'off'}`,
+        '',
+        'The schedule list will refresh; review the current heartbeat before applying another change.',
+      ].join('\n'));
+      await reload();
+      return null;
+    }
+    return fresh;
+  }
+  async function ensureScheduleFresh(s: TeamSchedule, action: string): Promise<TeamSchedule | null> {
+    const fresh = (await freshSchedules()).find((x) => x.id === s.id && (s.team ? x.team === s.team : true)) ?? null;
+    if (!fresh) {
+      window.alert(`${action} blocked: this schedule no longer exists.`);
+      await reload();
+      return null;
+    }
+    if (scheduleStamp(s) !== scheduleStamp(fresh)) {
+      window.alert([
+        `${action} blocked: this schedule changed since the row rendered.`,
+        '',
+        `Shown: ${fmtInterval(s.intervalSeconds)} ${s.active ? 'active' : 'paused'}`,
+        `Current: ${fmtInterval(fresh.intervalSeconds)} ${fresh.active ? 'active' : 'paused'}`,
+        '',
+        'The schedule list will refresh; review the current row before applying another change.',
+      ].join('\n'));
+      await reload();
+      return null;
+    }
+    return fresh;
+  }
+  async function closeCheckinFresh(c: CheckIn, label = 'closing check-in'): Promise<void> {
+    const id = checkinId(c);
+    if (!id) return;
+    const fresh = (await call<CheckIn[]>('checkins').catch(() => [] as CheckIn[])).find((x) => checkinId(x) === id) ?? null;
+    if (!fresh) {
+      window.alert('Close blocked: this check-in no longer exists.');
+      await reload();
+      return;
+    }
+    if (checkinStamp(c) !== checkinStamp(fresh)) {
+      window.alert([
+        'Close blocked: this check-in changed since the row rendered.',
+        '',
+        `Shown: ${String(c.status ?? 'unknown')} / task ${linkedTaskState(c)}`,
+        `Current: ${String(fresh.status ?? 'unknown')} / task ${linkedTaskState(fresh)}`,
+        '',
+        'The check-in list will refresh; review the current row before closing it.',
+      ].join('\n'));
+      await reload();
+      return;
+    }
+    if (!/(active|snoozed)/i.test(String(fresh.status))) {
+      window.alert('Close blocked: this check-in is no longer active.');
+      await reload();
+      return;
+    }
+    await act(label, () => call('checkins:close', id));
+  }
 
   const fleetAgents = store.allAgents.length ? store.allAgents : store.agents.map((a) => ({ ...a, team: store.team ?? 'default' }));
   const shownSchedules = allSchedules.length ? allSchedules : schedules.map((s) => ({ ...s, team: store.team ?? 'default' }));
@@ -120,9 +219,20 @@ export function Schedule({ store }: { store: FleetStore }) {
   );
   async function cleanUp() {
     if (!staleCheckins.length) return;
-    if (!window.confirm(`Close ${staleCheckins.length} stale check-in${staleCheckins.length === 1 ? '' : 's'}?\n\nThis bulk-closes check-ins linked to finished or removed tasks.`)) return;
-    await act(`cleaning up ${staleCheckins.length} stale check-in${staleCheckins.length === 1 ? '' : 's'}`, async () => {
-      for (const c of staleCheckins) await call('checkins:close', c.id);
+    const fresh = await call<CheckIn[]>('checkins').catch(() => [] as CheckIn[]);
+    const freshStale = fresh.filter(
+      (c) => /(active|snoozed)/i.test(String(c.status)) && (isTerminalTask(c.linkedTask?.status) || c.linkedTask?.gone),
+    );
+    const renderedIds = staleCheckins.map(checkinId).filter(Boolean).sort().join('|');
+    const freshIds = freshStale.map(checkinId).filter(Boolean).sort().join('|');
+    if (renderedIds !== freshIds) {
+      window.alert(`Clean up blocked: the stale check-in set changed from ${staleCheckins.length} to ${freshStale.length} item${freshStale.length === 1 ? '' : 's'}.\n\nThe list will refresh; review the current stale check-ins before closing them.`);
+      await reload();
+      return;
+    }
+    if (!window.confirm(`Close ${freshStale.length} stale check-in${freshStale.length === 1 ? '' : 's'}?\n\nThis bulk-closes check-ins linked to finished or removed tasks.`)) return;
+    await act(`cleaning up ${freshStale.length} stale check-in${freshStale.length === 1 ? '' : 's'}`, async () => {
+      for (const c of freshStale) await call('checkins:close', checkinId(c));
     });
   }
 
@@ -130,14 +240,21 @@ export function Schedule({ store }: { store: FleetStore }) {
     const key = targetKey(agent, team);
     const seconds = hbInterval[key] ?? hbFor(agent, team)?.intervalSeconds ?? 3600;
     const existing = heartbeats.filter((h) => h.targets.includes(agent) && (!team || h.team === team));
-    if (!window.confirm(`${existing.length ? 'Update' : 'Enable'} heartbeat for ${team ? `${team}/` : ''}${agent}?\n\nThis creates or replaces a recurring internal manager check-in.`)) return;
+    const freshExisting = await ensureHeartbeatFresh(agent, team, existing, `${existing.length ? 'Update' : 'Enable'} heartbeat`);
+    if (!freshExisting) return;
+    if (!window.confirm(`${freshExisting.length ? 'Update' : 'Enable'} heartbeat for ${team ? `${team}/` : ''}${agent}?\n\nThis creates or replaces a recurring internal manager check-in.`)) return;
     // ADD-then-PRUNE: create the new heartbeat before removing the old, so a
     // failed add never leaves the agent unmonitored.
     await act(`heartbeat ${agent}`, async () => {
       await call('addHeartbeat', agent, seconds, HEARTBEAT_MSG, 'internal', team);
-      for (const s of existing) await call('removeSchedule', s.id, s.team);
+      for (const s of freshExisting) await call('removeSchedule', s.id, s.team);
       setHbInterval((m) => { const next = { ...m }; delete next[key]; return next; });
     });
+  }
+  async function mutateSchedule(s: TeamSchedule, label: string, detail: string, op: 'pauseSchedule' | 'resumeSchedule' | 'removeSchedule') {
+    const fresh = await ensureScheduleFresh(s, label);
+    if (!fresh) return;
+    await guardedScheduleAct(label, detail, () => call(op, fresh.id, fresh.team));
   }
 
   return (
@@ -189,10 +306,10 @@ export function Schedule({ store }: { store: FleetStore }) {
                   <td className="row-actions">
                     {hb ? (
                       <>
-                        <button className="btn" disabled={busy} onClick={() => void guardedScheduleAct(`${hb.active ? 'pause' : 'resume'} ${a.name}`, `${hb.active ? 'Pauses' : 'Resumes'} this recurring heartbeat for ${a.team ?? store.team ?? 'default'}/${a.name}.`, () => call(hb.active ? 'pauseSchedule' : 'resumeSchedule', hb.id, hb.team))}>
+                        <button className="btn" disabled={busy} onClick={() => void mutateSchedule(hb, `${hb.active ? 'pause' : 'resume'} ${a.name}`, `${hb.active ? 'Pauses' : 'Resumes'} this recurring heartbeat for ${a.team ?? store.team ?? 'default'}/${a.name}.`, hb.active ? 'pauseSchedule' : 'resumeSchedule')}>
                           {hb.active ? 'Pause' : 'Resume'}
                         </button>
-                        <button className="btn" disabled={busy} onClick={() => void guardedScheduleAct(`disable ${a.name}`, `Removes this recurring heartbeat for ${a.team ?? store.team ?? 'default'}/${a.name}.`, () => call('removeSchedule', hb.id, hb.team))}>✕</button>
+                        <button className="btn" disabled={busy} onClick={() => void mutateSchedule(hb, `disable ${a.name}`, `Removes this recurring heartbeat for ${a.team ?? store.team ?? 'default'}/${a.name}.`, 'removeSchedule')}>✕</button>
                       </>
                     ) : null}
                   </td>
@@ -230,10 +347,10 @@ export function Schedule({ store }: { store: FleetStore }) {
                         </td>
                         <td className="muted small">{relTime(s.lastRunAt)}</td>
                         <td className="row-actions">
-                          <button className="btn" disabled={busy} onClick={() => void guardedScheduleAct(`${s.active ? 'pause' : 'resume'} ${s.targets?.[0]}`, `${s.active ? 'Pauses' : 'Resumes'} this recurring heartbeat on ${s.team ?? 'unknown team'}.`, () => call(s.active ? 'pauseSchedule' : 'resumeSchedule', s.id, s.team))}>
+                          <button className="btn" disabled={busy} onClick={() => void mutateSchedule(s, `${s.active ? 'pause' : 'resume'} ${s.targets?.[0]}`, `${s.active ? 'Pauses' : 'Resumes'} this recurring heartbeat on ${s.team ?? 'unknown team'}.`, s.active ? 'pauseSchedule' : 'resumeSchedule')}>
                             {s.active ? 'Pause' : 'Resume'}
                           </button>
-                          <button className="btn" disabled={busy} title="Remove this heartbeat" onClick={() => void guardedScheduleAct(`remove ${s.targets?.[0]}`, `Removes this recurring heartbeat on ${s.team ?? 'unknown team'}.`, () => call('removeSchedule', s.id, s.team))}>✕</button>
+                          <button className="btn" disabled={busy} title="Remove this heartbeat" onClick={() => void mutateSchedule(s, `remove ${s.targets?.[0]}`, `Removes this recurring heartbeat on ${s.team ?? 'unknown team'}.`, 'removeSchedule')}>✕</button>
                         </td>
                       </tr>
                     );
@@ -305,7 +422,7 @@ export function Schedule({ store }: { store: FleetStore }) {
                           </div>
                         </div>
                         {open ? (
-                          <button className="btn small" disabled={busy} title="Stop this check-in firing" onClick={() => void act('closing check-in', () => call('checkins:close', c.id))}>Close</button>
+                          <button className="btn small" disabled={busy} title="Stop this check-in firing" onClick={() => void closeCheckinFresh(c)}>Close</button>
                         ) : (
                           <span className="muted small" style={{ alignSelf: 'center' }}>{c.status}</span>
                         )}

@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { call, resolveCoordinator, useSyncVersion, type FleetStore } from '../store.ts';
+import type { ScheduleEntry } from '../../../../idctl/src/api/client.ts';
 
 /**
  * Dream tab (under Work). An agent runs an offline "dream" — a reflection pass over
@@ -113,19 +114,41 @@ export function Dream({ store }: { store: FleetStore }) {
 
   async function scheduleNightly() {
     if (!agent) return;
-    if (!window.confirm(`Schedule nightly dream for ${agent}?\n\nThis creates a recurring manager check-in at 03:00 every day.`)) return;
+    const schedules = await call<ScheduleEntry[]>('schedules').catch(() => [] as ScheduleEntry[]);
+    const existing = schedules.find((s) =>
+      s.kind === 'calendar' &&
+      s.targets.includes(agent) &&
+      s.localTimeSeconds === 3 * 3600 &&
+      s.daysOfWeek === 'mon,tue,wed,thu,fri,sat,sun' &&
+      s.message === NIGHTLY_OBJECTIVE);
+    if (existing) {
+      window.alert(`Nightly dream already exists for ${team}/${agent} at 03:00 (${existing.active ? 'active' : 'paused'}).\n\nManage it under Loops -> Scheduled objectives instead of creating a duplicate.`);
+      return;
+    }
+    if (!window.confirm(`Schedule nightly dream for ${team}/${agent}?\n\nThis creates a recurring manager check-in at 03:00 every day.`)) return;
     setBusy(true); setMsg(`scheduling nightly dream for ${agent}…`);
     try {
-      await call('addCalendarCheckin', agent, '03:00', 'mon,tue,wed,thu,fri,sat,sun', NIGHTLY_OBJECTIVE, { delivery: 'talk' });
+      await call('addCalendarCheckin', agent, '03:00', 'mon,tue,wed,thu,fri,sat,sun', NIGHTLY_OBJECTIVE, { delivery: 'talk' }, team);
       setMsg(`nightly dream scheduled for ${agent} at 03:00 ✓ — manage it under Loops → Scheduled objectives`);
     } catch (e) { setMsg(`schedule failed: ${e instanceof Error ? e.message : String(e)}`); }
     finally { setBusy(false); }
   }
 
-  async function remove(id: string) {
+  async function remove(d: DreamSummary) {
+    const current = await call<Dream | null>('dreams:get', d.id).catch(() => null);
+    if (!current) {
+      window.alert('Delete blocked: this dream report no longer exists.');
+      await reload();
+      return;
+    }
+    if (current.title !== d.title || current.agent !== d.agent || current.team !== d.team || current.createdAt !== d.createdAt) {
+      window.alert('Delete blocked: this dream report changed since the list rendered.\n\nThe dream list will refresh; review the current report before deleting.');
+      await reload();
+      return;
+    }
     if (!window.confirm('Delete this dream report?\n\nThis removes the saved report from the local dream log.')) return;
     setBusy(true);
-    try { await call('dreams:remove', id); if (openId === id) { setOpenId(null); setDetail(null); } await reload(); }
+    try { await call('dreams:remove', current.id); if (openId === current.id) { setOpenId(null); setDetail(null); } await reload(); }
     finally { setBusy(false); }
   }
 
@@ -168,7 +191,7 @@ export function Dream({ store }: { store: FleetStore }) {
                 <span className="muted small">· {new Date(d.createdAt).toLocaleString()}</span>
                 <span className="grow" />
                 <span className="muted small">{ago(d.createdAt)}</span>
-                <button className="btn icon-danger small" disabled={locked} title="Delete dream" onClick={(e) => { e.stopPropagation(); void remove(d.id); }}>✕</button>
+                <button className="btn icon-danger small" disabled={locked} title="Delete dream" onClick={(e) => { e.stopPropagation(); void remove(d); }}>✕</button>
                 <span className="muted">{isOpen ? '▾' : '▸'}</span>
               </div>
               {isOpen ? (
