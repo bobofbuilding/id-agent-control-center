@@ -2565,7 +2565,7 @@
         {
           "id": "ollama",
           "label": "Local models (Ollama)",
-          "description": "Concurrency, installed models, pull/remove controls, and downloadable model catalog.",
+          "description": "Guided local driving path, concurrency, installed models, pull/remove controls, and downloadable model catalog. The local path distinguishes installed/configured from synced/default-ready before agents rely on the ollama runtime.",
           "routesInto": [
             "manager:localConcurrency",
             "manager:setLocalConcurrency",
@@ -2743,7 +2743,7 @@
           "id": "first-run-quick-actions",
           "label": "Readiness quick actions",
           "type": "buttons",
-          "description": "Download starter, add Ollama backend, sync a stale backend, make the ready backend explicit default, or scan running local servers from the top checkpoint.",
+          "description": "Download starter, add Ollama backend, sync a stale backend, make the ready backend explicit default, or scan running local servers from the top checkpoint and Local models path strip.",
           "routesInto": [
             "ollama:pull",
             "providers:add",
@@ -2793,7 +2793,12 @@
         {
           "id": "readiness-summary",
           "label": "Readiness summary",
-          "description": "Shows manager online/offline, routing default versus auto fallback, local starter/backend state, ready backend count, synced count, and missing key count before the deeper Settings controls."
+          "description": "Shows manager online/offline, routing default versus auto fallback, synced local backend readiness, ready backend count, synced count, and missing key count before the deeper Settings controls."
+        },
+        {
+          "id": "local-driving-path",
+          "label": "Local driving path",
+          "description": "Compact Local models strip that shows the next local setup state: download starter, add Ollama backend, sync local backend, make local backend default, or local default ready. Its buttons reuse the existing guarded pull/add/sync/default/scan paths."
         },
         {
           "id": "hardware-summary",
@@ -2826,7 +2831,7 @@
           "providers:*"
         ]
       },
-      "body": "# Settings\n\nSettings contains local desktop configuration for hardware, manager connection, coordinator status, self-update, subscriptions, Ollama, image services, local stacks, EVM data RPCs, and inference backends.\n\n## Use it for\n\n- Fix manager connectivity or confirm the manager URL used by the app.\n- Review subscription CLI state, local model providers, image generation services, EVM data endpoints, and inference defaults.\n- Check for, stage, and relaunch into app updates.\n\n## Current guardrails\n\nCoordinator is now read-only on Settings. The Connection card shows the active team's current coordinator and hands routing changes to HR Manager, where coordinator and primary-lead writes run through hierarchy fresh-reads and before/after previews. Provider default, enable/disable, remove, connect/sync, same-name add/replace, local-discovery add, and Add all new now fresh-read the current provider list before writing. Disabling or removing the last enabled inference backend is blocked before and after confirmation. Same-name provider replacement now requires an inline Replace existing backend arm, shows before/after endpoint details, and rechecks the provider after confirmation; discovered-server bulk add re-runs discovery and de-dupes against the fresh provider list before adding anything.\n\nEVM RPC save, replace, remove, and check fresh-read the current endpoint row before acting; replacing an existing endpoint shows before/after URLs. Local Ollama auto-backend creation rechecks current providers before adding the default Ollama backend. Local concurrency Apply fresh-reads the manager's current local inference limit before writing, and image-server Save/Clear fresh-reads the current preferred local image generator before changing local-vs-cloud routing. Local LLM stacks now sort starter-friendly choices first and label install effort as start here, easy, guided, or advanced; Terminal install commands remain reviewed and explicit, with visible clipboard fallback when automation is blocked. First-run local setup now defaults manual backend add to Ollama, starts the local model pull field on qwen3:1.7b, and exposes a top readiness checkpoint for manager connectivity, explicit-vs-auto routing, local runtime readiness, ready backend counts, missing keys, and guarded quick actions for starter download, Ollama backend add, sync, explicit default, and local scan. Sign-out, stack install/uninstall, model removal, and provider removal remain explicit operator actions.\n\n## Boundary\n\nThese settings are app-local configuration and infrastructure routing, not manager task data. Coordinator/routing edits belong in HR Manager, not Settings. Because release and update behavior is surfaced here, keep this page aligned with the package version and release process; the wiki drift check exists to catch stale release-facing documentation before shipping."
+      "body": "# Settings\n\nSettings contains local desktop configuration for hardware, manager connection, coordinator status, self-update, subscriptions, Ollama, image services, local stacks, EVM data RPCs, and inference backends.\n\n## Use it for\n\n- Fix manager connectivity or confirm the manager URL used by the app.\n- Review subscription CLI state, local model providers, image generation services, EVM data endpoints, and inference defaults.\n- Bring a new install into a driveable local path: download starter model, add Ollama backend, sync models, and make the local backend default when desired.\n- Check for, stage, and relaunch into app updates.\n\n## Current guardrails\n\nCoordinator is now read-only on Settings. The Connection card shows the active team's current coordinator and hands routing changes to HR Manager, where coordinator and primary-lead writes run through hierarchy fresh-reads and before/after previews. Provider default, enable/disable, remove, connect/sync, same-name add/replace, local-discovery add, and Add all new now fresh-read the current provider list before writing. Disabling or removing the last enabled inference backend is blocked before and after confirmation. Same-name provider replacement now requires an inline Replace existing backend arm, shows before/after endpoint details, and rechecks the provider after confirmation; discovered-server bulk add re-runs discovery and de-dupes against the fresh provider list before adding anything.\n\nEVM RPC save, replace, remove, and check fresh-read the current endpoint row before acting; replacing an existing endpoint shows before/after URLs. Local Ollama auto-backend creation rechecks current providers before adding the default Ollama backend. Local concurrency Apply fresh-reads the manager's current local inference limit before writing, and image-server Save/Clear fresh-reads the current preferred local image generator before changing local-vs-cloud routing. Local LLM stacks now sort starter-friendly choices first and label install effort as start here, easy, guided, or advanced; Terminal install commands remain reviewed and explicit, with visible clipboard fallback when automation is blocked. First-run local setup now defaults manual backend add to Ollama, starts the local model pull field on qwen3:1.7b, and exposes a top readiness checkpoint for manager connectivity, explicit-vs-auto routing, synced local runtime readiness, ready backend counts, missing keys, and guarded quick actions for starter download, Ollama backend add, sync, explicit default, and local scan. The Local models section repeats that path beside the model catalog, and local runtime readiness now means a local backend is synced/live rather than merely installed or configured. Sign-out, stack install/uninstall, model removal, and provider removal remain explicit operator actions.\n\n## Boundary\n\nThese settings are app-local configuration and infrastructure routing, not manager task data. Coordinator/routing edits belong in HR Manager, not Settings. Because release and update behavior is surfaced here, keep this page aligned with the package version and release process; the wiki drift check exists to catch stale release-facing documentation before shipping."
     },
     {
       "id": "guardrails-audit",
@@ -2866,7 +2871,7 @@
         "idctl-desktop/src/renderer/App.tsx"
       ],
       "purpose": "Current audit record for controls that can rewrite live agent, task, project, capability, identity, or provider state and therefore need review, confirmation, or stronger state synchronization.",
-      "scope": "Documentation and implementation record for the current modified build. It records the first full dashboard-page audit, sixty conservative guardrail implementation passes, and the policy decisions still needed before more disruptive UX simplification.",
+      "scope": "Documentation and implementation record for the current modified build. It records the first full dashboard-page audit, sixty-six conservative guardrail implementation passes, and the policy decisions still needed before more disruptive UX simplification.",
       "tabs": [
         {
           "id": "dashboard",
@@ -2911,7 +2916,7 @@
         {
           "id": "settings",
           "label": "Settings",
-          "description": "Provider default/toggle/remove/connect/add, local discovery adds, EVM RPC writes, local concurrency, and image-server preference changes now fresh-read current settings before writing. Same-name provider replacement needs an inline replacement arm before the final confirmation. Coordinator status is read-only here; HR Manager owns coordinator and primary routing edits. The last enabled inference backend cannot be disabled or removed."
+          "description": "Provider default/toggle/remove/connect/add, local discovery adds, EVM RPC writes, local concurrency, and image-server preference changes now fresh-read current settings before writing. Same-name provider replacement needs an inline replacement arm before the final confirmation. Coordinator status is read-only here; HR Manager owns coordinator and primary routing edits. The last enabled inference backend cannot be disabled or removed. Local model readiness now distinguishes installed/configured from synced/default-ready and shows a guided local driving path beside the model catalog."
         }
       ],
       "controls": [
@@ -3455,6 +3460,11 @@
           "IDACC Brain client: exposes a read-only /controllers report with controller count, active agent-link count, and raw controller payloads for Identity review.",
           "Identity & Keys: adds a Brain Controller Sync card and header chip that compare Brain controller links with current IDACC agents using scoped id/team-name matches first.",
           "Authority boundary: bare agent-name Brain controller links become review-only when duplicate current agent names exist, and the card never creates, links, revokes, or promotes Brain controller records."
+        ],
+        "implementedSixtySixthPass": [
+          "Settings: local runtime readiness now requires a synced/live local backend instead of treating an installed starter model plus configured backend as ready.",
+          "Settings Local models: adds a compact Local driving path strip that shows the next setup state and reuses guarded Download starter, Add Ollama backend, Sync, Make default, and Scan running actions.",
+          "UX boundary: the first-run path now keeps model download, backend add, backend sync, and explicit default visible together so downloaded local models do not imply that agents are route-ready."
         ]
       },
       "notes": [
@@ -3524,10 +3534,11 @@
         "Sixty-third guardrail pass adds an IDACC-side Brain Graph contract chip/review strip backed by read-only /graph/app/data so neighbor expansion support and missing source-authority labels stay visible from the Capabilities skill catalog.",
         "Sixty-fourth guardrail pass adds an IDACC-side Brain Skills catalog contract chip/review strip backed by /skills/index metadata, facets, reuse groups, and proposal summary fields.",
         "Sixty-fifth guardrail pass adds an IDACC-side Brain Controller Sync card in Identity & Keys backed by read-only /controllers and scoped current-agent matching.",
+        "Sixty-sixth guardrail pass adds a guided Settings Local driving path and tightens local readiness to synced/live local backends rather than installed/configured hints.",
         "The guardrail passes favor confirmation prompts and explicit disclosures over removing controls; the open UX decision is whether to replace confirmed shortcuts with preview-and-apply flows.",
         "Most important simplification: separate status/observation pages from mutation/control surfaces wherever possible."
       ],
-      "body": "# Sync & Guardrails Audit\n\nThis page records the ongoing pass over Dashboard, Work, Projects, Health, Identity & Keys, HR Manager, Capabilities, Computer Use, Settings, and the Brain dashboard tabs. It now documents sixty-five conservative guardrail implementation passes.\n\n## Current build state\n\nIDACC is sync-bus aware across dashboard, work, projects, health, plans, goals, loops, schedules, dreams, agent capability changes, and org sync. The guardrail layer favors fresh reads, preview prompts, scoped team/name authority, and owner-page handoffs before mutation.\n\nThe latest pass tightens Identity & Keys. IDACC now reads Brain /controllers as accountable-controller evidence, shows a Brain Controller Sync header chip and card, matches controller links to current agents by manager id or scoped team/name first, and holds bare agent-name links as review-only when duplicate current names exist. The card is observation-only: it does not create, link, revoke, or promote Brain controller records.\n\n## Boundaries\n\nDashboard stays observe, talk, and refresh. HR Manager owns hierarchy, relay policy, team lifecycle, and org sync. Capabilities owns MCP, skills, plugins, additive Brain catalog sync, and read-only Brain contract chips. Identity owns local controller proof, scoped key actions, legacy authority review, and read-only Brain /controllers comparison. Brain Fleet, Health, Skills, Learning, Agents, and Graph remain status surfaces unless a future write flow receives its own guarded preview-and-apply path.\n\n## Open decisions\n\nDecide whether to restart/redeploy Brain now so the staged Skills/Fleet/Health/Agents/Graph/Learning source-contract patches appear live on port 4200, or keep holding them for a maintenance window while IDACC surfaces stale-contract warnings."
+      "body": "# Sync & Guardrails Audit\n\nThis page records the ongoing pass over Dashboard, Work, Projects, Health, Identity & Keys, HR Manager, Capabilities, Computer Use, Settings, and the Brain dashboard tabs. It now documents sixty-six conservative guardrail implementation passes.\n\n## Current build state\n\nIDACC is sync-bus aware across dashboard, work, projects, health, plans, goals, loops, schedules, dreams, agent capability changes, and org sync. The guardrail layer favors fresh reads, preview prompts, scoped team/name authority, and owner-page handoffs before mutation.\n\nThe latest pass tightens Settings local-model setup. Local runtime readiness now requires a synced/live local backend, and the Local models section shows a compact Local driving path for the next setup state: download starter, add Ollama backend, sync local backend, make local backend default, or ready. Downloaded/configured local models no longer imply that agents are route-ready.\n\n## Boundaries\n\nDashboard stays observe, talk, and refresh. HR Manager owns hierarchy, relay policy, team lifecycle, and org sync. Capabilities owns MCP, skills, plugins, additive Brain catalog sync, and read-only Brain contract chips. Identity owns local controller proof, scoped key actions, legacy authority review, and read-only Brain /controllers comparison. Settings owns local model/backend setup but keeps coordinator/routing edits handed to HR Manager. Brain Fleet, Health, Skills, Learning, Agents, and Graph remain status surfaces unless a future write flow receives its own guarded preview-and-apply path.\n\n## Open decisions\n\nDecide whether to restart/redeploy Brain now so the staged Skills/Fleet/Health/Agents/Graph/Learning source-contract patches appear live on port 4200, or keep holding them for a maintenance window while IDACC surfaces stale-contract warnings."
     },
     {
       "id": "wiki",
@@ -3590,5 +3601,5 @@
       "body": "# Wiki\n\nWiki is both the human documentation page and the editable schematic for the Control Center UI. Each article explains the operator purpose of a page; the structured sections below preserve tabs, tiles, fields, controls, displays, routes, and source files for implementation detail.\n\n## Use it for\n\n- Search pages, controls, routes, source files, and notes from inside the desktop app.\n- Confirm how a UI surface is intended to behave before editing code or filing follow-up work.\n- Keep app navigation metadata and human documentation in one reviewed JSON artifact.\n\n## Editing rule\n\nThe desktop app hot-reload polls CONTROL_CENTER_WIKI.json through the main-process wiki bridge. Sidebar labels, icons, order, and visibility still come from pages[].nav for implemented routes, so documentation edits must preserve that metadata and keep every page.body non-empty."
     }
   ],
-  "appVersion": "0.1.285"
+  "appVersion": "0.1.286"
 }

@@ -702,7 +702,30 @@ export function Settings({ store, navigate }: { store: FleetStore; navigate?: (v
   const starterModel = TOP_LOCAL_MODEL_CATALOG.find((m) => m.id === STARTER_LOCAL_MODEL_ID) ?? TOP_LOCAL_MODEL_CATALOG[0];
   const starterInstalled = modelInstalled(STARTER_LOCAL_MODEL_ID);
   const localBackendConfigured = localProviders.some((p) => p.enabled !== false);
-  const localBackendReady = localProviders.some(providerRouteReady) || (localBackendConfigured && starterInstalled);
+  const localRouteReadyProviders = localProviders.filter(providerRouteReady);
+  const localBackendReady = localRouteReadyProviders.length > 0;
+  const localSyncCandidate = localProviders.find((p) => p.enabled !== false && providerKeyReady(p) && !providerRouteReady(p));
+  const localDefaultReady = Boolean(defaultProvider && isLocalProvider(defaultProvider) && providerRouteReady(defaultProvider));
+  const localDefaultCandidate = localRouteReadyProviders[0];
+  const localDrivingTone = localDefaultReady ? 'ok' : localBackendReady || localBackendConfigured || starterInstalled ? 'warn' : 'err';
+  const localDrivingTitle = localDefaultReady
+    ? 'local default ready'
+    : localDefaultCandidate
+      ? 'local backend ready'
+      : localSyncCandidate
+        ? 'sync local backend'
+        : starterInstalled
+          ? 'add Ollama backend'
+          : 'download starter model';
+  const localDrivingDetail = localDefaultReady
+    ? `${defaultProvider?.name ?? 'local backend'} is synced and default for local agents.`
+    : localDefaultCandidate
+      ? `${localDefaultCandidate.name} is synced; make it default to keep local agents from falling back to another backend.`
+      : localSyncCandidate
+        ? `${localSyncCandidate.name} is configured; connect and sync so its models appear in runtime pickers.`
+        : starterInstalled
+          ? `${STARTER_LOCAL_MODEL_ID} is installed; add the Ollama backend so agents can route to it.`
+          : `Download ${STARTER_LOCAL_MODEL_ID}; IDACC will add Ollama after the pull succeeds.`;
   const providersNeedingKeys = enabledProviders.filter((p) => (p.needsKey ?? kindNeedsKey(p.kind)) && !providerKeyReady(p)).length;
   const syncCandidate = defaultProvider && !defaultRouteReady ? defaultProvider : enabledProviders.find((p) => providerKeyReady(p) && !providerRouteReady(p));
   const textRuntimeReady = store.connection === 'online' && (defaultRouteReady || routeReadyProviders.length > 0);
@@ -1049,6 +1072,37 @@ export function Settings({ store, navigate }: { store: FleetStore; navigate?: (v
           <button className="btn small" disabled={discovering} onClick={() => void runDiscover()}>
             {discovering ? 'Scanning…' : 'Scan running'}
           </button>
+        </div>
+        <div className={`local-driving-strip ${localDrivingTone}`}>
+          <div className="grow">
+            <b>Local driving path: {localDrivingTitle}</b>
+            <span>{localDrivingDetail}</span>
+          </div>
+          <div className="row-actions">
+            {!starterInstalled && starterModel ? (
+              <button className="btn small primary" disabled={pulling} onClick={() => void pull(STARTER_LOCAL_MODEL_ID)}>
+                {pulling ? 'Downloading…' : 'Download starter'}
+              </button>
+            ) : null}
+            {starterInstalled && !localBackendConfigured ? (
+              <button className="btn small" disabled={busy} onClick={() => void addOllamaBackendFromReadiness()}>
+                Add Ollama backend
+              </button>
+            ) : null}
+            {localSyncCandidate ? (
+              <button className="btn small" disabled={busy} onClick={() => void connect(localSyncCandidate.name)}>
+                Sync {localSyncCandidate.name}
+              </button>
+            ) : null}
+            {localDefaultCandidate && !localDefaultReady ? (
+              <button className="btn small" disabled={busy} onClick={() => void setDefault(localDefaultCandidate.name)}>
+                Make {localDefaultCandidate.name} default
+              </button>
+            ) : null}
+            <button className="btn small" disabled={discovering} onClick={() => void runDiscover()}>
+              {discovering ? 'Scanning…' : 'Scan running'}
+            </button>
+          </div>
         </div>
         <div className="row-actions" style={{ gap: 8, alignItems: 'center', flexWrap: 'wrap', marginBottom: 4 }}>
           <span className="muted small">parallel local inferences:</span>
