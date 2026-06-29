@@ -18,6 +18,7 @@ type TeamLead = { team: string; lead: string | null; activeCount: number; totalC
 type FanoutResult = { team: string; lead?: string; status: 'dispatched' | 'no-active-agent' | 'failed'; queryId?: string; detail?: string };
 type TriageResult = { considered: number; assigned: { ref: string; agent: string }[]; skipped: number; dispatched: number; error?: string };
 type AssignScope = 'team' | 'selected-teams' | 'team-leads' | 'all-agents';
+type TaskSnapshot = { status: string; owner?: string; team?: string; lane: Lane };
 
 type Tab = 'tasks' | 'goals' | 'plans' | 'schedule' | 'loops' | 'dream';
 const TABS: { id: Tab; label: string }[] = [
@@ -321,9 +322,60 @@ function TasksPanel({ store }: { store: FleetStore }) {
     if (ov && LANE_STATUS[ov] === colOf(t.status)) return ov;
     return DEFAULT_LANE[colOf(t.status)];
   }
+  function laneOfWith(t: Task, list: Task[], lanes: Record<string, string>, deps: Record<string, string[]>): Lane {
+    const idx = new Map(list.map((x) => [ref(x), x] as const));
+    const blocked = !isDone(t) && (deps[ref(t)] ?? []).some((r) => {
+      const d = idx.get(r);
+      return d ? !isDone(d) : false;
+    });
+    if (blocked) return 'holding';
+    const ov = lanes[ref(t)] as Lane | undefined;
+    if (ov && LANE_STATUS[ov] === colOf(t.status)) return ov;
+    return DEFAULT_LANE[colOf(t.status)];
+  }
+  function snapshotOf(t: Task, lane: Lane = laneOf(t)): TaskSnapshot {
+    return { status: colOf(t.status), owner: t.ownerName ?? '', team: t.teamName ?? taskTeam(t) ?? '', lane };
+  }
+  async function freshTask(t: Task): Promise<{ task: Task | null; lane: Lane }> {
+    const list = await call<Task[]>(store.viewAll ? 'tasks:allTeams' : 'tasks');
+    const lanes = await call<Record<string, string>>('tasks:lanes').catch(() => laneOverlay);
+    const deps = await call<Record<string, string[]>>('tasks:deps').catch(() => depsOverlay);
+    const task = list.find((x) => ref(x) === ref(t) || x.uuid === t.uuid || x.name === t.name) ?? null;
+    return { task, lane: task ? laneOfWith(task, list, lanes, deps) : laneOf(t) };
+  }
+  async function ensureFreshTask(t: Task, action: string, fields: Array<keyof TaskSnapshot> = ['status', 'owner', 'team', 'lane'], quiet = false): Promise<Task | null> {
+    const before = snapshotOf(t);
+    const { task, lane } = await freshTask(t);
+    if (!task) {
+      if (!quiet) {
+        window.alert(`${action} blocked: ${ref(t)} is no longer in the live task list.`);
+        await reload();
+      }
+      return null;
+    }
+    const current = snapshotOf(task, lane);
+    const changed = fields.filter((field) => String(before[field] ?? '') !== String(current[field] ?? ''));
+    if (changed.length) {
+      if (!quiet) {
+        window.alert([
+          `${action} blocked: ${ref(t)} changed since this card was rendered.`,
+          '',
+          ...changed.map((field) => `- ${field}: ${String(before[field] || 'none')} -> ${String(current[field] || 'none')}`),
+          '',
+          'The board will refresh; review the current task before applying another change.',
+        ].join('\n'));
+        await reload();
+      }
+      return null;
+    }
+    return task;
+  }
   // Drag a card to a lane → save the lane overlay + set the mapped manager status if it changed.
   async function moveToLane(t: Task, lane: Lane) {
     if (laneOf(t) === lane) return;
+    const fresh = await ensureFreshTask(t, `Move ${ref(t)}`, ['status', 'owner', 'team', 'lane']);
+    if (!fresh) return;
+    t = fresh;
     const targetStatus = LANE_STATUS[lane];
     if (colOf(t.status) !== targetStatus && !window.confirm(`Move ${ref(t)} to ${lane.replace(/-/g, ' ')}?\n\nThis also writes the manager task status to "${targetStatus}".`)) return;
     setBusy(true); setNote(`move ${ref(t)} → ${lane.replace(/-/g, ' ')}…`);
@@ -429,7 +481,13 @@ function TasksPanel({ store }: { store: FleetStore }) {
     load[target.name] = (load[target.name] ?? 0) + 1;
     return target.name;
   }
-  async function redispatchCore(t: Task, load: Record<string, number>): Promise<boolean> {
+  async function redispatchCore(t: Task, load: Record<string, number>, notifyStale = false): Promise<boolean> {
+    const fresh = await ensureFreshTask(t, `Re-dispatch ${ref(t)}`, ['status', 'owner', 'team'], !notifyStale);
+    if (!fresh) {
+      if (!notifyStale) setNote('skipped stale re-dispatch; board refreshed');
+      return false;
+    }
+    t = fresh;
     const tteam = taskTeam(t);
     const target = pickRedispatchTarget(t, load);
     if (!target) return false;
@@ -442,7 +500,7 @@ function TasksPanel({ store }: { store: FleetStore }) {
     if (!window.confirm(`Re-dispatch ${ref(t)}?\n\nThis may reassign the task from ${t.ownerName ?? 'unassigned'} to another active agent and sends the agent a new background request.`)) return;
     const tt = toast({ kind: 'progress', text: `Re-dispatching ${ref(t)}…` });
     try {
-      const ok = await redispatchCore(t, {});
+      const ok = await redispatchCore(t, {}, true);
       tt.update(ok ? { kind: 'success', text: `re-dispatched ${ref(t)} ✓` } : { kind: 'error', text: 'no active agent to take this task' });
       if (ok) await reload();
     } catch (e) { tt.update({ kind: 'error', text: `re-dispatch failed: ${e instanceof Error ? e.message : String(e)}` }); }
@@ -454,7 +512,7 @@ function TasksPanel({ store }: { store: FleetStore }) {
     const tt = silent ? null : toast({ kind: 'progress', text: `Re-dispatching ${n} stalled task${n === 1 ? '' : 's'}…` });
     let ok = 0;
     const load: Record<string, number> = {}; // shared so the batch spreads across active agents
-    for (const t of stalledTasks) { try { if (await redispatchCore(t, load)) ok++; } catch { /* keep going */ } }
+    for (const t of stalledTasks) { try { if (await redispatchCore(t, load, false)) ok++; } catch { /* keep going */ } }
     if (tt) tt.update({ kind: ok ? 'success' : 'error', text: `re-dispatched ${ok}/${n} stalled ✓` });
     else if (ok) toast({ kind: 'info', text: `⚙ auto-re-dispatched ${ok} stalled task${ok === 1 ? '' : 's'}` });
     await reload();
@@ -478,7 +536,10 @@ function TasksPanel({ store }: { store: FleetStore }) {
     const clean = title?.trim().replace(/"/g, "'");
     if (clean) void run(`/task create "${clean}"`, `create “${clean}”`);
   }
-  function assign(t: Task, agent: string) {
+  async function assign(t: Task, agent: string) {
+    const fresh = await ensureFreshTask(t, `Assign ${ref(t)}`, ['status', 'owner', 'team']);
+    if (!fresh) return;
+    t = fresh;
     if (agent && agent !== t.ownerName && !window.confirm(`Assign ${ref(t)} to ${agent}?\n\nThis overwrites the current owner${t.ownerName ? ` (${t.ownerName})` : ''}.`)) return;
     if (agent) void run(`/task assign ${ref(t)} ${agent}`, `assign ${ref(t)} → ${agent}`, taskTeam(t));
   }
@@ -984,7 +1045,7 @@ function TasksPanel({ store }: { store: FleetStore }) {
                 ) : t.ownerName ? (
                   <span className="muted small" title={phase === 'done' ? 'completed by this agent' : 'assigned, not yet started'}>{phase === 'done' ? '✓' : '◴'} {t.ownerName}</span>
                 ) : !isDone(t) ? (
-                  <select className="cell-select" style={{ fontSize: 11 }} defaultValue="" disabled={busy} onChange={(e) => assign(t, e.target.value)}>
+                  <select className="cell-select" style={{ fontSize: 11 }} defaultValue="" disabled={busy} onChange={(e) => void assign(t, e.target.value)}>
                     <option value="">assign…</option>
                     {(store.viewAll ? store.allAgents.filter((a) => a.team === t.teamName) : store.agents).map((a) => <option key={a.id} value={a.name}>{a.name}{liveAgent(a.status) ? '' : ' · stopped'}</option>)}
                   </select>
