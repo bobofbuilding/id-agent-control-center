@@ -309,6 +309,10 @@ function unsafeSession(scopeIdx: number, ttlMs: number): boolean {
   const ttl = Number(ttlMs);
   return !Number.isFinite(ttl) || ttl <= 0 || scope.label.toLowerCase().includes('full') || scope.spendLimitWei === '0';
 }
+function clientFor(selectedTeam?: string): ManagerClient {
+  const selected = String(selectedTeam ?? '').trim();
+  return selected ? client.withTeam(selected) : client;
+}
 
 const M: Record<string, (...a: any[]) => Promise<unknown>> = {
   info: async () => ({ managerUrl, team, coordinator: lsGet<Record<string, string>>('idctl.coordinators', {})[team] ?? null }),
@@ -328,9 +332,9 @@ const M: Record<string, (...a: any[]) => Promise<unknown>> = {
   inboxPending: () => client.inboxPending(),
   tasks: () => client.tasks(),
   dispatch: (cmd: string) => client.dispatch(String(cmd)),
-  remote: (cmd: string, agent?: string) => client.remote(String(cmd), agent),
+  remote: (cmd: string, agent?: string, selectedTeam?: string) => clientFor(selectedTeam).remote(String(cmd), agent),
   probeAll: () => client.probeAll(),
-  probeOne: (n: string) => client.probeOne(String(n)),
+  probeOne: (n: string, selectedTeam?: string) => clientFor(selectedTeam).probeOne(String(n)),
   'headroom:status': async () => ({
     cli: { found: false, error: 'Headroom status requires the Electron main process.' },
     proxy: { url: 'http://127.0.0.1:8787/mcp', reachable: false, error: 'not checked in this shell' },
@@ -354,7 +358,9 @@ const M: Record<string, (...a: any[]) => Promise<unknown>> = {
   teamConfig: (n: string) => client.teamConfig(String(n)),
   setTeamDelegates: (n: string, delegates: string[] | null) => client.setTeamDelegates(String(n), delegates ?? null),
   setAgentDelegates: (id: string, delegates: string[] | null) => client.setAgentDelegates(String(id), delegates ?? null),
-  setAgentRuntime: (id: string, runtime: string) => client.setAgentRuntime(String(id), String(runtime)),
+  setAgentRuntime: (id: string, runtime: string, selectedTeam?: string) => clientFor(selectedTeam).setAgentRuntime(String(id), String(runtime)),
+  setAgentEffort: (id: string, effort: string, selectedTeam?: string) => clientFor(selectedTeam).setAgentEffort(String(id), String(effort ?? '')),
+  setAgentSpeed: (id: string, speed: string, selectedTeam?: string) => clientFor(selectedTeam).setAgentSpeed(String(id), String(speed ?? '')),
   spawnAgent: (spec: Parameters<ManagerClient['spawnAgent']>[0]) => client.spawnAgent(spec),
   'identity:controllerChallenge': async (agent: string, wallet: string, selectedTeam?: string) => startControllerChallenge(String(agent), String(wallet), selectedTeam ? String(selectedTeam) : undefined),
   'identity:controllerVerify': async (agent: string, wallet: string, signature: string, selectedTeam?: string) => verifyControllerChallengeForAgent(String(agent), String(wallet), String(signature), selectedTeam ? String(selectedTeam) : undefined),

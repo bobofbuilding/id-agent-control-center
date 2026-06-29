@@ -66,6 +66,10 @@ function speedOf(a: Agent): string {
 function runtimeOf(a: Agent): string | undefined {
   return a.runtime ?? (typeof a.metadata?.runtime === 'string' ? a.metadata.runtime : undefined);
 }
+function displayValue(value: string | undefined, fallback = 'default'): string {
+  const v = (value ?? '').trim();
+  return v || fallback;
+}
 function metadataNames(value: unknown): string[] {
   if (!Array.isArray(value)) return [];
   return value
@@ -167,14 +171,36 @@ export function AgentTable({ store, onProbe, probeBusy }: { store: FleetStore; o
   // ★ set an agent as its team's coordinator (lead) — works per-team in the holistic view.
   const teamFor = (a: TeamAgent) => a.team ?? store.team ?? 'default';
   const isLead = (a: TeamAgent) => (coords[teamFor(a)] ?? (teamFor(a) === store.team ? store.coordinator : undefined)) === a.name;
-  function confirmAgentChange(a: TeamAgent, label: string, detail: string): boolean {
+  function confirmAgentChange(
+    a: TeamAgent,
+    label: string,
+    detail: string,
+    changes: Array<[string, string | undefined, string | undefined]> = [],
+    effects: string[] = [],
+  ): boolean {
     const team = teamFor(a);
+    const currentRuntime = runtimeOf(a);
+    const state = [
+      `Status: ${a.status}${isActive(a) ? ' (running)' : ''}`,
+      `Runtime/model: ${displayValue(currentRuntime, 'unset')} / ${displayValue(a.model, 'unset')}`,
+    ].join('\n');
+    const diff = changes.length
+      ? `\n\nChanges:\n${changes.map(([field, before, after]) => `- ${field}: ${displayValue(before)} -> ${displayValue(after)}`).join('\n')}`
+      : '';
+    const impact = effects.length ? `\n\nWill:\n${effects.map((effect) => `- ${effect}`).join('\n')}` : '';
     const active = isActive(a) ? '\n\nThis agent is currently running; the change may restart or redirect live work.' : '';
-    return window.confirm(`${label} for ${team}/${a.name}?\n\n${detail}${active}`);
+    return window.confirm(`${label} for ${team}/${a.name}?\n\n${detail}\n\n${state}${diff}${impact}${active}`);
   }
   async function makeLead(a: TeamAgent) {
     const team = teamFor(a);
-    if (!confirmAgentChange(a, 'Set team lead', `This changes ${team}'s coordinator routing.`)) return;
+    const before = coords[team] ?? (team === store.team ? store.coordinator : undefined);
+    if (!confirmAgentChange(
+      a,
+      'Set team lead',
+      `This changes ${team}'s coordinator routing.`,
+      [['coordinator', before, a.name]],
+      [`Future team-level messages route to ${a.name} by default`],
+    )) return;
     try { await call('coordinator:set', team, a.name); setCoords((c) => ({ ...c, [team]: a.name })); store.refresh(); }
     catch (err) { window.alert(`couldn't set lead: ${err instanceof Error ? err.message : String(err)}`); }
   }
@@ -202,7 +228,19 @@ export function AgentTable({ store, onProbe, probeBusy }: { store: FleetStore; o
   async function setModel(a: TeamAgent, model: string) {
     if (!model || model === a.model) return;
     const team = teamOf(a);
-    if (!confirmAgentChange(a, `Switch model to ${short(model)}`, 'This updates the model and rebuilds the agent harness.')) return;
+    const currentRuntime = runtimeOf(a);
+    const mismatch = runtimeModelMismatch(currentRuntime, model);
+    if (!confirmAgentChange(
+      a,
+      `Switch model to ${short(model)}`,
+      'This updates the model and rebuilds the agent harness.',
+      [['model', a.model, model]],
+      [
+        'Write the selected model through the manager',
+        'Rebuild the agent harness so the new model is loaded',
+        ...(mismatch ? [`Keep the current runtime even though the selected model may not match it: ${mismatch}`] : []),
+      ],
+    )) return;
     setBusy(`model ${a.name}`);
     try {
       await call('remote', `/model ${a.name} ${model}`, undefined, team);
@@ -220,17 +258,38 @@ export function AgentTable({ store, onProbe, probeBusy }: { store: FleetStore; o
     if (act === 'Reset session') {
       // Start a fresh conversation — drops the agent's accumulated context. Use this to deflate a
       // bloated codex session (multi-million-token prompts) so its next turns are cheap again.
-      if (!confirmAgentChange(a, 'Reset session', 'This clears the agent conversation context.')) return;
+      if (!confirmAgentChange(
+        a,
+        'Reset session',
+        'This clears the agent conversation context.',
+        [],
+        ['Drop accumulated session context for future turns'],
+      )) return;
       void run(`reset session ${a.name}`, `/clear ${a.name}`, team);
       return;
     }
-    if ((act === 'Stop' || act === 'Rebuild') && !confirmAgentChange(a, act, act === 'Stop' ? 'This stops the agent process and can interrupt current work.' : 'This restarts the agent process so runtime/config changes take effect.')) return;
+    if ((act === 'Stop' || act === 'Rebuild') && !confirmAgentChange(
+      a,
+      act,
+      act === 'Stop' ? 'This stops the agent process and can interrupt current work.' : 'This restarts the agent process so runtime/config changes take effect.',
+      [],
+      [act === 'Stop' ? 'Stop this agent process' : 'Restart this agent process with current runtime/config'],
+    )) return;
     void run(`${act} ${a.name}`, `/agent ${a.name} ${act.toLowerCase()}`, team);
   }
   async function setEffort(a: TeamAgent, effort: string) {
     if (effort === effortOf(a)) return;
     const team = teamOf(a);
-    if (!confirmAgentChange(a, `Set effort to ${effort || 'default'}`, 'This changes the reasoning effort and rebuilds the agent harness.')) return;
+    if (!confirmAgentChange(
+      a,
+      `Set effort to ${effort || 'default'}`,
+      'This changes the reasoning effort and rebuilds the agent harness.',
+      [['effort', effortOf(a), effort || 'default']],
+      [
+        'Write reasoning-effort metadata',
+        'Rebuild the agent harness so the setting is picked up on launch',
+      ],
+    )) return;
     setBusy(`effort ${a.name}`);
     try {
       await call('setAgentEffort', a.id, effort, team);
@@ -242,7 +301,16 @@ export function AgentTable({ store, onProbe, probeBusy }: { store: FleetStore; o
   async function setSpeed(a: TeamAgent, speed: string) {
     if (speed === speedOf(a)) return;
     const team = teamOf(a);
-    if (!confirmAgentChange(a, `Set speed to ${speed}`, 'This changes output speed and rebuilds the agent harness.')) return;
+    if (!confirmAgentChange(
+      a,
+      `Set speed to ${speed}`,
+      'This changes output speed and rebuilds the agent harness.',
+      [['speed', speedOf(a), speed]],
+      [
+        'Write output-speed metadata',
+        'Rebuild the agent harness so the setting is picked up on launch',
+      ],
+    )) return;
     setBusy(`speed ${a.name}`);
     try {
       await call('setAgentSpeed', a.id, speed, team);
@@ -252,14 +320,29 @@ export function AgentTable({ store, onProbe, probeBusy }: { store: FleetStore; o
     } catch (err) { setBusy(`speed change failed — ${err instanceof Error ? err.message : String(err)}`); setTimeout(() => setBusy(null), 4000); }
   }
   async function setRuntime(a: TeamAgent, runtime: string) {
-    if (!runtime || runtime === a.runtime) return;
+    const currentRuntime = runtimeOf(a);
+    if (!runtime || runtime === currentRuntime) return;
     const team = teamOf(a);
-    if (!confirmAgentChange(a, `Switch runtime to ${runtimeLabel(runtime)}`, 'This may also switch the model and rebuild the agent harness.')) return;
+    const models = catalog[runtime] ?? [];
+    const model = !a.model || runtimeModelMismatch(runtime, a.model) ? models[0] ?? a.model : a.model;
+    const effects = [
+      'Write the selected runtime through the manager',
+      model && model !== a.model ? `Switch model to ${model} because the current model does not match the new runtime` : 'Keep the current model',
+      'Rebuild the agent harness so runtime/config changes take effect',
+    ];
+    if (!confirmAgentChange(
+      a,
+      `Switch runtime to ${runtimeLabel(runtime)}`,
+      'This may also switch the model and rebuild the agent harness.',
+      [
+        ['runtime', currentRuntime, runtime],
+        ...(model && model !== a.model ? [['model', a.model, model] as [string, string | undefined, string | undefined]] : []),
+      ],
+      effects,
+    )) return;
     setBusy(`runtime ${a.name}`);
     try {
       await call('setAgentRuntime', a.id, runtime, team);
-      const models = catalog[runtime] ?? [];
-      const model = !a.model || runtimeModelMismatch(runtime, a.model) ? models[0] ?? a.model : a.model;
       if (model && model !== a.model) await call('remote', `/model ${a.name} ${model}`, undefined, team);
       store.refresh();
       setTimeout(() => { try { modelRefs.current[a.id]?.showPicker?.(); } catch { /* no activation */ } }, 250);
