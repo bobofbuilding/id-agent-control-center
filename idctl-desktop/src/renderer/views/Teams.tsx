@@ -17,6 +17,9 @@ type TeamSource =
   | { kind: 'default'; name: 'default' }
   | { kind: 'template'; name: string }
   | { kind: 'config'; name: string };
+type TeamAgentsGroup = { team: string; agents: Agent[] };
+type HrHierarchy = { primary: { team: string; agent: string } | null; coordinators: Record<string, string> };
+type OrgCfg = { enabled?: boolean; autoRebuild?: boolean };
 
 const HB_INTERVALS = [
   { label: '5 min', s: 300 },
@@ -42,6 +45,47 @@ function isRunnableAgent(a: Agent): boolean {
 type HrAgentCandidate = Agent & { team?: string };
 function hrAgentKey(a: HrAgentCandidate, fallbackTeam = 'default'): string {
   return `${a.team ?? fallbackTeam}/${a.name}`;
+}
+function sortedKey(values: string[]): string {
+  return [...new Set(values.map(String).filter(Boolean))].sort().join('|');
+}
+function agentNameKey(agents: Agent[]): string {
+  return sortedKey(agents.map((a) => slugName(a.name)));
+}
+function metadataDelegates(a: { metadata?: unknown }): string[] | null {
+  const raw = (a.metadata as { delegates_to?: unknown } | undefined)?.delegates_to;
+  return Array.isArray(raw) ? raw.map(String) : null;
+}
+function hrAgentStamp(a: HrAgentCandidate, fallbackTeam = 'default'): string {
+  return JSON.stringify({
+    id: a.id,
+    name: a.name,
+    team: a.team ?? fallbackTeam,
+    runtime: a.runtime ?? '',
+    model: a.model ?? '',
+    status: a.status ?? '',
+    health: a.health ?? '',
+    delegates: metadataDelegates(a),
+  });
+}
+function hierarchyStamp(h: HrHierarchy): string {
+  return JSON.stringify({
+    primary: h.primary ? [h.primary.team, h.primary.agent] : null,
+    coordinators: Object.entries(h.coordinators ?? {}).sort(([a], [b]) => a.localeCompare(b)),
+  });
+}
+function orgConfigStamp(c: OrgCfg): string {
+  return JSON.stringify({ enabled: c.enabled !== false, autoRebuild: c.autoRebuild !== false });
+}
+async function freshHrGroups(): Promise<TeamAgentsGroup[]> {
+  return call<TeamAgentsGroup[]>('agents:allTeams').catch(() => []);
+}
+function agentsForTeam(groups: TeamAgentsGroup[], team: string): Agent[] {
+  return groups.find((g) => g.team === team)?.agents ?? [];
+}
+function findHrAgent(groups: TeamAgentsGroup[], team: string, ref: { id?: string; name: string }): Agent | undefined {
+  const agents = agentsForTeam(groups, team);
+  return (ref.id ? agents.find((a) => a.id === ref.id) : undefined) ?? agents.find((a) => a.name === ref.name);
 }
 function resolveHrManagerAgent(store: FleetStore): { name: string; team?: string } | null {
   const candidates: HrAgentCandidate[] = (store.allAgents.length ? store.allAgents : store.agents).filter(isRunnableAgent);
@@ -90,8 +134,7 @@ function describeAgentRelay(d: string[] | null, teamPolicy: string[] | null): st
 }
 
 function currentAgentDelegates(a: { metadata?: unknown }): string[] | null {
-  const raw = (a.metadata as { delegates_to?: unknown } | undefined)?.delegates_to;
-  return Array.isArray(raw) ? raw.map(String) : null;
+  return metadataDelegates(a);
 }
 
 function primaryLabel(primary: { team: string; agent: string } | null): string {
@@ -227,17 +270,34 @@ export function Teams({ store }: { store: FleetStore }) {
   async function saveInstr(team?: string) {
     if (!instrTarget) return;
     const targetTeam = team ?? instrTargetTeam;
-    if (!window.confirm(`Save instructions and rebuild ${targetTeam}/${instrTarget}?\n\nThis writes the agent's system-prompt addendum and rebuilds the agent so it starts following it.`)) return;
-    setInstrBusy(true); setInstrMsg('saving…');
+    const rendered = instrTargetChoice;
+    if (!rendered) return;
+    setInstrBusy(true); setInstrMsg('checking current agent…');
     try {
+      const fresh = await ensureRenderedAgentFresh('Save instructions', {
+        id: rendered.id,
+        name: rendered.name,
+        team: targetTeam,
+        stamp: hrAgentStamp(rendered, targetTeam),
+      });
+      if (!fresh) { setInstrMsg('blocked — roster changed; review refreshed state'); return; }
+      const current = await call<string>('agent:getInstructions', fresh.name, targetTeam).catch(() => '');
+      if (current !== instrSaved) {
+        setInstrText(current);
+        setInstrSaved(current);
+        setInstrMsg('blocked — instructions changed elsewhere; review refreshed text');
+        return;
+      }
+      if (!window.confirm(`Save instructions and rebuild ${targetTeam}/${fresh.name}?\n\nThis writes the agent's current system-prompt addendum and rebuilds the current agent so it starts following it.`)) return;
+      setInstrMsg('saving…');
       // `team` scopes the write to the selected agent's team (Structure panel), so a
       // pending active-team switch can't redirect it; omitted ⇒ the active team.
-      const r = await call<{ ok: boolean; needsRebuild?: boolean }>('agent:setInstructions', instrTarget, instrText, targetTeam);
+      const r = await call<{ ok: boolean; needsRebuild?: boolean }>('agent:setInstructions', fresh.name, instrText, targetTeam);
       setInstrSaved(instrText);
-      setInstrMsg(r.needsRebuild ? `saved ✓ — rebuilding ${instrTarget}…` : 'saved ✓');
+      setInstrMsg(r.needsRebuild ? `saved ✓ — rebuilding ${fresh.name}…` : 'saved ✓');
       // Rebuild so the new instructions land in the agent's system prompt now.
-      await call('rebuildAgent', instrTarget, targetTeam).catch(() => {});
-      setInstrMsg(instrText.trim() ? `saved ✓ — ${targetTeam}/${instrTarget} rebuilt; it now follows these instructions` : `cleared ✓ — ${targetTeam}/${instrTarget} rebuilt`);
+      await call('rebuildAgent', fresh.name, targetTeam).catch(() => {});
+      setInstrMsg(instrText.trim() ? `saved ✓ — ${targetTeam}/${fresh.name} rebuilt; it now follows these instructions` : `cleared ✓ — ${targetTeam}/${fresh.name} rebuilt`);
     } catch (e) {
       setInstrMsg(`save failed: ${e instanceof Error ? e.message : String(e)}`);
     } finally { setInstrBusy(false); }
@@ -283,6 +343,22 @@ export function Teams({ store }: { store: FleetStore }) {
   const selectedTeamName = selectedKey?.startsWith('team:') ? selectedKey.slice('team:'.length) : null;
   const selectedTeamAgents = selectedTeamName ? (graphGroups.find((g) => g.team === selectedTeamName)?.agents ?? []) : [];
 
+  async function ensureRenderedAgentFresh(action: string, ref: { id?: string; name: string; team: string; stamp?: string }): Promise<Agent | null> {
+    const groups = await freshHrGroups();
+    const fresh = findHrAgent(groups, ref.team, ref);
+    if (!fresh) {
+      setMsg(`${action} blocked: ${ref.team}/${ref.name} is no longer in the current roster. Refreshed; review and try again.`);
+      store.refresh();
+      return null;
+    }
+    if (ref.stamp && hrAgentStamp({ ...fresh, team: ref.team }, ref.team) !== ref.stamp) {
+      setMsg(`${action} blocked: ${ref.team}/${ref.name} changed since this row loaded. Refreshed; review the current status first.`);
+      store.refresh();
+      return null;
+    }
+    return fresh;
+  }
+
   // ── Structure-tab agent editor — isolated from the active team. Loads/saves the SELECTED
   //    agent's goals by name+team directly (no active-team switch). Separate from the Manage
   //    tab's shared instruction editor (which stays active-team scoped). ──
@@ -303,13 +379,30 @@ export function Teams({ store }: { store: FleetStore }) {
   }, [selAgentName, selAgentTeam]);
   async function saveSgInstr() {
     if (!selAgentName) return;
-    if (!window.confirm(`Save instructions and rebuild ${selAgentTeam}/${selAgentName}?\n\nThis writes the selected agent's system-prompt addendum and rebuilds it immediately.`)) return;
-    setSgBusy(true); setSgMsg('saving…');
+    const rendered = selectedAgent?.agent;
+    if (!rendered) return;
+    setSgBusy(true); setSgMsg('checking current agent…');
     try {
-      await call('agent:setInstructions', selAgentName, sgInstr, selAgentTeam);
+      const fresh = await ensureRenderedAgentFresh('Save selected agent instructions', {
+        id: rendered.id,
+        name: selAgentName,
+        team: selAgentTeam,
+        stamp: hrAgentStamp({ ...rendered, team: selAgentTeam }, selAgentTeam),
+      });
+      if (!fresh) { setSgMsg('blocked — roster changed; review refreshed state'); return; }
+      const current = await call<string>('agent:getInstructions', fresh.name, selAgentTeam).catch(() => '');
+      if (current !== sgSaved) {
+        setSgInstr(current);
+        setSgSaved(current);
+        setSgMsg('blocked — instructions changed elsewhere; review refreshed text');
+        return;
+      }
+      if (!window.confirm(`Save instructions and rebuild ${selAgentTeam}/${fresh.name}?\n\nThis writes the selected agent's current system-prompt addendum and rebuilds it immediately.`)) return;
+      setSgMsg('saving…');
+      await call('agent:setInstructions', fresh.name, sgInstr, selAgentTeam);
       setSgSaved(sgInstr);
-      await call('rebuildAgent', selAgentName, selAgentTeam).catch(() => {});
-      setSgMsg(sgInstr.trim() ? `saved ✓ — ${selAgentName} rebuilt` : `cleared ✓ — ${selAgentName} rebuilt`);
+      await call('rebuildAgent', fresh.name, selAgentTeam).catch(() => {});
+      setSgMsg(sgInstr.trim() ? `saved ✓ — ${fresh.name} rebuilt` : `cleared ✓ — ${fresh.name} rebuilt`);
       store.refresh();
     } catch (e) { setSgMsg(`save failed: ${e instanceof Error ? e.message : String(e)}`); }
     finally { setSgBusy(false); }
@@ -327,6 +420,26 @@ export function Teams({ store }: { store: FleetStore }) {
       setSgInstr(txt.trim()); setSgMsg('drafted ✓ — review, then Save & rebuild');
     } catch (e) { setSgMsg(`HR manager draft failed: ${e instanceof Error ? e.message : String(e)}`); }
     finally { setSgBusy(false); }
+  }
+  async function rebuildSelectedStructureAgent(rendered: Agent, team: string) {
+    setBusy(true);
+    setMsg(`checking ${team}/${rendered.name}…`);
+    try {
+      const fresh = await ensureRenderedAgentFresh('Rebuild selected agent', {
+        id: rendered.id,
+        name: rendered.name,
+        team,
+        stamp: hrAgentStamp({ ...rendered, team }, team),
+      });
+      if (!fresh) return;
+      if (!window.confirm(`Rebuild current ${team}/${fresh.name}?\n\nThis restarts the selected agent so config and instruction changes take effect.`)) return;
+      setMsg(`rebuilding ${fresh.name}…`);
+      await call('rebuildAgent', fresh.name, team);
+      store.refresh();
+      setMsg(`rebuild queued for ${team}/${fresh.name} ✓`);
+    } catch (e) {
+      setMsg(`rebuild failed: ${e instanceof Error ? e.message : String(e)}`);
+    } finally { setBusy(false); }
   }
 
   async function loadRelay() {
@@ -374,18 +487,27 @@ export function Teams({ store }: { store: FleetStore }) {
   const relayPayload: string[] | null = mode === 'permissive' ? null : delegates ?? [];
   const relayDirty = relayKey(relayPayload) !== relayKey(savedDelegates);
   async function saveRelay() {
-    const preview = [
-      `Save relay policy for ${activeTeam}?`,
-      '',
-      `Before: ${describeRelay(savedDelegates)}`,
-      `After:  ${describeRelay(relayPayload)}`,
-      '',
-      `This changes which teams ${activeTeam}'s agents may delegate work to.`,
-    ].join('\n');
-    if (!window.confirm(preview)) return;
     setRelayBusy(true);
-    setRelayMsg('saving…');
+    setRelayMsg('checking current policy…');
     try {
+      const fresh = await call<{ delegates_to: string[] | null }>('teamConfig', activeTeam);
+      if (relayKey(fresh.delegates_to) !== relayKey(savedDelegates)) {
+        setDelegates(fresh.delegates_to);
+        setSavedDelegates(fresh.delegates_to);
+        setMode(modeOf(fresh.delegates_to));
+        setRelayMsg('blocked — relay policy changed elsewhere; review refreshed policy');
+        return;
+      }
+      const preview = [
+        `Save relay policy for ${activeTeam}?`,
+        '',
+        `Before: ${describeRelay(fresh.delegates_to)}`,
+        `After:  ${describeRelay(relayPayload)}`,
+        '',
+        `This changes which teams ${activeTeam}'s current agents may delegate work to.`,
+      ].join('\n');
+      if (!window.confirm(preview)) return;
+      setRelayMsg('saving…');
       const r = await call<{ delegates_to: string[] | null }>('setTeamDelegates', activeTeam, relayPayload);
       setDelegates(r.delegates_to);
       setSavedDelegates(r.delegates_to);
@@ -414,22 +536,43 @@ export function Teams({ store }: { store: FleetStore }) {
   // cross-team delegation independently of its team's policy).
   const [agentEditing, setAgentEditing] = useState<string | null>(null);
   const [agentSel, setAgentSel] = useState<string[]>([]);
-  async function applyAgent(a: { id: string; name: string; metadata?: unknown }, delegates: string[] | null, label: string): Promise<boolean> {
-    const current = currentAgentDelegates(a);
-    const preview = [
-      `Apply ${label} override?`,
-      '',
-      `Agent: ${activeTeam}/${a.name}`,
-      `Before: ${describeAgentRelay(current, savedDelegates)}`,
-      `After:  ${describeAgentRelay(delegates, savedDelegates)}`,
-      '',
-      "This changes this individual agent's cross-team delegation policy immediately.",
-    ].join('\n');
-    if (!window.confirm(preview)) return false;
+  async function applyAgent(a: HrAgentCandidate, delegates: string[] | null, label: string): Promise<boolean> {
     setBusy(true);
-    setMsg(`${label}…`);
+    setMsg(`checking ${label}…`);
     try {
-      await call('setAgentDelegates', a.id, delegates);
+      const fresh = await ensureRenderedAgentFresh(`Apply ${label}`, {
+        id: a.id,
+        name: a.name,
+        team: activeTeam,
+        stamp: hrAgentStamp({ ...a, team: activeTeam }, activeTeam),
+      });
+      if (!fresh) return false;
+      const freshTeam = await call<{ delegates_to: string[] | null }>('teamConfig', activeTeam);
+      if (relayKey(freshTeam.delegates_to) !== relayKey(savedDelegates)) {
+        setDelegates(freshTeam.delegates_to);
+        setSavedDelegates(freshTeam.delegates_to);
+        setMode(modeOf(freshTeam.delegates_to));
+        setMsg(`blocked: ${activeTeam} relay policy changed; review refreshed policy before overriding ${fresh.name}.`);
+        return false;
+      }
+      const current = currentAgentDelegates(fresh);
+      if (relayKey(current) !== relayKey(currentAgentDelegates(a))) {
+        setMsg(`blocked: ${activeTeam}/${fresh.name} relay override changed elsewhere. Refreshed; review and try again.`);
+        store.refresh();
+        return false;
+      }
+      const preview = [
+        `Apply ${label} override?`,
+        '',
+        `Agent: ${activeTeam}/${fresh.name}`,
+        `Before: ${describeAgentRelay(current, freshTeam.delegates_to)}`,
+        `After:  ${describeAgentRelay(delegates, freshTeam.delegates_to)}`,
+        '',
+        "This changes this individual agent's cross-team delegation policy immediately.",
+      ].join('\n');
+      if (!window.confirm(preview)) return false;
+      setMsg(`${label}…`);
+      await call('setAgentDelegates', fresh.id, delegates);
       store.refresh();
       setMsg(`${label} ✓`);
       return true;
@@ -443,13 +586,29 @@ export function Teams({ store }: { store: FleetStore }) {
   // Reassign a local agent to a different team (manager rebuilds it there).
   async function moveAgentToTeam(agentId: string, agentName: string, fromTeam: string, toTeam: string) {
     if (!toTeam || toTeam === fromTeam) return;
-    if (!window.confirm(`Move agent "${agentName}" from "${fromTeam}" to "${toTeam}"?\n\nIt will be rebuilt under the new team and leave ${fromTeam}.`)) return;
     setBusy(true);
-    setMsg(`moving ${agentName} → ${toTeam}…`);
+    setMsg(`checking move ${agentName} → ${toTeam}…`);
     try {
-      const r = await call<{ rebuilt?: boolean; warning?: string }>('agent:move', agentId, toTeam);
+      const [groups, teams] = await Promise.all([
+        freshHrGroups(),
+        call<{ name: string }[]>('teams').catch(() => []),
+      ]);
+      if (!teams.some((t) => t.name === toTeam)) {
+        setMsg(`move blocked: target team "${toTeam}" no longer exists. Refreshed; review and try again.`);
+        store.refresh();
+        return;
+      }
+      const fresh = findHrAgent(groups, fromTeam, { id: agentId, name: agentName });
+      if (!fresh) {
+        setMsg(`move blocked: ${fromTeam}/${agentName} is no longer in that team. Refreshed; review and try again.`);
+        store.refresh();
+        return;
+      }
+      if (!window.confirm(`Move current agent "${fresh.name}" from "${fromTeam}" to "${toTeam}"?\n\nIt will be rebuilt under the new team and leave ${fromTeam}.`)) return;
+      setMsg(`moving ${fresh.name} → ${toTeam}…`);
+      const r = await call<{ rebuilt?: boolean; warning?: string }>('agent:move', fresh.id, toTeam);
       store.refresh();
-      setMsg(r?.warning ? `moved ${agentName} → ${toTeam} (⚠ ${r.warning})` : `moved ${agentName} → ${toTeam} ✓`);
+      setMsg(r?.warning ? `moved ${fresh.name} → ${toTeam} (⚠ ${r.warning})` : `moved ${fresh.name} → ${toTeam} ✓`);
     } catch (err) {
       setMsg(`failed: ${err instanceof Error ? err.message : String(err)}`);
     } finally {
@@ -458,10 +617,26 @@ export function Teams({ store }: { store: FleetStore }) {
   }
   // Delete an EMPTY team. The manager refuses `default` and any team with agents.
   async function removeTeam(name: string) {
-    if (!window.confirm(`Delete team "${name}"?\n\nIt has no agents. This can't be undone.`)) return;
     setBusy(true);
-    setMsg(`deleting team ${name}…`);
+    setMsg(`checking team ${name}…`);
     try {
+      const [teams, groups] = await Promise.all([
+        call<{ name: string }[]>('teams').catch(() => []),
+        freshHrGroups(),
+      ]);
+      if (name === 'default' || !teams.some((t) => t.name === name)) {
+        setMsg(`delete blocked: team "${name}" is no longer deletable. Refreshed; review and try again.`);
+        store.refresh();
+        return;
+      }
+      const agents = agentsForTeam(groups, name);
+      if (agents.length) {
+        setMsg(`delete blocked: ${name} now has ${agents.length} agent${agents.length === 1 ? '' : 's'}. Stop or move them first.`);
+        store.refresh();
+        return;
+      }
+      if (!window.confirm(`Delete current empty team "${name}"?\n\nIt still has no agents. This can't be undone.`)) return;
+      setMsg(`deleting team ${name}…`);
       await call('team:delete', name);
       if (name === store.team) await store.setTeam('default');
       store.refresh();
@@ -472,7 +647,7 @@ export function Teams({ store }: { store: FleetStore }) {
       setBusy(false);
     }
   }
-  function pickAgentMode(a: { id: string; name: string; metadata?: unknown }, m: RelayMode) {
+  function pickAgentMode(a: HrAgentCandidate, m: RelayMode) {
     if (m === 'select') {
       const cur = (a.metadata as { delegates_to?: unknown })?.delegates_to;
       setAgentSel(Array.isArray(cur) && !cur.includes('*') ? (cur as string[]) : []);
@@ -486,59 +661,91 @@ export function Teams({ store }: { store: FleetStore }) {
     setAgentSel((s) => (s.includes(name) ? s.filter((x) => x !== name) : [...s, name]));
   }
   // Lead hierarchy (#10): the primary coordinator across teams.
-  const [hier, setHier] = useState<{ primary: { team: string; agent: string } | null; coordinators: Record<string, string> }>({ primary: null, coordinators: {} });
+  const [hier, setHier] = useState<HrHierarchy>({ primary: null, coordinators: {} });
   async function loadHier() {
     setHier(await call<typeof hier>('coordinator:hierarchy').catch(() => ({ primary: null, coordinators: {} })));
   }
   useEffect(() => { void loadHier(); }, [activeTeam, store.lastUpdated]);
+  async function ensureHierarchyFresh(action: string): Promise<HrHierarchy | null> {
+    const fresh = await call<HrHierarchy>('coordinator:hierarchy').catch(() => ({ primary: null, coordinators: {} }));
+    if (hierarchyStamp(fresh) !== hierarchyStamp(hier)) {
+      setHier(fresh);
+      setMsg(`${action} blocked: lead hierarchy changed elsewhere. Refreshed; review the current hierarchy first.`);
+      return null;
+    }
+    return fresh;
+  }
+  async function ensureHierarchyAgent(action: string, team: string, agent: string): Promise<Agent | null> {
+    const groups = await freshHrGroups();
+    const fresh = findHrAgent(groups, team, { name: agent });
+    if (!fresh) {
+      setMsg(`${action} blocked: ${team}/${agent} is no longer in the current roster. Refreshed; review and try again.`);
+      store.refresh();
+      return null;
+    }
+    return fresh;
+  }
   async function makePrimary() {
-    const agent = store.coordinator ?? store.agents.find((a) => /^(lead|manager)$/i.test(a.name))?.name;
-    if (!agent) return;
     const team = store.team ?? 'default';
-    const beforeCoord = hier.coordinators[team] ?? '(none)';
+    const freshHier = await ensureHierarchyFresh('Make primary');
+    if (!freshHier) return;
+    const teamAgents = agentsForTeam(await freshHrGroups(), team);
+    const agent = freshHier.coordinators[team] ?? resolveCoordinator(teamAgents, undefined);
+    if (!agent) { setMsg(`Make primary blocked: ${team} has no current coordinator candidate.`); return; }
+    const freshAgent = await ensureHierarchyAgent('Make primary', team, agent);
+    if (!freshAgent) return;
+    const beforeCoord = freshHier.coordinators[team] ?? '(none)';
     const preview = [
-      `Make ${team}/${agent} the primary cross-team lead?`,
+      `Make ${team}/${freshAgent.name} the primary cross-team lead?`,
       '',
-      `Primary: ${primaryLabel(hier.primary)} -> ${team}/${agent}`,
-      `Coordinator for ${team}: ${beforeCoord} -> ${agent}`,
+      `Primary: ${primaryLabel(freshHier.primary)} -> ${team}/${freshAgent.name}`,
+      `Coordinator for ${team}: ${beforeCoord} -> ${freshAgent.name}`,
       '',
       'This changes fleet hierarchy routing. Run Org sync afterward to push the hierarchy into agent goals and the brain.',
     ].join('\n');
     if (!window.confirm(preview)) return;
-    await call('coordinator:setPrimary', team, agent);
+    await call('coordinator:setPrimary', team, freshAgent.name);
     await loadHier();
   }
   /** Set (or change) a team's coordinator — the lead the rest of the team reports to. */
   async function setTeamCoordinator(team: string, agent: string) {
     if (!agent) return;
-    const before = hier.coordinators[team] || (hier.primary?.team === team ? hier.primary.agent : '(none)');
+    const freshHier = await ensureHierarchyFresh('Set coordinator');
+    if (!freshHier) return;
+    const freshAgent = await ensureHierarchyAgent('Set coordinator', team, agent);
+    if (!freshAgent) return;
+    const before = freshHier.coordinators[team] || (freshHier.primary?.team === team ? freshHier.primary.agent : '(none)');
     const preview = [
-      `Make ${team}/${agent} the team coordinator?`,
+      `Make ${team}/${freshAgent.name} the team coordinator?`,
       '',
-      `Coordinator for ${team}: ${before} -> ${agent}`,
-      `Primary lead: ${primaryLabel(hier.primary)}`,
+      `Coordinator for ${team}: ${before} -> ${freshAgent.name}`,
+      `Primary lead: ${primaryLabel(freshHier.primary)}`,
       '',
       `This changes the lead that the rest of ${team} reports to.`,
     ].join('\n');
     if (!window.confirm(preview)) return;
-    await call('coordinator:set', team, agent).catch(() => {});
+    await call('coordinator:set', team, freshAgent.name).catch(() => {});
     await loadHier();
     store.refresh();
   }
   /** Promote a specific team's coordinator to the primary cross-team lead. */
   async function makePrimaryFor(team: string, agent: string) {
     if (!agent) return;
-    const beforeCoord = hier.coordinators[team] ?? '(none)';
+    const freshHier = await ensureHierarchyFresh('Promote primary');
+    if (!freshHier) return;
+    const freshAgent = await ensureHierarchyAgent('Promote primary', team, agent);
+    if (!freshAgent) return;
+    const beforeCoord = freshHier.coordinators[team] ?? '(none)';
     const preview = [
-      `Promote ${team}/${agent} to primary cross-team lead?`,
+      `Promote ${team}/${freshAgent.name} to primary cross-team lead?`,
       '',
-      `Primary: ${primaryLabel(hier.primary)} -> ${team}/${agent}`,
-      `Coordinator for ${team}: ${beforeCoord} -> ${agent}`,
+      `Primary: ${primaryLabel(freshHier.primary)} -> ${team}/${freshAgent.name}`,
+      `Coordinator for ${team}: ${beforeCoord} -> ${freshAgent.name}`,
       '',
       'This changes fleet hierarchy routing. Run Org sync afterward to push the hierarchy into agent goals and the brain.',
     ].join('\n');
     if (!window.confirm(preview)) return;
-    await call('coordinator:setPrimary', team, agent).catch(() => {});
+    await call('coordinator:setPrimary', team, freshAgent.name).catch(() => {});
     await loadHier();
   }
 
@@ -554,7 +761,7 @@ export function Teams({ store }: { store: FleetStore }) {
     rebuildLimit: number;
     changedAgents: { team: string; agent: string; status?: string; rebuild: boolean; reason?: string }[];
   };
-  const [orgCfg, setOrgCfg] = useState<{ enabled?: boolean; autoRebuild?: boolean }>({ enabled: true, autoRebuild: true });
+  const [orgCfg, setOrgCfg] = useState<OrgCfg>({ enabled: true, autoRebuild: true });
   const [secondaries, setSecondaries] = useState<SecLead[]>([]);
   const [orgBusy, setOrgBusy] = useState(false);
   const [orgResult, setOrgResult] = useState<string | null>(null);
@@ -578,20 +785,46 @@ export function Teams({ store }: { store: FleetStore }) {
     setSecondaries(await call<{ secondaries: SecLead[] }>('org:hierarchy').then((h) => h.secondaries ?? []).catch(() => []));
   }
   useEffect(() => { void loadOrg(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [activeTeam, store.lastUpdated]);
+  async function ensureOrgConfigFresh(action: string): Promise<OrgCfg | null> {
+    const fresh = await call<OrgCfg>('org:getConfig').catch(() => ({ enabled: true, autoRebuild: true }));
+    if (orgConfigStamp(fresh) !== orgConfigStamp(orgCfg)) {
+      setOrgCfg(fresh);
+      setOrgResult(`${action} blocked: org-sync settings changed elsewhere. Review refreshed settings and try again.`);
+      return null;
+    }
+    return fresh;
+  }
   async function toggleOrg(patch: { enabled?: boolean; autoRebuild?: boolean }) {
+    if (!(await ensureOrgConfigFresh('Org config change'))) return;
     const label = patch.enabled !== undefined ? `${patch.enabled ? 'Enable' : 'Disable'} org auto-sync` : `${patch.autoRebuild ? 'Enable' : 'Disable'} org auto-rebuild`;
     if (!window.confirm(`${label}?\n\nOrg sync composes agent goals from the hierarchy and brain; auto-rebuild can restart idle agents after goals change.`)) return;
     const next = await call<{ enabled?: boolean; autoRebuild?: boolean }>('org:setConfig', patch).catch(() => orgCfg);
     setOrgCfg(next);
   }
   async function syncOrgNow() {
-    setOrgBusy(true); setOrgResult('previewing…');
+    setOrgBusy(true); setOrgResult('checking current org state…');
     try {
-      const opts = { autoRebuild: orgCfg.autoRebuild !== false };
+      const freshCfg = await ensureOrgConfigFresh('Org sync');
+      if (!freshCfg) return;
+      const freshHier = await ensureHierarchyFresh('Org sync');
+      if (!freshHier) { setOrgResult('Org sync blocked: lead hierarchy changed elsewhere. Review refreshed hierarchy and try again.'); return; }
+      const opts = { autoRebuild: freshCfg.autoRebuild !== false };
+      const previewStamp = { hierarchy: hierarchyStamp(freshHier), config: orgConfigStamp(freshCfg) };
+      setOrgResult('previewing…');
       const preview = await call<OrgPreview>('org:preview', opts);
       const previewText = formatOrgPreview(preview);
       if (!window.confirm(`${previewText}\n\nApply this org sync now?`)) {
         setOrgResult(`preview only:\n${previewText}`);
+        return;
+      }
+      const [afterHier, afterCfg] = await Promise.all([
+        call<HrHierarchy>('coordinator:hierarchy').catch(() => ({ primary: null, coordinators: {} })),
+        call<OrgCfg>('org:getConfig').catch(() => freshCfg),
+      ]);
+      if (hierarchyStamp(afterHier) !== previewStamp.hierarchy || orgConfigStamp(afterCfg) !== previewStamp.config) {
+        setHier(afterHier);
+        setOrgCfg(afterCfg);
+        setOrgResult('sync blocked: org state changed after preview. Review the refreshed hierarchy/settings and run Preview & sync again.');
         return;
       }
       setOrgResult('syncing…');
@@ -606,10 +839,44 @@ export function Teams({ store }: { store: FleetStore }) {
   // Whole-team lifecycle (start / stop / probe / rebuild every agent in a team).
   const [teamOpBusy, setTeamOpBusy] = useState(false);
   const [teamOpMsg, setTeamOpMsg] = useState('');
-  const [pendingTeamOp, setPendingTeamOp] = useState<string | null>(null); // 2-step confirm for stop/rebuild
+  async function currentTeamSnapshot(team: string): Promise<{ exists: boolean; agents: Agent[]; running: number; total: number }> {
+    const [teams, groups] = await Promise.all([
+      call<Array<{ name: string; agentCount?: number }>>('teams').catch(() => []),
+      freshHrGroups(),
+    ]);
+    const agents = agentsForTeam(groups, team);
+    const row = teams.find((t) => t.name === team);
+    return {
+      exists: Boolean(row) || groups.some((g) => g.team === team),
+      agents,
+      running: agents.filter(isRunnableAgent).length,
+      total: agents.length || Number(row?.agentCount) || 0,
+    };
+  }
   async function runTeamOp(team: string, op: 'start' | 'stop' | 'probe' | 'rebuild') {
-    setPendingTeamOp(null); setTeamOpBusy(true); setTeamOpMsg(`${op} ${team}…`);
+    setTeamOpBusy(true); setTeamOpMsg(`checking ${team}…`);
     try {
+      const snap = await currentTeamSnapshot(team);
+      if (!snap.exists) {
+        setTeamOpMsg(`${op} blocked: team ${team} no longer exists. Refreshed; review and try again.`);
+        store.refresh();
+        return;
+      }
+      if (op !== 'probe') {
+        if (snap.total === 0) {
+          setTeamOpMsg(`${op} blocked: team ${team} has no current agents.`);
+          store.refresh();
+          return;
+        }
+        const verb = op === 'start' ? 'Start' : op === 'stop' ? 'Stop' : 'Rebuild';
+        const note = op === 'rebuild'
+          ? 'This restarts every current agent so config and instructions take effect.'
+          : op === 'stop'
+            ? 'This stops every current agent in the team.'
+            : 'This starts every current agent in the team.';
+        if (!window.confirm(`${verb} all current agents in ${team}?\n\nCurrent state: ${snap.running}/${snap.total} running.\n\n${note}`)) return;
+      }
+      setTeamOpMsg(`${op} ${team}…`);
       if (op === 'probe') {
         const p = await call<{ team: string; probed: number; passed: number; failed: number }>('team:probe', team);
         setTeamOpMsg(`probe ${team}: ${p.passed}/${p.probed} healthy${p.failed ? ` · ${p.failed} failed` : ''}`);
@@ -678,10 +945,7 @@ export function Teams({ store }: { store: FleetStore }) {
                     {selectedAgent.reassignTargets.map((n) => <option key={n} value={n}>{n}</option>)}
                   </select>
                   <button className="btn small" disabled={busy} title="Edit this agent's team relay (switches to its team — a team-wide setting)" onClick={() => { if (selectedAgent!.team !== store.team) void store.setTeam(selectedAgent!.team); setTab('route'); }}>⇄ Routing</button>
-                  <button className="btn small" disabled={busy} onClick={() => {
-                    if (!window.confirm(`Rebuild ${selectedAgent!.team}/${selectedAgent!.agent.name}?\n\nThis restarts the selected agent so config and instruction changes take effect.`)) return;
-                    void call('rebuildAgent', selectedAgent!.agent.name, selectedAgent!.team).then(() => setMsg(`rebuilding ${selectedAgent!.agent.name}…`)).catch(() => {});
-                  }}>Rebuild</button>
+                  <button className="btn small" disabled={busy} onClick={() => void rebuildSelectedStructureAgent(selectedAgent!.agent, selectedAgent!.team)}>Rebuild</button>
                 </span>
               </div>
               <div className="muted small" style={{ margin: '8px 0 4px' }}>goals &amp; instructions — appended to this agent’s system prompt</div>
@@ -738,15 +1002,9 @@ export function Teams({ store }: { store: FleetStore }) {
                   <td className={running ? 'ok-text' : 'muted'}>{running}/{total}</td>
                   <td className="row-actions">
                     <button className="btn small" disabled={teamOpBusy} title={`Start every agent in ${t.name}`} onClick={() => void runTeamOp(t.name, 'start')}>▶ Start all</button>
-                    <button className={`btn small${pendingTeamOp === `${t.name}:stop` ? ' danger' : ''}`} disabled={teamOpBusy} title={`Stop every agent in ${t.name}`}
-                      onClick={() => (pendingTeamOp === `${t.name}:stop` ? void runTeamOp(t.name, 'stop') : setPendingTeamOp(`${t.name}:stop`))}>
-                      {pendingTeamOp === `${t.name}:stop` ? '⚠ confirm — stop all' : '■ Stop all'}
-                    </button>
+                    <button className="btn small danger" disabled={teamOpBusy} title={`Stop every agent in ${t.name}`} onClick={() => void runTeamOp(t.name, 'stop')}>■ Stop all</button>
                     <button className="btn small" disabled={teamOpBusy} title={`Health-probe ${t.name}`} onClick={() => void runTeamOp(t.name, 'probe')}>◇ Probe</button>
-                    <button className={`btn small${pendingTeamOp === `${t.name}:rebuild` ? ' danger' : ''}`} disabled={teamOpBusy} title={`Rebuild (restart) every agent in ${t.name}`}
-                      onClick={() => (pendingTeamOp === `${t.name}:rebuild` ? void runTeamOp(t.name, 'rebuild') : setPendingTeamOp(`${t.name}:rebuild`))}>
-                      {pendingTeamOp === `${t.name}:rebuild` ? '⚠ confirm — rebuild' : '↻ Rebuild'}
-                    </button>
+                    <button className="btn small" disabled={teamOpBusy} title={`Rebuild (restart) every agent in ${t.name}`} onClick={() => void runTeamOp(t.name, 'rebuild')}>↻ Rebuild</button>
                   </td>
                   <td>
                     {t.name !== 'default' && total === 0 ? (
@@ -1254,6 +1512,50 @@ function TeamBuilder({
     };
   }
 
+  type BuilderPreflight = {
+    targetTeam: string;
+    hierarchy: HrHierarchy;
+    hierarchyStamp: string;
+    relayStamp: string;
+  };
+  async function preflightBuildTarget(): Promise<BuilderPreflight | null> {
+    setError('');
+    onMessage(`checking ${targetTeam} before build…`);
+    const [teamsNow, groupsNow, hierarchyNow] = await Promise.all([
+      call<Array<{ name: string }>>('teams').catch(() => []),
+      freshHrGroups(),
+      call<HrHierarchy>('coordinator:hierarchy').catch(() => ({ primary: null, coordinators: {} })),
+    ]);
+    const freshTeamExists = teamsNow.some((t) => t.name === targetTeam);
+    const renderedTeamExists = existingTeams.includes(targetTeam);
+    if (freshTeamExists !== renderedTeamExists) {
+      setError(`Team "${targetTeam}" changed while this builder was open. Refresh and review before building.`);
+      onMessage(`build blocked: ${targetTeam} team list changed`);
+      onDone();
+      return null;
+    }
+    const freshRosterKey = agentNameKey(agentsForTeam(groupsNow, targetTeam));
+    const renderedRosterKey = sortedKey((existingAgents[targetTeam] ?? []).map((n) => slugName(n)));
+    if (freshRosterKey !== renderedRosterKey) {
+      setError(`The ${targetTeam} roster changed while this builder was open. Refresh and review the current agents before building.`);
+      onMessage(`build blocked: ${targetTeam} roster changed`);
+      onDone();
+      return null;
+    }
+    let relayBefore: string[] | null = null;
+    if (freshTeamExists) {
+      relayBefore = await call<{ delegates_to: string[] | null }>('teamConfig', targetTeam)
+        .then((r) => r.delegates_to)
+        .catch(() => null);
+    }
+    return {
+      targetTeam,
+      hierarchy: hierarchyNow,
+      hierarchyStamp: hierarchyStamp(hierarchyNow),
+      relayStamp: relayKey(relayBefore),
+    };
+  }
+
   async function build() {
     if (!targetTeam) { setError('Choose or name a team.'); return; }
     if (isReservedName(targetTeam)) { setError(`“${targetTeam}” is a reserved word — choose another team name.`); return; }
@@ -1270,6 +1572,8 @@ function TeamBuilder({
       coordinate ? 'promote the starred lead to primary coordinator, write the coordination preset, and rebuild that lead' : '',
       relayMode !== 'permissive' ? `set cross-team relay to ${describeRelay(relayPayload)}` : '',
     ].filter(Boolean);
+    const preflight = await preflightBuildTarget();
+    if (!preflight) return;
     if (!window.confirm(`Build ${batch.length} agent${batch.length === 1 ? '' : 's'} in ${targetTeam}?\n\nThis onboards and starts new agents${heartbeat ? ', adds heartbeats' : ''}${probeAfter ? ', and probes them' : ''}.${postSteps.length ? `\n\nAfter build it will also ${postSteps.join('; ')}.` : ''}`)) return;
     setBuilding(true); onBusy(true); setError(''); setPost({});
     onMessage(`adding ${batch.length} new agent(s) to ${targetTeam}${alreadyThere.length ? ` (${alreadyThere.length} already there)` : ''}…`);
@@ -1305,6 +1609,16 @@ function TeamBuilder({
       const preset = coordinatorPresetFor(teammates);
       setPost((p) => ({ ...p, coord: 'running', leadName }));
       try {
+        const [hierNow, groupsNow] = await Promise.all([
+          call<HrHierarchy>('coordinator:hierarchy').catch(() => preflight.hierarchy),
+          freshHrGroups(),
+        ]);
+        if (hierarchyStamp(hierNow) !== preflight.hierarchyStamp) {
+          throw new Error('lead hierarchy changed after build confirmation; review Route before auto-wiring');
+        }
+        if (!findHrAgent(groupsNow, preflight.targetTeam, { name: leadName })) {
+          throw new Error(`${preflight.targetTeam}/${leadName} is not in the current roster after build`);
+        }
         await call('coordinator:setPrimary', targetTeam, leadName);
         await call('agent:setInstructions', leadName, preset, targetTeam);
         await call('rebuildAgent', leadName, targetTeam).catch(() => {});
@@ -1315,6 +1629,12 @@ function TeamBuilder({
     if (anyOk && relayMode !== 'permissive') {
       setPost((p) => ({ ...p, relay: 'running' }));
       try {
+        const relayNow = await call<{ delegates_to: string[] | null }>('teamConfig', targetTeam)
+          .then((r) => r.delegates_to)
+          .catch(() => null);
+        if (relayKey(relayNow) !== preflight.relayStamp) {
+          throw new Error(`${targetTeam} relay policy changed after build confirmation; review Route before applying builder relay`);
+        }
         await call('setTeamDelegates', targetTeam, relayPayload);
         setPost((p) => ({ ...p, relay: 'ok' }));
       } catch (e) { setPost((p) => ({ ...p, relay: 'failed', relayErr: e instanceof Error ? e.message : String(e) })); }
