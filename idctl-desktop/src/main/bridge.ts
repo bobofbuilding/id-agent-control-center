@@ -437,6 +437,42 @@ let cfg: Config = loadConfig({ team: 'default', admin: true });
 let client = new ManagerClient(cfg);
 const keys = getKeyProvider();
 
+const COALESCED_READ_METHODS = new Set([
+  'health',
+  'agents',
+  'teams',
+  'agents:allTeams',
+  'events',
+  'events:multi',
+  'news:allTeams',
+  'activity:get',
+  'inboxPending',
+  'tasks',
+  'tasks:allTeams',
+  'runtime:models',
+  'runtime:freshness',
+  'runtime:cooldowns',
+  'query:poll',
+]);
+const inFlightReadCalls = new Map<string, Promise<unknown>>();
+
+function coalescedCallKey(method: string, args: unknown[]): string {
+  try {
+    return `${method}:${JSON.stringify(args)}`;
+  } catch {
+    return `${method}:${args.map((a) => String(a)).join('\u0001')}`;
+  }
+}
+
+async function coalesceReadCall(method: string, args: unknown[], run: () => Promise<unknown>): Promise<unknown> {
+  const key = coalescedCallKey(method, args);
+  const current = inFlightReadCalls.get(key);
+  if (current) return current;
+  const next = run().finally(() => { inFlightReadCalls.delete(key); });
+  inFlightReadCalls.set(key, next);
+  return next;
+}
+
 function goalDriverConfig(): GoalDriverConfig {
   return normalizeGoalDriverConfig(loadSettings().goalDriver);
 }
@@ -1039,12 +1075,14 @@ function normUrl(u: string): string {
   return u.trim().toLowerCase().replace('://localhost', '://127.0.0.1').replace(/\/+$/, '');
 }
 
-export async function call(method: string, args: unknown[] = []): Promise<unknown> {
+async function callRaw(method: string, args: unknown[] = []): Promise<unknown> {
   if (method === 'setTeam') {
+    inFlightReadCalls.clear();
     client = client.withTeam(String(args[0]) || undefined);
     return info();
   }
   if (method === 'setManager') {
+    inFlightReadCalls.clear();
     cfg = { ...cfg, managerUrl: String(args[0]) };
     client = new ManagerClient(cfg);
     return info();
@@ -1082,6 +1120,13 @@ export async function call(method: string, args: unknown[] = []): Promise<unknow
   const fn = METHODS[method];
   if (!fn) throw new Error(`unknown method: ${method}`);
   return fn(...args);
+}
+
+export async function call(method: string, args: unknown[] = []): Promise<unknown> {
+  if (COALESCED_READ_METHODS.has(method)) {
+    return coalesceReadCall(method, args, () => callRaw(method, args));
+  }
+  return callRaw(method, args);
 }
 
 export function info() {

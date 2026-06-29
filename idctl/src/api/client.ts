@@ -193,6 +193,9 @@ function qArg(s: string): string {
   return `"${s.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`;
 }
 
+const DEFAULT_MANAGER_TIMEOUT_MS = 35_000;
+const LONG_POLL_GRACE_MS = 5_000;
+
 export class ManagerClient {
   constructor(private cfg: Config) {}
 
@@ -220,65 +223,113 @@ export class ManagerClient {
     return h;
   }
 
-  private async get<T>(path: string, signal?: AbortSignal): Promise<T> {
-    let res: Response;
+  private async responseErrorDetail(res: Response): Promise<string> {
     try {
-      res = await fetch(`${this.cfg.managerUrl}${path}`, { headers: this.headers(), signal });
-    } catch (err) {
-      throw new NetworkError(err instanceof Error ? err.message : String(err));
-    }
-    if (!res.ok) {
-      if (res.status >= 500) throw new NetworkError(`GET ${path} → ${res.status}`);
-      throw new ManagerError(`GET ${path} → ${res.status} ${res.statusText}`, res.status);
-    }
-    return (await res.json()) as T;
-  }
-
-  private async del<T>(path: string, signal?: AbortSignal): Promise<T> {
-    let res: Response;
-    try {
-      res = await fetch(`${this.cfg.managerUrl}${path}`, { method: 'DELETE', headers: this.headers(), signal });
-    } catch (err) {
-      throw new NetworkError(err instanceof Error ? err.message : String(err));
-    }
-    if (!res.ok) {
-      let detail = '';
+      const text = await res.text();
+      if (!text) return '';
       try {
-        const j = (await res.json()) as { error?: string };
-        detail = j?.error ? `: ${j.error}` : '';
+        const j = JSON.parse(text) as { error?: unknown };
+        return typeof j?.error === 'string' && j.error ? `: ${j.error}` : '';
       } catch {
-        /* body not json */
+        return `: ${text.slice(0, 400)}`;
       }
-      if (res.status >= 500) throw new NetworkError(`DELETE ${path} → ${res.status}${detail}`);
-      throw new ManagerError(`DELETE ${path} → ${res.status} ${res.statusText}${detail}`, res.status);
+    } catch {
+      try { await res.body?.cancel(); } catch { /* already closed */ }
+      return '';
+    }
+  }
+
+  private async jsonOrThrow<T>(method: string, path: string, res: Response): Promise<T> {
+    if (!res.ok) {
+      const detail = await this.responseErrorDetail(res);
+      if (res.status >= 500) throw new NetworkError(`${method} ${path} → ${res.status}${detail}`);
+      throw new ManagerError(`${method} ${path} → ${res.status} ${res.statusText}${detail}`, res.status);
     }
     return (await res.json()) as T;
   }
 
-  private async post<T>(path: string, body: unknown, signal?: AbortSignal): Promise<T> {
+  private requestSignal(signal?: AbortSignal, timeoutMs = DEFAULT_MANAGER_TIMEOUT_MS): { signal?: AbortSignal; cleanup: () => void; timedOut: () => boolean } {
+    if (!signal && timeoutMs <= 0) return { signal: undefined, cleanup: () => {}, timedOut: () => false };
+    const ctrl = new AbortController();
+    let timeout: ReturnType<typeof setTimeout> | undefined;
+    let didTimeout = false;
+    const abortFromCaller = () => { try { ctrl.abort(signal?.reason); } catch { ctrl.abort(); } };
+    if (signal) {
+      if (signal.aborted) abortFromCaller();
+      else signal.addEventListener('abort', abortFromCaller, { once: true });
+    }
+    if (timeoutMs > 0) {
+      timeout = setTimeout(() => {
+        didTimeout = true;
+        try { ctrl.abort(new Error(`manager request timed out after ${timeoutMs}ms`)); } catch { ctrl.abort(); }
+      }, timeoutMs);
+    }
+    return {
+      signal: ctrl.signal,
+      cleanup: () => {
+        if (timeout) clearTimeout(timeout);
+        if (signal && !signal.aborted) signal.removeEventListener('abort', abortFromCaller);
+      },
+      timedOut: () => didTimeout,
+    };
+  }
+
+  private requestError(method: string, path: string, err: unknown, timedOut: boolean): NetworkError {
+    if (timedOut) return new NetworkError(`${method} ${path} timed out`);
+    return new NetworkError(err instanceof Error ? err.message : String(err));
+  }
+
+  private async get<T>(path: string, signal?: AbortSignal, timeoutMs = DEFAULT_MANAGER_TIMEOUT_MS): Promise<T> {
+    const req = this.requestSignal(signal, timeoutMs);
+    let res: Response;
+    try {
+      res = await fetch(`${this.cfg.managerUrl}${path}`, { headers: this.headers(), signal: req.signal });
+    } catch (err) {
+      req.cleanup();
+      throw this.requestError('GET', path, err, req.timedOut());
+    }
+    try {
+      return await this.jsonOrThrow<T>('GET', path, res);
+    } finally {
+      req.cleanup();
+    }
+  }
+
+  private async del<T>(path: string, signal?: AbortSignal, timeoutMs = DEFAULT_MANAGER_TIMEOUT_MS): Promise<T> {
+    const req = this.requestSignal(signal, timeoutMs);
+    let res: Response;
+    try {
+      res = await fetch(`${this.cfg.managerUrl}${path}`, { method: 'DELETE', headers: this.headers(), signal: req.signal });
+    } catch (err) {
+      req.cleanup();
+      throw this.requestError('DELETE', path, err, req.timedOut());
+    }
+    try {
+      return await this.jsonOrThrow<T>('DELETE', path, res);
+    } finally {
+      req.cleanup();
+    }
+  }
+
+  private async post<T>(path: string, body: unknown, signal?: AbortSignal, timeoutMs = DEFAULT_MANAGER_TIMEOUT_MS): Promise<T> {
+    const req = this.requestSignal(signal, timeoutMs);
     let res: Response;
     try {
       res = await fetch(`${this.cfg.managerUrl}${path}`, {
         method: 'POST',
         headers: this.headers(),
         body: JSON.stringify(body ?? {}),
-        signal,
+        signal: req.signal,
       });
     } catch (err) {
-      throw new NetworkError(err instanceof Error ? err.message : String(err));
+      req.cleanup();
+      throw this.requestError('POST', path, err, req.timedOut());
     }
-    if (!res.ok) {
-      let detail = '';
-      try {
-        const j = (await res.json()) as { error?: string };
-        detail = j?.error ? `: ${j.error}` : '';
-      } catch {
-        /* body not json */
-      }
-      if (res.status >= 500) throw new NetworkError(`POST ${path} → ${res.status}${detail}`);
-      throw new ManagerError(`POST ${path} → ${res.status} ${res.statusText}${detail}`, res.status);
+    try {
+      return await this.jsonOrThrow<T>('POST', path, res);
+    } finally {
+      req.cleanup();
     }
-    return (await res.json()) as T;
   }
 
   /**
@@ -330,7 +381,8 @@ export class ManagerClient {
     const p = new URLSearchParams({ since: String(since), limit: String(opts.limit ?? 100) });
     if (opts.topics) p.set('topics', opts.topics);
     if (opts.wait) p.set('wait', String(opts.wait));
-    return this.get<EventsResponse>(`/events?${p.toString()}`, signal);
+    const timeoutMs = opts.wait ? Math.max(DEFAULT_MANAGER_TIMEOUT_MS, (opts.wait * 1000) + LONG_POLL_GRACE_MS) : DEFAULT_MANAGER_TIMEOUT_MS;
+    return this.get<EventsResponse>(`/events?${p.toString()}`, signal, timeoutMs);
   }
 
   // ---- Remote command surface ------------------------------------------
@@ -383,8 +435,10 @@ export class ManagerClient {
 
   /** GET /query/:id with optional long-poll. */
   async query(queryId: string, wait?: number, signal?: AbortSignal): Promise<QueryResult> {
-    const w = wait != null ? `?wait=${Math.max(0, Math.min(30, wait))}` : '';
-    return this.get<QueryResult>(`/query/${encodeURIComponent(queryId)}${w}`, signal);
+    const boundedWait = wait != null ? Math.max(0, Math.min(30, wait)) : undefined;
+    const w = boundedWait != null ? `?wait=${boundedWait}` : '';
+    const timeoutMs = boundedWait ? Math.max(DEFAULT_MANAGER_TIMEOUT_MS, (boundedWait * 1000) + LONG_POLL_GRACE_MS) : DEFAULT_MANAGER_TIMEOUT_MS;
+    return this.get<QueryResult>(`/query/${encodeURIComponent(queryId)}${w}`, signal, timeoutMs);
   }
 
   /**
