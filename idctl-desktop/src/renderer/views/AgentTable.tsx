@@ -183,6 +183,52 @@ export function AgentTable({ store, onProbe, probeBusy }: { store: FleetStore; o
   const teamFor = (a: TeamAgent) => a.team ?? store.team ?? 'default';
   const isLead = (a: TeamAgent) => (coords[teamFor(a)] ?? (teamFor(a) === store.team ? store.coordinator : undefined)) === a.name;
   const draftKeyFor = (a: TeamAgent) => `${teamFor(a)}:${a.id}`;
+  function agentStamp(a: TeamAgent): string {
+    return JSON.stringify({
+      id: a.id,
+      name: a.name,
+      team: teamFor(a),
+      status: a.status ?? '',
+      runtime: runtimeOf(a) ?? '',
+      model: a.model ?? '',
+      effort: effortOf(a),
+      speed: speedOf(a),
+      type: a.type ?? '',
+      health: a.health ?? '',
+      port: a.port ?? '',
+      deploymentShape: a.deploymentShape ?? '',
+    });
+  }
+  async function freshFleetAgents(): Promise<TeamAgent[] | null> {
+    const groups = await call<{ team: string; agents: Agent[] }[]>('agents:allTeams').catch(() => null);
+    if (groups) return groups.flatMap((g) => g.agents.map((a) => ({ ...a, team: g.team })));
+    const ag = await call<Agent[]>('agents').catch(() => null);
+    return ag ? ag.map((a) => ({ ...a, team: store.team ?? 'default' })) : null;
+  }
+  function findFreshAgent(list: TeamAgent[], a: TeamAgent): TeamAgent | undefined {
+    const team = teamFor(a);
+    return list.find((x) => teamFor(x) === team && x.id === a.id)
+      ?? list.find((x) => teamFor(x) === team && x.name === a.name);
+  }
+  async function ensureAgentFresh(a: TeamAgent, action: string): Promise<TeamAgent | null> {
+    const list = await freshFleetAgents();
+    if (!list) {
+      window.alert(`Could not verify ${teamFor(a)}/${a.name} before ${action}. Refresh Health and try again.`);
+      return null;
+    }
+    const current = findFreshAgent(list, a);
+    if (!current) {
+      window.alert(`${teamFor(a)}/${a.name} is no longer present in the fleet snapshot. Health will refresh now.`);
+      store.refresh();
+      return null;
+    }
+    if (agentStamp(current) !== agentStamp(a)) {
+      window.alert(`${teamFor(a)}/${a.name} changed before ${action}. Health will refresh now; review the current row before applying the action.`);
+      store.refresh();
+      return null;
+    }
+    return current;
+  }
   function configOf(a: TeamAgent): AgentConfigState {
     return { runtime: runtimeOf(a), model: a.model, effort: effortOf(a), speed: speedOf(a) };
   }
@@ -232,15 +278,23 @@ export function AgentTable({ store, onProbe, probeBusy }: { store: FleetStore; o
   async function applyConfigDrafts() {
     const drafts = Object.values(configDrafts);
     if (!drafts.length) return;
-    const currentByKey = new Map(shown.map((a) => [draftKeyFor(a), a]));
-    const staleRows = drafts.flatMap((d) => {
-      const current = currentByKey.get(d.key);
-      if (!current) return [`${d.team}/${d.name}: agent is no longer visible in the fleet snapshot`];
-      const reasons = configChanges(d.baseline, configOf(current)).map(([field, before, after]) => `${field} changed from ${displayValue(before)} to ${displayValue(after)}`);
-      if (current.name !== d.name) reasons.push(`name changed from ${d.name} to ${current.name}`);
-      if (current.status !== d.status) reasons.push(`status changed from ${d.status} to ${current.status}`);
-      return reasons.length ? [`${d.team}/${d.name}: ${reasons.join('; ')}`] : [];
-    });
+    const staleRowsFor = (list: TeamAgent[]) => {
+      const currentByKey = new Map(list.map((a) => [draftKeyFor(a), a]));
+      return drafts.flatMap((d) => {
+        const current = currentByKey.get(d.key);
+        if (!current) return [`${d.team}/${d.name}: agent is no longer visible in the fleet snapshot`];
+        const reasons = configChanges(d.baseline, configOf(current)).map(([field, before, after]) => `${field} changed from ${displayValue(before)} to ${displayValue(after)}`);
+        if (current.name !== d.name) reasons.push(`name changed from ${d.name} to ${current.name}`);
+        if (current.status !== d.status) reasons.push(`status changed from ${d.status} to ${current.status}`);
+        return reasons.length ? [`${d.team}/${d.name}: ${reasons.join('; ')}`] : [];
+      });
+    };
+    const freshList = await freshFleetAgents();
+    if (!freshList) {
+      window.alert('Could not verify the current fleet before applying Health config. Refresh and try again.');
+      return;
+    }
+    const staleRows = staleRowsFor(freshList);
     if (staleRows.length) {
       window.alert([
         'Staged Health config is stale.',
@@ -250,6 +304,7 @@ export function AgentTable({ store, onProbe, probeBusy }: { store: FleetStore; o
         '',
         'Discard and re-stage from the current fleet snapshot before applying.',
       ].filter(Boolean).join('\n'));
+      store.refresh();
       return;
     }
     const summaries = drafts.flatMap((d) => configChanges(d.baseline, d.next).map(([field, before, after]) => `${d.team}/${d.name} ${field}: ${displayValue(before)} -> ${displayValue(after)}`));
@@ -265,6 +320,24 @@ export function AgentTable({ store, onProbe, probeBusy }: { store: FleetStore; o
       '',
       'This writes manager config and rebuilds each touched agent once so the new runtime settings are picked up.',
     ].filter(Boolean).join('\n'))) return;
+    const latestList = await freshFleetAgents();
+    if (!latestList) {
+      window.alert('Could not verify the fleet immediately before writing Health config. Refresh and try again.');
+      return;
+    }
+    const latestStaleRows = staleRowsFor(latestList);
+    if (latestStaleRows.length) {
+      window.alert([
+        'Fleet changed after the review prompt.',
+        '',
+        ...latestStaleRows.slice(0, 8).map((row) => `- ${row}`),
+        latestStaleRows.length > 8 ? `- +${latestStaleRows.length - 8} more` : '',
+        '',
+        'No config was written. Review the latest Health table and try again.',
+      ].filter(Boolean).join('\n'));
+      store.refresh();
+      return;
+    }
     setBusy('apply config changes');
     try {
       for (const d of drafts) {
@@ -311,16 +384,23 @@ export function AgentTable({ store, onProbe, probeBusy }: { store: FleetStore; o
     return window.confirm(`${label} for ${team}/${a.name}?\n\n${detail}\n\n${state}${diff}${impact}${active}`);
   }
   async function makeLead(a: TeamAgent) {
-    const team = teamFor(a);
-    const before = coords[team] ?? (team === store.team ? store.coordinator : undefined);
+    const fresh = await ensureAgentFresh(a, 'setting team lead');
+    if (!fresh) return;
+    const team = teamFor(fresh);
+    const hierarchy = await call<{ coordinators?: Record<string, string> }>('coordinator:hierarchy').catch(() => null);
+    const before = hierarchy?.coordinators?.[team] ?? coords[team] ?? (team === store.team ? store.coordinator : undefined);
+    if (before === fresh.name) {
+      setCoords((c) => ({ ...c, [team]: fresh.name }));
+      return;
+    }
     if (!confirmAgentChange(
-      a,
+      fresh,
       'Set team lead',
       `This changes ${team}'s coordinator routing.`,
-      [['coordinator', before, a.name]],
-      [`Future team-level messages route to ${a.name} by default`],
+      [['coordinator', before, fresh.name]],
+      [`Future team-level messages route to ${fresh.name} by default`],
     )) return;
-    try { await call('coordinator:set', team, a.name); setCoords((c) => ({ ...c, [team]: a.name })); store.refresh(); }
+    try { await call('coordinator:set', team, fresh.name); setCoords((c) => ({ ...c, [team]: fresh.name })); store.refresh(); }
     catch (err) { window.alert(`couldn't set lead: ${err instanceof Error ? err.message : String(err)}`); }
   }
   useEffect(() => {
@@ -344,38 +424,60 @@ export function AgentTable({ store, onProbe, probeBusy }: { store: FleetStore; o
     catch (err) { window.alert(`${label} failed: ${err instanceof Error ? err.message : String(err)}`); }
     finally { setBusy(null); }
   }
-  function action(a: TeamAgent, act: string) {
+  async function probeAgent(a: TeamAgent) {
+    const fresh = await ensureAgentFresh(a, 'probing');
+    if (!fresh) return;
+    if (onProbe) onProbe(fresh);
+    else await run(`probe ${fresh.name}`, `/agent ${fresh.name} probe`, teamOf(fresh));
+  }
+  async function action(a: TeamAgent, act: string) {
     if (!act) return;
-    const team = teamOf(a);
     if ((act === 'Start' || act === 'Rebuild') && configDrafts[draftKeyFor(a)]) {
       window.alert(`Apply or discard staged config for ${teamFor(a)}/${a.name} before ${act.toLowerCase()}ing it.`);
       return;
     }
+    const fresh = await ensureAgentFresh(a, act.toLowerCase());
+    if (!fresh) return;
+    const team = teamOf(fresh);
     if (act === 'Delete') {
-      if (window.confirm(`Delete agent "${a.name}"? Working files are left in place.`)) void run(`delete ${a.name}`, `/delete ${a.name}`, team);
+      if (confirmAgentChange(
+        fresh,
+        'Delete agent',
+        'This removes the agent from the manager roster. Working files are left in place.',
+        [],
+        ['Remove this agent from future routing and Health views'],
+      )) await run(`delete ${fresh.name}`, `/delete ${fresh.name}`, team);
       return;
     }
     if (act === 'Reset session') {
       // Start a fresh conversation — drops the agent's accumulated context. Use this to deflate a
       // bloated codex session (multi-million-token prompts) so its next turns are cheap again.
       if (!confirmAgentChange(
-        a,
+        fresh,
         'Reset session',
         'This clears the agent conversation context.',
         [],
         ['Drop accumulated session context for future turns'],
       )) return;
-      void run(`reset session ${a.name}`, `/clear ${a.name}`, team);
+      await run(`reset session ${fresh.name}`, `/clear ${fresh.name}`, team);
       return;
     }
-    if ((act === 'Stop' || act === 'Rebuild') && !confirmAgentChange(
-      a,
+    if (act === 'Probe') {
+      await probeAgent(fresh);
+      return;
+    }
+    if ((act === 'Start' || act === 'Stop' || act === 'Rebuild') && !confirmAgentChange(
+      fresh,
       act,
-      act === 'Stop' ? 'This stops the agent process and can interrupt current work.' : 'This restarts the agent process so runtime/config changes take effect.',
+      act === 'Start'
+        ? 'This starts the agent process.'
+        : act === 'Stop'
+          ? 'This stops the agent process and can interrupt current work.'
+          : 'This restarts the agent process so runtime/config changes take effect.',
       [],
-      [act === 'Stop' ? 'Stop this agent process' : 'Restart this agent process with current runtime/config'],
+      [act === 'Start' ? 'Start this agent process' : act === 'Stop' ? 'Stop this agent process' : 'Restart this agent process with current runtime/config'],
     )) return;
-    void run(`${act} ${a.name}`, `/agent ${a.name} ${act.toLowerCase()}`, team);
+    await run(`${act} ${fresh.name}`, `/agent ${fresh.name} ${act.toLowerCase()}`, team);
   }
   const renderRow = (a: TeamAgent) => {
     const currentRuntime = runtimeOf(a);
@@ -435,7 +537,7 @@ export function AgentTable({ store, onProbe, probeBusy }: { store: FleetStore; o
         </td>
         <td className="muted" title="port is assigned by the manager">{a.port || '—'}</td>
         <td onClick={(e) => e.stopPropagation()}>
-          <select className="cell-select" value="" onChange={(e) => { action(a, e.target.value); e.target.value = ''; }}>
+          <select className="cell-select" value="" onChange={(e) => { void action(a, e.target.value); e.target.value = ''; }}>
             <option value="">⋯</option>
             <option>Start</option>
             <option>Stop</option>
@@ -447,7 +549,7 @@ export function AgentTable({ store, onProbe, probeBusy }: { store: FleetStore; o
         </td>
         {onProbe ? (
           <td onClick={(e) => e.stopPropagation()}>
-            <button className="btn small" disabled={probeBusy === a.name} onClick={() => onProbe(a)}>{probeBusy === a.name ? '…' : 'Probe'}</button>
+            <button className="btn small" disabled={probeBusy === a.name} onClick={() => void probeAgent(a)}>{probeBusy === a.name ? '…' : 'Probe'}</button>
           </td>
         ) : null}
       </tr>
