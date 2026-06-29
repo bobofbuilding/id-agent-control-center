@@ -8,6 +8,9 @@ Every change pushed or merged to `main` carries its version number in the commit
 subject (`vX.Y.Z: …`), stamped automatically by the `commit-msg` hook — see
 [CONTRIBUTING.md](CONTRIBUTING.md).
 
+## [0.1.263] — 2026-06-29
+- Document staged coordinator team YAML validation return-path guardrails.
+
 ## [0.1.262] — 2026-06-29
 - Brain dashboard Fleet and Agents status-authority guardrails.
 
