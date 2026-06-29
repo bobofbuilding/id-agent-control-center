@@ -85,6 +85,19 @@ function describeRelay(d: string[] | null): string {
   return d.join(', ');
 }
 
+function describeAgentRelay(d: string[] | null, teamPolicy: string[] | null): string {
+  return d === null ? `inherit team (${describeRelay(teamPolicy)})` : describeRelay(d);
+}
+
+function currentAgentDelegates(a: { metadata?: unknown }): string[] | null {
+  const raw = (a.metadata as { delegates_to?: unknown } | undefined)?.delegates_to;
+  return Array.isArray(raw) ? raw.map(String) : null;
+}
+
+function primaryLabel(primary: { team: string; agent: string } | null): string {
+  return primary ? `${primary.team}/${primary.agent}` : '(none)';
+}
+
 /**
  * Shared delegation guidance appended to every coordinator directive (the generic preset and
  * the roster-aware one the builder generates).
@@ -361,7 +374,15 @@ export function Teams({ store }: { store: FleetStore }) {
   const relayPayload: string[] | null = mode === 'permissive' ? null : delegates ?? [];
   const relayDirty = relayKey(relayPayload) !== relayKey(savedDelegates);
   async function saveRelay() {
-    if (!window.confirm(`Save relay policy for ${activeTeam}?\n\nThis changes which teams ${activeTeam}'s agents may delegate work to.`)) return;
+    const preview = [
+      `Save relay policy for ${activeTeam}?`,
+      '',
+      `Before: ${describeRelay(savedDelegates)}`,
+      `After:  ${describeRelay(relayPayload)}`,
+      '',
+      `This changes which teams ${activeTeam}'s agents may delegate work to.`,
+    ].join('\n');
+    if (!window.confirm(preview)) return;
     setRelayBusy(true);
     setRelayMsg('saving…');
     try {
@@ -393,16 +414,28 @@ export function Teams({ store }: { store: FleetStore }) {
   // cross-team delegation independently of its team's policy).
   const [agentEditing, setAgentEditing] = useState<string | null>(null);
   const [agentSel, setAgentSel] = useState<string[]>([]);
-  async function applyAgent(id: string, delegates: string[] | null, label: string) {
-    if (!window.confirm(`Apply ${label} override?\n\nThis changes this individual agent's cross-team delegation policy immediately.`)) return;
+  async function applyAgent(a: { id: string; name: string; metadata?: unknown }, delegates: string[] | null, label: string): Promise<boolean> {
+    const current = currentAgentDelegates(a);
+    const preview = [
+      `Apply ${label} override?`,
+      '',
+      `Agent: ${activeTeam}/${a.name}`,
+      `Before: ${describeAgentRelay(current, savedDelegates)}`,
+      `After:  ${describeAgentRelay(delegates, savedDelegates)}`,
+      '',
+      "This changes this individual agent's cross-team delegation policy immediately.",
+    ].join('\n');
+    if (!window.confirm(preview)) return false;
     setBusy(true);
     setMsg(`${label}…`);
     try {
-      await call('setAgentDelegates', id, delegates);
+      await call('setAgentDelegates', a.id, delegates);
       store.refresh();
       setMsg(`${label} ✓`);
+      return true;
     } catch (err) {
       setMsg(`failed: ${err instanceof Error ? err.message : String(err)}`);
+      return false;
     } finally {
       setBusy(false);
     }
@@ -446,7 +479,7 @@ export function Teams({ store }: { store: FleetStore }) {
       setAgentEditing(a.id);
     } else {
       setAgentEditing(null);
-      void applyAgent(a.id, m === 'permissive' ? null : m === 'all' ? ['*'] : [], `${a.name} relay`);
+      void applyAgent(a, m === 'permissive' ? null : m === 'all' ? ['*'] : [], `${a.name} relay`);
     }
   }
   function toggleAgentTeam(name: string) {
@@ -461,14 +494,33 @@ export function Teams({ store }: { store: FleetStore }) {
   async function makePrimary() {
     const agent = store.coordinator ?? store.agents.find((a) => /^(lead|manager)$/i.test(a.name))?.name;
     if (!agent) return;
-    if (!window.confirm(`Make ${store.team ?? 'default'}/${agent} the primary cross-team lead?\n\nThis changes fleet hierarchy routing. Run Org sync afterward to push the hierarchy into agent goals and the brain.`)) return;
-    await call('coordinator:setPrimary', store.team ?? 'default', agent);
+    const team = store.team ?? 'default';
+    const beforeCoord = hier.coordinators[team] ?? '(none)';
+    const preview = [
+      `Make ${team}/${agent} the primary cross-team lead?`,
+      '',
+      `Primary: ${primaryLabel(hier.primary)} -> ${team}/${agent}`,
+      `Coordinator for ${team}: ${beforeCoord} -> ${agent}`,
+      '',
+      'This changes fleet hierarchy routing. Run Org sync afterward to push the hierarchy into agent goals and the brain.',
+    ].join('\n');
+    if (!window.confirm(preview)) return;
+    await call('coordinator:setPrimary', team, agent);
     await loadHier();
   }
   /** Set (or change) a team's coordinator — the lead the rest of the team reports to. */
   async function setTeamCoordinator(team: string, agent: string) {
     if (!agent) return;
-    if (!window.confirm(`Make ${team}/${agent} the team coordinator?\n\nThis changes the lead that the rest of ${team} reports to.`)) return;
+    const before = hier.coordinators[team] || (hier.primary?.team === team ? hier.primary.agent : '(none)');
+    const preview = [
+      `Make ${team}/${agent} the team coordinator?`,
+      '',
+      `Coordinator for ${team}: ${before} -> ${agent}`,
+      `Primary lead: ${primaryLabel(hier.primary)}`,
+      '',
+      `This changes the lead that the rest of ${team} reports to.`,
+    ].join('\n');
+    if (!window.confirm(preview)) return;
     await call('coordinator:set', team, agent).catch(() => {});
     await loadHier();
     store.refresh();
@@ -476,7 +528,16 @@ export function Teams({ store }: { store: FleetStore }) {
   /** Promote a specific team's coordinator to the primary cross-team lead. */
   async function makePrimaryFor(team: string, agent: string) {
     if (!agent) return;
-    if (!window.confirm(`Promote ${team}/${agent} to primary cross-team lead?\n\nThis changes fleet hierarchy routing. Run Org sync afterward to push the hierarchy into agent goals and the brain.`)) return;
+    const beforeCoord = hier.coordinators[team] ?? '(none)';
+    const preview = [
+      `Promote ${team}/${agent} to primary cross-team lead?`,
+      '',
+      `Primary: ${primaryLabel(hier.primary)} -> ${team}/${agent}`,
+      `Coordinator for ${team}: ${beforeCoord} -> ${agent}`,
+      '',
+      'This changes fleet hierarchy routing. Run Org sync afterward to push the hierarchy into agent goals and the brain.',
+    ].join('\n');
+    if (!window.confirm(preview)) return;
     await call('coordinator:setPrimary', team, agent).catch(() => {});
     await loadHier();
   }
@@ -846,7 +907,7 @@ export function Teams({ store }: { store: FleetStore }) {
                           );
                         })
                       )}
-                      <button className="btn" disabled={busy} onClick={() => { void applyAgent(a.id, agentSel, `${a.name} relay`); setAgentEditing(null); }}>
+                      <button className="btn" disabled={busy} onClick={() => { void applyAgent(a, agentSel, `${a.name} relay`).then((ok) => { if (ok) setAgentEditing(null); }); }}>
                         Save
                       </button>
                       <button className="btn" onClick={() => setAgentEditing(null)}>Cancel</button>
