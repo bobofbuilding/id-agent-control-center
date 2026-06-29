@@ -51,6 +51,20 @@ type BrainFleetReport = {
     cacheDrift?: { status?: string; liveTotal?: number | null; cachedTotal?: number | null; delta?: number | null };
   };
 } | null;
+type BrainCoreHealthReport = {
+  generatedAt?: string;
+  ok?: boolean;
+  nodes?: number;
+  edges?: number;
+  memories?: number;
+  entities?: number;
+  timelineEvents?: number;
+  facts?: number;
+  fts?: boolean;
+  sqliteVec?: { available?: boolean; degraded?: boolean; state?: string; dimensions?: number; extension?: string; fallback?: string; error?: string | null };
+  routeInventory?: { skew?: boolean; missing?: string[]; count?: number; routes?: string[] };
+  warnings?: string[];
+} | null;
 type BrainGraphReport = {
   generatedAt?: string;
   graph?: {
@@ -175,6 +189,46 @@ function brainFleetReviewDetail(report: BrainFleetReport): string {
   }
   if ((fleet.warnings ?? []).length) return (fleet.warnings ?? []).join(' ');
   return 'Brain Fleet authority is live.';
+}
+
+function brainCoreNeedsReview(report: BrainCoreHealthReport): boolean {
+  if (!report) return true;
+  return report.ok !== true || !!report.routeInventory?.skew || !!report.sqliteVec?.degraded || report.sqliteVec?.available === false || (report.warnings ?? []).length > 0;
+}
+
+function brainCoreStatusLabel(report: BrainCoreHealthReport): string {
+  if (!report) return 'Core --';
+  const count = `${report.nodes ?? 0}n/${report.edges ?? 0}e`;
+  if (report.ok !== true) return `Core ${count} down`;
+  if (report.routeInventory?.skew) return `Core ${count} routes`;
+  if (report.sqliteVec?.degraded || report.sqliteVec?.available === false) return `Core ${count} vector`;
+  return `Core ${count}`;
+}
+
+function brainCoreStatusTitle(report: BrainCoreHealthReport): string {
+  if (!report) return 'Brain /health unavailable. This safe core check does not open Brain Health or Learning dashboards.';
+  return [
+    `Safe route: GET /health`,
+    `Generated: ${report.generatedAt ?? 'unknown'}`,
+    `Counts: ${report.nodes ?? 0} nodes / ${report.edges ?? 0} edges / ${report.memories ?? 0} memories / ${report.facts ?? 0} facts`,
+    `Route inventory: ${report.routeInventory?.skew ? 'missing critical routes' : 'current'} (${report.routeInventory?.count ?? report.routeInventory?.routes?.length ?? '?'} routes)`,
+    report.routeInventory?.missing?.length ? `Missing: ${report.routeInventory.missing.join(', ')}` : '',
+    `sqlite-vec: ${report.sqliteVec?.available ? 'available' : 'fallback'}${report.sqliteVec?.dimensions ? `, dim ${report.sqliteVec.dimensions}` : ''}`,
+    ...(report.warnings ?? []),
+  ].filter(Boolean).join('\n');
+}
+
+function brainCoreReviewDetail(report: BrainCoreHealthReport): string {
+  if (!report) return 'Brain /health is unavailable. IDACC cannot verify core Brain liveness without opening guarded Brain Health or Learning tabs.';
+  if (report.ok !== true) return 'Brain /health did not report ok=true. Check the Brain service before relying on dashboard tabs.';
+  if (report.routeInventory?.skew) {
+    return `Brain /health reports route inventory drift. Missing: ${(report.routeInventory.missing ?? []).join(', ') || 'critical routes'}.`;
+  }
+  if (report.sqliteVec?.degraded || report.sqliteVec?.available === false) {
+    return 'Brain core is reachable, but native sqlite-vec is degraded or unavailable; vector rollout decisions should stay behind Learning replay review.';
+  }
+  if ((report.warnings ?? []).length) return (report.warnings ?? []).join(' ');
+  return 'Brain core health is reachable through safe GET /health.';
 }
 
 function brainSkillContractGaps(report: BrainSkillSummary): string[] {
@@ -399,6 +453,7 @@ export function Modules({ store }: { store: FleetStore }) {
   const [autoTags, setAutoTags] = useState<Record<string, string[]>>({});
   const [categorizing, setCategorizing] = useState(false);
   const [brainSkills, setBrainSkills] = useState<BrainSkillSummary>(null);
+  const [brainCore, setBrainCore] = useState<BrainCoreHealthReport>(null);
   const [brainFleet, setBrainFleet] = useState<BrainFleetReport>(null);
   const [brainGraph, setBrainGraph] = useState<BrainGraphReport>(null);
   const [brainSyncing, setBrainSyncing] = useState(false);
@@ -525,6 +580,7 @@ export function Modules({ store }: { store: FleetStore }) {
     setPlugins(await call<LibraryPluginEntry[]>('libraryPlugins').catch(() => []));
     setAutoTags(await call<Record<string, string[]>>('skills:autoTags').catch(() => ({})));
     setBrainSkills(await call<BrainSkillSummary>('skills:brainSummary').catch(() => null));
+    setBrainCore(await call<BrainCoreHealthReport>('brain:coreHealth').catch(() => null));
     setBrainFleet(await call<BrainFleetReport>('brain:fleetReport').catch(() => null));
     setBrainGraph(await call<BrainGraphReport>('brain:graphReport').catch(() => null));
   }
@@ -905,6 +961,10 @@ export function Modules({ store }: { store: FleetStore }) {
         : brainMissingLocal
           ? `Local catalog has ${skills.length} skills while Brain reports ${brainTotal ?? 'unknown'}. Sync Brain to upsert current local definitions.`
           : brainSkillContractDetail(brainSkills);
+  const brainCoreNeedsOperatorReview = brainCoreNeedsReview(brainCore);
+  const brainCoreStatus = brainCoreStatusLabel(brainCore);
+  const brainCoreTitle = brainCoreStatusTitle(brainCore);
+  const brainCoreDetail = brainCoreReviewDetail(brainCore);
   const brainFleetNeedsReview = brainFleetReviewNeeded(brainFleet);
   const brainFleetStatus = brainFleetStatusLabel(brainFleet);
   const brainFleetTitle = brainFleetStatusTitle(brainFleet);
@@ -1153,6 +1213,9 @@ export function Modules({ store }: { store: FleetStore }) {
           <span className={`chip ${brainCatalogNeedsReview ? 'brain-review' : brainSkills?.summary ? 'tag' : ''}`} title={brainStatusTitle}>
             {brainStatusLabel}
           </span>
+          <span className={`chip ${brainCoreNeedsOperatorReview ? 'brain-review' : 'tag'}`} title={brainCoreTitle}>
+            {brainCoreStatus}
+          </span>
           <span className={`chip ${brainFleetNeedsReview ? 'brain-review' : 'tag'}`} title={brainFleetTitle}>
             {brainFleetStatus}
           </span>
@@ -1182,6 +1245,16 @@ export function Modules({ store }: { store: FleetStore }) {
                 {brainSyncing ? 'Syncing…' : 'Preview & sync'}
               </button>
             ) : null}
+            <BrainDashboardLauncher compact />
+          </div>
+        ) : null}
+
+        {brainCoreNeedsOperatorReview ? (
+          <div className="skill-brain-review">
+            <div className="grow">
+              <b>Brain core health review</b>
+              <div className="muted small">{brainCoreDetail}</div>
+            </div>
             <BrainDashboardLauncher compact />
           </div>
         ) : null}

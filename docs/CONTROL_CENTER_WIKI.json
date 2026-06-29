@@ -35,7 +35,7 @@
   },
   "global": {
     "shell": "Electron desktop app. Renderer calls window.idagents.call(method, ...args); preload sends IPC to main; main either handles app-local methods or forwards manager methods through bridge.ts and ManagerClient.",
-    "state": "useFleet in src/renderer/store.ts keeps the live snapshot: connection, manager URL, active team, coordinator, agents, teams, events, inbox, unread chat count, all-team agents, and refresh functions. Renderer mutations also emit coarse sync-domain invalidations so mounted Dashboard, Work, Inbox, Projects, and Health views refresh together after plans, goals, loops, schedules, tasks, project, org, and agent-capability changes. The fleet primary lead is locked to the default team; other teams can still choose coordinators that the default primary delegates to and default-team validators review. The external Brain dashboard's /fleet-report now mirrors IDACC's all-team manager polling contract: /teams, then /agents per team, with Brain-cache fallback and drift warnings instead of stale cached counts. Brain Health approval triage now fresh-reads the approval row and honors backend confirmation-required responses before mutating queued memory, fact, instruction, or graph state. Brain Learning keeps passive report refresh automatic but runs eval replay/vector comparison only from an explicit operator refresh. Brain Agents keeps live row status authoritative while holding same-name SLA, unfetched telemetry, and bare controller fallbacks as ambiguous or unknown until scoped telemetry exists; Brain Graph now labels itself as a read-only GET view, marks agent/entity statuses as Brain graph snapshots rather than live lifecycle authority, and overlays live Fleet status only for unambiguous agent matches. HR Manager Build surfaces preloaded-team coverage and default return-path readiness before non-default team onboarding. Capabilities previews and stamps local skill catalogs before Brain sync writes, preserves Brain /skills/index route/profile metadata, flags missing catalog facets/reuse/proposal fields as a stale Brain Skills contract, and its Skills tab opens each Brain dashboard tab through a fixed whitelist; Brain Health and Learning launch buttons are additionally guarded because those tabs load report/replay surfaces that are not purely passive in the current Brain build. Identity and Computer Use legacy authority cards now provide scoped selection/copy helpers without auto-promoting old bare-name records; Identity also reads Brain /controllers as observation-only accountable-controller evidence and flags missing or ambiguous current-agent links before Brain Agents controller fallback is trusted. Settings defaults the manual backend form to Ollama, exposes a first-run readiness checkpoint for manager connection, provider routing, local runtime, synced backends, and guarded setup actions, shows coordinator status as read-only with an HR Manager routing handoff, non-embedded Chat keeps its coordinator marker read-only, and Health lead markers also hand routing edits to HR Manager. Focused HR routing handoffs from Dashboard, Health, Settings, and hidden Chat now use the App shell target teams:route so coordinator and org-sync review lands directly on HR Manager Route > Hierarchy & sync instead of the generic Structure tab. Brain Health source now reads /fleet-report and renders the same live/partial/cache Fleet authority contract as Brain Fleet and Agents, so Health triage cannot sit beside stale or cache-only fleet counts without an explicit warning after the Brain service is redeployed.",
+    "state": "useFleet in src/renderer/store.ts keeps the live snapshot: connection, manager URL, active team, coordinator, agents, teams, events, inbox, unread chat count, all-team agents, and refresh functions. Renderer mutations also emit coarse sync-domain invalidations so mounted Dashboard, Work, Inbox, Projects, and Health views refresh together after plans, goals, loops, schedules, tasks, project, org, and agent-capability changes. The fleet primary lead is locked to the default team; other teams can still choose coordinators that the default primary delegates to and default-team validators review. The external Brain dashboard's /fleet-report now mirrors IDACC's all-team manager polling contract: /teams, then /agents per team, with Brain-cache fallback and drift warnings instead of stale cached counts. Brain Health approval triage now fresh-reads the approval row and honors backend confirmation-required responses before mutating queued memory, fact, instruction, or graph state. Brain Learning keeps passive report refresh automatic but runs eval replay/vector comparison only from an explicit operator refresh. Brain Agents keeps live row status authoritative while holding same-name SLA, unfetched telemetry, and bare controller fallbacks as ambiguous or unknown until scoped telemetry exists; Brain Graph now labels itself as a read-only GET view, marks agent/entity statuses as Brain graph snapshots rather than live lifecycle authority, and overlays live Fleet status only for unambiguous agent matches. HR Manager Build surfaces preloaded-team coverage and default return-path readiness before non-default team onboarding. Capabilities previews and stamps local skill catalogs before Brain sync writes, preserves Brain /skills/index route/profile metadata, flags missing catalog facets/reuse/proposal fields as a stale Brain Skills contract, reads safe Brain /health core status before guarded Brain Health/Learning opens, and its Skills tab opens each Brain dashboard tab through a fixed whitelist; Brain Health and Learning launch buttons are additionally guarded because those tabs load report/replay surfaces that are not purely passive in the current Brain build. Identity and Computer Use legacy authority cards now provide scoped selection/copy helpers without auto-promoting old bare-name records; Identity also reads Brain /controllers as observation-only accountable-controller evidence and flags missing or ambiguous current-agent links before Brain Agents controller fallback is trusted. Settings defaults the manual backend form to Ollama, exposes a first-run readiness checkpoint for manager connection, provider routing, local runtime, synced backends, and guarded setup actions, shows coordinator status as read-only with an HR Manager routing handoff, non-embedded Chat keeps its coordinator marker read-only, and Health lead markers also hand routing edits to HR Manager. Focused HR routing handoffs from Dashboard, Health, Settings, and hidden Chat now use the App shell target teams:route so coordinator and org-sync review lands directly on HR Manager Route > Hierarchy & sync instead of the generic Structure tab. Brain Health source now reads /fleet-report and renders the same live/partial/cache Fleet authority contract as Brain Fleet and Agents, so Health triage cannot sit beside stale or cache-only fleet counts without an explicit warning after the Brain service is redeployed.",
     "routing": [
       {
         "surface": "Sidebar",
@@ -1993,7 +1993,7 @@
         {
           "id": "skills",
           "label": "Skills",
-          "purpose": "Install/uninstall/create/delete skills, manage app-side auto-tags, show local-vs-Brain catalog and Brain Skills contract freshness, show Brain fleet and graph contract freshness, explicitly sync the local SKILL.md catalog into Brain, and open whitelisted Brain dashboard tabs with Health/Learning confirmations.",
+          "purpose": "Install/uninstall/create/delete skills, manage app-side auto-tags, show local-vs-Brain catalog and Brain Skills contract freshness, show Brain core, fleet, and graph contract freshness, explicitly sync the local SKILL.md catalog into Brain, and open whitelisted Brain dashboard tabs with Health/Learning confirmations.",
           "routesInto": [
             "librarySkills",
             "skills:autoTags",
@@ -2003,6 +2003,7 @@
             "installSkill",
             "uninstallSkill",
             "skills:brainSummary",
+            "brain:coreHealth",
             "brain:fleetReport",
             "brain:graphReport",
             "skills:syncBrain",
@@ -2212,6 +2213,16 @@
           "description": "Appears after local skill create/delete/re-categorize or when Brain reports fewer skills than the local catalog, offering Preview & sync Brain and whitelisted Brain dashboard tab launchers without automatically mutating Brain."
         },
         {
+          "id": "brain-core-health-review",
+          "label": "Brain core health review",
+          "type": "status strip",
+          "description": "Appears when safe Brain /health is unavailable, reports route-inventory skew, or reports degraded sqlite-vec capability. It avoids /brain/health, /brain/health-view, /metrics/learning, and /brain/learning-report so the check does not write timeline events or reconcile eval fixture state.",
+          "routesInto": [
+            "brain:coreHealth",
+            "brain:openDashboard"
+          ]
+        },
+        {
           "id": "brain-fleet-authority-review",
           "label": "Brain fleet authority review",
           "type": "status strip",
@@ -2235,7 +2246,7 @@
           "id": "brain-dashboard-tabs",
           "label": "Brain dashboard tabs",
           "type": "buttons",
-          "description": "Opens Fleet, Health, Skills, Learning, Agents, or Graph through the main-process whitelist; does not accept arbitrary URLs or mutate Brain state.",
+          "description": "Opens Fleet, Health, Skills, Learning, Agents, or Graph through the main-process whitelist; Health and Learning require a confirmation because their Brain-side report routes are not yet pure passive summaries.",
           "routesInto": [
             "brain:openDashboard"
           ]
@@ -2292,6 +2303,7 @@
           "skills:autoTags",
           "skills:categorize",
           "skills:brainSummary",
+          "brain:coreHealth",
           "brain:fleetReport",
           "brain:graphReport",
           "skills:syncBrain",
@@ -3470,6 +3482,11 @@
           "Capabilities Brain launcher: Health and Learning tabs now show guarded styling and require an operator confirmation before the desktop shell opens them.",
           "Guardrail reason: Brain Health and Learning load report routes that may reconcile stale eval fixture state in the current Brain build, and Learning also exposes manual eval replay/vector comparison.",
           "UX boundary: Fleet, Skills, Agents, and Graph remain one-click whitelisted opens, while Health/Learning require intentional review until Brain exposes pure-read dashboard summaries."
+        ],
+        "implementedSixtyEighthPass": [
+          "IDACC Brain client: exposes safe Brain /health through brain:coreHealth, avoiding /brain/health timeline writes and learning report fixture reconciliation.",
+          "Capabilities Skills: adds a Brain Core chip and review strip for /health availability, route-inventory skew, and sqlite-vec degradation before operators open guarded Brain Health or Learning.",
+          "UX boundary: core Brain liveness is visible from IDACC without opening report/replay dashboard tabs; vector rollout decisions still require intentional Learning replay review."
         ]
       },
       "notes": [
@@ -3541,10 +3558,11 @@
         "Sixty-fifth guardrail pass adds an IDACC-side Brain Controller Sync card in Identity & Keys backed by read-only /controllers and scoped current-agent matching.",
         "Sixty-sixth guardrail pass adds a guided Settings Local driving path and tightens local readiness to synced/live local backends rather than installed/configured hints.",
         "Sixty-seventh guardrail pass adds guarded IDACC confirmations before opening Brain Health or Learning because those dashboard tabs load report/replay surfaces that are not yet pure passive summaries.",
+        "Sixty-eighth guardrail pass adds an IDACC-side Brain Core health chip backed by safe GET /health so Brain liveness, route skew, and sqlite-vec degradation are visible without opening guarded report tabs.",
         "The guardrail passes favor confirmation prompts and explicit disclosures over removing controls; the open UX decision is whether to replace confirmed shortcuts with preview-and-apply flows.",
         "Most important simplification: separate status/observation pages from mutation/control surfaces wherever possible."
       ],
-      "body": "# Sync & Guardrails Audit\n\nThis page records the ongoing pass over Dashboard, Work, Projects, Health, Identity & Keys, HR Manager, Capabilities, Computer Use, Settings, and the Brain dashboard tabs. It now documents sixty-seven conservative guardrail implementation passes.\n\n## Current build state\n\nIDACC is sync-bus aware across dashboard, work, projects, health, plans, goals, loops, schedules, dreams, agent capability changes, and org sync. The guardrail layer favors fresh reads, preview prompts, scoped team/name authority, and owner-page handoffs before mutation.\n\nThe latest pass tightens the IDACC-to-Brain dashboard handoff. Brain Health and Learning launch buttons are now visibly guarded and ask for confirmation before opening, because those tabs load report/replay surfaces that may reconcile stale eval fixture state in the current Brain build. Fleet, Skills, Agents, and Graph remain whitelisted one-click status tabs.\n\n## Boundaries\n\nDashboard stays observe, talk, and refresh. HR Manager owns hierarchy, relay policy, team lifecycle, and org sync. Capabilities owns MCP, skills, plugins, additive Brain catalog sync, read-only Brain contract chips, and guarded Brain Health/Learning handoffs. Identity owns local controller proof, scoped key actions, legacy authority review, and read-only Brain /controllers comparison. Settings owns local model/backend setup but keeps coordinator/routing edits handed to HR Manager. Brain Fleet, Health, Skills, Learning, Agents, and Graph remain status surfaces unless a future write flow receives its own guarded preview-and-apply path.\n\n## Open decisions\n\nDecide whether to add pure-read Brain Health/Learning summary endpoints, or keep the guarded IDACC confirmations while report routes continue to reconcile stale eval fixtures."
+      "body": "# Sync & Guardrails Audit\n\nThis page records the ongoing pass over Dashboard, Work, Projects, Health, Identity & Keys, HR Manager, Capabilities, Computer Use, Settings, and the Brain dashboard tabs. It now documents sixty-eight conservative guardrail implementation passes.\n\n## Current build state\n\nIDACC is sync-bus aware across dashboard, work, projects, health, plans, goals, loops, schedules, dreams, agent capability changes, and org sync. The guardrail layer favors fresh reads, preview prompts, scoped team/name authority, and owner-page handoffs before mutation.\n\nThe latest pass adds safe Brain Core health visibility. Capabilities now reads Brain GET /health for liveness, route-inventory skew, and sqlite-vec degradation before operators open guarded Brain Health or Learning. This avoids /brain/health timeline writes and avoids the learning report routes that may reconcile stale eval fixture state in the current Brain build.\n\n## Boundaries\n\nDashboard stays observe, talk, and refresh. HR Manager owns hierarchy, relay policy, team lifecycle, and org sync. Capabilities owns MCP, skills, plugins, additive Brain catalog sync, read-only Brain contract chips, safe Brain Core health, and guarded Brain Health/Learning handoffs. Identity owns local controller proof, scoped key actions, legacy authority review, and read-only Brain /controllers comparison. Settings owns local model/backend setup but keeps coordinator/routing edits handed to HR Manager. Brain Fleet, Health, Skills, Learning, Agents, and Graph remain status surfaces unless a future write flow receives its own guarded preview-and-apply path.\n\n## Open decisions\n\nDecide whether to add pure-read Brain Health/Learning summary endpoints, or keep the guarded IDACC confirmations while report routes continue to reconcile stale eval fixtures."
     },
     {
       "id": "wiki",
@@ -3607,5 +3625,5 @@
       "body": "# Wiki\n\nWiki is both the human documentation page and the editable schematic for the Control Center UI. Each article explains the operator purpose of a page; the structured sections below preserve tabs, tiles, fields, controls, displays, routes, and source files for implementation detail.\n\n## Use it for\n\n- Search pages, controls, routes, source files, and notes from inside the desktop app.\n- Confirm how a UI surface is intended to behave before editing code or filing follow-up work.\n- Keep app navigation metadata and human documentation in one reviewed JSON artifact.\n\n## Editing rule\n\nThe desktop app hot-reload polls CONTROL_CENTER_WIKI.json through the main-process wiki bridge. Sidebar labels, icons, order, and visibility still come from pages[].nav for implemented routes, so documentation edits must preserve that metadata and keep every page.body non-empty."
     }
   ],
-  "appVersion": "0.1.287"
+  "appVersion": "0.1.288"
 }

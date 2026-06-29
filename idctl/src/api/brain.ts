@@ -151,6 +151,33 @@ export interface BrainGraphReport {
     warnings?: string[];
   };
 }
+export interface BrainCoreHealthReport {
+  generatedAt?: string;
+  ok?: boolean;
+  nodes?: number;
+  edges?: number;
+  memories?: number;
+  entities?: number;
+  timelineEvents?: number;
+  facts?: number;
+  fts?: boolean;
+  sqliteVec?: {
+    available?: boolean;
+    degraded?: boolean;
+    state?: string;
+    dimensions?: number;
+    extension?: string;
+    fallback?: string;
+    error?: string | null;
+  };
+  routeInventory?: {
+    skew?: boolean;
+    missing?: string[];
+    count?: number;
+    routes?: string[];
+  };
+  warnings?: string[];
+}
 export interface BrainControllerLink {
   id?: number;
   controller_id?: string;
@@ -376,6 +403,26 @@ export class BrainClient {
         identityBridgeCount: expandedMeta.identityBridgeCount,
         warnings,
       },
+    };
+  }
+
+  /** Read the safe Brain /health route, avoiding /brain/health report writes and learning reconciliation. */
+  async coreHealth(): Promise<BrainCoreHealthReport | null> {
+    const r = await this.req<BrainCoreHealthReport>('GET', '/health');
+    if (!r) return null;
+    const warnings: string[] = [];
+    if (r.ok !== true) warnings.push('Brain /health did not report ok=true.');
+    if (r.routeInventory?.skew) {
+      const missing = r.routeInventory.missing ?? [];
+      warnings.push(`Brain route inventory is missing ${missing.length ? missing.join(', ') : 'critical routes'}.`);
+    }
+    if (r.sqliteVec?.degraded || r.sqliteVec?.available === false) {
+      warnings.push('Brain sqlite-vec native vector capability is degraded; fallback retrieval may be in use.');
+    }
+    return {
+      ...r,
+      generatedAt: new Date().toISOString(),
+      warnings,
     };
   }
 
