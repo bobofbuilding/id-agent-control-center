@@ -100,6 +100,30 @@ function diffSummary(d: ProjectDiff | null | undefined): string[] {
   }
   return lines;
 }
+function gitStateStamp(g: GitInfo | null | undefined): string {
+  return JSON.stringify(g ? {
+    isRepo: g.isRepo,
+    branch: g.branch ?? '',
+    remoteUrl: g.remoteUrl ?? '',
+    upstreamUrl: g.upstreamUrl ?? '',
+    isFork: Boolean(g.isFork),
+    ahead: g.ahead ?? null,
+    behind: g.behind ?? null,
+    dirty: Boolean(g.dirty),
+    compareRef: g.compareRef ?? '',
+    upstreamGone: Boolean(g.upstreamGone),
+    error: g.error ?? '',
+  } : null);
+}
+function diffStateStamp(d: ProjectDiff | null | undefined): string {
+  return JSON.stringify(d ? {
+    ok: d.ok,
+    stat: d.stat ?? '',
+    diff: d.diff ?? '',
+    untracked: [...(d.untracked ?? [])].sort(),
+    error: d.error ?? '',
+  } : null);
+}
 function autoCommitBlockers(g: GitInfo | null | undefined, d: ProjectDiff | null | undefined): string[] {
   const out: string[] = [];
   if (!g) out.push('git status unavailable');
@@ -478,18 +502,22 @@ export function Projects({ store }: { store: FleetStore }) {
   // creds) rather than committing from here. This is the standard "request for change" flow.
   async function submitCommit(p: ProjectEntry, desc: string, opts: { confirm?: boolean; quietStale?: boolean } = {}) {
     if (!desc.trim()) { setNote('describe the change (or use ✨ Draft with AI)'); return; }
-    const fresh = await ensureProjectFresh(p, 'committing and pushing', { quiet: opts.quietStale });
+    let fresh = await ensureProjectFresh(p, 'committing and pushing', { quiet: opts.quietStale });
     if (!fresh) {
       if (opts.quietStale) toast({ kind: 'info', text: `Commit skipped because "${p.name}" changed before the write. Review Projects and retry.`, durationMs: 10000 });
       return;
     }
     if (!fresh.path) { setNote('this project has no local folder to commit'); return; }
     const shouldConfirm = opts.confirm ?? true;
+    let reviewedGit: GitInfo | null = null;
+    let reviewedDiff: ProjectDiff | null = null;
     if (shouldConfirm) {
       const [g, d] = await Promise.all([
         call<GitInfo>('project:git', fresh.path).catch(() => null),
         call<ProjectDiff>('project:diff', fresh.path).catch(() => null),
       ]);
+      reviewedGit = g;
+      reviewedDiff = d;
       if (d?.ok && !d.stat && !d.diff && !d.untracked.length) {
         setNote(`nothing to commit for ${fresh.name}`);
         return;
@@ -508,6 +536,33 @@ export function Projects({ store }: { store: FleetStore }) {
         'This stages all non-ignored changes, creates a commit with the reviewed message, and pushes the current branch when possible.',
       ].join('\n');
       if (!window.confirm(preview)) return;
+      const afterConfirm = await ensureProjectFresh(fresh, 'committing after review', { quiet: opts.quietStale });
+      if (!afterConfirm?.path) return;
+      const [latestGit, latestDiff] = await Promise.all([
+        call<GitInfo>('project:git', afterConfirm.path).catch(() => null),
+        call<ProjectDiff>('project:diff', afterConfirm.path).catch(() => null),
+      ]);
+      if (gitStateStamp(latestGit) !== gitStateStamp(reviewedGit) || diffStateStamp(latestDiff) !== diffStateStamp(reviewedDiff)) {
+        setNote(`commit blocked: git state changed for ${afterConfirm.name}; review the latest status/diff and try again`);
+        window.alert('Git state changed after the commit review prompt. No commit was created; review the latest status/diff and try again.');
+        if (latestGit) setGitMap((m) => ({ ...m, [afterConfirm.id]: latestGit }));
+        return;
+      }
+      fresh = afterConfirm;
+    } else {
+      const latest = await ensureProjectFresh(fresh, 'committing immediately before write', { quiet: opts.quietStale });
+      if (!latest?.path) return;
+      const [latestGit, latestDiff] = await Promise.all([
+        call<GitInfo>('project:git', latest.path).catch(() => null),
+        call<ProjectDiff>('project:diff', latest.path).catch(() => null),
+      ]);
+      const blockers = autoCommitBlockers(latestGit, latestDiff);
+      if (blockers.length) {
+        toast({ kind: 'info', text: `Auto-commit skipped for “${latest.name}”: ${blockers.join('; ')}. Use Projects to review manually.`, durationMs: 12000 });
+        if (latestGit) setGitMap((m) => ({ ...m, [latest.id]: latestGit }));
+        return;
+      }
+      fresh = latest;
     }
     // Commit & push DIRECTLY from the app (reliable) instead of delegating to an agent that may
     // mark the task "done" without the commit ever landing. .gitignore keeps secrets out; the
@@ -716,7 +771,7 @@ export function Projects({ store }: { store: FleetStore }) {
 
   async function runGit(p: ProjectEntry, action: string) {
     if (!p.path) return;
-    const fresh = await ensureProjectFresh(p, `running git ${action}`);
+    let fresh = await ensureProjectFresh(p, `running git ${action}`);
     if (!fresh?.path) return;
     if (action === 'pull') {
       const [g, d] = await Promise.all([
@@ -734,6 +789,19 @@ export function Projects({ store }: { store: FleetStore }) {
         'This fetches and fast-forwards when safe. It never force-pushes or discards work, but it can change files in the folder.',
       ].join('\n');
       if (!window.confirm(preview)) return;
+      const afterConfirm = await ensureProjectFresh(fresh, 'running git pull after review');
+      if (!afterConfirm?.path) return;
+      const [latestGit, latestDiff] = await Promise.all([
+        call<GitInfo>('project:git', afterConfirm.path).catch(() => null),
+        call<ProjectDiff>('project:diff', afterConfirm.path).catch(() => null),
+      ]);
+      if (gitStateStamp(latestGit) !== gitStateStamp(g) || diffStateStamp(latestDiff) !== diffStateStamp(d)) {
+        setNote(`pull blocked: git state changed for ${afterConfirm.name}; review the latest status/diff and try again`);
+        window.alert('Git state changed after the pull review prompt. No pull was run; review the latest status/diff and try again.');
+        if (latestGit) setGitMap((m) => ({ ...m, [afterConfirm.id]: latestGit }));
+        return;
+      }
+      fresh = afterConfirm;
     }
     setGitBusy(`${fresh.id}:${action}`);
     setGitOut((o) => ({ ...o, [fresh.id]: { action, output: `$ git ${action}…` } }));
