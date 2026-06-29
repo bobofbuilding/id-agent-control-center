@@ -538,6 +538,7 @@ export function Settings({ store }: { store: FleetStore }) {
   const [confirmRemove, setConfirmRemove] = useState<string | null>(null);
   const [removing, setRemoving] = useState<string | null>(null);
   const [stackConfirm, setStackConfirm] = useState<string | null>(null);
+  const [stackMsg, setStackMsg] = useState('');
 
   // How many local-model (ollama) queries the manager runs at once. Cloud runtimes
   // (codex/claude) parallelize freely; local agents share one server, so this caps
@@ -697,6 +698,14 @@ export function Settings({ store }: { store: FleetStore }) {
   // Stack install commands: runnable (open Terminal) vs app-download (link out).
   const RUNNABLE_RE = /^(brew|pip|pipx|uv|cargo|curl|docker|conda|npm|npx)\b/;
   function stackCmd(s: LocalStackEntry): string { return (s.install ?? '').split('#')[0].trim(); }
+  function stackEaseLabel(s: LocalStackEntry): string {
+    if (s.installEase === 'start-here') return 'start here';
+    if (s.installEase === 'easy') return 'easy';
+    if (s.installEase === 'guided') return 'guided';
+    if (s.installEase === 'advanced') return 'advanced';
+    if (s.installEase === 'expert') return 'expert';
+    return '';
+  }
   function stackInstallCmd(s: LocalStackEntry): string | null { const c = stackCmd(s); return c && RUNNABLE_RE.test(c) ? c : null; }
   function stackUninstallCmd(s: LocalStackEntry): string | null {
     const c = stackCmd(s); let m: RegExpMatchArray | null;
@@ -709,7 +718,12 @@ export function Settings({ store }: { store: FleetStore }) {
   async function runStackCmd(cmd: string) {
     setStackConfirm(null);
     const r = await call<{ ran: boolean }>('app:runInTerminal', cmd).catch(() => ({ ran: false }));
-    if (!r.ran) await copyText(cmd); // Terminal automation blocked → silent clipboard fallback
+    if (r.ran) {
+      setStackMsg('opened Terminal — review and stop it there if anything looks wrong');
+    } else {
+      await copyText(cmd);
+      setStackMsg('Terminal automation was blocked — command copied to clipboard');
+    }
   }
   /** Real port conflict only: this stack's default port is ACTUALLY in use right now (a
    *  detected running server or a configured provider). We no longer warn about stacks that
@@ -1050,7 +1064,7 @@ export function Settings({ store }: { store: FleetStore }) {
       <section className="card">
         <h3>Local LLM stacks</h3>
         <p className="muted small" style={{ marginTop: -4 }}>
-          Self-hostable inference servers you can run <b>next to Ollama</b> — the top 10 picks from <a className="ext-link" href="https://github.com/av/awesome-llm-services" target="_blank" rel="noreferrer">awesome-llm-services</a>. <b>Install</b> opens the command in your Terminal (visible and abortable — nothing runs silently); app-only stacks show <b>Get ↗</b> (no CLI install — opens the download). After installing + starting one, hit <b>⟳ Scan running</b> then add it under <b>Inference backends</b> below. ⚠ only appears when a stack's default port is <i>actually</i> in use right now (shared default ports are no longer flagged — they aren't a conflict unless you run two at once).
+          Self-hostable inference servers you can run <b>next to Ollama</b> — starter-friendly paths first, then advanced serving stacks from <a className="ext-link" href="https://github.com/av/awesome-llm-services" target="_blank" rel="noreferrer">awesome-llm-services</a>. <b>Install</b> opens the reviewed command in your Terminal (visible and abortable — nothing runs silently); app-only stacks show <b>Get ↗</b>. After installing + starting one, hit <b>⟳ Scan running</b> then add it under <b>Inference backends</b> below.
         </p>
         <div className="row-actions" style={{ flexWrap: 'wrap', gap: 6 }}>
           <span className="chips grow">
@@ -1061,6 +1075,7 @@ export function Settings({ store }: { store: FleetStore }) {
             ))}
           </span>
           <button className="btn small" disabled={discovering} onClick={() => void runDiscover()}>{discovering ? 'Scanning…' : '⟳ Scan running'}</button>
+          {stackMsg ? <span className="muted small">{stackMsg}</span> : null}
         </div>
         <div className="stack-list">
           {filteredStacks.map((s) => {
@@ -1074,6 +1089,7 @@ export function Settings({ store }: { store: FleetStore }) {
                   <span className="b">{s.name}</span>
                   {s.defaultPort ? <span className="muted small mono">:{s.defaultPort}</span> : null}
                   <span className="muted small">{s.openaiCompatible ? 'OpenAI-compatible' : s.apiKind}</span>
+                  {stackEaseLabel(s) ? <span className="chip tag" title={s.installNote}>{stackEaseLabel(s)}</span> : null}
                   {s.appleSilicon ? <span className="chip tag" title="Apple-Silicon native">Apple Silicon</span> : null}
                   {running ? <span className="ok-text small" title="Detected running by the last scan">● running</span> : null}
                   {pw ? <span className={`small ${pw.level === 'error' ? 'status-error' : 'warn-text'}`} title="Port-conflict risk if you run this on its default port">⚠ {pw.msg}</span> : null}
