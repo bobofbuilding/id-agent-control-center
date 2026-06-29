@@ -16,6 +16,8 @@ export interface AgentMetadata {
   plugins?: string[];
   skillmesh_address?: string;
   ows_wallet?: string;
+  ows_address?: string;
+  wallet?: boolean;
   idchain_domain?: string;
   [key: string]: unknown;
 }
@@ -41,6 +43,7 @@ export interface Agent {
   customer_domain?: string | null;
   public_endpoint_url?: string | null;
   ows_wallet?: string | null;
+  ows_address?: string | null;
   idchain_domain?: string | null;
   ssh_target?: string | null;
   last_seen?: number | null;

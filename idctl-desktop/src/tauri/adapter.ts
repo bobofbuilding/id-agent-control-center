@@ -229,49 +229,64 @@ function controllerProofStatus(agent: string, wallet: string): ControllerProofRe
   return record;
 }
 
-function controllerWalletFromAgent(agent: Agent | undefined): string {
-  const metaWallet = agent?.metadata?.ows_wallet;
-  const wallet = agent?.ows_wallet ?? (typeof metaWallet === 'string' ? metaWallet : '');
-  return typeof wallet === 'string' ? wallet.trim().toLowerCase() : '';
+function stringField(value: unknown): string {
+  return typeof value === 'string' ? value.trim() : '';
 }
 
-async function controllerWalletForAgent(agent: string): Promise<string> {
-  const agents = await client.agents();
+function ethAddress(value: unknown): string {
+  const candidate = stringField(value);
+  return ETH_ADDRESS_RE.test(candidate) ? candidate.toLowerCase() : '';
+}
+
+function controllerWalletFromAgent(agent: Agent | undefined): string {
+  const meta = agent?.metadata as Record<string, unknown> | undefined;
+  const direct = agent as (Agent & { ows_address?: string | null }) | undefined;
+  return (
+    ethAddress(direct?.ows_address) ||
+    ethAddress(meta?.ows_address) ||
+    ethAddress(meta?.skillmesh_address) ||
+    ethAddress(agent?.ows_wallet) ||
+    ethAddress(meta?.ows_wallet)
+  );
+}
+
+async function controllerWalletForAgent(agent: string, selectedTeam?: string): Promise<string> {
+  const agents = await (selectedTeam ? client.withTeam(selectedTeam) : client).agents();
   const row = agents.find((a) => a.name === agent || a.id === agent || a.alias === agent);
   const wallet = controllerWalletFromAgent(row);
   if (!wallet || !ETH_ADDRESS_RE.test(wallet)) throw new Error('No valid controller wallet is linked for this agent.');
   return wallet;
 }
 
-async function startControllerChallenge(agent: string, wallet: string): Promise<ControllerProofRecord> {
-  const expected = await controllerWalletForAgent(agent);
+async function startControllerChallenge(agent: string, wallet: string, selectedTeam?: string): Promise<ControllerProofRecord> {
+  const expected = await controllerWalletForAgent(agent, selectedTeam);
   if (wallet.toLowerCase() !== expected) throw new Error('Controller challenge wallet does not match the agent controller wallet.');
   return newControllerChallenge(agent, expected);
 }
 
-async function verifyControllerChallengeForAgent(agent: string, wallet: string, signature: string): Promise<ControllerProofRecord> {
-  const expected = await controllerWalletForAgent(agent);
+async function verifyControllerChallengeForAgent(agent: string, wallet: string, signature: string, selectedTeam?: string): Promise<ControllerProofRecord> {
+  const expected = await controllerWalletForAgent(agent, selectedTeam);
   if (wallet.toLowerCase() !== expected) throw new Error('Controller signature wallet does not match the agent controller wallet.');
   return verifyControllerChallenge(agent, expected, signature);
 }
 
-async function controllerProofStatusForAgent(agent: string, wallet: string): Promise<ControllerProofRecord | null> {
-  const expected = await controllerWalletForAgent(agent);
+async function controllerProofStatusForAgent(agent: string, wallet: string, selectedTeam?: string): Promise<ControllerProofRecord | null> {
+  const expected = await controllerWalletForAgent(agent, selectedTeam);
   if (wallet.toLowerCase() !== expected) return null;
   return controllerProofStatus(agent, expected);
 }
 
-async function requireControllerProof(agent: string): Promise<void> {
-  const expected = await controllerWalletForAgent(agent);
+async function requireControllerProof(agent: string, selectedTeam?: string): Promise<void> {
+  const expected = await controllerWalletForAgent(agent, selectedTeam);
   const record = controllerProofs.get(agent);
   if (!record?.verifiedAt || record.expiresAt <= Date.now() || record.wallet.toLowerCase() !== expected) {
     throw new Error('Privileged identity and key actions require a fresh controller-wallet challenge.');
   }
 }
 
-async function requireControllerProofIfWalletExists(agent: string): Promise<void> {
+async function requireControllerProofIfWalletExists(agent: string, selectedTeam?: string): Promise<void> {
   try {
-    await requireControllerProof(agent);
+    await requireControllerProof(agent, selectedTeam);
   } catch (err) {
     if (err instanceof Error && err.message === 'No valid controller wallet is linked for this agent.') return;
     throw err;
@@ -289,6 +304,14 @@ const M: Record<string, (...a: any[]) => Promise<unknown>> = {
   health: () => client.health(),
   agents: () => client.agents(),
   teams: () => client.teams(),
+  'agents:allTeams': async () => {
+    const teams = await client.teams().catch(() => []);
+    const names = teams.length ? teams.map((t) => t.name) : [team || 'default'];
+    const groups = await Promise.all(
+      names.map(async (name) => ({ team: name, agents: await client.withTeam(name).agents().catch(() => []) })),
+    );
+    return groups.filter((g) => g.agents.length > 0);
+  },
   'wiki:get': () => fetchWiki(),
   events: (since: number) => client.events(Number(since) || 0, { wait: 20, limit: 100 }),
   inboxPending: () => client.inboxPending(),
@@ -322,18 +345,20 @@ const M: Record<string, (...a: any[]) => Promise<unknown>> = {
   setAgentDelegates: (id: string, delegates: string[] | null) => client.setAgentDelegates(String(id), delegates ?? null),
   setAgentRuntime: (id: string, runtime: string) => client.setAgentRuntime(String(id), String(runtime)),
   spawnAgent: (spec: Parameters<ManagerClient['spawnAgent']>[0]) => client.spawnAgent(spec),
-  'identity:controllerChallenge': async (agent: string, wallet: string) => startControllerChallenge(String(agent), String(wallet)),
-  'identity:controllerVerify': async (agent: string, wallet: string, signature: string) => verifyControllerChallengeForAgent(String(agent), String(wallet), String(signature)),
-  'identity:controllerStatus': async (agent: string, wallet: string) => controllerProofStatusForAgent(String(agent), String(wallet)),
-  'identity:register': async (agent: string) => {
+  'identity:controllerChallenge': async (agent: string, wallet: string, selectedTeam?: string) => startControllerChallenge(String(agent), String(wallet), selectedTeam ? String(selectedTeam) : undefined),
+  'identity:controllerVerify': async (agent: string, wallet: string, signature: string, selectedTeam?: string) => verifyControllerChallengeForAgent(String(agent), String(wallet), String(signature), selectedTeam ? String(selectedTeam) : undefined),
+  'identity:controllerStatus': async (agent: string, wallet: string, selectedTeam?: string) => controllerProofStatusForAgent(String(agent), String(wallet), selectedTeam ? String(selectedTeam) : undefined),
+  'identity:register': async (agent: string, selectedTeam?: string) => {
     const name = String(agent);
-    await requireControllerProof(name);
-    return client.remote(`/register ${name}`);
+    const teamName = selectedTeam ? String(selectedTeam) : undefined;
+    await requireControllerProof(name, teamName);
+    return (teamName ? client.withTeam(teamName) : client).remote(`/register ${name}`);
   },
-  'wallet:provision': async (agent: string) => {
+  'wallet:provision': async (agent: string, selectedTeam?: string) => {
     const name = String(agent);
-    await requireControllerProofIfWalletExists(name);
-    return client.remote(`/agent ${name} wallet provision`);
+    const teamName = selectedTeam ? String(selectedTeam) : undefined;
+    await requireControllerProofIfWalletExists(name, teamName);
+    return (teamName ? client.withTeam(teamName) : client).remote(`/agent ${name} wallet provision`);
   },
   'runtime:models': async () => buildRuntimeCatalog(lsGet<ProviderProfile[]>('idctl.providers', [])),
   'runtime:probe': async () => {
@@ -406,15 +431,15 @@ const M: Record<string, (...a: any[]) => Promise<unknown>> = {
     }
     return assembleAccount(agent, st);
   },
-  'keys:deploy': async (agent: string) => {
-    await requireControllerProof(String(agent));
+  'keys:deploy': async (agent: string, selectedTeam?: string) => {
+    await requireControllerProof(String(agent), selectedTeam ? String(selectedTeam) : undefined);
     const st = keysState();
     st.accounts[agent] = { ...(st.accounts[agent] ?? { agent, smartAccount: mockAddr('safe:' + agent), owner: OWNER, deployed: false, chainId: CHAIN }), deployed: true };
     lsSet('idctl.keys', st);
     return assembleAccount(agent, st);
   },
-  'keys:issue': async (agent: string, scopeIdx: number, ttlMs: number) => {
-    await requireControllerProof(String(agent));
+  'keys:issue': async (agent: string, scopeIdx: number, ttlMs: number, selectedTeam?: string) => {
+    await requireControllerProof(String(agent), selectedTeam ? String(selectedTeam) : undefined);
     if (unsafeSession(scopeIdx, ttlMs)) throw new Error('Refusing to issue uncapped, full, non-expiring, or invalid session keys from the Control Center.');
     const st = keysState();
     const now = Date.now();
@@ -425,8 +450,8 @@ const M: Record<string, (...a: any[]) => Promise<unknown>> = {
     lsSet('idctl.keys', st);
     return key;
   },
-  'keys:revoke': async (agent: string, sessionId: string) => {
-    await requireControllerProof(String(agent));
+  'keys:revoke': async (agent: string, sessionId: string, selectedTeam?: string) => {
+    await requireControllerProof(String(agent), selectedTeam ? String(selectedTeam) : undefined);
     const st = keysState();
     const s = (st.sessions[agent] ?? []).find((x) => x.id === sessionId);
     if (s) {

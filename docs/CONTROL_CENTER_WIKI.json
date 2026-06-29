@@ -1,6 +1,6 @@
 {
   "schemaVersion": 2,
-  "updated": "2026-06-28",
+  "updated": "2026-06-29",
   "title": "ID Agents Control Center Wiki",
   "description": "Human-readable wiki and editable UI schematic for the Control Center. Each page.body field is the prose wiki article; the desktop app still reads page nav metadata for sidebar labels, icons, order, and visibility, and keeps the structured sections as supporting implementation detail.",
   "editContract": {
@@ -1342,20 +1342,23 @@
       },
       "sourceFiles": [
         "idctl-desktop/src/renderer/views/Identity.tsx",
+        "idctl-desktop/src/main/bridge.ts",
+        "idctl-desktop/src/tauri/adapter.ts",
+        "idctl/src/api/types.ts",
         "idctl/src/keys/mockProvider.ts"
       ],
-      "purpose": "Manage agent onchain identity, OWS wallet, Safe-style account, and scoped session keys.",
-      "scope": "Active team agents. Key provider is currently mock unless a live provider is wired behind the same interface.",
+      "purpose": "Manage agent onchain identity, wallet controller address, Safe-style account, and scoped session keys.",
+      "scope": "All-team agent roster with wallet-bearing agents sorted first. Key provider is currently mock unless a live provider is wired behind the same interface.",
       "tiles": [
         {
           "id": "agent-list",
           "label": "Agents",
-          "description": "Selects which active-team agent to inspect."
+          "description": "Selects which all-team agent to inspect; agents with controller wallet addresses are prioritized."
         },
         {
           "id": "onchain-identity",
           "label": "Onchain identity",
-          "description": "ENS/ID-chain domain and OWS wallet state.",
+          "description": "ENS/ID-chain domain and controller wallet state from OWS address, SkillMesh address, or address-form OWS wallet metadata.",
           "routesInto": [
             "identity:register",
             "wallet:provision"
@@ -1455,6 +1458,10 @@
       ],
       "routing": {
         "managerMethods": [
+          "agents:allTeams",
+          "identity:controllerChallenge",
+          "identity:controllerVerify",
+          "identity:controllerStatus",
           "identity:register",
           "wallet:provision"
         ],
@@ -1472,7 +1479,7 @@
           "/agent <agent> wallet provision"
         ]
       },
-      "body": "# Identity & Keys\n\nIdentity & Keys is the review surface for agent identity, wallet posture, Safe-style account state, and scoped session keys. It helps operators understand who can act and what account or key material is associated with that action.\n\n## Use it for\n\n- Select an agent and inspect identity status, account details, session keys, and warnings.\n- Review delegated capability posture before relying on an agent for identity-sensitive work.\n- Keep onchain identity, OWS wallet, Safe account, and session-key concepts visible in one place.\n\n## Safety note\n\nSome provider behavior still depends on the active manager backend. Treat this page as the UI contract and verify the live provider before documenting stronger guarantees about signing, custody, non-expiring keys, or production-grade authorization."
+      "body": "# Identity & Keys\n\nIdentity & Keys is the review surface for agent identity, wallet posture, Safe-style account state, and scoped session keys. It helps operators understand who can act and what account or key material is associated with that action.\n\n## Use it for\n\n- Select an agent from the all-team roster and inspect identity status, account details, session keys, and warnings.\n- Confirm wallet-bearing agents are visible even when they belong to a team other than the manager's active team.\n- Review delegated capability posture before relying on an agent for identity-sensitive work.\n- Keep onchain identity, wallet controller address, Safe account, and session-key concepts visible in one place.\n\n## Wallet source\n\nThe page treats a valid controller wallet address as active identity evidence when it appears in OWS address metadata, SkillMesh address metadata, or an address-form OWS wallet field. Register and wallet-provision actions are routed through the selected agent's team so cross-team agents are resolved against the correct manager scope.\n\n## Safety note\n\nSome provider behavior still depends on the active manager backend. Treat this page as the UI contract and verify the live provider before documenting stronger guarantees about signing, custody, non-expiring keys, or production-grade authorization."
     },
     {
       "id": "teams",
@@ -2618,5 +2625,5 @@
       "body": "# Wiki\n\nWiki is both the human documentation page and the editable schematic for the Control Center UI. Each article explains the operator purpose of a page; the structured sections below preserve tabs, tiles, fields, controls, displays, routes, and source files for implementation detail.\n\n## Use it for\n\n- Search pages, controls, routes, source files, and notes from inside the desktop app.\n- Confirm how a UI surface is intended to behave before editing code or filing follow-up work.\n- Keep app navigation metadata and human documentation in one reviewed JSON artifact.\n\n## Editing rule\n\nThe desktop app hot-reload polls CONTROL_CENTER_WIKI.json through the main-process wiki bridge. Sidebar labels, icons, order, and visibility still come from pages[].nav for implemented routes, so documentation edits must preserve that metadata and keep every page.body non-empty."
     }
   ],
-  "appVersion": "0.1.212"
+  "appVersion": "0.1.213"
 }

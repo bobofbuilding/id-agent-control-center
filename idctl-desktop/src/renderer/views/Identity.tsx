@@ -1,9 +1,10 @@
 import { useEffect, useMemo, useState } from 'react';
-import { call, type FleetStore } from '../store.ts';
+import { call, type FleetStore, type TeamAgent } from '../store.ts';
 import type { Agent } from '../../../../idctl/src/api/types.ts';
 import type { AgentAccount, KeyCapabilities, SessionKey, SessionScope } from '../../../../idctl/src/keys/types.ts';
 
 type EvidenceState = 'verified' | 'warn' | 'missing' | 'self';
+type IdentityAgent = TeamAgent;
 
 interface ControllerProof {
   agent: string;
@@ -34,13 +35,45 @@ function remaining(validUntil: number): string {
 }
 
 function identityValue(
-  a: { idchain_domain?: string | null; ows_wallet?: string | null; metadata?: unknown },
-  key: 'idchain_domain' | 'ows_wallet',
+  a: { idchain_domain?: string | null; ows_wallet?: string | null; ows_address?: string | null; metadata?: unknown },
+  key: 'idchain_domain' | 'ows_wallet' | 'ows_address' | 'skillmesh_address',
 ): string {
-  const meta = a.metadata as { idchain_domain?: unknown; ows_wallet?: unknown } | undefined;
-  const direct = key === 'idchain_domain' ? a.idchain_domain : a.ows_wallet;
+  const meta = a.metadata as { idchain_domain?: unknown; ows_wallet?: unknown; ows_address?: unknown; skillmesh_address?: unknown } | undefined;
+  const direct = key === 'idchain_domain' ? a.idchain_domain : key === 'ows_wallet' ? a.ows_wallet : key === 'ows_address' ? a.ows_address : undefined;
   const value = direct ?? meta?.[key];
   return typeof value === 'string' ? value.trim() : '';
+}
+
+function isEthAddress(value: string): boolean {
+  return /^0x[0-9a-fA-F]{40}$/.test(value.trim());
+}
+
+function controllerWallet(a: Agent | undefined): string {
+  if (!a) return '';
+  const candidates = [
+    identityValue(a, 'ows_address'),
+    identityValue(a, 'skillmesh_address'),
+    identityValue(a, 'ows_wallet'),
+  ];
+  return candidates.find(isEthAddress) ?? '';
+}
+
+function hasWallet(a: Agent): boolean {
+  return Boolean(controllerWallet(a));
+}
+
+function agentKey(a: IdentityAgent): string {
+  return `${a.team ?? 'default'}:${a.name}`;
+}
+
+function uniqueAgents(agents: IdentityAgent[]): IdentityAgent[] {
+  const seen = new Set<string>();
+  return agents.filter((a) => {
+    const key = agentKey(a);
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
 }
 
 function statusLabel(state: EvidenceState): string {
@@ -137,12 +170,18 @@ export function Identity({ store }: { store: FleetStore }) {
   const [error, setError] = useState<string | null>(null);
   const [proofs, setProofs] = useState<Record<string, ControllerProof>>({});
 
-  const names = store.agents.map((a) => a.name);
-  const selected = sel ?? names[0];
+  const identityAgents = useMemo(() => {
+    const all = store.allAgents.length ? store.allAgents : store.agents.map((a) => ({ ...a, team: store.team ?? 'default' }));
+    const sorted = uniqueAgents(all).sort((a, b) => Number(hasWallet(b)) - Number(hasWallet(a)) || (a.team ?? '').localeCompare(b.team ?? '') || a.name.localeCompare(b.name));
+    return sorted;
+  }, [store.allAgents, store.agents, store.team]);
+  const names = useMemo(() => identityAgents.map((a) => a.name), [identityAgents]);
+  const selected = sel && identityAgents.some((a) => a.name === sel) ? sel : identityAgents.find(hasWallet)?.name ?? names[0];
   const acct = selected ? accounts[selected] : undefined;
-  const selAgent = selected ? store.agents.find((a) => a.name === selected) : undefined;
+  const selAgent = selected ? identityAgents.find((a) => a.name === selected) : undefined;
+  const selectedTeam = selAgent?.team;
   const domain = selAgent ? identityValue(selAgent, 'idchain_domain') : '';
-  const wallet = selAgent ? identityValue(selAgent, 'ows_wallet') : '';
+  const wallet = controllerWallet(selAgent);
   const proof = selected ? proofs[selected] : undefined;
   const controllerVerified = proofMatchesWallet(proof, wallet);
   const activeSessions = useMemo(() => [...(acct?.sessions ?? [])].sort(activeSessionSort), [acct]);
@@ -177,7 +216,7 @@ export function Identity({ store }: { store: FleetStore }) {
 
   useEffect(() => {
     void reload();
-  }, [store.agents.length]);
+  }, [names.join('|')]);
 
   useEffect(() => {
     const nextScope = safeScopes[0]?.idx;
@@ -189,7 +228,7 @@ export function Identity({ store }: { store: FleetStore }) {
   useEffect(() => {
     if (!selected || !wallet || controllerVerified) return;
     let live = true;
-    call<ControllerProof | null>('identity:controllerStatus', selected, wallet)
+    call<ControllerProof | null>('identity:controllerStatus', selected, wallet, selectedTeam)
       .then((status) => {
         if (live && status) setProofs((prev) => ({ ...prev, [selected]: status }));
       })
@@ -197,7 +236,7 @@ export function Identity({ store }: { store: FleetStore }) {
     return () => {
       live = false;
     };
-  }, [selected, wallet, controllerVerified]);
+  }, [selected, wallet, selectedTeam, controllerVerified]);
 
   async function act(method: string, ...args: unknown[]) {
     setError(null);
@@ -212,11 +251,11 @@ export function Identity({ store }: { store: FleetStore }) {
     }
   }
 
-  async function identityAction(agent: string, action: 'register' | 'provision') {
+  async function identityAction(agent: string, action: 'register' | 'provision', team?: string) {
     setError(null);
     setBusy(true);
     try {
-      await call(action === 'register' ? 'identity:register' : 'wallet:provision', agent);
+      await call(action === 'register' ? 'identity:register' : 'wallet:provision', agent, team);
       store.refresh();
       await reload();
     } catch (err) {
@@ -231,7 +270,7 @@ export function Identity({ store }: { store: FleetStore }) {
     setError(null);
     setBusy(true);
     try {
-      const challenge = await call<ControllerProof>('identity:controllerChallenge', selected, wallet);
+      const challenge = await call<ControllerProof>('identity:controllerChallenge', selected, wallet, selectedTeam);
       setProofs((prev) => ({ ...prev, [selected]: challenge }));
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to start controller challenge');
@@ -257,7 +296,7 @@ export function Identity({ store }: { store: FleetStore }) {
     setError(null);
     setBusy(true);
     try {
-      const verified = await call<ControllerProof>('identity:controllerVerify', selected, wallet, proof.signature);
+      const verified = await call<ControllerProof>('identity:controllerVerify', selected, wallet, proof.signature, selectedTeam);
       setProofs((prev) => ({ ...prev, [selected]: verified }));
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to verify controller signature');
@@ -279,7 +318,7 @@ export function Identity({ store }: { store: FleetStore }) {
       setError(controllerVerified ? 'Choose a capped scope and finite TTL.' : 'Issue session key requires a signed controller-wallet challenge first.');
       return;
     }
-    void act('keys:issue', selected, scopeIdx, presets.ttls[ttlIdx].ms);
+    void act('keys:issue', selected, scopeIdx, presets.ttls[ttlIdx].ms, selectedTeam);
   }
 
   return (
@@ -295,15 +334,17 @@ export function Identity({ store }: { store: FleetStore }) {
       <div className="cols identity-shell">
         <section className="card identity-agents">
           <h3>Agents</h3>
-          {store.agents.map((a) => {
-            const agentWallet = identityValue(a, 'ows_wallet');
+          {identityAgents.map((a) => {
+            const agentWallet = controllerWallet(a);
             const agentProof = proofs[a.name];
             const verified = proofMatchesWallet(agentProof, agentWallet);
             return (
-              <button key={a.id} className={`target${a.name === selected ? ' active' : ''}`} onClick={() => setSel(a.name)}>
+              <button key={agentKey(a)} className={`target${a.name === selected ? ' active' : ''}`} onClick={() => setSel(a.name)}>
                 <span>{a.name}</span>
-                <span className="muted small">{identityValue(a, 'idchain_domain') || a.status || 'unbound'}</span>
-                <span className={verified ? 'ok-text small' : 'muted small'}>{verified ? 'controller verified' : 'proof required'}</span>
+                <span className="muted small">{identityValue(a, 'idchain_domain') || a.team || a.status || 'unbound'}</span>
+                <span className={verified ? 'ok-text small' : agentWallet ? 'warn-text small' : 'muted small'}>
+                  {verified ? 'controller verified' : agentWallet ? `wallet ${shortAddr(agentWallet)}` : 'no wallet'}
+                </span>
               </button>
             );
           })}
@@ -318,6 +359,7 @@ export function Identity({ store }: { store: FleetStore }) {
                   <h2>{selected}</h2>
                   <div className="identity-subtitle">
                     <span className={domain ? 'mono' : 'muted'}>{domain || 'no ENS / idchain name'}</span>
+                    {selectedTeam ? <span className="muted small">{selectedTeam}</span> : null}
                     <StatusPill state={controllerVerified ? 'verified' : wallet ? 'warn' : 'missing'} />
                   </div>
                 </div>
@@ -382,17 +424,17 @@ export function Identity({ store }: { store: FleetStore }) {
                   </div>
                   <div className="row-actions identity-actions">
                     {!wallet ? (
-                      <button className="btn" disabled={busy} onClick={() => void identityAction(selected!, 'provision')}>
+                      <button className="btn" disabled={busy} onClick={() => void identityAction(selected!, 'provision', selectedTeam)}>
                         Provision wallet
                       </button>
                     ) : null}
                     <button className="btn" disabled={busy} onClick={() => void act('keys:ensure', selected)}>
                       Create account
                     </button>
-                    <button className="btn" disabled={busy || !controllerVerified} onClick={() => requireControllerProof('Register identity', () => void identityAction(selected!, 'register'))}>
+                    <button className="btn" disabled={busy || !controllerVerified} onClick={() => requireControllerProof('Register identity', () => void identityAction(selected!, 'register', selectedTeam))}>
                       Register identity
                     </button>
-                    <button className="btn primary" disabled={busy || acct.deployed || !controllerVerified} onClick={() => requireControllerProof('Deploy account', () => void act('keys:deploy', selected))}>
+                    <button className="btn primary" disabled={busy || acct.deployed || !controllerVerified} onClick={() => requireControllerProof('Deploy account', () => void act('keys:deploy', selected, selectedTeam))}>
                       Deploy
                     </button>
                   </div>
@@ -437,7 +479,7 @@ export function Identity({ store }: { store: FleetStore }) {
                         </td>
                         <td className="row-actions">
                           {s.status === 'active' ? (
-                            <button className="btn" disabled={busy || !controllerVerified} onClick={() => requireControllerProof('Revoke session key', () => void act('keys:revoke', selected, s.id))}>
+                            <button className="btn" disabled={busy || !controllerVerified} onClick={() => requireControllerProof('Revoke session key', () => void act('keys:revoke', selected, s.id, selectedTeam))}>
                               Revoke
                             </button>
                           ) : null}
