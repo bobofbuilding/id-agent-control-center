@@ -233,6 +233,8 @@ button.chip.incompat:hover { border-color: var(--line); }
 .brain-dashboard-tabs { display: inline-flex; align-items: center; gap: 4px; flex-wrap: wrap; }
 .brain-dashboard-tabs.compact { flex: 1 1 220px; }
 .brain-dashboard-tabs .btn { padding: 3px 8px; }
+.brain-dashboard-tabs .btn.guarded { border-color: color-mix(in srgb, var(--warn) 55%, var(--line)); color: var(--warn); }
+.brain-dashboard-tabs .btn.guarded:hover:not(:disabled) { background: color-mix(in srgb, var(--warn) 10%, var(--bg-2)); }
 .skill-catalog { display: flex; flex-direction: column; gap: 8px; margin-top: 10px; }
 .skill-card { border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; background: var(--bg-2); }
 .skill-card-head { display: flex; align-items: center; gap: 8px; }

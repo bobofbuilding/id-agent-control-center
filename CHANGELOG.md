@@ -8,6 +8,9 @@ Every change pushed or merged to `main` carries its version number in the commit
 subject (`vX.Y.Z: …`), stamped automatically by the `commit-msg` hook — see
 [CONTRIBUTING.md](CONTRIBUTING.md).
 
+## [0.1.287] — 2026-06-29
+- Brain dashboard Health/Learning launch guard
+
 ## [0.1.286] — 2026-06-29
 - Settings local model driving path
 

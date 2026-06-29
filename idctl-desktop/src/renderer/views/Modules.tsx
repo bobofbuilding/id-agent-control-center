@@ -76,18 +76,48 @@ type BrainSkillSyncResult = {
 };
 type SkillBrainDrift = { kind: 'created' | 'deleted' | 'retagged'; skill: string; at: number };
 type BrainDashboardTab = 'fleet' | 'health' | 'skills' | 'learning' | 'agents' | 'graph';
+type BrainDashboardTabSpec = {
+  tab: BrainDashboardTab;
+  label: string;
+  path: string;
+  guard?: {
+    title: string;
+    confirm: string;
+  };
+};
 
-const BRAIN_DASHBOARD_TABS: { tab: BrainDashboardTab; label: string; path: string }[] = [
+const BRAIN_DASHBOARD_TABS: BrainDashboardTabSpec[] = [
   { tab: 'fleet', label: 'Fleet', path: '/dashboard' },
-  { tab: 'health', label: 'Health', path: '/dashboard/health' },
+  {
+    tab: 'health',
+    label: 'Health',
+    path: '/dashboard/health',
+    guard: {
+      title: 'Guarded: Brain Health loads report and triage routes before showing approval controls.',
+      confirm: 'Open Brain Health?\n\nThis Brain tab loads report and triage routes before showing approval controls. In the current Brain build, those read-looking reports may reconcile stale eval fixture state. Continue only if you are intentionally reviewing Brain Health.',
+    },
+  },
   { tab: 'skills', label: 'Skills', path: '/dashboard/skills' },
-  { tab: 'learning', label: 'Learning', path: '/dashboard/learning' },
+  {
+    tab: 'learning',
+    label: 'Learning',
+    path: '/dashboard/learning',
+    guard: {
+      title: 'Guarded: Brain Learning separates passive reports from manual eval replay/vector comparison.',
+      confirm: 'Open Brain Learning?\n\nThis Brain tab loads learning report routes and exposes manual eval replay/vector comparison. In the current Brain build, report refresh may reconcile stale eval fixture state. Continue only if you are intentionally reviewing Brain Learning.',
+    },
+  },
   { tab: 'agents', label: 'Agents', path: '/dashboard/agents' },
   { tab: 'graph', label: 'Graph', path: '/dashboard/graph' },
 ];
 
 function brainDashboardTabForPath(pathname: string): BrainDashboardTab | null {
   return BRAIN_DASHBOARD_TABS.find((x) => x.path === pathname)?.tab ?? null;
+}
+
+function openBrainDashboardTab(tab: BrainDashboardTabSpec) {
+  if (tab.guard && !window.confirm(tab.guard.confirm)) return;
+  void call('brain:openDashboard', tab.tab);
 }
 
 function brainFleetAuthority(report: BrainFleetReport): string {
@@ -229,7 +259,12 @@ function BrainDashboardLauncher({ compact = false }: { compact?: boolean }) {
     <span className={`brain-dashboard-tabs${compact ? ' compact' : ''}`} title="Open a whitelisted Brain dashboard tab">
       {!compact ? <span className="muted small">Brain</span> : null}
       {BRAIN_DASHBOARD_TABS.map((x) => (
-        <button key={x.tab} className="btn small" onClick={() => void call('brain:openDashboard', x.tab)}>
+        <button
+          key={x.tab}
+          className={`btn small${x.guard ? ' guarded' : ''}`}
+          title={x.guard?.title ?? `Open Brain ${x.label}`}
+          onClick={() => openBrainDashboardTab(x)}
+        >
           {x.label}
         </button>
       ))}
