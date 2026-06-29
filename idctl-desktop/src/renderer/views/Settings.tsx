@@ -81,10 +81,17 @@ export function Settings({ store }: { store: FleetStore }) {
   const [name, setName] = useState('groq');
   const [baseUrl, setBaseUrl] = useState('https://api.groq.com/openai/v1');
   const [apiKey, setApiKey] = useState('');
+  const [replaceProviderArmed, setReplaceProviderArmed] = useState(false);
+  const [providerMsg, setProviderMsg] = useState('');
   // local LLM discovery (scan localhost for running servers)
   const [discovering, setDiscovering] = useState(false);
   const [discovered, setDiscovered] = useState<Discovered[] | null>(null);
+  function resetProviderAddReview() {
+    setReplaceProviderArmed(false);
+    setProviderMsg('');
+  }
   function pickProvider(id: string) {
+    resetProviderAddReview();
     setCatalogId(id);
     if (id === 'custom') { setKind('openai-compatible'); setBaseUrl(defaultBaseUrl('openai-compatible')); return; }
     const e = findProvider(id);
@@ -224,6 +231,7 @@ export function Settings({ store }: { store: FleetStore }) {
         }
       }
       setProviders(await call<ProviderRow[]>('providers:add', p));
+      setProviderMsg(existing ? `replaced "${p.name}"` : `added "${p.name}"`);
       after?.();
     } finally {
       setBusy(false);
@@ -232,6 +240,11 @@ export function Settings({ store }: { store: FleetStore }) {
   async function addProvider() {
     const entry = findProvider(catalogId);
     const p: ProviderProfile = { name: name.trim() || kind, kind, baseUrl: baseUrl.trim() || defaultBaseUrl(kind), apiKey: apiKey.trim() || undefined, enabled: true };
+    const renderedExisting = findProviderRow(providers, p.name);
+    if (renderedExisting && !replaceProviderArmed) {
+      setProviderMsg(`Review replacement for "${p.name}" before adding.`);
+      return;
+    }
     // Providers with no GET /models endpoint (Perplexity) ship a preset list so
     // their models appear without a (failing) discovery probe.
     if (entry?.models?.length) {
@@ -240,6 +253,7 @@ export function Settings({ store }: { store: FleetStore }) {
     await addProviderProfile(p, () => {
       setName('');
       setApiKey('');
+      setReplaceProviderArmed(false);
     });
   }
   async function connect(n: string) {
@@ -673,6 +687,8 @@ export function Settings({ store }: { store: FleetStore }) {
   const stackTags = Array.from(new Set(TOP_LOCAL_STACKS.flatMap((s) => s.tags ?? []))).sort();
   const filteredStacks = stackTag === 'all' ? TOP_LOCAL_STACKS : TOP_LOCAL_STACKS.filter((s) => (s.tags ?? []).includes(stackTag));
   const runningPorts = new Set((discovered ?? []).map((d) => d.port));
+  const addProviderName = name.trim() || kind;
+  const replaceCandidate = findProviderRow(providers, addProviderName);
 
   function providerPort(p: ProviderRow): number | null {
     try { const x = new URL(p.baseUrl).port; return x ? Number(x) : null; } catch { return null; }
@@ -1275,22 +1291,33 @@ export function Settings({ store }: { store: FleetStore }) {
             <option value="custom">Custom…</option>
           </select>
           {catalogId === 'custom' ? (
-            <select value={kind} onChange={(e) => { const k = e.target.value as ProviderKind; setKind(k); setBaseUrl(defaultBaseUrl(k)); }}>
+            <select value={kind} onChange={(e) => { const k = e.target.value as ProviderKind; resetProviderAddReview(); setKind(k); setBaseUrl(defaultBaseUrl(k)); }}>
               {KINDS.map((k) => <option key={k} value={k}>{k}</option>)}
             </select>
           ) : null}
-          <input placeholder="name" value={name} onChange={(e) => setName(e.target.value)} />
-          <input placeholder="base URL" value={baseUrl} onChange={(e) => setBaseUrl(e.target.value)} />
+          <input placeholder="name" value={name} onChange={(e) => { resetProviderAddReview(); setName(e.target.value); }} />
+          <input placeholder="base URL" value={baseUrl} onChange={(e) => { resetProviderAddReview(); setBaseUrl(e.target.value); }} />
           <input
             placeholder={kindNeedsKey(kind) ? 'API key (or leave blank to use env)' : 'API key (not needed)'}
             value={apiKey}
-            onChange={(e) => setApiKey(e.target.value)}
+            onChange={(e) => { resetProviderAddReview(); setApiKey(e.target.value); }}
             type="password"
           />
-          <button className="btn primary" disabled={busy} onClick={() => void addProvider()}>
-            Add
+          <button className="btn primary" disabled={busy || (!!replaceCandidate && !replaceProviderArmed)} onClick={() => void addProvider()}>
+            {replaceCandidate ? 'Replace' : 'Add'}
           </button>
         </div>
+        {replaceCandidate ? (
+          <div className="provider-replace-review">
+            <label className="small" style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+              <input type="checkbox" checked={replaceProviderArmed} onChange={(e) => { setReplaceProviderArmed(e.target.checked); setProviderMsg(''); }} />
+              Replace existing backend
+            </label>
+            <span className="muted small">Before: {providerEndpoint(replaceCandidate)}</span>
+            <span className="muted small">After: {providerEndpoint({ name: addProviderName, kind, baseUrl: baseUrl.trim() || defaultBaseUrl(kind), enabled: true })}</span>
+          </div>
+        ) : null}
+        {providerMsg ? <div className={`small ${/added|replaced/.test(providerMsg) ? 'ok-text' : 'warn-text'}`} style={{ marginTop: 6 }}>{providerMsg}</div> : null}
         <p className="muted small" style={{ marginTop: 8 }}>
           Cloud backends (OpenAI, Anthropic) authenticate with an API key — paste it above or set <span className="mono">ANTHROPIC_API_KEY</span>/<span className="mono">OPENAI_API_KEY</span> and it's auto-detected. Connect &amp; sync validates it live and pulls the model list. (Neither offers OAuth for API access; the <span className="mono">claude-code-cli</span> runtime uses your logged-in Claude session instead.)
         </p>

@@ -527,6 +527,7 @@ textarea.composer-input { resize: none; line-height: 1.4; min-height: 38px; max-
 .grid td.row-actions { text-align: right; }
 .issue-row, .add-provider { display: flex; gap: 8px; margin-top: 12px; flex-wrap: wrap; align-items: center; }
 .add-provider input { flex: 1; min-width: 120px; }
+.provider-replace-review { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin-top: 8px; padding: 8px 10px; border: 1px solid var(--warn); border-radius: 6px; background: color-mix(in srgb, var(--warn) 8%, transparent); }
 
 /* Local LLM discovery (scan localhost for running servers). */
 .discover-local { border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; margin-bottom: 12px; background: var(--bg-2); }
