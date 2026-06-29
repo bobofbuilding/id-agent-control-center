@@ -49,7 +49,7 @@ interface BrokerState {
   lastAgent: string;          // most recent caller (for the pane label)
   actions: number;            // lifetime action count
   captureFailing: boolean;    // last pump capture returned null while armed (permission/relaunch hint)
-  blessed: Set<string>;       // agent names allowed to act this armed session (synced at arm)
+  blessed: Set<string>;       // scoped agent authorities allowed to act this armed session (synced at arm)
   team: string;               // most recent caller's team (for the audit→Chat mirror)
   lastShot: { w: number; h: number; bounds: { x: number; y: number; width: number; height: number } } | null; // for click coord mapping
   supervised: boolean;        // HOLD every input action for the user's approval (default on)
@@ -152,6 +152,14 @@ function mapPoint(x: number, y: number): { gx: number; gy: number; ok: boolean }
 }
 
 const TOKEN_RE = /^[0-9a-f]{48}$/; // randomBytes(24).toString('hex')
+const AUTHORITY_LIMIT = 160;
+function normalizeAuthority(agent: string): string {
+  return String(agent).slice(0, AUTHORITY_LIMIT);
+}
+function teamFromAuthority(agent: string): string {
+  const i = agent.indexOf(':');
+  return i > 0 ? agent.slice(0, i).slice(0, 64) : '';
+}
 function loadOrMakeToken(): { token: string } {
   try {
     const j = JSON.parse(readFileSync(sessionFile(), 'utf8'));
@@ -179,12 +187,17 @@ function writeSession(): void {
 // derives the caller's identity from the TOKEN (authoritative) rather than trusting
 // a self-reported name behind a shared secret. Persisted (0600) so the token baked
 // into an agent's .mcp.json env stays valid across app restarts.
-const agentTokens = new Map<string, string>(); // token → agent name
+const agentTokens = new Map<string, string>(); // token → scoped agent authority
 function agentTokensFile(): string { return join(cuDir(), 'agent-tokens.json'); }
 function loadAgentTokens(): void {
   try {
     const j = JSON.parse(readFileSync(agentTokensFile(), 'utf8'));
-    if (j && typeof j === 'object') for (const [tok, a] of Object.entries(j)) { if (TOKEN_RE.test(tok) && typeof a === 'string') agentTokens.set(tok, a); }
+    if (j && typeof j === 'object') for (const [tok, a] of Object.entries(j)) {
+      if (TOKEN_RE.test(tok) && typeof a === 'string') {
+        const authority = normalizeAuthority(a);
+        if (authority) agentTokens.set(tok, authority);
+      }
+    }
   } catch { /* none yet */ }
 }
 function saveAgentTokens(): void {
@@ -192,7 +205,7 @@ function saveAgentTokens(): void {
 }
 /** Mint (or reuse) a per-agent token — called at bless; injected into the agent's MCP env. */
 export function mintAgentToken(agent: string): string {
-  const name = String(agent).slice(0, 64);
+  const name = normalizeAuthority(agent);
   for (const [tok, a] of agentTokens) if (a === name) return tok; // reuse: the agent's .mcp.json already carries it
   const tok = randomBytes(24).toString('hex');
   agentTokens.set(tok, name);
@@ -201,7 +214,7 @@ export function mintAgentToken(agent: string): string {
 }
 /** Revoke an agent's token (called at unbless). */
 export function revokeAgentToken(agent: string): void {
-  const name = String(agent).slice(0, 64);
+  const name = normalizeAuthority(agent);
   let changed = false;
   for (const [tok, a] of [...agentTokens]) if (a === name) { agentTokens.delete(tok); changed = true; }
   if (changed) saveAgentTokens();
@@ -241,9 +254,9 @@ function rec(agent: string, action: string, detail: string, decision: 'executed'
 /** Phase 1 action handler: screenshot + gated mouse/keyboard input, all audited. */
 async function handleAction(body: Record<string, unknown>): Promise<{ status: number; json: Record<string, unknown> }> {
   const type = String(body?.type || '');
-  const agent = body?.agent ? String(body.agent).slice(0, 64) : '';
+  const agent = body?.agent ? normalizeAuthority(String(body.agent)) : '';
   if (agent) S.lastAgent = agent;
-  if (body?.team) S.team = String(body.team).slice(0, 64);
+  S.team = body?.team ? String(body.team).slice(0, 64) : teamFromAuthority(agent);
 
   if (type === 'status' || type === 'ping') {
     return { status: 200, json: { ok: true, armed: S.armed, phase: 1, capability: driver.driverCapability().ok } };
@@ -390,7 +403,7 @@ function reconcilePump(): void {
 export function armBroker(blessed?: string[]): { ok: boolean; port: number; blessed: string[] } {
   // The blessed set is captured AT ARM from the agents that currently have the
   // computer-use tool attached — so disarming + re-arming is the way to refresh it.
-  if (Array.isArray(blessed)) S.blessed = new Set(blessed.map((s) => String(s).slice(0, 64)).filter(Boolean)); // match handleAction's 64-char truncation of the caller id
+  if (Array.isArray(blessed)) S.blessed = new Set(blessed.map((s) => normalizeAuthority(String(s))).filter(Boolean)); // match handleAction's truncation of the caller id
   S.armed = true;
   reconcilePump();
   return { ok: true, port: S.port, blessed: [...S.blessed] };

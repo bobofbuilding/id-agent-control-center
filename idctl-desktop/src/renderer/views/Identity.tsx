@@ -175,11 +175,12 @@ export function Identity({ store }: { store: FleetStore }) {
     const sorted = uniqueAgents(all).sort((a, b) => Number(hasWallet(b)) - Number(hasWallet(a)) || (a.team ?? '').localeCompare(b.team ?? '') || a.name.localeCompare(b.name));
     return sorted;
   }, [store.allAgents, store.agents, store.team]);
+  const accountKeys = useMemo(() => identityAgents.map(agentKey), [identityAgents]);
   const names = useMemo(() => [...new Set(identityAgents.map((a) => a.name))], [identityAgents]);
   const selAgent = (sel ? identityAgents.find((a) => agentKey(a) === sel) : undefined) ?? identityAgents.find(hasWallet) ?? identityAgents[0];
   const selected = selAgent?.name;
   const selectedKey = selAgent ? agentKey(selAgent) : '';
-  const acct = selected ? accounts[selected] : undefined;
+  const acct = selectedKey ? accounts[selectedKey] : undefined;
   const selectedTeam = selAgent?.team;
   const domain = selAgent ? identityValue(selAgent, 'idchain_domain') : '';
   const wallet = controllerWallet(selAgent);
@@ -201,9 +202,9 @@ export function Identity({ store }: { store: FleetStore }) {
   const readyCount = review.filter((r) => r.state === 'verified').length;
 
   async function reload() {
-    if (names.length === 0) return;
+    if (accountKeys.length === 0) return;
     try {
-      const list = await call<AgentAccount[]>('keys:list', names);
+      const list = await call<AgentAccount[]>('keys:list', accountKeys);
       setAccounts(Object.fromEntries(list.map((a) => [a.agent, a])));
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to load key accounts');
@@ -217,7 +218,7 @@ export function Identity({ store }: { store: FleetStore }) {
 
   useEffect(() => {
     void reload();
-  }, [names.join('|')]);
+  }, [accountKeys.join('|')]);
 
   useEffect(() => {
     const nextScope = safeScopes[0]?.idx;
@@ -433,7 +434,7 @@ export function Identity({ store }: { store: FleetStore }) {
                     ) : null}
                     <button className="btn" disabled={busy} onClick={() => {
                       if (!window.confirm(`Create account for ${selectedTeam ?? 'default'}/${selected}?\n\nThis ensures a smart-account record for the selected agent.`)) return;
-                      void act('keys:ensure', selected);
+                      void act('keys:ensure', selected, selectedTeam);
                     }}>
                       Create account
                     </button>

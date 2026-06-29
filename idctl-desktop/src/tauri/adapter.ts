@@ -36,6 +36,10 @@ function makeClient(): ManagerClient {
   return new ManagerClient({ managerUrl, team, refreshMs: 3000, waitSeconds: 25, admin: true });
 }
 
+function scopedAgentKey(agent: string, selectedTeam?: string): string {
+  return selectedTeam ? `${selectedTeam}:${agent}` : agent;
+}
+
 // ---- localStorage helpers --------------------------------------------------
 function lsGet<T>(key: string, fallback: T): T {
   try {
@@ -137,9 +141,14 @@ const CONTROLLER_PROOF_TTL_MS = 10 * 60_000;
 const ETH_ADDRESS_RE = /^0x[0-9a-fA-F]{40}$/;
 const controllerProofs = new Map<string, ControllerProofRecord>();
 
-function challengeMessage(agent: string, wallet: string, nonce: string): string {
+function controllerProofKey(agent: string, selectedTeam?: string): string {
+  return scopedAgentKey(agent, selectedTeam);
+}
+
+function challengeMessage(agent: string, wallet: string, nonce: string, selectedTeam?: string): string {
   return [
     'ID Agents controller proof',
+    `Team: ${selectedTeam ?? 'default'}`,
     `Agent: ${agent}`,
     `Controller: ${wallet}`,
     `Nonce: ${nonce}`,
@@ -153,19 +162,19 @@ function randomHex(bytes: number): string {
   return Array.from(buf, (b) => b.toString(16).padStart(2, '0')).join('');
 }
 
-function newControllerChallenge(agent: string, wallet: string): ControllerProofRecord {
+function newControllerChallenge(agent: string, wallet: string, selectedTeam?: string): ControllerProofRecord {
   if (!ETH_ADDRESS_RE.test(wallet)) throw new Error('Controller wallet must be a valid 0x address.');
   const nonce = randomHex(16);
   const record: ControllerProofRecord = {
     agent,
     wallet: wallet.toLowerCase(),
     nonce,
-    message: challengeMessage(agent, wallet, nonce),
+    message: challengeMessage(agent, wallet, nonce, selectedTeam),
     signature: '',
     verifiedAt: 0,
     expiresAt: Date.now() + CONTROLLER_PROOF_TTL_MS,
   };
-  controllerProofs.set(agent, record);
+  controllerProofs.set(controllerProofKey(agent, selectedTeam), record);
   return record;
 }
 
@@ -203,11 +212,12 @@ function recoverPersonalSignAddress(message: string, signature: string): string 
   return `0x${bytesToHex(keccak_256(publicKey.slice(1)).slice(-20))}`;
 }
 
-async function verifyControllerChallenge(agent: string, wallet: string, signature: string): Promise<ControllerProofRecord> {
-  const record = controllerProofs.get(agent);
+async function verifyControllerChallenge(agent: string, wallet: string, signature: string, selectedTeam?: string): Promise<ControllerProofRecord> {
+  const key = controllerProofKey(agent, selectedTeam);
+  const record = controllerProofs.get(key);
   if (!record || record.wallet.toLowerCase() !== wallet.toLowerCase()) throw new Error('No active controller challenge for this agent and wallet.');
   if (record.expiresAt <= Date.now()) {
-    controllerProofs.delete(agent);
+    controllerProofs.delete(key);
     throw new Error('Controller challenge expired. Start a new challenge.');
   }
   if (!isSignatureLike(signature)) throw new Error('Controller signature must be a 0x-prefixed 65-byte wallet signature.');
@@ -215,15 +225,16 @@ async function verifyControllerChallenge(agent: string, wallet: string, signatur
   const recovered = recoverPersonalSignAddress(record.message, trimmed);
   if (recovered.toLowerCase() !== wallet.toLowerCase()) throw new Error('Controller signature does not match the challenge wallet.');
   const verified = { ...record, signature: trimmed, verifiedAt: Date.now() };
-  controllerProofs.set(agent, verified);
+  controllerProofs.set(key, verified);
   return verified;
 }
 
-function controllerProofStatus(agent: string, wallet: string): ControllerProofRecord | null {
-  const record = controllerProofs.get(agent);
+function controllerProofStatus(agent: string, wallet: string, selectedTeam?: string): ControllerProofRecord | null {
+  const key = controllerProofKey(agent, selectedTeam);
+  const record = controllerProofs.get(key);
   if (!record || record.wallet.toLowerCase() !== wallet.toLowerCase() || !record.verifiedAt) return null;
   if (record.expiresAt <= Date.now()) {
-    controllerProofs.delete(agent);
+    controllerProofs.delete(key);
     return null;
   }
   return record;
@@ -261,24 +272,24 @@ async function controllerWalletForAgent(agent: string, selectedTeam?: string): P
 async function startControllerChallenge(agent: string, wallet: string, selectedTeam?: string): Promise<ControllerProofRecord> {
   const expected = await controllerWalletForAgent(agent, selectedTeam);
   if (wallet.toLowerCase() !== expected) throw new Error('Controller challenge wallet does not match the agent controller wallet.');
-  return newControllerChallenge(agent, expected);
+  return newControllerChallenge(agent, expected, selectedTeam);
 }
 
 async function verifyControllerChallengeForAgent(agent: string, wallet: string, signature: string, selectedTeam?: string): Promise<ControllerProofRecord> {
   const expected = await controllerWalletForAgent(agent, selectedTeam);
   if (wallet.toLowerCase() !== expected) throw new Error('Controller signature wallet does not match the agent controller wallet.');
-  return verifyControllerChallenge(agent, expected, signature);
+  return verifyControllerChallenge(agent, expected, signature, selectedTeam);
 }
 
 async function controllerProofStatusForAgent(agent: string, wallet: string, selectedTeam?: string): Promise<ControllerProofRecord | null> {
   const expected = await controllerWalletForAgent(agent, selectedTeam);
   if (wallet.toLowerCase() !== expected) return null;
-  return controllerProofStatus(agent, expected);
+  return controllerProofStatus(agent, expected, selectedTeam);
 }
 
 async function requireControllerProof(agent: string, selectedTeam?: string): Promise<void> {
   const expected = await controllerWalletForAgent(agent, selectedTeam);
-  const record = controllerProofs.get(agent);
+  const record = controllerProofs.get(controllerProofKey(agent, selectedTeam));
   if (!record?.verifiedAt || record.expiresAt <= Date.now() || record.wallet.toLowerCase() !== expected) {
     throw new Error('Privileged identity and key actions require a fresh controller-wallet challenge.');
   }
@@ -423,37 +434,41 @@ const M: Record<string, (...a: any[]) => Promise<unknown>> = {
     const st = keysState();
     return (agents ?? []).map((a) => assembleAccount(a, st));
   },
-  'keys:ensure': async (agent: string) => {
+  'keys:ensure': async (agent: string, selectedTeam?: string) => {
+    const key = scopedAgentKey(String(agent), selectedTeam ? String(selectedTeam) : undefined);
     const st = keysState();
-    if (!st.accounts[agent]) {
-      st.accounts[agent] = { agent, smartAccount: mockAddr('safe:' + agent), owner: OWNER, deployed: false, chainId: CHAIN };
+    if (!st.accounts[key]) {
+      st.accounts[key] = { agent: key, smartAccount: mockAddr('safe:' + key), owner: OWNER, deployed: false, chainId: CHAIN };
       lsSet('idctl.keys', st);
     }
-    return assembleAccount(agent, st);
+    return assembleAccount(key, st);
   },
   'keys:deploy': async (agent: string, selectedTeam?: string) => {
     await requireControllerProof(String(agent), selectedTeam ? String(selectedTeam) : undefined);
+    const key = scopedAgentKey(String(agent), selectedTeam ? String(selectedTeam) : undefined);
     const st = keysState();
-    st.accounts[agent] = { ...(st.accounts[agent] ?? { agent, smartAccount: mockAddr('safe:' + agent), owner: OWNER, deployed: false, chainId: CHAIN }), deployed: true };
+    st.accounts[key] = { ...(st.accounts[key] ?? { agent: key, smartAccount: mockAddr('safe:' + key), owner: OWNER, deployed: false, chainId: CHAIN }), deployed: true };
     lsSet('idctl.keys', st);
-    return assembleAccount(agent, st);
+    return assembleAccount(key, st);
   },
   'keys:issue': async (agent: string, scopeIdx: number, ttlMs: number, selectedTeam?: string) => {
     await requireControllerProof(String(agent), selectedTeam ? String(selectedTeam) : undefined);
     if (unsafeSession(scopeIdx, ttlMs)) throw new Error('Refusing to issue uncapped, full, non-expiring, or invalid session keys from the Control Center.');
+    const key = scopedAgentKey(String(agent), selectedTeam ? String(selectedTeam) : undefined);
     const st = keysState();
     const now = Date.now();
     const id = 'sess_' + now.toString(36) + '_' + Math.floor(Math.random() * 1e6).toString(36);
     const ttl = Number(ttlMs);
-    const key: SessionKey = { id, agent, address: mockAddr('session:' + agent + id), scope: SCOPE_PRESETS[Number(scopeIdx) || 0], createdAt: now, validUntil: ttl > 0 ? now + ttl : 0, status: 'active' };
-    (st.sessions[agent] ??= []).push(key);
+    const session: SessionKey = { id, agent: key, address: mockAddr('session:' + key + id), scope: SCOPE_PRESETS[Number(scopeIdx) || 0], createdAt: now, validUntil: ttl > 0 ? now + ttl : 0, status: 'active' };
+    (st.sessions[key] ??= []).push(session);
     lsSet('idctl.keys', st);
-    return key;
+    return session;
   },
   'keys:revoke': async (agent: string, sessionId: string, selectedTeam?: string) => {
     await requireControllerProof(String(agent), selectedTeam ? String(selectedTeam) : undefined);
+    const key = scopedAgentKey(String(agent), selectedTeam ? String(selectedTeam) : undefined);
     const st = keysState();
-    const s = (st.sessions[agent] ?? []).find((x) => x.id === sessionId);
+    const s = (st.sessions[key] ?? []).find((x) => x.id === sessionId);
     if (s) {
       s.status = 'revoked';
       lsSet('idctl.keys', st);

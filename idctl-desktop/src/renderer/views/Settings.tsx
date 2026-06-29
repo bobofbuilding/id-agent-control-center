@@ -166,6 +166,14 @@ export function Settings({ store }: { store: FleetStore }) {
       setBusy(false);
     }
   }
+  function enabledProviderCount(except?: string): number {
+    return providers.filter((x) => x.enabled && x.name !== except).length;
+  }
+  async function chooseCoordinator(n: string) {
+    const label = n || '(auto: lead/first)';
+    if (!window.confirm(`Set ${store.team ?? 'default'} coordinator to ${label}?\n\nNew drafts, routing, and manager-assist actions will use this coordinator immediately.`)) return;
+    await store.setCoordinator(n);
+  }
   async function setDefault(n: string) {
     const p = providers.find((x) => x.name === n);
     if (p && !p.default && !window.confirm(`Set "${p.name}" as the default inference backend?\n\nAgents without an explicit backend can start using this provider on their next run or rebuild.`)) return;
@@ -173,11 +181,19 @@ export function Settings({ store }: { store: FleetStore }) {
   }
   async function toggle(n: string) {
     const p = providers.find((x) => x.name === n);
+    if (p?.enabled && enabledProviderCount(n) === 0) {
+      window.alert('Refusing to disable the last enabled inference backend. Enable another backend first.');
+      return;
+    }
     if (p?.enabled && !window.confirm(`Disable inference backend "${p.name}"?\n\nAgents that depend on this provider may lose model options until another backend is enabled or selected.`)) return;
     setProviders(await call<ProviderRow[]>('providers:toggle', n));
   }
   async function removeProviderProfile(n: string) {
     const p = providers.find((x) => x.name === n);
+    if (p?.enabled && enabledProviderCount(n) === 0) {
+      window.alert('Refusing to remove the last enabled inference backend. Enable another backend first.');
+      return;
+    }
     const defaultNote = p?.default ? '\n\nIt is currently the default backend.' : '';
     if (!window.confirm(`Remove inference backend "${n}"?${defaultNote}\n\nAgents that depend on this provider may lose model options until another backend is configured.`)) return;
     setProviders(await call<ProviderRow[]>('providers:remove', n));
@@ -553,7 +569,7 @@ export function Settings({ store }: { store: FleetStore }) {
           <b>
             <select
               value={store.coordinator ?? ''}
-              onChange={(e) => void store.setCoordinator(e.target.value)}
+              onChange={(e) => void chooseCoordinator(e.target.value)}
             >
               <option value="">(auto: lead/first)</option>
               {store.agents.map((a) => (

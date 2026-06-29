@@ -71,9 +71,14 @@ const CONTROLLER_PROOF_TTL_MS = 10 * 60_000;
 const controllerProofs = new Map<string, ControllerProofRecord>();
 const ETH_ADDRESS_RE = /^0x[0-9a-fA-F]{40}$/;
 
-function challengeMessage(agent: string, wallet: string, nonce: string): string {
+function controllerProofKey(agent: string, team?: string): string {
+  return team ? `${team}:${agent}` : agent;
+}
+
+function challengeMessage(agent: string, wallet: string, nonce: string, team?: string): string {
   return [
     'ID Agents controller proof',
+    `Team: ${team ?? 'default'}`,
     `Agent: ${agent}`,
     `Controller: ${wallet}`,
     `Nonce: ${nonce}`,
@@ -81,7 +86,7 @@ function challengeMessage(agent: string, wallet: string, nonce: string): string 
   ].join('\n');
 }
 
-function newControllerChallenge(agent: string, wallet: string): ControllerProofRecord {
+function newControllerChallenge(agent: string, wallet: string, team?: string): ControllerProofRecord {
   if (!ETH_ADDRESS_RE.test(wallet)) {
     throw new Error('Controller wallet must be a valid 0x address.');
   }
@@ -90,12 +95,12 @@ function newControllerChallenge(agent: string, wallet: string): ControllerProofR
     agent,
     wallet: wallet.toLowerCase(),
     nonce,
-    message: challengeMessage(agent, wallet, nonce),
+    message: challengeMessage(agent, wallet, nonce, team),
     signature: '',
     verifiedAt: 0,
     expiresAt: Date.now() + CONTROLLER_PROOF_TTL_MS,
   };
-  controllerProofs.set(agent, record);
+  controllerProofs.set(controllerProofKey(agent, team), record);
   return record;
 }
 
@@ -134,13 +139,14 @@ function recoverPersonalSignAddress(message: string, signature: string): string 
   return `0x${bytesToHex(keccak_256(publicKey.slice(1)).slice(-20))}`;
 }
 
-async function verifyControllerChallenge(agent: string, wallet: string, signature: string): Promise<ControllerProofRecord> {
-  const record = controllerProofs.get(agent);
+async function verifyControllerChallenge(agent: string, wallet: string, signature: string, team?: string): Promise<ControllerProofRecord> {
+  const key = controllerProofKey(agent, team);
+  const record = controllerProofs.get(key);
   if (!record || record.wallet.toLowerCase() !== wallet.toLowerCase()) {
     throw new Error('No active controller challenge for this agent and wallet.');
   }
   if (record.expiresAt <= Date.now()) {
-    controllerProofs.delete(agent);
+    controllerProofs.delete(key);
     throw new Error('Controller challenge expired. Start a new challenge.');
   }
   if (!isSignatureLike(signature)) {
@@ -152,15 +158,16 @@ async function verifyControllerChallenge(agent: string, wallet: string, signatur
     throw new Error('Controller signature does not match the challenge wallet.');
   }
   const verified = { ...record, signature: trimmed, verifiedAt: Date.now() };
-  controllerProofs.set(agent, verified);
+  controllerProofs.set(key, verified);
   return verified;
 }
 
-function controllerProofStatus(agent: string, wallet: string): ControllerProofRecord | null {
-  const record = controllerProofs.get(agent);
+function controllerProofStatus(agent: string, wallet: string, team?: string): ControllerProofRecord | null {
+  const key = controllerProofKey(agent, team);
+  const record = controllerProofs.get(key);
   if (!record || record.wallet.toLowerCase() !== wallet.toLowerCase() || !record.verifiedAt) return null;
   if (record.expiresAt <= Date.now()) {
-    controllerProofs.delete(agent);
+    controllerProofs.delete(key);
     return null;
   }
   return record;
@@ -202,7 +209,7 @@ async function startControllerChallenge(agent: string, wallet: string, team?: st
   if (wallet.toLowerCase() !== expected) {
     throw new Error('Controller challenge wallet does not match the agent controller wallet.');
   }
-  return newControllerChallenge(agent, expected);
+  return newControllerChallenge(agent, expected, team);
 }
 
 async function verifyControllerChallengeForAgent(agent: string, wallet: string, signature: string, team?: string): Promise<ControllerProofRecord> {
@@ -210,18 +217,18 @@ async function verifyControllerChallengeForAgent(agent: string, wallet: string, 
   if (wallet.toLowerCase() !== expected) {
     throw new Error('Controller signature wallet does not match the agent controller wallet.');
   }
-  return verifyControllerChallenge(agent, expected, signature);
+  return verifyControllerChallenge(agent, expected, signature, team);
 }
 
 async function controllerProofStatusForAgent(agent: string, wallet: string, team?: string): Promise<ControllerProofRecord | null> {
   const expected = await controllerWalletForAgent(agent, team);
   if (wallet.toLowerCase() !== expected) return null;
-  return controllerProofStatus(agent, expected);
+  return controllerProofStatus(agent, expected, team);
 }
 
 async function requireControllerProof(agent: string, team?: string): Promise<void> {
   const expected = await controllerWalletForAgent(agent, team);
-  const record = controllerProofs.get(agent);
+  const record = controllerProofs.get(controllerProofKey(agent, team));
   if (!record?.verifiedAt || record.expiresAt <= Date.now() || record.wallet.toLowerCase() !== expected) {
     throw new Error('Privileged identity and key actions require a fresh controller-wallet challenge.');
   }
@@ -368,6 +375,10 @@ import { brokerServerPath, mintAgentToken, revokeAgentToken, brokerUrl } from '.
 // includes the old broken name so existing attachments can be detected + cleaned up.
 const CU_MCP_NAME = 'mac-control';
 const CU_MCP_ALIASES = ['mac-control', 'computer-use'];
+function scopedAgentKey(agent: string, team?: string): string {
+  const name = String(agent);
+  return team ? `${String(team)}:${name}` : name;
+}
 
 // idctl-desktop is the operator's local control center talking to 127.0.0.1,
 // so it is a legitimate admin client (admin-gated routes: skill install, MCP attach).
@@ -743,38 +754,46 @@ const METHODS: Record<string, (...a: any[]) => Promise<unknown>> = {
   // Computer Use: attach/detach the bundled computer-use MCP server to an agent
   // (a "bless" — lets that agent drive the Mac through the broker). Merges with
   // the agent's existing MCP servers (never clobbers them) and dedupes by name.
-  'cu:attach': async (agentId: string, agentName: string) => {
+  'cu:attach': async (agentId: string, agentName: string, team?: string) => {
+    const teamName = team ? String(team) : undefined;
+    const scopedClient = teamName ? client.withTeam(teamName) : client;
     // NEVER swallow the fetch into [] — a transient failure would make `cur` empty
     // and the wholesale-replace POST would WIPE the agent's other MCP servers. Let
     // it throw, and fail closed if the agent isn't found, so we only ever merge
     // onto a known-good current list.
-    const agents = await client.agents();
+    const agents = await scopedClient.agents();
     const a = agents.find((x) => x.id === agentId || x.name === agentId || x.name === agentName);
     if (!a) throw new Error(`agent not found: ${agentName || agentId}`);
     const cur = (((a.metadata as any)?.mcpServers) ?? []) as McpServerSpec[];
+    const authorityTeam = teamName ?? client.team ?? 'default';
+    const authority = scopedAgentKey(a.name, authorityTeam);
     // Per-agent token + broker URL injected here, so the agent authenticates AS itself
     // (the broker derives identity from the token, not a self-reported name). The
     // server name MUST NOT be "computer-use" — Claude Code reserves that and rejects
     // the WHOLE MCP config, breaking every dispatch to the agent.
-    const spec: McpServerSpec = { name: CU_MCP_NAME, command: 'node', args: [brokerServerPath()], env: { ID_CU_AGENT: String(a.name), ID_CU_TOKEN: mintAgentToken(a.name), ID_CU_URL: brokerUrl() } };
+    const spec: McpServerSpec = { name: CU_MCP_NAME, command: 'node', args: [brokerServerPath()], env: { ID_CU_AGENT: authority, ID_CU_AGENT_NAME: String(a.name), ID_CU_TEAM: authorityTeam, ID_CU_TOKEN: mintAgentToken(authority), ID_CU_URL: brokerUrl() } };
     const next = [...cur.filter((s) => !CU_MCP_ALIASES.includes(s.name)), spec]; // also strips the old broken name
-    return client.setAgentMcp(a.id, next);
+    return scopedClient.setAgentMcp(a.id, next);
   },
-  'cu:detach': async (agentId: string, agentName?: string) => {
-    const agents = await client.agents();
+  'cu:detach': async (agentId: string, agentName?: string, team?: string) => {
+    const teamName = team ? String(team) : undefined;
+    const scopedClient = teamName ? client.withTeam(teamName) : client;
+    const agents = await scopedClient.agents();
     const a = agents.find((x) => x.id === agentId || x.name === agentId || x.name === agentName);
     if (!a) throw new Error(`agent not found: ${agentName || agentId}`);
-    revokeAgentToken(a.name);
+    revokeAgentToken(scopedAgentKey(a.name, teamName ?? client.team ?? 'default'));
     const cur = (((a.metadata as any)?.mcpServers) ?? []) as McpServerSpec[];
-    return client.setAgentMcp(a.id, cur.filter((s) => !CU_MCP_ALIASES.includes(s.name)));
+    return scopedClient.setAgentMcp(a.id, cur.filter((s) => !CU_MCP_ALIASES.includes(s.name)));
   },
   // Agents that have computer-use attached (for the view's "blessed" list) — detects
   // the old reserved name too, so a previously-broken agent shows up to be removed/re-blessed.
-  'cu:attached': async () => {
-    const agents = await client.agents().catch(() => [] as Awaited<ReturnType<typeof client.agents>>);
+  'cu:attached': async (team?: string) => {
+    const teamName = team ? String(team) : undefined;
+    const scopedClient = teamName ? client.withTeam(teamName) : client;
+    const agents = await scopedClient.agents().catch(() => [] as Awaited<ReturnType<typeof client.agents>>);
     return agents
       .filter((a) => (((a.metadata as any)?.mcpServers ?? []) as { name: string }[]).some((s) => CU_MCP_ALIASES.includes(s.name)))
-      .map((a) => ({ id: a.id, name: a.name }));
+      .map((a) => ({ id: a.id, name: a.name, team: teamName ?? client.team ?? 'default', authority: scopedAgentKey(a.name, teamName ?? client.team ?? 'default') }));
   },
 
   // MCP server registry (local settings catalog)
@@ -864,26 +883,29 @@ const METHODS: Record<string, (...a: any[]) => Promise<unknown>> = {
   // identity & keys (Safe + ERC-4337 session keys; mock today)
   'keys:caps': async () => keys.capabilities(),
   'keys:list': (agents: string[]) => keys.listAccounts(agents ?? []),
-  'keys:ensure': (agent: string) => keys.ensureAccount(String(agent)),
+  'keys:ensure': (agent: string, team?: string) => keys.ensureAccount(scopedAgentKey(String(agent), team ? String(team) : undefined)),
   'keys:deploy': async (agent: string, team?: string) => {
     const name = String(agent);
-    await requireControllerProof(name, team ? String(team) : undefined);
-    return keys.deployAccount(name);
+    const teamName = team ? String(team) : undefined;
+    await requireControllerProof(name, teamName);
+    return keys.deployAccount(scopedAgentKey(name, teamName));
   },
   'keys:issue': async (agent: string, scopeIdx: number, ttlMs: number, team?: string) => {
     const name = String(agent);
+    const teamName = team ? String(team) : undefined;
     const scope = SCOPE_PRESETS[Number(scopeIdx) || 0] ?? SCOPE_PRESETS[0];
     const ttl = Number(ttlMs);
-    await requireControllerProof(name, team ? String(team) : undefined);
+    await requireControllerProof(name, teamName);
     if (!Number.isFinite(ttl) || ttl <= 0 || scope.label.toLowerCase().includes('full') || scope.spendLimitWei === '0') {
       throw new Error('Refusing to issue uncapped, full, non-expiring, or invalid session keys from the Control Center.');
     }
-    return keys.issueSession(name, scope, ttl);
+    return keys.issueSession(scopedAgentKey(name, teamName), scope, ttl);
   },
   'keys:revoke': async (agent: string, sessionId: string, team?: string) => {
     const name = String(agent);
-    await requireControllerProof(name, team ? String(team) : undefined);
-    return keys.revokeSession(name, String(sessionId));
+    const teamName = team ? String(team) : undefined;
+    await requireControllerProof(name, teamName);
+    return keys.revokeSession(scopedAgentKey(name, teamName), String(sessionId));
   },
   'keys:presets': async () => ({ scopes: SCOPE_PRESETS, ttls: TTL_PRESETS }),
 

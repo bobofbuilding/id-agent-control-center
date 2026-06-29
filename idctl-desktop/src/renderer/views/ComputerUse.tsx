@@ -22,6 +22,7 @@ interface PendingAction { id: string; agent: string; action: string; preview: st
 interface Status { armed: boolean; watching: boolean; port: number; url: string; lastAgent: string; actions: number; serverStaged: boolean; captureFailing: boolean; blessed: string[]; driverOk: boolean; accessibility: boolean; supervised: boolean; paused: boolean; pending: PendingAction[]; panicHotkey: boolean }
 interface FrameMsg { jpegBase64: string; width: number; height: number; ts: number; display?: { bounds: { width: number; height: number } } }
 interface AuditEntry { ts: number; agent: string; action: string; detail: string; decision: 'executed' | 'blocked'; reason?: string }
+type AttachedAgent = { id: string; name: string; team?: string; authority?: string };
 
 const ACT_ICON: Record<string, string> = { screenshot: '📷', mouse_move: '➜', left_click: '🖱', right_click: '🖱', middle_click: '🖱', double_click: '🖱', left_click_drag: '✣', type: '⌨', key: '⌨', scroll: '↕' };
 
@@ -81,7 +82,7 @@ function PermissionRow({
 export function ComputerUse({ store }: { store: FleetStore }) {
   const [perms, setPerms] = useState<Perms | null>(null);
   const [status, setStatus] = useState<Status | null>(null);
-  const [attached, setAttached] = useState<{ id: string; name: string }[]>([]);
+  const [attached, setAttached] = useState<AttachedAgent[]>([]);
   const [frame, setFrame] = useState<string>('');
   const [frameMeta, setFrameMeta] = useState<FrameMsg | null>(null);
   const [pick, setPick] = useState('');
@@ -103,6 +104,8 @@ export function ComputerUse({ store }: { store: FleetStore }) {
   }
 
   const eligible = store.agents.filter((a) => mcpCapable(agentRuntime(a)));
+  const activeTeam = store.team ?? 'default';
+  const authorityOf = (a: { name: string; team?: string; authority?: string }) => a.authority ?? `${a.team ?? activeTeam}:${a.name}`;
   const armed = !!status?.armed;
   const srGranted = perms?.screenRecording === 'granted';
   const axGranted = perms?.accessibility === true;
@@ -116,7 +119,7 @@ export function ComputerUse({ store }: { store: FleetStore }) {
     const [p, s, at, au] = await Promise.all([
       call<Perms>('cu:permissions').catch(() => null),
       call<Status>('cu:status').catch(() => null),
-      call<{ id: string; name: string }[]>('cu:attached').catch(() => []),
+      call<AttachedAgent[]>('cu:attached', activeTeam).catch(() => []),
       call<AuditEntry[]>('cu:audit', 40).catch(() => []),
     ]);
     if (p) setPerms(p);
@@ -151,7 +154,7 @@ export function ComputerUse({ store }: { store: FleetStore }) {
     const offPanic = window.idagents.onComputerPanic(() => { setPanicFlash(true); setTimeout(() => setPanicFlash(false), 2500); void refresh(); });
     return () => { clearInterval(t); off(); offPending(); offPanic(); void call('cu:watch', false); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [activeTeam]);
   // Also pause the pump when the OS window is hidden/minimized.
   useEffect(() => {
     const onVis = () => { void call('cu:watch', document.visibilityState === 'visible'); };
@@ -164,40 +167,43 @@ export function ComputerUse({ store }: { store: FleetStore }) {
     try {
       // Bless = the agents that currently have the computer-use tool attached,
       // captured at arm. Re-arm to refresh after blessing/removing an agent.
-      const at = await call<{ id: string; name: string }[]>('cu:attached').catch(() => []);
-      await call('cu:arm', (at ?? []).map((a) => a.name));
+      const at = await call<AttachedAgent[]>('cu:attached', activeTeam).catch(() => []);
+      await call('cu:arm', (at ?? []).map(authorityOf));
       await refresh();
     } finally { setBusy(false); }
   }
   async function disarm() { setBusy(true); try { await call('cu:disarm'); setFrame(''); setFrameMeta(null); await refresh(); } finally { setBusy(false); } }
 
-  async function bless(a: { id: string; name: string }) {
+  async function bless(a: { id: string; name: string; team?: string }) {
     setBusy(true); setMsg('');
+    const team = a.team ?? activeTeam;
+    const authority = authorityOf({ ...a, team });
     try {
-      await call('cu:attach', a.id, a.name);            // throws on failure → caught below (never silently "succeeds")
-      setMsg(`Attaching computer-use to ${a.name} — rebuilding so it picks up the tool…`);
+      await call('cu:attach', a.id, a.name, team);      // throws on failure → caught below (never silently "succeeds")
+      setMsg(`Attaching computer-use to ${team}/${a.name} — rebuilding so it picks up the tool…`);
       try {
-        await call('rebuildAgent', a.name);             // the rebuild is what actually wires the tool
-        if (status?.armed) await call('cu:arm', [...(status.blessed ?? []), a.name]); // re-sync the live bless-list so it works without a manual re-arm
+        await call('rebuildAgent', a.name, team);       // the rebuild is what actually wires the tool
+        if (status?.armed) await call('cu:arm', [...(status.blessed ?? []), authority]); // re-sync the live bless-list so it works without a manual re-arm
         await refresh();
-        setMsg(`✅ ${a.name} can now see + control your Mac (when armed). Ask it to take a screenshot.`);
+        setMsg(`✅ ${team}/${a.name} can now see + control your Mac (when armed). Ask it to take a screenshot.`);
       } catch (e) {
         await refresh();
-        setMsg(`⚠ Attached, but the rebuild failed (${e instanceof Error ? e.message : e}). Rebuild ${a.name} from Dashboard, then it can see the screen.`);
+        setMsg(`⚠ Attached, but the rebuild failed (${e instanceof Error ? e.message : e}). Rebuild ${team}/${a.name} from Health, then it can see the screen.`);
       }
     } catch (e) {
-      setMsg(`✗ Couldn't bless ${a.name}: ${e instanceof Error ? e.message : e}`);
+      setMsg(`✗ Couldn't bless ${team}/${a.name}: ${e instanceof Error ? e.message : e}`);
     } finally { setBusy(false); }
   }
-  async function unbless(a: { id: string; name: string }) {
+  async function unbless(a: AttachedAgent) {
     setBusy(true); setMsg('');
+    const team = a.team ?? activeTeam;
     try {
-      await call('cu:detach', a.id, a.name);
-      await call('rebuildAgent', a.name).catch(() => {});
+      await call('cu:detach', a.id, a.name, team);
+      await call('rebuildAgent', a.name, team).catch(() => {});
       await refresh();
-      setMsg(`Removed computer-use from ${a.name}.`);
+      setMsg(`Removed computer-use from ${team}/${a.name}.`);
     } catch (e) {
-      setMsg(`✗ Couldn't remove from ${a.name}: ${e instanceof Error ? e.message : e}`);
+      setMsg(`✗ Couldn't remove from ${team}/${a.name}: ${e instanceof Error ? e.message : e}`);
     } finally { setBusy(false); }
   }
 
@@ -326,7 +332,7 @@ export function ComputerUse({ store }: { store: FleetStore }) {
 
           <section className="card">
             <h3>Who can drive</h3>
-            <div className="muted small">Bless a Claude/codex agent to let it see + control your Mac. It rebuilds to pick up the tools. Bless changes apply on the next <b>Arm</b>.</div>
+            <div className="muted small">Bless a Claude/codex agent to let it see + control your Mac. It rebuilds to pick up the tools and is scoped to the active team.</div>
             <div className="cu-bless-add">
               <select className="cell-select" value={pick} disabled={busy} onChange={(e) => setPick(e.target.value)}>
                 <option value="">choose an agent…</option>
@@ -334,13 +340,13 @@ export function ComputerUse({ store }: { store: FleetStore }) {
                   <option key={a.id} value={a.id}>{a.name} · {agentRuntime(a)}</option>
                 ))}
               </select>
-              <button className="btn primary" disabled={busy || !pick} onClick={() => { const a = eligible.find((x) => x.id === pick); if (a) void bless({ id: a.id, name: a.name }); }}>Bless</button>
+              <button className="btn primary" disabled={busy || !pick} onClick={() => { const a = eligible.find((x) => x.id === pick); if (a) void bless({ id: a.id, name: a.name, team: activeTeam }); }}>Bless</button>
             </div>
             {attached.length ? (
               <div className="cu-blessed">
                 {attached.map((a) => (
                   <div key={a.id} className="cu-blessed-row">
-                    <span>🖥️ {a.name}</span>
+                    <span>🖥️ {a.team ?? activeTeam}/{a.name}</span>
                     <button className="btn icon-danger" disabled={busy} onClick={() => void unbless(a)}>Remove</button>
                   </div>
                 ))}
