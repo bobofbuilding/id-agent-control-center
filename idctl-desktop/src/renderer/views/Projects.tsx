@@ -33,6 +33,7 @@ type TaskLite = { shortId?: string; uuid?: string; title: string; status: string
 /** GitHub repo metadata (from the main process via the GitHub API). */
 type GithubMeta = { ok: boolean; name?: string; description?: string; topics?: string[]; language?: string; isPrivate?: boolean; error?: string };
 type CloneResult = { ok: boolean; path?: string; name?: string; error?: string };
+type ProjectDiff = { ok: boolean; stat: string; diff: string; untracked: string[]; error?: string };
 
 function newId(): string {
   return `p_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 7)}`;
@@ -62,6 +63,40 @@ function GitStatus({ g }: { g?: GitInfo }) {
       {g.dirty ? <span className="warn-text small" title="uncommitted local changes">● uncommitted</span> : null}
     </span>
   );
+}
+
+function gitSummary(g: GitInfo | null | undefined): string[] {
+  if (!g) return ['Git: not checked yet'];
+  if (!g.isRepo) return [`Git: not a repository${g.error ? ` (${g.error})` : ''}`];
+  const sync = g.ahead == null || g.behind == null
+    ? 'fetch needed to compare'
+    : g.ahead && g.behind
+      ? `${g.ahead} ahead, ${g.behind} behind`
+      : g.ahead
+        ? `${g.ahead} ahead`
+        : g.behind
+          ? `${g.behind} behind`
+          : 'up to date';
+  return [
+    `Branch: ${g.branch || '(unknown)'}`,
+    `Remote: ${g.remoteUrl || '(none)'}`,
+    `Compare: ${g.compareRef || '(unknown)'} - ${sync}`,
+    `Working tree: ${g.dirty ? 'uncommitted changes' : 'clean'}`,
+    ...(g.upstreamGone ? ['Warning: tracking branch is gone; pull may switch back to the default branch if this branch was already merged.'] : []),
+  ];
+}
+
+function diffSummary(d: ProjectDiff | null | undefined): string[] {
+  if (!d) return ['Diff: unavailable'];
+  if (!d.ok) return [`Diff: unavailable${d.error ? ` (${d.error})` : ''}`];
+  const lines = ['Files changed:', d.stat.trim() || '(none tracked)'];
+  if (d.untracked.length) {
+    const shown = d.untracked.slice(0, 12);
+    lines.push(`Untracked: ${shown.join(', ')}${d.untracked.length > shown.length ? `, ...and ${d.untracked.length - shown.length} more` : ''}`);
+  } else {
+    lines.push('Untracked: none');
+  }
+  return lines;
 }
 
 export function Projects({ store }: { store: FleetStore }) {
@@ -343,7 +378,30 @@ export function Projects({ store }: { store: FleetStore }) {
     if (!desc.trim()) { setNote('describe the change (or use ✨ Draft with AI)'); return; }
     if (!p.path) { setNote('this project has no local folder to commit'); return; }
     const shouldConfirm = opts.confirm ?? true;
-    if (shouldConfirm && !window.confirm(`Commit and push changes for "${p.name}"?\n\nFolder: ${p.path}\n\nThis stages all non-ignored changes, creates a commit with the reviewed message, and pushes the current branch when possible.`)) return;
+    if (shouldConfirm) {
+      const [g, d] = await Promise.all([
+        call<GitInfo>('project:git', p.path).catch(() => null),
+        call<ProjectDiff>('project:diff', p.path).catch(() => null),
+      ]);
+      if (d?.ok && !d.stat && !d.diff && !d.untracked.length) {
+        setNote(`nothing to commit for ${p.name}`);
+        return;
+      }
+      const subject = desc.trim().split('\n').find(Boolean) ?? '(empty message)';
+      const preview = [
+        `Commit and push changes for "${p.name}"?`,
+        '',
+        `Folder: ${p.path}`,
+        ...gitSummary(g),
+        '',
+        ...diffSummary(d),
+        '',
+        `Commit message: ${subject}`,
+        '',
+        'This stages all non-ignored changes, creates a commit with the reviewed message, and pushes the current branch when possible.',
+      ].join('\n');
+      if (!window.confirm(preview)) return;
+    }
     // Commit & push DIRECTLY from the app (reliable) instead of delegating to an agent that may
     // mark the task "done" without the commit ever landing. .gitignore keeps secrets out; the
     // backend self-heals the branch + pulls before committing.
@@ -494,7 +552,23 @@ export function Projects({ store }: { store: FleetStore }) {
 
   async function runGit(p: ProjectEntry, action: string) {
     if (!p.path) return;
-    if (action === 'pull' && !window.confirm(`Pull latest changes for "${p.name}"?\n\nThis can change files in ${p.path}. It never force-pushes or discards work.`)) return;
+    if (action === 'pull') {
+      const [g, d] = await Promise.all([
+        call<GitInfo>('project:git', p.path).catch(() => null),
+        call<ProjectDiff>('project:diff', p.path).catch(() => null),
+      ]);
+      const preview = [
+        `Pull latest changes for "${p.name}"?`,
+        '',
+        `Folder: ${p.path}`,
+        ...gitSummary(g),
+        '',
+        ...diffSummary(d),
+        '',
+        'This fetches and fast-forwards when safe. It never force-pushes or discards work, but it can change files in the folder.',
+      ].join('\n');
+      if (!window.confirm(preview)) return;
+    }
     setGitBusy(`${p.id}:${action}`);
     setGitOut((o) => ({ ...o, [p.id]: { action, output: `$ git ${action}…` } }));
     try {
