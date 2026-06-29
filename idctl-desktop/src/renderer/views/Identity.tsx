@@ -264,6 +264,16 @@ function sessionStamp(s: SessionKey): string {
     spendLimitWei: s.scope.spendLimitWei,
   });
 }
+function accountStamp(a: AgentAccount | null | undefined): string {
+  return JSON.stringify(a ? {
+    agent: a.agent,
+    smartAccount: a.smartAccount,
+    owner: a.owner,
+    deployed: a.deployed,
+    chainId: a.chainId,
+    sessions: a.sessions.map(sessionStamp).sort(),
+  } : null);
+}
 
 export function Identity({ store }: { store: FleetStore }) {
   const [caps, setCaps] = useState<KeyCapabilities | null>(null);
@@ -337,6 +347,9 @@ export function Identity({ store }: { store: FleetStore }) {
       ...(brainControllers.warnings ?? []),
     ].filter(Boolean).join('\n')
     : 'Brain /controllers unavailable; Brain Agents controller fallback should not be trusted.';
+  function controllerProofValidFor(agent: IdentityAgent): boolean {
+    return proofMatchesWallet(proofs[agentKey(agent)], controllerWallet(agent));
+  }
 
   async function freshIdentityAgents(): Promise<IdentityAgent[] | null> {
     const groups = await call<{ team: string; agents: Agent[] }[]>('agents:allTeams').catch(() => null);
@@ -472,10 +485,16 @@ export function Identity({ store }: { store: FleetStore }) {
     if (!fresh) return;
     const team = fresh.team ?? 'default';
     if (!window.confirm(`${action === 'register' ? 'Register identity' : 'Provision wallet'} for ${team}/${fresh.name}?\n\n${action === 'register' ? 'This writes the public identity binding for the selected controller wallet.' : 'This creates or binds a controller wallet for the agent.'}`)) return;
+    const afterConfirm = await ensureSelectedFresh(action === 'register' ? 'registering identity after review' : 'provisioning wallet after review');
+    if (!afterConfirm) return;
+    if (action === 'register' && !controllerProofValidFor(afterConfirm)) {
+      setError('Controller proof expired or changed after confirmation. Sign a fresh challenge before registering identity.');
+      return;
+    }
     setError(null);
     setBusy(true);
     try {
-      await call(action === 'register' ? 'identity:register' : 'wallet:provision', fresh.name, team);
+      await call(action === 'register' ? 'identity:register' : 'wallet:provision', afterConfirm.name, afterConfirm.team ?? 'default');
       store.refresh();
       await reload();
     } catch (err) {
@@ -537,9 +556,18 @@ export function Identity({ store }: { store: FleetStore }) {
   async function createAccount() {
     const fresh = await ensureSelectedFresh('creating account');
     if (!fresh) return;
+    const key = agentKey(fresh);
+    const reviewedAccount = await latestAccountFor(key);
     const team = fresh.team ?? 'default';
     if (!window.confirm(`Create account for ${team}/${fresh.name}?\n\nThis ensures a smart-account record for the selected agent.`)) return;
-    await act('keys:ensure', fresh.name, team);
+    const afterConfirm = await ensureSelectedFresh('creating account after review');
+    if (!afterConfirm) return;
+    const latestAccount = await latestAccountFor(agentKey(afterConfirm));
+    if (accountStamp(latestAccount) !== accountStamp(reviewedAccount)) {
+      setError('Account state changed after confirmation. Identity has refreshed the latest account state; review and retry.');
+      return;
+    }
+    await act('keys:ensure', afterConfirm.name, afterConfirm.team ?? 'default');
   }
 
   async function deployAccount() {
@@ -553,7 +581,18 @@ export function Identity({ store }: { store: FleetStore }) {
     }
     const team = fresh.team ?? 'default';
     if (!window.confirm(`Deploy account for ${team}/${fresh.name}?\n\nThis deploys the selected smart account using the verified controller authority.`)) return;
-    await act('keys:deploy', fresh.name, team);
+    const afterConfirm = await ensureSelectedFresh('deploying account after review');
+    if (!afterConfirm) return;
+    if (!controllerProofValidFor(afterConfirm)) {
+      setError('Controller proof expired or changed after confirmation. Sign a fresh challenge before deploying.');
+      return;
+    }
+    const latestAfterConfirm = await latestAccountFor(agentKey(afterConfirm));
+    if (!latestAfterConfirm || accountStamp(latestAfterConfirm) !== accountStamp(latest) || latestAfterConfirm.deployed) {
+      setError('Account state changed after confirmation. Identity has refreshed the latest account state; review and retry.');
+      return;
+    }
+    await act('keys:deploy', afterConfirm.name, afterConfirm.team ?? 'default');
   }
 
   async function issueSession() {
@@ -563,8 +602,20 @@ export function Identity({ store }: { store: FleetStore }) {
       return;
     }
     const team = fresh.team ?? 'default';
+    const reviewedAccount = await latestAccountFor(agentKey(fresh));
     if (!window.confirm(`Issue session key for ${team}/${fresh.name}?\n\nScope: ${issueScope?.label ?? 'unknown'}\nTTL: ${issueTtl?.label ?? 'unknown'}\n\nThis creates a live spend-capped delegated key until it expires or is revoked.`)) return;
-    await act('keys:issue', fresh.name, scopeIdx, presets.ttls[ttlIdx].ms, team);
+    const afterConfirm = await ensureSelectedFresh('issuing session key after review');
+    if (!afterConfirm) return;
+    if (!controllerProofValidFor(afterConfirm)) {
+      setError('Controller proof expired or changed after confirmation. Sign a fresh challenge before issuing a key.');
+      return;
+    }
+    const latestAccount = await latestAccountFor(agentKey(afterConfirm));
+    if (accountStamp(latestAccount) !== accountStamp(reviewedAccount)) {
+      setError('Account or session state changed after confirmation. Identity has refreshed the latest account state; review and retry.');
+      return;
+    }
+    await act('keys:issue', afterConfirm.name, scopeIdx, presets.ttls[ttlIdx].ms, afterConfirm.team ?? 'default');
   }
 
   async function revokeSession(s: SessionKey) {
@@ -579,7 +630,19 @@ export function Identity({ store }: { store: FleetStore }) {
     }
     const team = fresh.team ?? 'default';
     if (!window.confirm(`Revoke session key ${shortAddr(current.address)}?\n\nThis disables the active delegated key for ${team}/${fresh.name}.`)) return;
-    await act('keys:revoke', fresh.name, current.id, team);
+    const afterConfirm = await ensureSelectedFresh('revoking session key after review');
+    if (!afterConfirm) return;
+    if (!controllerProofValidFor(afterConfirm)) {
+      setError('Controller proof expired or changed after confirmation. Sign a fresh challenge before revoking.');
+      return;
+    }
+    const latestAfterConfirm = await latestAccountFor(agentKey(afterConfirm));
+    const currentAfterConfirm = latestAfterConfirm?.sessions.find((row) => row.id === current.id);
+    if (!currentAfterConfirm || currentAfterConfirm.status !== 'active' || sessionStamp(currentAfterConfirm) !== sessionStamp(current)) {
+      setError('Session key changed after confirmation. Identity has refreshed the latest account state; review and retry.');
+      return;
+    }
+    await act('keys:revoke', afterConfirm.name, currentAfterConfirm.id, afterConfirm.team ?? 'default');
   }
 
   async function copyLegacyAuthority(authority: string) {
