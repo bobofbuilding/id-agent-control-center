@@ -34,10 +34,50 @@ import { syncDomainsForMethod, type StoreChangeEvent } from '../shared/syncDomai
 declare const __dirname: string;
 
 let win: BrowserWindow | null = null;
-let brainGraphWin: BrowserWindow | null = null;
+let brainDashboardWin: BrowserWindow | null = null;
 let stopGoalDriver: (() => void) | null = null;
 
 type EvmRpcRow = Omit<EvmRpcProfile, 'apiKey' | 'apiKeyEncrypted'> & { keySource: EvmRpcKeySource };
+type BrainDashboardTab = 'fleet' | 'health' | 'skills' | 'learning' | 'agents' | 'graph';
+
+const BRAIN_DASHBOARD_TABS: Record<BrainDashboardTab, { title: string; path: string }> = {
+  fleet: { title: 'Brain Fleet', path: '/dashboard' },
+  health: { title: 'Brain Health', path: '/dashboard/health' },
+  skills: { title: 'Brain Skills', path: '/dashboard/skills' },
+  learning: { title: 'Brain Learning', path: '/dashboard/learning' },
+  agents: { title: 'Brain Agents', path: '/dashboard/agents' },
+  graph: { title: 'Brain Graph', path: '/dashboard/graph' },
+};
+
+function normalizeBrainDashboardTab(value: unknown): BrainDashboardTab {
+  const tab = String(value || 'fleet').toLowerCase();
+  if (tab in BRAIN_DASHBOARD_TABS) return tab as BrainDashboardTab;
+  throw new Error(`Unsupported Brain dashboard tab "${tab}"`);
+}
+
+async function openBrainDashboard(value: unknown): Promise<{ ok: true; tab: BrainDashboardTab; url: string }> {
+  const tab = normalizeBrainDashboardTab(value);
+  const cfg = BRAIN_DASHBOARD_TABS[tab];
+  const url = `http://127.0.0.1:4200${cfg.path}`;
+  if (!brainDashboardWin || brainDashboardWin.isDestroyed()) {
+    brainDashboardWin = new BrowserWindow({
+      width: 1100,
+      height: 800,
+      title: cfg.title,
+      webPreferences: {
+        contextIsolation: true,
+      },
+    });
+    brainDashboardWin.on('closed', () => { brainDashboardWin = null; });
+  }
+  brainDashboardWin.setTitle(cfg.title);
+  brainDashboardWin.show();
+  brainDashboardWin.focus();
+  if (brainDashboardWin.webContents.getURL() !== url) {
+    await brainDashboardWin.loadURL(url);
+  }
+  return { ok: true, tab, url };
+}
 
 function publishStoreChange(method: string): void {
   const domains = syncDomainsForMethod(method);
@@ -438,23 +478,10 @@ async function appCall(method: string, args: unknown[]): Promise<unknown> {
       return ollamaRemove(args[0] as string);
     case 'app:hardware':
       return getHardware();
+    case 'brain:openDashboard':
+      return openBrainDashboard(args[0]);
     case 'brain:openGraph':
-      if (brainGraphWin && !brainGraphWin.isDestroyed()) {
-        brainGraphWin.show();
-        brainGraphWin.focus();
-      } else {
-        brainGraphWin = new BrowserWindow({
-          width: 1100,
-          height: 800,
-          title: 'Brain Graph',
-          webPreferences: {
-            contextIsolation: true,
-          },
-        });
-        brainGraphWin.on('closed', () => { brainGraphWin = null; });
-        await brainGraphWin.loadURL('http://127.0.0.1:4200/dashboard/graph');
-      }
-      return { ok: true };
+      return openBrainDashboard('graph');
     case 'project:pickFolder':
       return pickProjectFolder(args[0] as string | undefined);
     case 'project:openFolder':
