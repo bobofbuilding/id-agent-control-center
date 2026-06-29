@@ -8,6 +8,9 @@ Every change pushed or merged to `main` carries its version number in the commit
 subject (`vX.Y.Z: …`), stamped automatically by the `commit-msg` hook — see
 [CONTRIBUTING.md](CONTRIBUTING.md).
 
+## [0.1.244] — 2026-06-29
+- HR Manager: sync coordinator presets with validator return path
+
 ## [0.1.243] — 2026-06-29
 - HR Manager: lock fleet primary to default team
 

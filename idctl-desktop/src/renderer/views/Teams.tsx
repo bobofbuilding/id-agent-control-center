@@ -163,8 +163,13 @@ const COORDINATION_TAIL = `PARALLELISM — fire INDEPENDENT work off at the SAME
 
 Compressing, decomposing, delegating INDEPENDENT work IN PARALLEL, and summarizing — NOT doing the work yourself — is your primary job as the lead. Do the work yourself only for trivial one-liners, or when delegation would clearly be slower with no benefit (and say so in one line).`;
 
-/** Ready-made "act as the team coordinator" directive (generic coder/researcher
- *  teammates) — used by the Agent-instructions card's "Coordinator preset" button. */
+const VALIDATION_RETURN_PATH = `RETURN PATH — substantial completed work should flow through the default-team validators before it is treated as final:
+- Send a concise completed-work packet to **default/coder** and **default/researcher** with \`/ask default/coder "<completed work + summary>"\` and \`/ask default/researcher "<completed work + summary>"\`.
+- Ask coder to validate implementation, operations, code quality, and reproducibility. Ask researcher to validate evidence, reasoning, sourcing, policy fit, and completeness.
+- If either validator bounces the work back, refine with the responsible teammate or team lead and repeat the validation pass. Do not dump unvalidated raw work straight to **default/lead** unless the operator explicitly asks for an unvalidated fast path.`;
+
+/** Ready-made "act as the team coordinator" directive with generic coder/researcher
+ *  teammates — used as the Team Builder fallback when no explicit teammates exist. */
 const COORDINATOR_PRESET = `## Team coordination (you are the lead)
 
 You are this team's COORDINATOR. Your job is NOT to do the work yourself — it is to COMPRESS, BREAK UP, DELEGATE, and SUMMARIZE. You have specialist teammates — by default **coder** (implementation, code, file changes, running commands) and **researcher** (research, analysis, documentation, investigation) — and you can hand work to OTHER teams' leads too.
@@ -176,6 +181,8 @@ For any NON-TRIVIAL request, work in this order, and narrate each step as you go
 3. **Delegate** — hand each sub-task to its owner: a teammate on your team (implementation/code → **coder**, research/analysis/docs → **researcher**) via the **inter-agent** skill, or another team's lead via **/ask <team>/<lead>** when the work is in that team's domain. **Fan INDEPENDENT sub-tasks out IN PARALLEL** (async /news-to --trigger to each owner at once, so they run concurrently); chain with synchronous /talk-to ONLY the ones that need another's output.
 4. **Summarize step by step** — as EACH delegate replies, compress its result to 1-3 lines and post that running update immediately; don't wait for everything to finish. Keep a visible tally of what's done, what's pending, and any blockers.
 5. **Close out** — assemble the step summaries into one coherent answer, stating who did what.
+
+${VALIDATION_RETURN_PATH}
 
 ${COORDINATION_TAIL}`;
 
@@ -198,6 +205,8 @@ For any NON-TRIVIAL request, work in this order, and narrate each step as you go
 ${bullets}
 4. **Summarize step by step** — as EACH delegate replies, compress its result to 1-3 lines and post that running update immediately; don't wait for everything to finish. Track what's done, pending, and blocked.
 5. **Close out** — assemble the step summaries into one coherent answer, stating who did what.
+
+${VALIDATION_RETURN_PATH}
 
 ${COORDINATION_TAIL}`;
 }
