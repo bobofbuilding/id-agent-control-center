@@ -475,6 +475,17 @@ export class ManagerClient {
     }
   }
 
+  /** Active runtime credential-lane cooldowns from newer managers. Empty on older managers. */
+  async runtimeCooldowns(signal?: AbortSignal): Promise<RuntimeCooldown[]> {
+    try {
+      const d = await this.get<{ cooldowns?: RuntimeCooldown[] }>('/runtime/cooldowns', signal);
+      return d.cooldowns ?? [];
+    } catch (err) {
+      if (err instanceof ManagerError) return [];
+      throw err;
+    }
+  }
+
   // ---- Health probes ----------------------------------------------------
 
   async probeAll(signal?: AbortSignal): Promise<ProbeResult> {
@@ -1052,6 +1063,21 @@ export interface CheckIn {
   /** The task this check-in supervises, resolved server-side (newer managers). */
   linkedTask?: { name?: string; title?: string; status?: string; owner?: string | null; gone?: boolean } | null;
   [key: string]: unknown;
+}
+
+export interface RuntimeCooldown {
+  laneId: string;
+  runtime: string;
+  kind?: 'subscription' | 'metered-api' | string;
+  coolingUntilMs: number;
+  observedAtMs?: number;
+  reason?: string;
+  teamId?: string;
+  agentId?: string;
+  agentName?: string;
+  queryId?: string;
+  resetText?: string;
+  message?: string;
 }
 
 export interface LibraryEntry {

@@ -775,6 +775,8 @@ const METHODS: Record<string, (...a: any[]) => Promise<unknown>> = {
   // Per-runtime model freshness (live list + source + when last refreshed) for the
   // "models stay up to date" panel.
   'runtime:freshness': async () => runtimeFreshness(),
+  // Runtime credential lane cooldowns (newer managers); empty on stock/older managers.
+  'runtime:cooldowns': async () => client.runtimeCooldowns(),
 
   // modules: skills + plugins catalog, install, MCP attach + rebuild
   librarySkills: () => client.librarySkills(),

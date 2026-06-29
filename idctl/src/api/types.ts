@@ -29,6 +29,22 @@ export interface AgentMetadata {
   mcpServers?: AgentMcpServerMetadata[];
   delegates?: string[];
   instructions?: string;
+  runtimeCredentialLane?: string;
+  runtimeRateLimit?: {
+    laneId?: string;
+    coolingUntilMs?: number;
+    reason?: string;
+    observedAtMs?: number;
+    queryId?: string;
+    resetText?: string;
+    message?: string;
+  };
+  runtimeRateLimitFailover?: {
+    fromLaneId?: string;
+    toLaneId?: string;
+    queryId?: string;
+    observedAtMs?: number;
+  };
   skillmesh_address?: string;
   skillmesh_key_index?: number;
   skillmesh_key_path?: string;

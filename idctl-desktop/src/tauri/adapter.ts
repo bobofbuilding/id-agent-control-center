@@ -430,6 +430,7 @@ const M: Record<string, (...a: any[]) => Promise<unknown>> = {
     lsSet('idctl.providers', list);
     return buildRuntimeCatalog(list);
   },
+  'runtime:cooldowns': async () => client.runtimeCooldowns(),
 
   // modules: skills + plugins catalog, install, MCP attach + rebuild
   librarySkills: () => client.librarySkills(),

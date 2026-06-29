@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { call, agentsLeadFirst, type FleetStore, type TeamAgent } from '../store.ts';
 import { statusClass } from '../agentStatus.ts';
+import type { RuntimeCooldown } from '../../../../idctl/src/api/client.ts';
 import type { Agent } from '../../../../idctl/src/api/types.ts';
 import { RUNTIMES, offerableRuntimes, effortOptions, runtimeHasEffort, speedOptions, runtimeHasSpeed } from '../../../../idctl/src/settings/runtimeCatalog.ts';
 
@@ -14,6 +15,8 @@ import { RUNTIMES, offerableRuntimes, effortOptions, runtimeHasEffort, speedOpti
 type ProviderRow = { kind: string; enabled?: boolean; keySource?: string; lastSync?: { status?: string } };
 type RuntimeFreshness = { runtime: string; count: number; source: 'codex-cache' | 'provider' | 'curated' | 'none'; provider?: string; lastCheckedMs: number | null };
 type AgentConfigState = { runtime?: string; model?: string; effort: string; speed: string };
+type RuntimeRateLimitMeta = { laneId?: string; coolingUntilMs?: number; reason?: string; observedAtMs?: number; queryId?: string; resetText?: string; message?: string };
+type RuntimeFailoverMeta = { fromLaneId?: string; toLaneId?: string; queryId?: string; observedAtMs?: number };
 interface AgentConfigDraft {
   key: string;
   id: string;
@@ -134,8 +137,52 @@ function timeAgo(ms?: number | null): string {
   if (delta < 86_400_000) return `${Math.round(delta / 3_600_000)}h ago`;
   return `${Math.round(delta / 86_400_000)}d ago`;
 }
+function timeUntil(ms?: number | null): string {
+  if (!ms) return '';
+  const delta = Math.max(0, ms - Date.now());
+  if (delta < 60_000) return `${Math.max(1, Math.round(delta / 1000))}s left`;
+  if (delta < 3_600_000) return `${Math.round(delta / 60_000)}m left`;
+  if (delta < 86_400_000) return `${Math.round(delta / 3_600_000)}h left`;
+  return `${Math.round(delta / 86_400_000)}d left`;
+}
 function chips(values: string[], empty = 'none') {
   return values.length ? <span className="chips">{values.map((s) => <span className="chip" key={s}>{s}</span>)}</span> : <span className="muted">{empty}</span>;
+}
+function runtimeLaneOf(a: Agent): string {
+  const lane = a.metadata?.runtimeCredentialLane;
+  if (typeof lane === 'string' && lane.trim()) return lane.trim();
+  const rate = a.metadata?.runtimeRateLimit;
+  return typeof rate?.laneId === 'string' ? rate.laneId : '';
+}
+function runtimeRateLimitOf(a: Agent): RuntimeRateLimitMeta | null {
+  const raw = a.metadata?.runtimeRateLimit;
+  return raw && typeof raw === 'object' ? raw : null;
+}
+function runtimeFailoverOf(a: Agent): RuntimeFailoverMeta | null {
+  const raw = a.metadata?.runtimeRateLimitFailover;
+  return raw && typeof raw === 'object' ? raw : null;
+}
+function activeCooldowns(rows: RuntimeCooldown[]): RuntimeCooldown[] {
+  const now = Date.now();
+  return rows.filter((row) => Number(row.coolingUntilMs) > now);
+}
+function cooldownFor(a: Agent, rows: RuntimeCooldown[]): RuntimeCooldown | null {
+  const lane = runtimeLaneOf(a);
+  const runtime = runtimeOf(a);
+  return rows.find((row) => (row.agentId && row.agentId === a.id)
+    || (lane && row.laneId === lane)
+    || (row.agentName === a.name && (!runtime || row.runtime === runtime))) ?? null;
+}
+function rateLimitActive(a: Agent, rows: RuntimeCooldown[]): boolean {
+  const meta = runtimeRateLimitOf(a);
+  return Boolean(cooldownFor(a, rows) || (meta?.coolingUntilMs && meta.coolingUntilMs > Date.now()));
+}
+function cooldownLabel(row: RuntimeCooldown): string {
+  const left = timeUntil(row.coolingUntilMs);
+  return `${row.laneId}${left ? ` · ${left}` : ''}${row.reason ? ` · ${row.reason}` : ''}`;
+}
+function cooldownTitle(row: RuntimeCooldown): string {
+  return [cooldownLabel(row), row.resetText ? `reset: ${row.resetText}` : '', row.message ?? ''].filter(Boolean).join('\n');
 }
 
 export function AgentTable({ store, onProbe, probeBusy }: { store: FleetStore; onProbe?: (a: TeamAgent) => void; probeBusy?: string | null }) {
@@ -147,6 +194,7 @@ export function AgentTable({ store, onProbe, probeBusy }: { store: FleetStore; o
   const [coords, setCoords] = useState<Record<string, string>>({}); // team → coordinator (lead) name
   const [showStopped, setShowStopped] = useState(false); // by default the grid shows only running agents
   const [freshness, setFreshness] = useState<RuntimeFreshness[]>([]);
+  const [runtimeCooldowns, setRuntimeCooldowns] = useState<RuntimeCooldown[]>([]);
   const [showModels, setShowModels] = useState(false);
   const [configDrafts, setConfigDrafts] = useState<Record<string, AgentConfigDraft>>({});
   const configDraftList = Object.values(configDrafts);
@@ -171,12 +219,17 @@ export function AgentTable({ store, onProbe, probeBusy }: { store: FleetStore; o
   const isActive = (a: TeamAgent) => statusClass(a.status) === 'ok';
   const activeCount = shown.filter(isActive).length;
   const stoppedCount = shown.length - activeCount;
+  const coolingRows = activeCooldowns(runtimeCooldowns);
+  const selectedCooldown = sel ? cooldownFor(sel, coolingRows) : null;
+  const selectedRateLimit = sel ? runtimeRateLimitOf(sel) : null;
+  const selectedFailover = sel ? runtimeFailoverOf(sel) : null;
 
   useEffect(() => {
     call<Record<string, string[]>>('runtime:models').then(setCatalog).catch(() => setCatalog({}));
     call<ProviderRow[]>('providers:list').then(setProviders).catch(() => setProviders([]));
     call<{ coordinators?: Record<string, string> }>('coordinator:hierarchy').then((h) => setCoords(h.coordinators ?? {})).catch(() => {});
     call<RuntimeFreshness[]>('runtime:freshness').then(setFreshness).catch(() => setFreshness([]));
+    call<RuntimeCooldown[]>('runtime:cooldowns').then(setRuntimeCooldowns).catch(() => setRuntimeCooldowns([]));
   }, [store.lastUpdated]);
 
   // ★ set an agent as its team's coordinator (lead) — works per-team in the holistic view.
@@ -491,6 +544,8 @@ export function AgentTable({ store, onProbe, probeBusy }: { store: FleetStore; o
     const isLocal = (a.type ?? '') === 'claude' || RUNTIMES.includes(currentRuntime ?? '');
     const runtimeOpts = Array.from(new Set([currentRuntime, ...offerableRuntimes(providers, currentRuntime)].filter(Boolean))) as string[];
     const mismatch = runtimeModelMismatch(displayRuntime, displayModel);
+    const cooling = rateLimitActive(a, coolingRows);
+    const cooldown = cooldownFor(a, coolingRows);
     return (
       <tr key={`${a.team ?? ''}-${a.id}`} className={`${sel?.id === a.id ? 'sel' : ''}${draft ? ' config-staged' : ''}`} onClick={() => setSelected(a.id)}>
         <td className="b">
@@ -507,6 +562,7 @@ export function AgentTable({ store, onProbe, probeBusy }: { store: FleetStore; o
           ) : (
             <span className="muted" title="remote agents have no switchable runtime">{short(currentRuntime ?? a.type)}</span>
           )}
+          {cooling ? <span className="warn-text" title={cooldown ? cooldownTitle(cooldown) : 'runtime rate limit cooling'} style={{ marginLeft: 4, cursor: 'help' }}>⚠</span> : null}
         </td>
         <td onClick={(e) => e.stopPropagation()}>
           <select className={`cell-select${mismatch ? ' mismatch' : ''}`} value={displayModel ?? ''} onChange={(e) => stageConfig(a, { model: e.target.value })} title={mismatch ?? undefined}>
@@ -566,6 +622,11 @@ export function AgentTable({ store, onProbe, probeBusy }: { store: FleetStore; o
             <label className="muted small" style={{ display: 'inline-flex', alignItems: 'center', gap: 5, cursor: 'pointer' }} title="By default only running agents are shown — reveal stopped ones to start/manage them">
               <input type="checkbox" checked={showStopped} onChange={(e) => setShowStopped(e.target.checked)} /> show stopped ({stoppedCount})
             </label>
+          ) : null}
+          {coolingRows.length ? (
+            <span className="warn-text small" title={coolingRows.map(cooldownLabel).join('\n')}>
+              runtime cooldowns {coolingRows.length}
+            </span>
           ) : null}
           <button className="btn small" onClick={() => setShowModels((v) => !v)} title="Show each runtime's model list, where it comes from, and when it was last refreshed">
             {showModels ? 'Hide models' : `Models${freshness.length ? ` (${freshness.filter((f) => f.count).length})` : ''}`}
@@ -634,6 +695,23 @@ export function AgentTable({ store, onProbe, probeBusy }: { store: FleetStore; o
             {agentHint(sel) ? (<><span>hint</span><b className="warn-text">{agentHint(sel)}</b></>) : null}
             {viewAll ? (<><span>team</span><b>{sel.team ?? '—'}</b></>) : null}
             <span>runtime</span><b>{runtimeOf(sel) ?? sel.type ?? '—'}</b>
+            {runtimeLaneOf(sel) ? (<><span>runtime lane</span><b className="mono small">{runtimeLaneOf(sel)}</b></>) : null}
+            {selectedCooldown ? (
+              <>
+                <span>lane cooldown</span><b className="warn-text" title={cooldownTitle(selectedCooldown)}>{cooldownLabel(selectedCooldown)}</b>
+              </>
+            ) : selectedRateLimit ? (
+              <>
+                <span>rate limit</span><b className={selectedRateLimit.coolingUntilMs && selectedRateLimit.coolingUntilMs > Date.now() ? 'warn-text' : 'muted'}>
+                  {selectedRateLimit.laneId ?? 'runtime'}{selectedRateLimit.coolingUntilMs ? ` · ${timeUntil(selectedRateLimit.coolingUntilMs) || 'expired'}` : ''}{selectedRateLimit.reason ? ` · ${selectedRateLimit.reason}` : ''}
+                </b>
+              </>
+            ) : null}
+            {selectedFailover ? (
+              <>
+                <span>failover</span><b className="small">{selectedFailover.fromLaneId ?? '—'} -&gt; {selectedFailover.toLaneId ?? '—'}{selectedFailover.observedAtMs ? ` · ${timeAgo(selectedFailover.observedAtMs)} ago` : ''}</b>
+              </>
+            ) : null}
             <span>model</span><b>{sel.model ?? '—'}</b>
             {sel.health ? (<><span>health</span><b>{sel.health}</b></>) : null}
             <span>speed</span><b>{runtimeHasSpeed(runtimeOf(sel)) ? speedOf(sel) : '—'}</b>
