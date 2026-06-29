@@ -216,6 +216,7 @@ button.chip.incompat:hover { border-color: var(--line); }
 .catalog-row { display: flex; align-items: center; gap: 8px; padding: 5px 6px; border-radius: 6px; flex-wrap: wrap; }
 .catalog-row:hover { background: var(--bg-3); }
 .catalog-row .mono { min-width: 150px; }
+.mcp-replace-review { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin-top: 8px; padding: 8px 10px; border: 1px solid var(--warn); border-radius: 6px; background: color-mix(in srgb, var(--warn) 8%, transparent); }
 
 /* Local LLM stacks catalog (self-hostable serving stacks). */
 .stack-list { display: flex; flex-direction: column; gap: 6px; margin-top: 8px; }

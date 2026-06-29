@@ -105,6 +105,23 @@ function parseKV(s: string): Record<string, string> | undefined {
   }
   return Object.keys(out).length ? out : undefined;
 }
+function mcpEndpoint(p: McpServerProfile): string {
+  return p.transport === 'stdio'
+    ? [p.command, ...(p.args ?? [])].filter(Boolean).join(' ') || '(none)'
+    : p.url ?? '(none)';
+}
+function mcpProfileStamp(p: McpServerProfile): string {
+  return JSON.stringify({
+    name: p.name,
+    transport: p.transport,
+    command: p.command ?? '',
+    args: p.args ?? [],
+    url: p.url ?? '',
+    env: p.env ?? {},
+    headers: p.headers ?? {},
+    enabled: p.enabled !== false,
+  });
+}
 function sortedKey(values: string[]): string {
   return [...new Set(values.map(String).filter(Boolean))].sort().join('|');
 }
@@ -218,11 +235,19 @@ export function Modules({ store }: { store: FleetStore }) {
   const [argsStr, setArgsStr] = useState('');
   const [url, setUrl] = useState('');
   const [envStr, setEnvStr] = useState('');
+  const [catReplaceArmed, setCatReplaceArmed] = useState(false);
+  const [customReplaceArmed, setCustomReplaceArmed] = useState(false);
   // per-key test results: 'cat', 'custom', or a registered server name
   const [test, setTest] = useState<Record<string, TestResult>>({});
 
   const catEntry = MCP_CATALOG.find((e) => e.id === catId);
+  function resetMcpReplaceReview(scope: 'cat' | 'custom') {
+    if (scope === 'cat') setCatReplaceArmed(false);
+    else setCustomReplaceArmed(false);
+    setNote('');
+  }
   function pickCatalog(id: string) {
+    resetMcpReplaceReview('cat');
     setCatId(id);
     const e = MCP_CATALOG.find((x) => x.id === id);
     setCatName(e?.id ?? '');
@@ -313,7 +338,7 @@ export function Modules({ store }: { store: FleetStore }) {
     const res = await call<TestResult>('mcp:test', toSpec(profile)).catch((e) => ({ ok: false, error: e instanceof Error ? e.message : String(e) }));
     setTest((t) => ({ ...t, [key]: res }));
   }
-  async function addProfile(profile: McpServerProfile | null, after: () => void) {
+  async function addProfile(profile: McpServerProfile | null, after: () => void, opts: { replacementArmed?: boolean } = {}) {
     if (!profile) return;
     setBusy(true);
     setNote(`checking MCP registry for ${profile.name}…`);
@@ -321,9 +346,21 @@ export function Modules({ store }: { store: FleetStore }) {
       const latest = await call<McpServerProfile[]>('mcp:list').catch(() => mcp);
       const existing = latest.find((p) => p.name === profile.name);
       if (existing) {
-        const before = existing.transport === 'stdio' ? [existing.command, ...(existing.args ?? [])].filter(Boolean).join(' ') : existing.url;
-        const next = profile.transport === 'stdio' ? [profile.command, ...(profile.args ?? [])].filter(Boolean).join(' ') : profile.url;
+        if (!opts.replacementArmed) {
+          setMcp(latest);
+          setNote(`Review replacement for MCP server "${profile.name}" before adding.`);
+          return;
+        }
+        const before = mcpEndpoint(existing);
+        const next = mcpEndpoint(profile);
         if (!window.confirm(`Replace MCP server "${profile.name}" in the registry?\n\nBefore: ${before ?? '(none)'}\nAfter:  ${next ?? '(none)'}\n\nAgents already attached keep their current copy until you attach/rebuild again.`)) return;
+        const afterConfirm = await call<McpServerProfile[]>('mcp:list').catch(() => latest);
+        const still = afterConfirm.find((p) => p.name === profile.name);
+        if (!still || mcpProfileStamp(still) !== mcpProfileStamp(existing)) {
+          setMcp(afterConfirm);
+          setNote(`replace blocked: MCP server "${profile.name}" changed during confirmation. Review the current registry and try again.`);
+          return;
+        }
       }
       setMcp(await call<McpServerProfile[]>('mcp:add', profile));
       setNote(existing ? `replaced MCP server ${profile.name} ✓` : `added MCP server ${profile.name} ✓`);
@@ -536,6 +573,10 @@ export function Modules({ store }: { store: FleetStore }) {
   // # selected agents that have at least one MCP server attached (→ show Rebuild).
   const anyAttached = targetAgents.some((a) => curMcp(a).length > 0);
   const targetLabel = targetCount === 0 ? 'no agents' : targetCount === 1 ? targetAgents[0].name : `${targetCount} agents`;
+  const catalogDraft = buildCatalog();
+  const customDraft = buildCustom();
+  const catalogReplace = catalogDraft ? mcp.find((p) => p.name === catalogDraft.name) : undefined;
+  const customReplace = customDraft ? mcp.find((p) => p.name === customDraft.name) : undefined;
 
   return (
     <div className="view modules">
@@ -676,7 +717,7 @@ export function Modules({ store }: { store: FleetStore }) {
               <span></span>
               <b className="muted small">{catEntry.description}</b>
               <span>name</span>
-              <b><input style={{ width: 200 }} value={catName} onChange={(e) => setCatName(e.target.value)} /></b>
+              <b><input style={{ width: 200 }} value={catName} onChange={(e) => { resetMcpReplaceReview('cat'); setCatName(e.target.value); }} /></b>
               {(catEntry.inputs ?? []).map((inp) => (
                 <Fragment key={inp.key}>
                   <span>{inp.label}{inp.required ? ' *' : ''}</span>
@@ -686,7 +727,7 @@ export function Modules({ store }: { store: FleetStore }) {
                       type={inp.secret ? 'password' : 'text'}
                       placeholder={inp.placeholder}
                       value={catInputs[inp.key] ?? ''}
-                      onChange={(e) => setCatInputs((c) => ({ ...c, [inp.key]: e.target.value }))}
+                      onChange={(e) => { resetMcpReplaceReview('cat'); setCatInputs((c) => ({ ...c, [inp.key]: e.target.value })); }}
                     />
                   </b>
                 </Fragment>
@@ -696,9 +737,19 @@ export function Modules({ store }: { store: FleetStore }) {
         </div>
         <div className="row-actions" style={{ marginTop: 10 }}>
           <span className="grow small"><TestCell r={test.cat} /></span>
-          <button className="btn" disabled={test.cat?.testing} onClick={() => void runTest('cat', buildCatalog())}>{test.cat?.testing ? 'Testing…' : 'Test'}</button>
-          <button className="btn primary" disabled={busy || !buildCatalog()} onClick={() => void addProfile(buildCatalog(), () => setTest((t) => ({ ...t, cat: {} })))}>Add</button>
+          <button className="btn" disabled={test.cat?.testing} onClick={() => void runTest('cat', catalogDraft)}>{test.cat?.testing ? 'Testing…' : 'Test'}</button>
+          <button className="btn primary" disabled={busy || !catalogDraft || (!!catalogReplace && !catReplaceArmed)} onClick={() => void addProfile(catalogDraft, () => { setTest((t) => ({ ...t, cat: {} })); setCatReplaceArmed(false); }, { replacementArmed: catReplaceArmed })}>{catalogReplace ? 'Replace' : 'Add'}</button>
         </div>
+        {catalogDraft && catalogReplace ? (
+          <div className="mcp-replace-review">
+            <label className="small" style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+              <input type="checkbox" checked={catReplaceArmed} onChange={(e) => { setCatReplaceArmed(e.target.checked); setNote(''); }} />
+              Replace existing MCP server
+            </label>
+            <span className="muted small">Before: {mcpEndpoint(catalogReplace)}</span>
+            <span className="muted small">After: {mcpEndpoint(catalogDraft)}</span>
+          </div>
+        ) : null}
 
         <button className="btn small" style={{ marginTop: 12 }} onClick={() => setShowCustom((s) => !s)}>
           {showCustom ? '− custom server' : '+ custom server (advanced)'}
@@ -708,35 +759,45 @@ export function Modules({ store }: { store: FleetStore }) {
             <div className="kv" style={{ gridTemplateColumns: '120px 1fr', gap: '8px 12px', marginTop: 8 }}>
               <span>transport</span>
               <b>
-                <select className="cell-select" value={transport} onChange={(e) => setTransport(e.target.value as McpTransport)}>
+                <select className="cell-select" value={transport} onChange={(e) => { resetMcpReplaceReview('custom'); setTransport(e.target.value as McpTransport); }}>
                   {TRANSPORTS.map((t) => (<option key={t} value={t}>{t}</option>))}
                 </select>
               </b>
               <span>name</span>
-              <b><input style={{ width: 200 }} placeholder="name" value={mName} onChange={(e) => setMName(e.target.value)} /></b>
+              <b><input style={{ width: 200 }} placeholder="name" value={mName} onChange={(e) => { resetMcpReplaceReview('custom'); setMName(e.target.value); }} /></b>
               {transport === 'stdio' ? (
                 <>
                   <span>command</span>
-                  <b><input style={{ width: 200 }} placeholder="npx" value={cmd} onChange={(e) => setCmd(e.target.value)} /></b>
+                  <b><input style={{ width: 200 }} placeholder="npx" value={cmd} onChange={(e) => { resetMcpReplaceReview('custom'); setCmd(e.target.value); }} /></b>
                   <span>args</span>
-                  <b><input style={{ width: 360 }} placeholder="-y @scope/pkg /tmp (space-separated)" value={argsStr} onChange={(e) => setArgsStr(e.target.value)} /></b>
+                  <b><input style={{ width: 360 }} placeholder="-y @scope/pkg /tmp (space-separated)" value={argsStr} onChange={(e) => { resetMcpReplaceReview('custom'); setArgsStr(e.target.value); }} /></b>
                   <span>env</span>
-                  <b><input style={{ width: 360 }} placeholder="KEY=value, KEY2=value2" value={envStr} onChange={(e) => setEnvStr(e.target.value)} /></b>
+                  <b><input style={{ width: 360 }} placeholder="KEY=value, KEY2=value2" value={envStr} onChange={(e) => { resetMcpReplaceReview('custom'); setEnvStr(e.target.value); }} /></b>
                 </>
               ) : (
                 <>
                   <span>url</span>
-                  <b><input style={{ width: 360 }} placeholder="https://host/mcp" value={url} onChange={(e) => setUrl(e.target.value)} /></b>
+                  <b><input style={{ width: 360 }} placeholder="https://host/mcp" value={url} onChange={(e) => { resetMcpReplaceReview('custom'); setUrl(e.target.value); }} /></b>
                   <span>headers</span>
-                  <b><input style={{ width: 360 }} placeholder="Authorization=Bearer …" value={envStr} onChange={(e) => setEnvStr(e.target.value)} /></b>
+                  <b><input style={{ width: 360 }} placeholder="Authorization=Bearer …" value={envStr} onChange={(e) => { resetMcpReplaceReview('custom'); setEnvStr(e.target.value); }} /></b>
                 </>
               )}
             </div>
             <div className="row-actions" style={{ marginTop: 8 }}>
               <span className="grow small"><TestCell r={test.custom} /></span>
-              <button className="btn" disabled={test.custom?.testing} onClick={() => void runTest('custom', buildCustom())}>{test.custom?.testing ? 'Testing…' : 'Test'}</button>
-              <button className="btn primary" disabled={busy || !buildCustom()} onClick={() => void addProfile(buildCustom(), () => { setMName(''); setArgsStr(''); setEnvStr(''); setUrl(''); setTest((t) => ({ ...t, custom: {} })); })}>Add custom</button>
+              <button className="btn" disabled={test.custom?.testing} onClick={() => void runTest('custom', customDraft)}>{test.custom?.testing ? 'Testing…' : 'Test'}</button>
+              <button className="btn primary" disabled={busy || !customDraft || (!!customReplace && !customReplaceArmed)} onClick={() => void addProfile(customDraft, () => { setMName(''); setArgsStr(''); setEnvStr(''); setUrl(''); setTest((t) => ({ ...t, custom: {} })); setCustomReplaceArmed(false); }, { replacementArmed: customReplaceArmed })}>{customReplace ? 'Replace custom' : 'Add custom'}</button>
             </div>
+            {customDraft && customReplace ? (
+              <div className="mcp-replace-review">
+                <label className="small" style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+                  <input type="checkbox" checked={customReplaceArmed} onChange={(e) => { setCustomReplaceArmed(e.target.checked); setNote(''); }} />
+                  Replace existing MCP server
+                </label>
+                <span className="muted small">Before: {mcpEndpoint(customReplace)}</span>
+                <span className="muted small">After: {mcpEndpoint(customDraft)}</span>
+              </div>
+            ) : null}
           </>
         ) : null}
       </section>
