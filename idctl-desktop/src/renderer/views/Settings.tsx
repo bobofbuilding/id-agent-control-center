@@ -29,6 +29,39 @@ function timeAgo(ms: number): string {
   const h = Math.round(m / 60);
   return h < 24 ? `${h}h ago` : `${Math.round(h / 24)}d ago`;
 }
+function sortedKey(values: string[]): string {
+  return [...new Set(values.map(String).filter(Boolean))].sort().join('|');
+}
+function providerStamp(p: ProviderRow | ProviderProfile): string {
+  const row = p as ProviderRow;
+  return JSON.stringify({
+    name: p.name,
+    kind: p.kind,
+    baseUrl: p.baseUrl,
+    enabled: p.enabled !== false,
+    default: p.default === true,
+    keySource: row.keySource ?? '',
+    needsKey: row.needsKey === true,
+  });
+}
+function providerListStamp(list: ProviderRow[]): string {
+  return sortedKey(list.map(providerStamp));
+}
+function providerEndpoint(p: ProviderProfile): string {
+  return `${p.kind} · ${p.baseUrl}`;
+}
+function rpcStamp(rpc: EvmRpcRow): string {
+  return JSON.stringify({
+    id: rpc.id,
+    network: rpc.network,
+    httpsUrl: rpc.httpsUrl,
+    enabled: rpc.enabled !== false,
+    keySource: rpc.keySource,
+  });
+}
+function imageServerStamp(server: { url: string; type: string; model?: string } | null): string {
+  return server ? JSON.stringify({ url: server.url.replace(/\/+$/, ''), type: server.type, model: server.model ?? '' }) : '';
+}
 
 export function Settings({ store }: { store: FleetStore }) {
   const [providers, setProviders] = useState<ProviderRow[]>([]);
@@ -139,6 +172,63 @@ export function Settings({ store }: { store: FleetStore }) {
   }, [store.team, store.coordinator]);
 
 
+  async function freshProviders(): Promise<ProviderRow[]> {
+    return call<ProviderRow[]>('providers:list').catch(() => []);
+  }
+  function enabledProviderCount(list = providers, except?: string): number {
+    return list.filter((x) => x.enabled && x.name !== except).length;
+  }
+  function findProviderRow(list: ProviderRow[], providerName: string): ProviderRow | undefined {
+    return list.find((x) => x.name === providerName);
+  }
+  async function ensureProviderFresh(n: string, label: string): Promise<{ current: ProviderRow; list: ProviderRow[] } | null> {
+    const rendered = findProviderRow(providers, n);
+    const list = await freshProviders();
+    const current = findProviderRow(list, n);
+    if (!current) {
+      setProviders(list);
+      window.alert(`${label} blocked: "${n}" is no longer configured. Refreshed inference backends.`);
+      return null;
+    }
+    if (rendered && providerStamp(current) !== providerStamp(rendered)) {
+      setProviders(list);
+      window.alert(`${label} blocked: "${n}" changed since this page rendered. Refreshed inference backends; review the current row before trying again.`);
+      return null;
+    }
+    return { current, list };
+  }
+  async function recheckProviderBeforeWrite(n: string, expected: ProviderRow, label: string): Promise<ProviderRow[] | null> {
+    const list = await freshProviders();
+    const current = findProviderRow(list, n);
+    if (!current || providerStamp(current) !== providerStamp(expected)) {
+      setProviders(list);
+      window.alert(`${label} blocked: "${n}" changed during confirmation. Refreshed inference backends; review the current row before trying again.`);
+      return null;
+    }
+    return list;
+  }
+  async function addProviderProfile(p: ProviderProfile, after?: () => void) {
+    setBusy(true);
+    try {
+      const before = await freshProviders();
+      const existing = findProviderRow(before, p.name);
+      if (existing) {
+        const msg = `Replace inference backend "${p.name}"?\n\nBefore: ${providerEndpoint(existing)}\nAfter:  ${providerEndpoint(p)}\n\nAgents without an explicit backend may use the updated provider on their next run or rebuild.`;
+        if (!window.confirm(msg)) return;
+        const latest = await freshProviders();
+        const still = findProviderRow(latest, p.name);
+        if (!still || providerStamp(still) !== providerStamp(existing)) {
+          setProviders(latest);
+          window.alert(`Replace blocked: "${p.name}" changed during confirmation. Refreshed inference backends; review the current row before trying again.`);
+          return;
+        }
+      }
+      setProviders(await call<ProviderRow[]>('providers:add', p));
+      after?.();
+    } finally {
+      setBusy(false);
+    }
+  }
   async function addProvider() {
     const entry = findProvider(catalogId);
     const p: ProviderProfile = { name: name.trim() || kind, kind, baseUrl: baseUrl.trim() || defaultBaseUrl(kind), apiKey: apiKey.trim() || undefined, enabled: true };
@@ -147,18 +237,16 @@ export function Settings({ store }: { store: FleetStore }) {
     if (entry?.models?.length) {
       p.lastSync = { at: Date.now(), status: 'preset', modelCount: entry.models.length, models: entry.models };
     }
-    setBusy(true);
-    try {
-      setProviders(await call<ProviderRow[]>('providers:add', p));
+    await addProviderProfile(p, () => {
       setName('');
       setApiKey('');
-    } finally {
-      setBusy(false);
-    }
+    });
   }
   async function connect(n: string) {
     setBusy(true);
     try {
+      const fresh = await ensureProviderFresh(n, 'Connect & sync');
+      if (!fresh) return;
       const r = await call<{ providers: ProviderRow[]; outcome: ProbeOutcome }>('providers:connect', n);
       setProviders(r.providers);
       setProbe((m) => ({ ...m, [n]: r.outcome }));
@@ -166,49 +254,121 @@ export function Settings({ store }: { store: FleetStore }) {
       setBusy(false);
     }
   }
-  function enabledProviderCount(except?: string): number {
-    return providers.filter((x) => x.enabled && x.name !== except).length;
-  }
   async function chooseCoordinator(n: string) {
     const label = n || '(auto: lead/first)';
     if (!window.confirm(`Set ${store.team ?? 'default'} coordinator to ${label}?\n\nNew drafts, routing, and manager-assist actions will use this coordinator immediately.`)) return;
     await store.setCoordinator(n);
   }
   async function setDefault(n: string) {
-    const p = providers.find((x) => x.name === n);
-    if (p && !p.default && !window.confirm(`Set "${p.name}" as the default inference backend?\n\nAgents without an explicit backend can start using this provider on their next run or rebuild.`)) return;
+    const fresh = await ensureProviderFresh(n, 'Set default backend');
+    if (!fresh) return;
+    const p = fresh.current;
+    if (p.default) { setProviders(fresh.list); return; }
+    if (!window.confirm(`Set "${p.name}" as the default inference backend?\n\nAgents without an explicit backend can start using this provider on their next run or rebuild.`)) return;
+    const latest = await recheckProviderBeforeWrite(n, p, 'Set default backend');
+    if (!latest) return;
     setProviders(await call<ProviderRow[]>('providers:setDefault', n));
   }
   async function toggle(n: string) {
-    const p = providers.find((x) => x.name === n);
-    if (p?.enabled && enabledProviderCount(n) === 0) {
+    const fresh = await ensureProviderFresh(n, 'Toggle backend');
+    if (!fresh) return;
+    const p = fresh.current;
+    if (p.enabled && enabledProviderCount(fresh.list, n) === 0) {
       window.alert('Refusing to disable the last enabled inference backend. Enable another backend first.');
+      setProviders(fresh.list);
       return;
     }
-    if (p?.enabled && !window.confirm(`Disable inference backend "${p.name}"?\n\nAgents that depend on this provider may lose model options until another backend is enabled or selected.`)) return;
+    if (p.enabled && !window.confirm(`Disable inference backend "${p.name}"?\n\nAgents that depend on this provider may lose model options until another backend is enabled or selected.`)) return;
+    const latest = await recheckProviderBeforeWrite(n, p, 'Toggle backend');
+    if (!latest) return;
+    if (p.enabled && enabledProviderCount(latest, n) === 0) {
+      window.alert('Refusing to disable the last enabled inference backend. Enable another backend first.');
+      setProviders(latest);
+      return;
+    }
     setProviders(await call<ProviderRow[]>('providers:toggle', n));
   }
   async function removeProviderProfile(n: string) {
-    const p = providers.find((x) => x.name === n);
-    if (p?.enabled && enabledProviderCount(n) === 0) {
+    const fresh = await ensureProviderFresh(n, 'Remove backend');
+    if (!fresh) return;
+    const p = fresh.current;
+    if (p.enabled && enabledProviderCount(fresh.list, n) === 0) {
       window.alert('Refusing to remove the last enabled inference backend. Enable another backend first.');
+      setProviders(fresh.list);
       return;
     }
-    const defaultNote = p?.default ? '\n\nIt is currently the default backend.' : '';
+    const defaultNote = p.default ? '\n\nIt is currently the default backend.' : '';
     if (!window.confirm(`Remove inference backend "${n}"?${defaultNote}\n\nAgents that depend on this provider may lose model options until another backend is configured.`)) return;
+    const latest = await recheckProviderBeforeWrite(n, p, 'Remove backend');
+    if (!latest) return;
+    if (p.enabled && enabledProviderCount(latest, n) === 0) {
+      window.alert('Refusing to remove the last enabled inference backend. Enable another backend first.');
+      setProviders(latest);
+      return;
+    }
     setProviders(await call<ProviderRow[]>('providers:remove', n));
   }
   function rpcIdFromNetwork(network: string): string {
     return network.trim().toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') || 'evm-rpc';
   }
+  async function freshRpcs(): Promise<EvmRpcRow[]> {
+    return call<EvmRpcRow[]>('evmRpc:list').catch(() => []);
+  }
+  function findRpcRow(list: EvmRpcRow[], id: string): EvmRpcRow | undefined {
+    return list.find((x) => x.id === id);
+  }
+  async function ensureRpcFresh(id: string, label: string): Promise<{ current: EvmRpcRow; list: EvmRpcRow[] } | null> {
+    const rendered = findRpcRow(evmRpcs, id);
+    const list = await freshRpcs();
+    const current = findRpcRow(list, id);
+    if (!current) {
+      setEvmRpcs(list);
+      setRpcMsg(`${label} blocked: RPC row disappeared. Refreshed.`);
+      return null;
+    }
+    if (rendered && rpcStamp(current) !== rpcStamp(rendered)) {
+      setEvmRpcs(list);
+      setRpcMsg(`${label} blocked: RPC row changed since this page rendered. Refreshed.`);
+      return null;
+    }
+    return { current, list };
+  }
   async function saveRpc() {
     const network = rpcNetwork.trim();
     const httpsUrl = rpcUrl.trim();
     if (!network || !httpsUrl) { setRpcMsg('network and HTTPS URL are required'); return; }
+    const id = rpcEditing ?? rpcIdFromNetwork(network);
     setRpcBusy('save'); setRpcMsg('');
     try {
+      const latest = await freshRpcs();
+      const existing = findRpcRow(latest, id);
+      const rendered = findRpcRow(evmRpcs, id);
+      if (rpcEditing) {
+        if (!existing) {
+          setEvmRpcs(latest);
+          setRpcMsg('save blocked: RPC row disappeared. Refreshed.');
+          return;
+        }
+        if (rendered && rpcStamp(existing) !== rpcStamp(rendered)) {
+          setEvmRpcs(latest);
+          setRpcMsg('save blocked: RPC row changed since this page rendered. Refreshed.');
+          return;
+        }
+      } else if (existing) {
+        if (!window.confirm(`Replace EVM RPC endpoint "${existing.network}"?\n\nBefore: ${existing.httpsUrl}\nAfter:  ${httpsUrl}`)) {
+          setEvmRpcs(latest);
+          return;
+        }
+        const afterConfirm = await freshRpcs();
+        const still = findRpcRow(afterConfirm, id);
+        if (!still || rpcStamp(still) !== rpcStamp(existing)) {
+          setEvmRpcs(afterConfirm);
+          setRpcMsg('replace blocked: RPC row changed during confirmation. Refreshed.');
+          return;
+        }
+      }
       setEvmRpcs(await call<EvmRpcRow[]>('evmRpc:save', {
-        id: rpcEditing ?? rpcIdFromNetwork(network),
+        id,
         network,
         httpsUrl,
         apiKey: rpcApiKey.trim() || undefined,
@@ -231,9 +391,18 @@ export function Settings({ store }: { store: FleetStore }) {
     setRpcMsg('enter a new key only if you want to replace the linked key');
   }
   async function removeRpc(id: string) {
-    if (!window.confirm('Remove this EVM RPC endpoint?')) return;
     setRpcBusy(id);
     try {
+      const fresh = await ensureRpcFresh(id, 'remove');
+      if (!fresh) return;
+      if (!window.confirm(`Remove EVM RPC endpoint "${fresh.current.network}"?\n\n${fresh.current.httpsUrl}`)) return;
+      const latest = await freshRpcs();
+      const still = findRpcRow(latest, id);
+      if (!still || rpcStamp(still) !== rpcStamp(fresh.current)) {
+        setEvmRpcs(latest);
+        setRpcMsg('remove blocked: RPC row changed during confirmation. Refreshed.');
+        return;
+      }
       setEvmRpcs(await call<EvmRpcRow[]>('evmRpc:remove', id));
       if (rpcEditing === id) setRpcEditing(null);
     } finally {
@@ -243,6 +412,8 @@ export function Settings({ store }: { store: FleetStore }) {
   async function probeRpc(id: string) {
     setRpcBusy(id);
     try {
+      const fresh = await ensureRpcFresh(id, 'check');
+      if (!fresh) return;
       const r = await call<{ rpcs: EvmRpcRow[]; outcome: EvmRpcRequest }>('evmRpc:probe', id);
       setEvmRpcs(r.rpcs);
     } finally {
@@ -301,8 +472,15 @@ export function Settings({ store }: { store: FleetStore }) {
   async function addDiscovered(s: Discovered) {
     setBusy(true);
     try {
-      const providerName = uniqueProviderName(s.id, new Set(providers.map((p) => p.name)));
-      await call('providers:add', discoveredToProfile(s, providerName));
+      const latest = await freshProviders();
+      if (latest.some((p) => normUrl(p.baseUrl) === normUrl(s.baseUrl))) {
+        setProviders(latest);
+        await runDiscover();
+        window.alert(`${s.name} is already configured as an inference backend. Refreshed the discovered server list.`);
+        return;
+      }
+      const providerName = uniqueProviderName(s.id, new Set(latest.map((p) => p.name)));
+      await addProviderProfile(discoveredToProfile(s, providerName));
       await reload();
       await runDiscover(); // refresh the alreadyAdded flags
     } finally {
@@ -310,11 +488,30 @@ export function Settings({ store }: { store: FleetStore }) {
     }
   }
   async function addAllDiscovered() {
-    const list = (discovered ?? []).filter((s) => !isAdded(s) && s.status === 'live');
     setBusy(true);
     try {
-      const taken = new Set(providers.map((p) => p.name));
-      for (const s of list) {
+      const latest = await freshProviders();
+      const latestByUrl = new Set(latest.map((p) => normUrl(p.baseUrl)));
+      const freshDiscovered = await call<Discovered[]>('providers:discover').catch(() => discovered ?? []);
+      setDiscovered(freshDiscovered);
+      const list = freshDiscovered.filter((s) => s.status === 'live' && !latestByUrl.has(normUrl(s.baseUrl)));
+      if (!list.length) {
+        setProviders(latest);
+        window.alert('No new live local servers to add. Refreshed the discovered server list.');
+        return;
+      }
+      if (!window.confirm(`Add ${list.length} live local inference backend${list.length === 1 ? '' : 's'}?\n\n${list.map((s) => `${s.name} · ${s.baseUrl}`).join('\n')}`)) return;
+      const afterConfirm = await freshProviders();
+      const afterByUrl = new Set(afterConfirm.map((p) => normUrl(p.baseUrl)));
+      const stillNew = list.filter((s) => !afterByUrl.has(normUrl(s.baseUrl)));
+      if (stillNew.length !== list.length) {
+        setProviders(afterConfirm);
+        await runDiscover();
+        window.alert('Discovered backends changed during confirmation. Refreshed; review the list and try again.');
+        return;
+      }
+      const taken = new Set(afterConfirm.map((p) => p.name));
+      for (const s of stillNew) {
         const providerName = uniqueProviderName(s.id, taken);
         taken.add(providerName);
         await call('providers:add', discoveredToProfile(s, providerName));
@@ -359,6 +556,14 @@ export function Settings({ store }: { store: FleetStore }) {
     if (!Number.isFinite(n) || n < 1 || n > 16) { setConcMsg('enter a number 1–16'); return; }
     setConcBusy(true); setConcMsg('');
     try {
+      const current = await call<{ concurrency: number; active: number; queued: number }>('manager:localConcurrency').catch(() => null);
+      if (!current) { setConcMsg('failed: manager unreachable'); return; }
+      if (localConc && current.concurrency !== localConc.concurrency) {
+        setLocalConc(current);
+        setConcInput(String(current.concurrency));
+        setConcMsg('blocked: concurrency changed since this page rendered; refreshed');
+        return;
+      }
       const r = await call<{ concurrency: number }>('manager:setLocalConcurrency', n);
       setConcMsg(`now ${r.concurrency} concurrent ✓`);
       await loadConc();
@@ -382,6 +587,16 @@ export function Settings({ store }: { store: FleetStore }) {
     setImgBusy(true); setImgMsg('');
     try {
       const url = imgUrl.trim();
+      const current = await call<ImgServer | null>('image:getServer').catch(() => null);
+      if (imageServerStamp(current) !== imageServerStamp(imgServer)) {
+        setImgServer(current);
+        if (current) { setImgUrl(current.url); setImgType(current.type); }
+        else setImgUrl('');
+        setImgMsg('save blocked: image server changed since this page rendered; refreshed');
+        return;
+      }
+      if (!url && imgServer && !window.confirm('Clear the local image generator?\n\nImage creation will fall back to the cloud provider when available.')) return;
+      if (url && imgServer && imageServerStamp({ url, type: imgType }) !== imageServerStamp(imgServer) && !window.confirm(`Replace local image generator?\n\nBefore: ${imgServer.type} · ${imgServer.url}\nAfter:  ${imgType} · ${url}`)) return;
       const saved = await call<ImgServer | null>('image:setServer', url ? { url, type: imgType } : null);
       setImgServer(saved);
       setImgMsg(url ? 'saved ✓ — image creation will use this server first (cloud is the fallback)' : 'cleared — image creation uses the cloud provider');
@@ -405,10 +620,14 @@ export function Settings({ store }: { store: FleetStore }) {
   }
   async function ensureOllamaBackend(models?: { name: string }[]) {
     const base = 'http://127.0.0.1:11434';
-    if (providers.some((p) => p.kind === 'ollama' || normUrl(p.baseUrl) === normUrl(base))) return;
+    const latest = await freshProviders();
+    if (latest.some((p) => p.kind === 'ollama' || normUrl(p.baseUrl) === normUrl(base))) {
+      setProviders(latest);
+      return;
+    }
     const rows = models ?? ollamaModels;
     const profile: ProviderProfile = {
-      name: uniqueProviderName('ollama', new Set(providers.map((p) => p.name))),
+      name: uniqueProviderName('ollama', new Set(latest.map((p) => p.name))),
       kind: 'ollama',
       baseUrl: base,
       enabled: true,
