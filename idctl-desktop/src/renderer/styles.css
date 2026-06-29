@@ -599,6 +599,7 @@ select:focus, input:focus { border-color: var(--accent); }
 
 /* ── Computer Use ─────────────────────────────────────────────────────── */
 .cu-intro { margin: 2px 2px 12px; line-height: 1.5; }
+.cu-empty-arm { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin: -4px 2px 12px; padding: 8px 10px; border: 1px solid var(--warn); border-radius: 6px; background: color-mix(in srgb, var(--warn) 8%, transparent); }
 .cu-armpill { font-size: 12px; font-weight: 600; padding: 3px 9px; border-radius: 999px; border: 1px solid var(--border); color: var(--muted); }
 .cu-armpill.on { color: #fff; background: #1f7a33; border-color: #2a9d45; }
 .cu-cols { display: grid; grid-template-columns: 1fr 340px; gap: 14px; align-items: start; }

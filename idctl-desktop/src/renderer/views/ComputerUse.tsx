@@ -119,6 +119,7 @@ export function ComputerUse({ store }: { store: FleetStore }) {
   const [pending, setPending] = useState<PendingAction[]>([]);
   const [legacyAuthority, setLegacyAuthority] = useState<LegacyComputerUseAuthority[]>([]);
   const [panicFlash, setPanicFlash] = useState(false);
+  const [allowEmptyArm, setAllowEmptyArm] = useState(false);
   const lastFrameAt = useRef(0);
   const resolvedRef = useRef<Set<string>>(new Set()); // approval ids the user already answered → never resurrect via a stale snapshot
 
@@ -146,6 +147,7 @@ export function ComputerUse({ store }: { store: FleetStore }) {
   const describeAttached = (list: AttachedAgent[]) => list.length
     ? list.map((a) => `${a.team ?? activeTeam}/${a.name}`).join(', ')
     : 'no blessed agents';
+  const emptyArmNeedsReview = !armed && srGranted && attached.length === 0;
   const isTeamAuthority = (authority: string, team: string) => authority.startsWith(`${team}:`);
 
   async function refresh() {
@@ -261,6 +263,9 @@ export function ComputerUse({ store }: { store: FleetStore }) {
     document.addEventListener('visibilitychange', onVis);
     return () => document.removeEventListener('visibilitychange', onVis);
   }, []);
+  useEffect(() => {
+    if (armed || attached.length) setAllowEmptyArm(false);
+  }, [armed, attached.length]);
 
   async function arm() {
     setBusy(true);
@@ -276,6 +281,11 @@ export function ComputerUse({ store }: { store: FleetStore }) {
         setStatus(currentStatus);
         applyPending(currentStatus.pending ?? []);
         setMsg('Computer Use is already armed. Refreshed the current broker state.');
+        return;
+      }
+      if (!(at ?? []).length && !allowEmptyArm) {
+        setAttached(at ?? []);
+        setMsg('Review empty Computer Use arm first. No agent can drive until one is blessed and Computer Use is armed again.');
         return;
       }
       const beforeStamp = attachedStamp(at ?? []);
@@ -299,6 +309,7 @@ export function ComputerUse({ store }: { store: FleetStore }) {
         return;
       }
       await call('cu:arm', (latestAttached ?? []).map((a) => authorityOf(a, activeTeam)));
+      setAllowEmptyArm(false);
       await refresh();
     } finally { setBusy(false); }
   }
@@ -453,7 +464,12 @@ export function ComputerUse({ store }: { store: FleetStore }) {
           <span className={`cu-armpill ${armed ? 'on' : ''}`}>{armed ? (status?.paused ? '❚❚ paused' : '● ARMED') : '○ disarmed'}</span>
           {armed
             ? <button className="btn icon-danger" onClick={() => void disarm()}>Disarm</button>
-            : <button className="btn primary" disabled={busy || !srGranted} title={srGranted ? '' : 'Grant Screen Recording first'} onClick={() => void arm()}>Arm</button>}
+            : <button
+                className="btn primary"
+                disabled={busy || !srGranted || (emptyArmNeedsReview && !allowEmptyArm)}
+                title={!srGranted ? 'Grant Screen Recording first' : emptyArmNeedsReview && !allowEmptyArm ? 'Review empty arm first' : ''}
+                onClick={() => void arm()}
+              >Arm</button>}
         </div>
       </header>
 
@@ -479,6 +495,15 @@ export function ComputerUse({ store }: { store: FleetStore }) {
         Nothing happens unless you <b>Arm</b> it; only agents you bless can act; and while it's driving, <b>move your
         own mouse or hit Disarm to take back control</b>. Every action is logged below.
       </div>
+      {emptyArmNeedsReview ? (
+        <div className="cu-empty-arm">
+          <label className="small" style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+            <input type="checkbox" checked={allowEmptyArm} onChange={(e) => setAllowEmptyArm(e.target.checked)} />
+            Start live view with no blessed agents
+          </label>
+          <span className="muted small">Permission testing only; agents cannot drive.</span>
+        </div>
+      ) : null}
 
       <div className="cols cu-cols">
         {/* LEFT: the live pane */}

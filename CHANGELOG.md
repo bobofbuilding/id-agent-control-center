@@ -8,6 +8,9 @@ Every change pushed or merged to `main` carries its version number in the commit
 subject (`vX.Y.Z: …`), stamped automatically by the `commit-msg` hook — see
 [CONTRIBUTING.md](CONTRIBUTING.md).
 
+## [0.1.258] — 2026-06-29
+- Computer Use: require empty-arm review
+
 ## [0.1.257] — 2026-06-29
 - Settings: require provider replacement arm
 
