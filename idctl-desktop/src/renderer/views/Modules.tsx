@@ -500,6 +500,18 @@ function skillCatalogStamp(skills: LibrarySkillEntry[], autoTags: Record<string,
     }))
     .sort((a, b) => a.name.localeCompare(b.name)));
 }
+function brainSkillSummaryStamp(report: BrainSkillSummary): string {
+  return JSON.stringify({
+    total: report?.summary?.totalSkills ?? null,
+    generatedAt: report?.meta?.generatedAt ?? '',
+    route: report?.meta?.route ?? '',
+    profile: report?.meta?.profile ?? report?.profile ?? '',
+    domains: report?.facets?.domains?.length ?? null,
+    tags: report?.facets?.tags?.length ?? null,
+    reuseGroups: report?.reuseGroups?.length ?? null,
+    gaps: brainSkillContractGaps(report).sort(),
+  });
+}
 function mcpKey(a: { metadata?: unknown }): string {
   const servers = (((a.metadata as any)?.mcpServers ?? []) as McpServerSpec[])
     .map((s) => JSON.stringify({ name: s.name, transport: s.transport, command: s.command, args: s.args ?? [], url: s.url ?? '', env: s.env ?? {}, headers: s.headers ?? {} }))
@@ -719,6 +731,7 @@ export function Modules({ store }: { store: FleetStore }) {
         return;
       }
       const brainCount = latestBrain?.summary?.totalSkills;
+      const brainPreviewStamp = brainSkillSummaryStamp(latestBrain);
       const preview = [
         'Sync local skill catalog to Brain?',
         '',
@@ -730,16 +743,22 @@ export function Modules({ store }: { store: FleetStore }) {
         'It does not delete Brain-only skill nodes or install/uninstall skills on agents.',
       ].join('\n');
       if (!window.confirm(preview)) return;
-      setNote('rechecking skill catalog before Brain write…');
-      const [afterSkills, afterTags] = await Promise.all([
+      setNote('rechecking skill catalog and Brain index before Brain write…');
+      const [afterSkills, afterTags, afterBrain] = await Promise.all([
         call<LibrarySkillEntry[]>('librarySkills').catch(() => latestSkills),
         call<Record<string, string[]>>('skills:autoTags').catch(() => latestTags),
+        call<BrainSkillSummary>('skills:brainSummary').catch(() => latestBrain),
       ]);
       if (skillCatalogStamp(afterSkills, afterTags) !== latestStamp) {
         setSkills(afterSkills);
         setAutoTags(afterTags);
         setBrainDrift({ kind: 'retagged', skill: 'skill catalog', at: Date.now() });
         setNote('Brain sync blocked: skill catalog changed after preview. Review the refreshed catalog and sync again.');
+        return;
+      }
+      if (brainSkillSummaryStamp(afterBrain) !== brainPreviewStamp) {
+        setBrainSkills(afterBrain);
+        setNote('Brain sync blocked: Brain skill index changed after preview. Review the refreshed Brain catalog status, then sync again.');
         return;
       }
       setNote('syncing skill catalog to Brain…');
