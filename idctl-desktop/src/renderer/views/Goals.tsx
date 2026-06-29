@@ -146,6 +146,8 @@ export function Goals({ store }: { store: FleetStore }) {
    *  concurrent refine can't clobber a freshly-saved field. */
   async function patchGoal(p: Partial<Goal>) {
     if (!detail) return;
+    if (p.status && p.status !== detail.status && !window.confirm(`Change goal "${detail.title}" status to ${p.status}?\n\nThis writes the saved goal lifecycle state.`)) return;
+    if (p.autopilot === true && !detail.autopilot && !window.confirm(`Enable Autopilot for "${detail.title}"?\n\nWhen the master driver is on, this goal can spawn or sync work on its cadence.`)) return;
     const cur = (await call<Goal | null>('goals:get', detail.id).catch(() => null)) ?? detail;
     const next = { ...cur, ...p, updatedAt: Date.now() };
     setDetail(next);
@@ -153,6 +155,7 @@ export function Goals({ store }: { store: FleetStore }) {
     if (aliveRef.current) await reload();
   }
   async function patchDriver(p: Partial<GoalDriverConfig>) {
+    if (p.enabled === true && !driverCfg.enabled && !window.confirm('Enable the goal Autopilot master?\n\nActive goals with Autopilot on can spawn tasks or sync team instructions on the configured cadence.')) return;
     setDriverBusy(true);
     try {
       const next = await call<GoalDriverConfig>('goalDriver:setConfig', { ...driverCfg, ...p });
@@ -166,6 +169,7 @@ export function Goals({ store }: { store: FleetStore }) {
     }
   }
   async function runDriverNow() {
+    if (!window.confirm('Run the goal driver now?\n\nThis can spawn task work and sync team instructions for active Autopilot goals.')) return;
     setDriverBusy(true);
     setMsg('running goal driver...');
     try {

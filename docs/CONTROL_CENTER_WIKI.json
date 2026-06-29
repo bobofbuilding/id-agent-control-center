@@ -2598,17 +2598,17 @@
         "idctl-desktop/src/renderer/views/Settings.tsx"
       ],
       "purpose": "Current audit record for controls that can rewrite live agent, task, project, capability, identity, or provider state and therefore need review, confirmation, or stronger state synchronization.",
-      "scope": "Documentation and implementation record for the current modified build. It records the first full dashboard-page audit, the conservative guardrails now implemented in code, and the policy decisions still needed before more disruptive UX simplification.",
+      "scope": "Documentation and implementation record for the current modified build. It records the first full dashboard-page audit, two conservative guardrail implementation passes, and the policy decisions still needed before more disruptive UX simplification.",
       "tabs": [
         {
           "id": "dashboard",
           "label": "Dashboard",
-          "description": "Primary-lead selection, org sync, project sync, and command-palette dispatch can mutate hierarchy, goals, projects, or live agent routing from the home surface."
+          "description": "Primary-lead selection, org sync, project sync, and command-palette sync actions now require confirmation; the primary-lead selector is keyed by team/name to avoid same-name ambiguity."
         },
         {
           "id": "work",
           "label": "Work",
-          "description": "Task lane drag/drop, reconcile/redispatch, plan work, goal autopilot, schedules, loops, and dream scheduling can change task ownership, plan state, or recurring manager behavior."
+          "description": "Task lane drag/drop, owner reassignment, reconcile/redispatch, plan work, goal autopilot, schedules, loops, and dream scheduling now confirm before writing task status, ownership, live plan state, agent dispatch, or recurring manager behavior."
         },
         {
           "id": "projects",
@@ -2618,17 +2618,17 @@
         {
           "id": "health",
           "label": "Health",
-          "description": "Runtime/model/effort/speed selectors, reset session, rebuild, make lead, team probes, and Headroom pilot settings affect active agents and routing policy."
+          "description": "Runtime/model/effort/speed selectors, reset session, stop, rebuild, and make lead now confirm before changing active agent runtime, context, process state, or team routing."
         },
         {
           "id": "identity",
           "label": "Identity & Keys",
-          "description": "Controller proof gates privileged actions, but selected account/proof state is still keyed by agent name and can collide across teams."
+          "description": "Controller proof gates privileged actions; renderer selection and proof state are now team/name keyed, while backend account listing and Computer Use broker authority still need a full team/id storage pass."
         },
         {
           "id": "hr-manager",
           "label": "HR Manager",
-          "description": "Coordinator changes, primary lead promotion, relay overrides, instruction saves with rebuild, team builder auto-wiring, and org sync can reshape fleet behavior."
+          "description": "Coordinator changes, primary lead promotion, relay overrides, instruction saves with rebuild, Team Builder auto-wiring, selected-agent rebuild, org auto-sync, and org sync now require confirmation before reshaping fleet behavior."
         },
         {
           "id": "capabilities",
@@ -2687,12 +2687,19 @@
           "Computer Use: disabling supervised per-action approval now requires confirmation.",
           "Settings: provider default changes, disabling enabled providers, and provider removal now require confirmation."
         ],
+        "implementedSecondPass": [
+          "Dashboard: drawer and command-palette project/org sync actions now confirm; primary lead selection routes by team/name and confirms before org sync.",
+          "Work: task lane status writes, owner reassignment, reconcile, redispatch, plan work/status changes, goal autopilot, schedules, loops, and dreams now confirm before live writes or dispatch.",
+          "Health: team lead, model/runtime/effort/speed, reset session, stop, and rebuild actions now confirm, with explicit active-agent warnings.",
+          "Identity & Keys: selected agent and controller proof state are team/name keyed in the renderer; wallet/account/session issue/deploy/revoke actions now confirm in addition to existing controller proof gates.",
+          "HR Manager: coordinator/primary changes, relay policy writes, per-agent relay overrides, instruction save+rebuild, selected-agent rebuild, Team Builder post-build wiring, org auto-sync toggles, and org sync now confirm."
+        ],
         "recommendedFirstPass": [
-          "Dashboard: observe/chat/refresh only; confirm or move primary-lead and org-sync actions.",
+          "Dashboard: decide whether to remove high-impact mutations from Dashboard entirely or keep them as confirmed shortcuts.",
           "Projects: add a richer review sheet that shows diff, branch, remote, and push target before commit/push.",
-          "Identity and Computer Use: use team/id scoped authority instead of agent-name-only keys.",
-          "HR Manager: preview/confirm coordinator, primary lead, relay, instruction+rebuild, and org-sync changes.",
-          "Health: stage runtime/model/effort/speed changes and confirm reset/rebuild for active agents.",
+          "Identity and Computer Use: complete backend team/id scoped authority for account lists, session grants, broker tokens, and blessed-agent state.",
+          "HR Manager: upgrade confirmations into dry-run previews with affected agent counts, rebuild counts, and hierarchy diffs.",
+          "Health: optionally stage runtime/model/effort/speed changes behind an Apply button instead of keeping confirmed dropdown writes.",
           "Settings: detect and block disabling or removing the last usable backend."
         ],
         "releaseState": "This wiki page documents the current modified guardrail pass and should ship with the next IDACC release after typecheck and wiki validation pass."
@@ -2701,9 +2708,10 @@
         "Existing protections already found: delete task, delete project, combine duplicate projects, sign out, RPC removal, model removal, stack install/uninstall, team stop/rebuild, empty-team delete, Identity privileged actions, and Computer Use broker actions have confirmations or gates.",
         "Most dangerous stale-write class found: UI computes a replacement state from a snapshot and sends a wholesale write, especially MCP server lists and git/project automation.",
         "Most dangerous background automation found: project auto-commit can commit and push after task completion without another user click; the modified build makes enabling that behavior explicit per project.",
+        "Second guardrail pass favors confirmation prompts over moving controls; the open UX decision is whether to replace confirmed shortcuts with preview-and-apply flows.",
         "Most important simplification: separate status/observation pages from mutation/control surfaces wherever possible."
       ],
-      "body": "# Sync & Guardrails Audit\n\nThis page records the first full pass over the dashboard pages in order: Dashboard, Work, Projects, Health, Identity & Keys, HR Manager, Capabilities, Computer Use, and Settings. It now documents both the audit findings and the conservative guardrails added in the current modified build.\n\n## Current build state\n\nThe dashboard family is sync-bus aware: dashboard, work, projects, health, brain-backed plans/goals/loops/schedules/dreams, agent capability changes, and org sync emit coarse domain invalidations so mounted pages refresh together after relevant mutations. The next guardrail layer reduces stale writes and surprise mutations without removing the existing workflows.\n\n## Implemented guardrails\n\n- Projects no longer silently sync the workspace on first open. Commit/push, git pull, and enabling auto-commit now require explicit confirmation.\n- Capabilities now defaults scope to the active team. Multi-agent or cross-team applies require confirmation, MCP attach/detach refetches current agent metadata before writing a replacement server list, and MCP registry removal confirms.\n- Computer Use now confirms before supervised per-action approval is disabled.\n- Settings now confirms provider default changes, disabling enabled providers, and provider removal.\n\n## Remaining hard guardrail candidates\n\n- Dashboard primary-lead changes and org sync should move to HR Manager or show affected agents before applying.\n- HR Manager coordinator changes, relay changes, instruction saves with rebuild, and org sync need preview/confirm flows.\n- Health runtime/model/effort/speed changes should be staged or confirmed for active agents; reset session and active rebuild need stronger destructive handling.\n- Identity and Computer Use should key authority by team/id, not just agent name.\n- Projects should grow a richer commit review sheet that shows diff, branch, remote, and push target.\n\n## UX simplification target\n\nDashboard should stay mostly observe, talk, and refresh. Work should stage or preview bulk redistribution and recurring behavior. Projects should separate tracker edits from repository-changing operations. HR Manager should own hierarchy and org-sync controls. Capabilities should make bulk scope obvious before applying tools across teams.\n\n## Open operator decisions\n\n- Should high-impact Dashboard actions be removed from Dashboard entirely, or stay there with confirmation?\n- Should Projects keep auto-commit as a feature if it is explicit, reviewed, and per-project, or should it be removed from the UI?\n- Should runtime/model changes in Health be staged until an Apply button, or remain dropdown-driven with confirmation only for active agents?\n- Should org sync provide a dry-run preview, or is a confirmation with affected-counts enough for the next pass?"
+      "body": "# Sync & Guardrails Audit\n\nThis page records the full pass over the dashboard pages in order: Dashboard, Work, Projects, Health, Identity & Keys, HR Manager, Capabilities, Computer Use, and Settings. It now documents the audit findings plus two conservative guardrail implementation passes.\n\n## Current build state\n\nThe dashboard family is sync-bus aware: dashboard, work, projects, health, brain-backed plans/goals/loops/schedules/dreams, agent capability changes, and org sync emit coarse domain invalidations so mounted pages refresh together after relevant mutations. The guardrail layer now reduces stale writes and surprise mutations without removing the existing workflows.\n\n## Implemented guardrails\n\n- Dashboard project sync, org sync, command-palette sync, and primary-lead changes now require confirmation; primary-lead selection is team/name keyed.\n- Work now confirms task status writes, owner reassignment, reconcile, redispatch, plan work/status writes, goal autopilot, recurring schedules, loops, and dreams.\n- Projects no longer silently syncs the workspace on first open. Commit/push, git pull, and enabling auto-commit require explicit confirmation.\n- Health now confirms team lead, model/runtime/effort/speed changes, reset session, stop, and rebuild, with active-agent warnings.\n- Identity & Keys now keys renderer selection/proofs by team/name and confirms wallet/account/session actions on top of controller proof gates.\n- HR Manager now confirms coordinator/primary changes, relay writes, instruction save+rebuild, selected-agent rebuild, Team Builder post-build wiring, org auto-sync toggles, and org sync.\n- Capabilities defaults scope to the active team, confirms multi-agent or cross-team applies, refetches current agent metadata before MCP full-list writes, and confirms MCP registry removal.\n- Computer Use confirms before supervised per-action approval is disabled.\n- Settings confirms provider default changes, disabling enabled providers, and provider removal.\n\n## Remaining hard guardrail candidates\n\n- Dashboard still contains confirmed high-impact shortcuts; decide whether those should move fully to HR Manager/Projects.\n- HR Manager org sync and hierarchy changes should become dry-run previews with affected counts, hierarchy diffs, and rebuild lists.\n- Health runtime/model changes could become staged Apply flows instead of confirmed dropdown writes.\n- Identity backend account/session storage and Computer Use broker authority still need full team/id scoping, beyond the renderer proof-state fix.\n- Projects should grow a richer commit review sheet that shows diff, branch, remote, and push target.\n- Settings should block disabling or removing the last usable inference backend.\n\n## UX simplification target\n\nDashboard should stay mostly observe, talk, and refresh. Work should stage or preview bulk redistribution and recurring behavior. Projects should separate tracker edits from repository-changing operations. HR Manager should own hierarchy and org-sync controls. Capabilities should make bulk scope obvious before applying tools across teams.\n\n## Open operator decisions\n\n- Should high-impact Dashboard actions be removed from Dashboard entirely, or stay there as confirmed shortcuts?\n- Should Projects keep auto-commit as a feature if it is explicit, reviewed, and per-project, or should it be removed from the UI?\n- Should runtime/model changes in Health be staged until an Apply button, or remain dropdown-driven with confirmation?\n- Should org sync provide a dry-run preview, or is a confirmation with affected-counts enough for the next pass?"
     },
     {
       "id": "wiki",
@@ -2766,5 +2774,5 @@
       "body": "# Wiki\n\nWiki is both the human documentation page and the editable schematic for the Control Center UI. Each article explains the operator purpose of a page; the structured sections below preserve tabs, tiles, fields, controls, displays, routes, and source files for implementation detail.\n\n## Use it for\n\n- Search pages, controls, routes, source files, and notes from inside the desktop app.\n- Confirm how a UI surface is intended to behave before editing code or filing follow-up work.\n- Keep app navigation metadata and human documentation in one reviewed JSON artifact.\n\n## Editing rule\n\nThe desktop app hot-reload polls CONTROL_CENTER_WIKI.json through the main-process wiki bridge. Sidebar labels, icons, order, and visibility still come from pages[].nav for implemented routes, so documentation edits must preserve that metadata and keep every page.body non-empty."
     }
   ],
-  "appVersion": "0.1.217"
+  "appVersion": "0.1.218"
 }

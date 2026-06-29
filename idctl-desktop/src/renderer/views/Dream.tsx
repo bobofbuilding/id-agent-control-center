@@ -72,6 +72,7 @@ export function Dream({ store }: { store: FleetStore }) {
 
   async function dreamNow() {
     if (!agent) { setMsg('no agent available to dream'); return; }
+    if (!window.confirm(`Run dream now with ${agent}?\n\nThis sends a live reflection request over recent work and the shared brain, then saves the report.`)) return;
     setDreaming(true); setMsg(`${agent} is dreaming… (reflecting over recent work + the brain)`);
     try {
       const content = okText(await call<string>('dispatch', `/ask ${agent} ${qArg(DREAM_PROMPT(focus))}`));
@@ -112,6 +113,7 @@ export function Dream({ store }: { store: FleetStore }) {
 
   async function scheduleNightly() {
     if (!agent) return;
+    if (!window.confirm(`Schedule nightly dream for ${agent}?\n\nThis creates a recurring manager check-in at 03:00 every day.`)) return;
     setBusy(true); setMsg(`scheduling nightly dream for ${agent}…`);
     try {
       await call('addCalendarCheckin', agent, '03:00', 'mon,tue,wed,thu,fri,sat,sun', NIGHTLY_OBJECTIVE, { delivery: 'talk' });
@@ -121,6 +123,7 @@ export function Dream({ store }: { store: FleetStore }) {
   }
 
   async function remove(id: string) {
+    if (!window.confirm('Delete this dream report?\n\nThis removes the saved report from the local dream log.')) return;
     setBusy(true);
     try { await call('dreams:remove', id); if (openId === id) { setOpenId(null); setDetail(null); } await reload(); }
     finally { setBusy(false); }

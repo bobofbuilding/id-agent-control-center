@@ -125,6 +125,7 @@ function LoopBuilder({ store, onScheduled }: { store: FleetStore; onScheduled?: 
   async function run() {
     const valid = steps.map(fix).filter((s) => s.task);
     if (!valid.length) { setMsg('nothing to run — add steps first'); return; }
+    if (!window.confirm(`Run this ${valid.length}-step chain now?\n\nThis sends live /ask requests in sequence and saves the run results.`)) return;
     setRunning(true); setMsg('running the chain…');
     setResults(valid.map((_, i) => ({ idx: i, status: i === 0 ? 'running' : 'skipped' })));
     const out: LoopStepResult[] = [];
@@ -159,7 +160,10 @@ function LoopBuilder({ store, onScheduled }: { store: FleetStore; onScheduled?: 
     setResults((l.lastResults || []).map((r, i) => ({ idx: i, status: r.status === 'ok' ? 'ok' : r.status === 'failed' ? 'failed' : 'skipped', output: r.output, error: r.error })));
     setMsg('');
   }
-  async function removeSaved(id: string) { setBusy(true); try { await call('loops:remove', id); if (editingId === id) newChain(); await reload(); } finally { setBusy(false); } }
+  async function removeSaved(id: string) {
+    if (!window.confirm('Delete this saved loop chain?\n\nThis removes the reusable chain definition, but does not remove any scheduled manager check-ins created from it.')) return;
+    setBusy(true); try { await call('loops:remove', id); if (editingId === id) newChain(); await reload(); } finally { setBusy(false); }
+  }
 
   /** Compose the chain into one objective the manager can fire on a cadence. A single step is
    *  its own objective; a multi-step chain becomes an ordered checklist the lead runs/delegates. */
@@ -181,6 +185,7 @@ function LoopBuilder({ store, onScheduled }: { store: FleetStore; onScheduled?: 
     if (!/^(mon|tue|wed|thu|fri|sat|sun)(,(mon|tue|wed|thu|fri|sat|sun))*$/.test(d)) { setMsg('pick a cadence'); return; }
     if (!/^([01]\d|2[0-3]):[0-5]\d$/.test(time.trim())) { setMsg('time must be HH:MM (24h), e.g. 09:00'); return; }
     const target = valid[0].agent;
+    if (!window.confirm(`Schedule this loop for ${target} on ${d} at ${time.trim()}?\n\nThis creates a recurring manager check-in that continues until paused or removed.`)) return;
     setBusy(true); setMsg(`scheduling loop for ${target}…`);
     try {
       // Persist the loop first so the steps + schedule are saved, then create the manager check-in.
@@ -307,11 +312,16 @@ export function Loops({ store }: { store: FleetStore }) {
     catch (err) { setMsg(`${label} failed: ${err instanceof Error ? err.message : String(err)}`); }
     finally { setBusy(false); }
   }
+  async function guardedAct(label: string, detail: string, fn: () => Promise<unknown>) {
+    if (!window.confirm(`${label}?\n\n${detail}`)) return;
+    await act(label, fn);
+  }
 
   /** Fire the loop's objective once, right now (doesn't change the schedule). */
   async function runNow(s: ScheduleEntry) {
     const targets = Array.isArray(s.targets) ? s.targets : [];
     if (!targets.length) return;
+    if (!window.confirm(`Run scheduled objective now for ${targets.join(', ')}?\n\nThis sends the loop objective immediately without changing the saved schedule.`)) return;
     setRunning(s.id); setMsg(`running ${targets.join(', ')}…`);
     try {
       for (const t of targets) await call('dispatch', `/ask ${t} ${qArg(s.message)}`);
@@ -345,8 +355,8 @@ export function Loops({ store }: { store: FleetStore }) {
                 <td className="muted small">{relTime(s.lastRunAt)}</td>
                 <td className="row-actions">
                   <button className="btn" disabled={busy || running !== null} title="Run the objective once now" onClick={() => void runNow(s)}>{running === s.id ? '…' : 'Run now'}</button>
-                  <button className="btn" disabled={busy || running === s.id} onClick={() => void act(s.active ? 'pause' : 'resume', () => call(s.active ? 'pauseSchedule' : 'resumeSchedule', s.id))}>{s.active ? 'Pause' : 'Resume'}</button>
-                  <button className="btn icon-danger" disabled={busy || running === s.id} title="Delete loop" onClick={() => void act('remove', () => call('removeSchedule', s.id))}>✕</button>
+                  <button className="btn" disabled={busy || running === s.id} onClick={() => void guardedAct(s.active ? 'pause' : 'resume', `${s.active ? 'Pauses' : 'Resumes'} this recurring loop schedule.`, () => call(s.active ? 'pauseSchedule' : 'resumeSchedule', s.id))}>{s.active ? 'Pause' : 'Resume'}</button>
+                  <button className="btn icon-danger" disabled={busy || running === s.id} title="Delete loop" onClick={() => void guardedAct('remove', 'Deletes this recurring loop schedule. The saved chain definition stays unless you delete it above.', () => call('removeSchedule', s.id))}>✕</button>
                 </td>
               </tr>
             ))}

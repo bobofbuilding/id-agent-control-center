@@ -260,6 +260,7 @@ export function Plans({ store }: { store: FleetStore }) {
   // One button → all three phases, single live toast.
   async function runWork(p: BrainPlan) {
     if (busyFile) return;
+    if (!window.confirm(`Work plan "${p.title}" now?\n\nThis audits and may rewrite the plan status, creates blocker questions, and delegates remaining work to agents or teams.`)) return;
     setBusyFile(p.file);
     const t = toast({ kind: 'progress', text: `Working “${p.title}” — auditing status…` });
     try {
@@ -278,6 +279,7 @@ export function Plans({ store }: { store: FleetStore }) {
   }
 
   async function setBrainPending(p: BrainPlan) {
+    if (!window.confirm(`Set "${p.title}" back to PENDING?\n\nThis writes the live brain plan status and can make it eligible for future work loops.`)) return;
     setBusyFile(p.file); setMsg(`marking “${p.title}” pending…`);
     try {
       const res = await call<StatusWrite>('brain:setPlanStatus', p.file, 'PENDING').catch((): StatusWrite => ({ ok: false, error: 'write failed' }));
@@ -288,6 +290,7 @@ export function Plans({ store }: { store: FleetStore }) {
   // Mark a brain plan DONE directly (writes the status back to the plan file + index). Done
   // plans auto-move to the "Archived · Done" group below.
   async function setBrainDone(p: BrainPlan) {
+    if (!window.confirm(`Mark "${p.title}" DONE?\n\nThis writes the live brain plan status and moves it into the done/archive group.`)) return;
     setBusyFile(p.file); setMsg(`marking “${p.title}” done…`);
     try {
       const res = await call<StatusWrite>('brain:setPlanStatus', p.file, 'DONE').catch((): StatusWrite => ({ ok: false, error: 'write failed' }));
@@ -393,6 +396,7 @@ export function Plans({ store }: { store: FleetStore }) {
   // note linking the new plan. This is the draft → "active plan (pending)" handoff.
   async function promoteDraft() {
     if (!detail) return;
+    if (!window.confirm(`Promote "${detail.title}" to a live brain plan?\n\nThis writes a new brain plan at PENDING and marks the draft as promoted.`)) return;
     setBusy(true); setMsg(`promoting “${clip(detail.title, 40)}” to a live plan…`);
     try {
       const res = await call<{ ok: boolean; file?: string; num?: string; committed?: boolean; error?: string }>('brain:createPlan', detail.title, detail.content);

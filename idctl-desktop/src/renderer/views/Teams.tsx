@@ -213,11 +213,12 @@ export function Teams({ store }: { store: FleetStore }) {
   useEffect(() => { void loadInstr(instrTarget, instrTargetTeam); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [instrTarget, instrTargetTeam, store.team]);
   async function saveInstr(team?: string) {
     if (!instrTarget) return;
+    const targetTeam = team ?? instrTargetTeam;
+    if (!window.confirm(`Save instructions and rebuild ${targetTeam}/${instrTarget}?\n\nThis writes the agent's system-prompt addendum and rebuilds the agent so it starts following it.`)) return;
     setInstrBusy(true); setInstrMsg('saving…');
     try {
       // `team` scopes the write to the selected agent's team (Structure panel), so a
       // pending active-team switch can't redirect it; omitted ⇒ the active team.
-      const targetTeam = team ?? instrTargetTeam;
       const r = await call<{ ok: boolean; needsRebuild?: boolean }>('agent:setInstructions', instrTarget, instrText, targetTeam);
       setInstrSaved(instrText);
       setInstrMsg(r.needsRebuild ? `saved ✓ — rebuilding ${instrTarget}…` : 'saved ✓');
@@ -289,6 +290,7 @@ export function Teams({ store }: { store: FleetStore }) {
   }, [selAgentName, selAgentTeam]);
   async function saveSgInstr() {
     if (!selAgentName) return;
+    if (!window.confirm(`Save instructions and rebuild ${selAgentTeam}/${selAgentName}?\n\nThis writes the selected agent's system-prompt addendum and rebuilds it immediately.`)) return;
     setSgBusy(true); setSgMsg('saving…');
     try {
       await call('agent:setInstructions', selAgentName, sgInstr, selAgentTeam);
@@ -359,6 +361,7 @@ export function Teams({ store }: { store: FleetStore }) {
   const relayPayload: string[] | null = mode === 'permissive' ? null : delegates ?? [];
   const relayDirty = relayKey(relayPayload) !== relayKey(savedDelegates);
   async function saveRelay() {
+    if (!window.confirm(`Save relay policy for ${activeTeam}?\n\nThis changes which teams ${activeTeam}'s agents may delegate work to.`)) return;
     setRelayBusy(true);
     setRelayMsg('saving…');
     try {
@@ -391,6 +394,7 @@ export function Teams({ store }: { store: FleetStore }) {
   const [agentEditing, setAgentEditing] = useState<string | null>(null);
   const [agentSel, setAgentSel] = useState<string[]>([]);
   async function applyAgent(id: string, delegates: string[] | null, label: string) {
+    if (!window.confirm(`Apply ${label} override?\n\nThis changes this individual agent's cross-team delegation policy immediately.`)) return;
     setBusy(true);
     setMsg(`${label}…`);
     try {
@@ -457,12 +461,14 @@ export function Teams({ store }: { store: FleetStore }) {
   async function makePrimary() {
     const agent = store.coordinator ?? store.agents.find((a) => /^(lead|manager)$/i.test(a.name))?.name;
     if (!agent) return;
+    if (!window.confirm(`Make ${store.team ?? 'default'}/${agent} the primary cross-team lead?\n\nThis changes fleet hierarchy routing. Run Org sync afterward to push the hierarchy into agent goals and the brain.`)) return;
     await call('coordinator:setPrimary', store.team ?? 'default', agent);
     await loadHier();
   }
   /** Set (or change) a team's coordinator — the lead the rest of the team reports to. */
   async function setTeamCoordinator(team: string, agent: string) {
     if (!agent) return;
+    if (!window.confirm(`Make ${team}/${agent} the team coordinator?\n\nThis changes the lead that the rest of ${team} reports to.`)) return;
     await call('coordinator:set', team, agent).catch(() => {});
     await loadHier();
     store.refresh();
@@ -470,6 +476,7 @@ export function Teams({ store }: { store: FleetStore }) {
   /** Promote a specific team's coordinator to the primary cross-team lead. */
   async function makePrimaryFor(team: string, agent: string) {
     if (!agent) return;
+    if (!window.confirm(`Promote ${team}/${agent} to primary cross-team lead?\n\nThis changes fleet hierarchy routing. Run Org sync afterward to push the hierarchy into agent goals and the brain.`)) return;
     await call('coordinator:setPrimary', team, agent).catch(() => {});
     await loadHier();
   }
@@ -486,10 +493,13 @@ export function Teams({ store }: { store: FleetStore }) {
   }
   useEffect(() => { void loadOrg(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [activeTeam, store.lastUpdated]);
   async function toggleOrg(patch: { enabled?: boolean; autoRebuild?: boolean }) {
+    const label = patch.enabled !== undefined ? `${patch.enabled ? 'Enable' : 'Disable'} org auto-sync` : `${patch.autoRebuild ? 'Enable' : 'Disable'} org auto-rebuild`;
+    if (!window.confirm(`${label}?\n\nOrg sync composes agent goals from the hierarchy and brain; auto-rebuild can restart idle agents after goals change.`)) return;
     const next = await call<{ enabled?: boolean; autoRebuild?: boolean }>('org:setConfig', patch).catch(() => orgCfg);
     setOrgCfg(next);
   }
   async function syncOrgNow() {
+    if (!window.confirm(`Run org sync now?\n\nThis recomposes goals for every agent from the hierarchy and brain${orgCfg.autoRebuild !== false ? ', and may rebuild idle agents' : ''}.`)) return;
     setOrgBusy(true); setOrgResult('syncing…');
     try {
       const r = await call<{ agents: number; written: number; rebuilt: string[]; brain: boolean; skippedBusy: number }>('org:sync', { autoRebuild: orgCfg.autoRebuild !== false });
@@ -574,7 +584,10 @@ export function Teams({ store }: { store: FleetStore }) {
                     {selectedAgent.reassignTargets.map((n) => <option key={n} value={n}>{n}</option>)}
                   </select>
                   <button className="btn small" disabled={busy} title="Edit this agent's team relay (switches to its team — a team-wide setting)" onClick={() => { if (selectedAgent!.team !== store.team) void store.setTeam(selectedAgent!.team); setTab('route'); }}>⇄ Routing</button>
-                  <button className="btn small" disabled={busy} onClick={() => void call('rebuildAgent', selectedAgent!.agent.name, selectedAgent!.team).then(() => setMsg(`rebuilding ${selectedAgent!.agent.name}…`)).catch(() => {})}>Rebuild</button>
+                  <button className="btn small" disabled={busy} onClick={() => {
+                    if (!window.confirm(`Rebuild ${selectedAgent!.team}/${selectedAgent!.agent.name}?\n\nThis restarts the selected agent so config and instruction changes take effect.`)) return;
+                    void call('rebuildAgent', selectedAgent!.agent.name, selectedAgent!.team).then(() => setMsg(`rebuilding ${selectedAgent!.agent.name}…`)).catch(() => {});
+                  }}>Rebuild</button>
                 </span>
               </div>
               <div className="muted small" style={{ margin: '8px 0 4px' }}>goals &amp; instructions — appended to this agent’s system prompt</div>
@@ -1159,6 +1172,11 @@ function TeamBuilder({
       setError(alreadyThere.length ? `All ${alreadyThere.length} agent${alreadyThere.length === 1 ? '' : 's'} already in ${targetTeam} — nothing to add.` : 'Add at least one named agent.');
       return;
     }
+    const postSteps = [
+      coordinate ? 'promote the starred lead to primary coordinator, write the coordination preset, and rebuild that lead' : '',
+      relayMode !== 'permissive' ? `set cross-team relay to ${describeRelay(relayPayload)}` : '',
+    ].filter(Boolean);
+    if (!window.confirm(`Build ${batch.length} agent${batch.length === 1 ? '' : 's'} in ${targetTeam}?\n\nThis onboards and starts new agents${heartbeat ? ', adds heartbeats' : ''}${probeAfter ? ', and probes them' : ''}.${postSteps.length ? `\n\nAfter build it will also ${postSteps.join('; ')}.` : ''}`)) return;
     setBuilding(true); onBusy(true); setError(''); setPost({});
     onMessage(`adding ${batch.length} new agent(s) to ${targetTeam}${alreadyThere.length ? ` (${alreadyThere.length} already there)` : ''}…`);
     // Freeze a plan per agent so a later "retry" re-runs the exact same spec.

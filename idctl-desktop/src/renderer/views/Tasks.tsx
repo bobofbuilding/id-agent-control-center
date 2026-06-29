@@ -325,6 +325,7 @@ function TasksPanel({ store }: { store: FleetStore }) {
   async function moveToLane(t: Task, lane: Lane) {
     if (laneOf(t) === lane) return;
     const targetStatus = LANE_STATUS[lane];
+    if (colOf(t.status) !== targetStatus && !window.confirm(`Move ${ref(t)} to ${lane.replace(/-/g, ' ')}?\n\nThis also writes the manager task status to "${targetStatus}".`)) return;
     setBusy(true); setNote(`move ${ref(t)} → ${lane.replace(/-/g, ' ')}…`);
     try {
       await call('tasks:setLane', ref(t), lane);
@@ -403,10 +404,11 @@ function TasksPanel({ store }: { store: FleetStore }) {
   // ONLY when you click "Reconcile" (you initiate); the per-card ↻ stays for one-off re-dispatch.
   async function reconcileNow() {
     if (autoRef.current) return;
+    if (!window.confirm(`Reconcile work now?\n\nThis can assign unowned tasks, re-dispatch ${stalledTasks.length} stalled task${stalledTasks.length === 1 ? '' : 's'}, and create blocker questions in Inbox.`)) return;
     autoRef.current = true;
     try {
       await triage(false);
-      if (stalledTasks.length) await redispatchAll(false);
+      if (stalledTasks.length) await redispatchAll(false, false);
       await surfaceBlockers(false);
     } finally { autoRef.current = false; }
   }
@@ -437,6 +439,7 @@ function TasksPanel({ store }: { store: FleetStore }) {
     return true;
   }
   async function redispatch(t: Task) {
+    if (!window.confirm(`Re-dispatch ${ref(t)}?\n\nThis may reassign the task from ${t.ownerName ?? 'unassigned'} to another active agent and sends the agent a new background request.`)) return;
     const tt = toast({ kind: 'progress', text: `Re-dispatching ${ref(t)}…` });
     try {
       const ok = await redispatchCore(t, {});
@@ -444,9 +447,10 @@ function TasksPanel({ store }: { store: FleetStore }) {
       if (ok) await reload();
     } catch (e) { tt.update({ kind: 'error', text: `re-dispatch failed: ${e instanceof Error ? e.message : String(e)}` }); }
   }
-  async function redispatchAll(silent = false) {
+  async function redispatchAll(silent = false, confirmFirst = true) {
     if (!stalledTasks.length) return;
     const n = stalledTasks.length;
+    if (!silent && confirmFirst && !window.confirm(`Re-dispatch ${n} stalled task${n === 1 ? '' : 's'}?\n\nEach task may be reassigned to another active agent and receives a fresh background request.`)) return;
     const tt = silent ? null : toast({ kind: 'progress', text: `Re-dispatching ${n} stalled task${n === 1 ? '' : 's'}…` });
     let ok = 0;
     const load: Record<string, number> = {}; // shared so the batch spreads across active agents
@@ -475,6 +479,7 @@ function TasksPanel({ store }: { store: FleetStore }) {
     if (clean) void run(`/task create "${clean}"`, `create “${clean}”`);
   }
   function assign(t: Task, agent: string) {
+    if (agent && agent !== t.ownerName && !window.confirm(`Assign ${ref(t)} to ${agent}?\n\nThis overwrites the current owner${t.ownerName ? ` (${t.ownerName})` : ''}.`)) return;
     if (agent) void run(`/task assign ${ref(t)} ${agent}`, `assign ${ref(t)} → ${agent}`, taskTeam(t));
   }
   async function del(t: Task) { setConfirmDel(null); await run(`/task remove ${ref(t)}`, `delete ${ref(t)}`, taskTeam(t)); }
@@ -510,6 +515,7 @@ function TasksPanel({ store }: { store: FleetStore }) {
   }
   async function createPlan() {
     if (!proposal || !proposal.length) return;
+    if (!window.confirm(`Create and dispatch ${proposal.length} task${proposal.length === 1 ? '' : 's'} for ${activeTeam}?\n\nThis writes task cards and sends work to the selected owners.`)) return;
     setProposing(true); setAssignNote('creating tasks & dispatching to the fleet…');
     const n = proposal.length;
     // Global toast: persists after the panel closes / you switch pages.
@@ -538,6 +544,7 @@ function TasksPanel({ store }: { store: FleetStore }) {
     const title = objective.trim();
     const agents = selectedAssignTargets.filter((a) => assignOptionKeys.has(agentKey(a, activeTeam)));
     if (!title || !agents.length) { setAssignNote('enter a task and pick at least one agent'); return; }
+    if (!window.confirm(`Assign and dispatch "${title.slice(0, 80)}" to ${agents.length} agent${agents.length === 1 ? '' : 's'}?\n\nThis creates live task card${agents.length === 1 ? '' : 's'} and sends background work immediately.`)) return;
     setProposing(true);
     const t = toast({ kind: 'progress', text: `Assigning "${title.slice(0, 40)}" to ${agents.length} agent${agents.length === 1 ? '' : 's'}…` });
     try {
@@ -574,8 +581,9 @@ function TasksPanel({ store }: { store: FleetStore }) {
   async function createSchedule() {
     const msg = objective.trim();
     if (!schedTarget || !msg) { setAssignNote('pick an agent and enter the check-in message'); return; }
-    setProposing(true);
     const cadence = schedKind === 'interval' ? `every ${intervalLabel(everyMin)}` : `${calDays} @ ${calTime}`;
+    if (!window.confirm(`Schedule ${schedTarget} (${cadence})?\n\nThis creates a live manager check-in that will keep firing until it is paused or removed.`)) return;
+    setProposing(true);
     const t = toast({ kind: 'progress', text: `Scheduling ${schedTarget} (${cadence})…` });
     try {
       if (schedKind === 'interval') await call('addHeartbeat', schedTarget, everyMin * 60, msg, delivery, activeTeam);
@@ -590,6 +598,7 @@ function TasksPanel({ store }: { store: FleetStore }) {
   async function createLoop() {
     const obj = objective.trim();
     if (!schedTarget || !obj) { setAssignNote('pick an agent and describe the loop objective'); return; }
+    if (!window.confirm(`Start recurring loop for ${schedTarget} every ${intervalLabel(everyMin)}?\n\nThis creates an internal manager heartbeat that continues the objective on its cadence.`)) return;
     setProposing(true);
     const t = toast({ kind: 'progress', text: `Starting loop on ${schedTarget} (every ${intervalLabel(everyMin)})…` });
     try {
@@ -605,6 +614,7 @@ function TasksPanel({ store }: { store: FleetStore }) {
   async function createDream() {
     const vision = objective.trim();
     if (!schedTarget || !vision) { setAssignNote('pick an agent and describe the aspiration'); return; }
+    if (!window.confirm(`Set recurring dream for ${schedTarget} every ${intervalLabel(everyMin)}?\n\nThis creates a background aspiration check-in that should not preempt assigned work.`)) return;
     setProposing(true);
     const t = toast({ kind: 'progress', text: `Setting a dream for ${schedTarget}…` });
     try {

@@ -94,6 +94,10 @@ export function Schedule({ store }: { store: FleetStore }) {
       setBusy(false);
     }
   }
+  async function guardedScheduleAct(label: string, detail: string, fn: () => Promise<unknown>) {
+    if (!window.confirm(`${label}?\n\n${detail}`)) return;
+    await act(label, fn);
+  }
 
   const fleetAgents = store.allAgents.length ? store.allAgents : store.agents.map((a) => ({ ...a, team: store.team ?? 'default' }));
   const shownSchedules = allSchedules.length ? allSchedules : schedules.map((s) => ({ ...s, team: store.team ?? 'default' }));
@@ -116,6 +120,7 @@ export function Schedule({ store }: { store: FleetStore }) {
   );
   async function cleanUp() {
     if (!staleCheckins.length) return;
+    if (!window.confirm(`Close ${staleCheckins.length} stale check-in${staleCheckins.length === 1 ? '' : 's'}?\n\nThis bulk-closes check-ins linked to finished or removed tasks.`)) return;
     await act(`cleaning up ${staleCheckins.length} stale check-in${staleCheckins.length === 1 ? '' : 's'}`, async () => {
       for (const c of staleCheckins) await call('checkins:close', c.id);
     });
@@ -125,6 +130,7 @@ export function Schedule({ store }: { store: FleetStore }) {
     const key = targetKey(agent, team);
     const seconds = hbInterval[key] ?? hbFor(agent, team)?.intervalSeconds ?? 3600;
     const existing = heartbeats.filter((h) => h.targets.includes(agent) && (!team || h.team === team));
+    if (!window.confirm(`${existing.length ? 'Update' : 'Enable'} heartbeat for ${team ? `${team}/` : ''}${agent}?\n\nThis creates or replaces a recurring internal manager check-in.`)) return;
     // ADD-then-PRUNE: create the new heartbeat before removing the old, so a
     // failed add never leaves the agent unmonitored.
     await act(`heartbeat ${agent}`, async () => {
@@ -183,10 +189,10 @@ export function Schedule({ store }: { store: FleetStore }) {
                   <td className="row-actions">
                     {hb ? (
                       <>
-                        <button className="btn" disabled={busy} onClick={() => void act(`${hb.active ? 'pause' : 'resume'} ${a.name}`, () => call(hb.active ? 'pauseSchedule' : 'resumeSchedule', hb.id, hb.team))}>
+                        <button className="btn" disabled={busy} onClick={() => void guardedScheduleAct(`${hb.active ? 'pause' : 'resume'} ${a.name}`, `${hb.active ? 'Pauses' : 'Resumes'} this recurring heartbeat for ${a.team ?? store.team ?? 'default'}/${a.name}.`, () => call(hb.active ? 'pauseSchedule' : 'resumeSchedule', hb.id, hb.team))}>
                           {hb.active ? 'Pause' : 'Resume'}
                         </button>
-                        <button className="btn" disabled={busy} onClick={() => void act(`disable ${a.name}`, () => call('removeSchedule', hb.id, hb.team))}>✕</button>
+                        <button className="btn" disabled={busy} onClick={() => void guardedScheduleAct(`disable ${a.name}`, `Removes this recurring heartbeat for ${a.team ?? store.team ?? 'default'}/${a.name}.`, () => call('removeSchedule', hb.id, hb.team))}>✕</button>
                       </>
                     ) : null}
                   </td>
@@ -224,10 +230,10 @@ export function Schedule({ store }: { store: FleetStore }) {
                         </td>
                         <td className="muted small">{relTime(s.lastRunAt)}</td>
                         <td className="row-actions">
-                          <button className="btn" disabled={busy} onClick={() => void act(`${s.active ? 'pause' : 'resume'} ${s.targets?.[0]}`, () => call(s.active ? 'pauseSchedule' : 'resumeSchedule', s.id, s.team))}>
+                          <button className="btn" disabled={busy} onClick={() => void guardedScheduleAct(`${s.active ? 'pause' : 'resume'} ${s.targets?.[0]}`, `${s.active ? 'Pauses' : 'Resumes'} this recurring heartbeat on ${s.team ?? 'unknown team'}.`, () => call(s.active ? 'pauseSchedule' : 'resumeSchedule', s.id, s.team))}>
                             {s.active ? 'Pause' : 'Resume'}
                           </button>
-                          <button className="btn" disabled={busy} title="Remove this heartbeat" onClick={() => void act(`remove ${s.targets?.[0]}`, () => call('removeSchedule', s.id, s.team))}>✕</button>
+                          <button className="btn" disabled={busy} title="Remove this heartbeat" onClick={() => void guardedScheduleAct(`remove ${s.targets?.[0]}`, `Removes this recurring heartbeat on ${s.team ?? 'unknown team'}.`, () => call('removeSchedule', s.id, s.team))}>✕</button>
                         </td>
                       </tr>
                     );

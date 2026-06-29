@@ -175,14 +175,15 @@ export function Identity({ store }: { store: FleetStore }) {
     const sorted = uniqueAgents(all).sort((a, b) => Number(hasWallet(b)) - Number(hasWallet(a)) || (a.team ?? '').localeCompare(b.team ?? '') || a.name.localeCompare(b.name));
     return sorted;
   }, [store.allAgents, store.agents, store.team]);
-  const names = useMemo(() => identityAgents.map((a) => a.name), [identityAgents]);
-  const selected = sel && identityAgents.some((a) => a.name === sel) ? sel : identityAgents.find(hasWallet)?.name ?? names[0];
+  const names = useMemo(() => [...new Set(identityAgents.map((a) => a.name))], [identityAgents]);
+  const selAgent = (sel ? identityAgents.find((a) => agentKey(a) === sel) : undefined) ?? identityAgents.find(hasWallet) ?? identityAgents[0];
+  const selected = selAgent?.name;
+  const selectedKey = selAgent ? agentKey(selAgent) : '';
   const acct = selected ? accounts[selected] : undefined;
-  const selAgent = selected ? identityAgents.find((a) => a.name === selected) : undefined;
   const selectedTeam = selAgent?.team;
   const domain = selAgent ? identityValue(selAgent, 'idchain_domain') : '';
   const wallet = controllerWallet(selAgent);
-  const proof = selected ? proofs[selected] : undefined;
+  const proof = selectedKey ? proofs[selectedKey] : undefined;
   const controllerVerified = proofMatchesWallet(proof, wallet);
   const activeSessions = useMemo(() => [...(acct?.sessions ?? [])].sort(activeSessionSort), [acct]);
   const safeScopes = useMemo(
@@ -230,13 +231,13 @@ export function Identity({ store }: { store: FleetStore }) {
     let live = true;
     call<ControllerProof | null>('identity:controllerStatus', selected, wallet, selectedTeam)
       .then((status) => {
-        if (live && status) setProofs((prev) => ({ ...prev, [selected]: status }));
+        if (live && status) setProofs((prev) => ({ ...prev, [selectedKey]: status }));
       })
       .catch(() => {});
     return () => {
       live = false;
     };
-  }, [selected, wallet, selectedTeam, controllerVerified]);
+  }, [selected, selectedKey, wallet, selectedTeam, controllerVerified]);
 
   async function act(method: string, ...args: unknown[]) {
     setError(null);
@@ -252,6 +253,7 @@ export function Identity({ store }: { store: FleetStore }) {
   }
 
   async function identityAction(agent: string, action: 'register' | 'provision', team?: string) {
+    if (!window.confirm(`${action === 'register' ? 'Register identity' : 'Provision wallet'} for ${team ?? 'default'}/${agent}?\n\n${action === 'register' ? 'This writes the public identity binding for the selected controller wallet.' : 'This creates or binds a controller wallet for the agent.'}`)) return;
     setError(null);
     setBusy(true);
     try {
@@ -271,7 +273,7 @@ export function Identity({ store }: { store: FleetStore }) {
     setBusy(true);
     try {
       const challenge = await call<ControllerProof>('identity:controllerChallenge', selected, wallet, selectedTeam);
-      setProofs((prev) => ({ ...prev, [selected]: challenge }));
+      setProofs((prev) => ({ ...prev, [selectedKey]: challenge }));
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to start controller challenge');
     } finally {
@@ -283,7 +285,7 @@ export function Identity({ store }: { store: FleetStore }) {
     if (!selected || !proof) return;
     setProofs((prev) => ({
       ...prev,
-      [selected]: { ...proof, signature, verifiedAt: 0 },
+      [selectedKey]: { ...proof, signature, verifiedAt: 0 },
     }));
   }
 
@@ -297,7 +299,7 @@ export function Identity({ store }: { store: FleetStore }) {
     setBusy(true);
     try {
       const verified = await call<ControllerProof>('identity:controllerVerify', selected, wallet, proof.signature, selectedTeam);
-      setProofs((prev) => ({ ...prev, [selected]: verified }));
+      setProofs((prev) => ({ ...prev, [selectedKey]: verified }));
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to verify controller signature');
     } finally {
@@ -318,6 +320,7 @@ export function Identity({ store }: { store: FleetStore }) {
       setError(controllerVerified ? 'Choose a capped scope and finite TTL.' : 'Issue session key requires a signed controller-wallet challenge first.');
       return;
     }
+    if (!window.confirm(`Issue session key for ${selectedTeam ?? 'default'}/${selected}?\n\nScope: ${issueScope?.label ?? 'unknown'}\nTTL: ${issueTtl?.label ?? 'unknown'}\n\nThis creates a live spend-capped delegated key until it expires or is revoked.`)) return;
     void act('keys:issue', selected, scopeIdx, presets.ttls[ttlIdx].ms, selectedTeam);
   }
 
@@ -336,10 +339,10 @@ export function Identity({ store }: { store: FleetStore }) {
           <h3>Agents</h3>
           {identityAgents.map((a) => {
             const agentWallet = controllerWallet(a);
-            const agentProof = proofs[a.name];
+            const agentProof = proofs[agentKey(a)];
             const verified = proofMatchesWallet(agentProof, agentWallet);
             return (
-              <button key={agentKey(a)} className={`target${a.name === selected ? ' active' : ''}`} onClick={() => setSel(a.name)}>
+              <button key={agentKey(a)} className={`target${agentKey(a) === selectedKey ? ' active' : ''}`} onClick={() => setSel(agentKey(a))}>
                 <span>{a.name}</span>
                 <span className="muted small">{identityValue(a, 'idchain_domain') || a.team || a.status || 'unbound'}</span>
                 <span className={verified ? 'ok-text small' : agentWallet ? 'warn-text small' : 'muted small'}>
@@ -428,13 +431,19 @@ export function Identity({ store }: { store: FleetStore }) {
                         Provision wallet
                       </button>
                     ) : null}
-                    <button className="btn" disabled={busy} onClick={() => void act('keys:ensure', selected)}>
+                    <button className="btn" disabled={busy} onClick={() => {
+                      if (!window.confirm(`Create account for ${selectedTeam ?? 'default'}/${selected}?\n\nThis ensures a smart-account record for the selected agent.`)) return;
+                      void act('keys:ensure', selected);
+                    }}>
                       Create account
                     </button>
                     <button className="btn" disabled={busy || !controllerVerified} onClick={() => requireControllerProof('Register identity', () => void identityAction(selected!, 'register', selectedTeam))}>
                       Register identity
                     </button>
-                    <button className="btn primary" disabled={busy || acct.deployed || !controllerVerified} onClick={() => requireControllerProof('Deploy account', () => void act('keys:deploy', selected, selectedTeam))}>
+                    <button className="btn primary" disabled={busy || acct.deployed || !controllerVerified} onClick={() => requireControllerProof('Deploy account', () => {
+                      if (!window.confirm(`Deploy account for ${selectedTeam ?? 'default'}/${selected}?\n\nThis deploys the selected smart account using the verified controller authority.`)) return;
+                      void act('keys:deploy', selected, selectedTeam);
+                    })}>
                       Deploy
                     </button>
                   </div>
@@ -479,7 +488,10 @@ export function Identity({ store }: { store: FleetStore }) {
                         </td>
                         <td className="row-actions">
                           {s.status === 'active' ? (
-                            <button className="btn" disabled={busy || !controllerVerified} onClick={() => requireControllerProof('Revoke session key', () => void act('keys:revoke', selected, s.id, selectedTeam))}>
+                            <button className="btn" disabled={busy || !controllerVerified} onClick={() => requireControllerProof('Revoke session key', () => {
+                              if (!window.confirm(`Revoke session key ${shortAddr(s.address)}?\n\nThis disables the active delegated key for ${selectedTeam ?? 'default'}/${selected}.`)) return;
+                              void act('keys:revoke', selected, s.id, selectedTeam);
+                            })}>
                               Revoke
                             </button>
                           ) : null}

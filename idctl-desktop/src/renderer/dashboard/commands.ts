@@ -133,6 +133,7 @@ export function buildCommands(store: FleetStore): Command[] {
     group: 'Projects',
     keywords: 'register import scan folder root',
     run: async (c) => {
+      if (!window.confirm('Sync workspace projects?\n\nThis scans the workspace and adds or adopts project tracker entries. Review the Projects page afterward if anything new appears.')) return;
       c.setStatus('Syncing workspace projects…');
       try {
         const r = await call<{ ok?: boolean; added?: number; adopted?: number; total?: number; error?: string }>('projects:syncRoot');
@@ -147,6 +148,7 @@ export function buildCommands(store: FleetStore): Command[] {
     group: 'Org',
     keywords: 'hierarchy leads instructions rebuild brain',
     run: async (c) => {
+      if (!window.confirm('Run org sync now?\n\nThis recomposes every agent goals file from the hierarchy and brain, and may rebuild idle agents.')) return;
       c.setStatus('Recomposing org & syncing the brain…');
       try {
         const r = await call<{ written?: number; rebuilt?: string[]; brain?: boolean }>('org:sync', {});

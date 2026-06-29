@@ -167,8 +167,14 @@ export function AgentTable({ store, onProbe, probeBusy }: { store: FleetStore; o
   // ★ set an agent as its team's coordinator (lead) — works per-team in the holistic view.
   const teamFor = (a: TeamAgent) => a.team ?? store.team ?? 'default';
   const isLead = (a: TeamAgent) => (coords[teamFor(a)] ?? (teamFor(a) === store.team ? store.coordinator : undefined)) === a.name;
+  function confirmAgentChange(a: TeamAgent, label: string, detail: string): boolean {
+    const team = teamFor(a);
+    const active = isActive(a) ? '\n\nThis agent is currently running; the change may restart or redirect live work.' : '';
+    return window.confirm(`${label} for ${team}/${a.name}?\n\n${detail}${active}`);
+  }
   async function makeLead(a: TeamAgent) {
     const team = teamFor(a);
+    if (!confirmAgentChange(a, 'Set team lead', `This changes ${team}'s coordinator routing.`)) return;
     try { await call('coordinator:set', team, a.name); setCoords((c) => ({ ...c, [team]: a.name })); store.refresh(); }
     catch (err) { window.alert(`couldn't set lead: ${err instanceof Error ? err.message : String(err)}`); }
   }
@@ -196,6 +202,7 @@ export function AgentTable({ store, onProbe, probeBusy }: { store: FleetStore; o
   async function setModel(a: TeamAgent, model: string) {
     if (!model || model === a.model) return;
     const team = teamOf(a);
+    if (!confirmAgentChange(a, `Switch model to ${short(model)}`, 'This updates the model and rebuilds the agent harness.')) return;
     setBusy(`model ${a.name}`);
     try {
       await call('remote', `/model ${a.name} ${model}`, undefined, team);
@@ -213,14 +220,17 @@ export function AgentTable({ store, onProbe, probeBusy }: { store: FleetStore; o
     if (act === 'Reset session') {
       // Start a fresh conversation — drops the agent's accumulated context. Use this to deflate a
       // bloated codex session (multi-million-token prompts) so its next turns are cheap again.
+      if (!confirmAgentChange(a, 'Reset session', 'This clears the agent conversation context.')) return;
       void run(`reset session ${a.name}`, `/clear ${a.name}`, team);
       return;
     }
+    if ((act === 'Stop' || act === 'Rebuild') && !confirmAgentChange(a, act, act === 'Stop' ? 'This stops the agent process and can interrupt current work.' : 'This restarts the agent process so runtime/config changes take effect.')) return;
     void run(`${act} ${a.name}`, `/agent ${a.name} ${act.toLowerCase()}`, team);
   }
   async function setEffort(a: TeamAgent, effort: string) {
     if (effort === effortOf(a)) return;
     const team = teamOf(a);
+    if (!confirmAgentChange(a, `Set effort to ${effort || 'default'}`, 'This changes the reasoning effort and rebuilds the agent harness.')) return;
     setBusy(`effort ${a.name}`);
     try {
       await call('setAgentEffort', a.id, effort, team);
@@ -232,6 +242,7 @@ export function AgentTable({ store, onProbe, probeBusy }: { store: FleetStore; o
   async function setSpeed(a: TeamAgent, speed: string) {
     if (speed === speedOf(a)) return;
     const team = teamOf(a);
+    if (!confirmAgentChange(a, `Set speed to ${speed}`, 'This changes output speed and rebuilds the agent harness.')) return;
     setBusy(`speed ${a.name}`);
     try {
       await call('setAgentSpeed', a.id, speed, team);
@@ -243,6 +254,7 @@ export function AgentTable({ store, onProbe, probeBusy }: { store: FleetStore; o
   async function setRuntime(a: TeamAgent, runtime: string) {
     if (!runtime || runtime === a.runtime) return;
     const team = teamOf(a);
+    if (!confirmAgentChange(a, `Switch runtime to ${runtimeLabel(runtime)}`, 'This may also switch the model and rebuild the agent harness.')) return;
     setBusy(`runtime ${a.name}`);
     try {
       await call('setAgentRuntime', a.id, runtime, team);
