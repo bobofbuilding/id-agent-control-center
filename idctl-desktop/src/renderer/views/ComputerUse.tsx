@@ -149,6 +149,23 @@ export function ComputerUse({ store }: { store: FleetStore }) {
     : 'no blessed agents';
   const emptyArmNeedsReview = !armed && srGranted && attached.length === 0;
   const isTeamAuthority = (authority: string, team: string) => authority.startsWith(`${team}:`);
+  function eligibleByAuthority(authority: string): ComputerUseTarget | undefined {
+    const sep = authority.indexOf(':');
+    if (sep < 0) return undefined;
+    const team = authority.slice(0, sep);
+    const name = authority.slice(sep + 1);
+    if (team !== activeTeam) return undefined;
+    const found = eligible.find((a) => a.name === name);
+    return found ? { ...found, team } : undefined;
+  }
+  async function copyLegacyAuthority(authority: string) {
+    try {
+      await navigator.clipboard.writeText(authority);
+      setMsg(`Copied scoped authority ${authority}.`);
+    } catch {
+      setMsg(`Copy failed. Scoped authority: ${authority}`);
+    }
+  }
 
   async function refresh() {
     const authorityTargets = eligible.map((a) => ({ name: a.name, team: activeTeam }));
@@ -609,11 +626,30 @@ export function ComputerUse({ store }: { store: FleetStore }) {
             {legacyAuthority.length ? (
               <div className="cu-legacy small">
                 <b>Legacy authority review</b>
-                {legacyAuthority.map((row) => (
-                  <div key={`${row.source}:${row.agent}`} className="muted">
-                    {row.agent}: {row.tokenCount} old bare-name token{row.tokenCount === 1 ? '' : 's'} blocked by scoped arming{' -> '}{row.currentAuthorities.join(', ')}
-                  </div>
-                ))}
+                {legacyAuthority.map((row) => {
+                  const firstAuthority = row.currentAuthorities[0] ?? '';
+                  const target = row.currentAuthorities.map(eligibleByAuthority).find(Boolean);
+                  const alreadyBlessed = target ? attached.some((a) => authorityOf(a, activeTeam) === authorityOf(target, activeTeam)) : false;
+                  return (
+                    <div key={`${row.source}:${row.agent}`} className="cu-legacy-row">
+                      <span className="muted">
+                        {row.agent}: {row.tokenCount} old bare-name token{row.tokenCount === 1 ? '' : 's'} blocked by scoped arming{' -> '}{row.currentAuthorities.join(', ')}
+                      </span>
+                      <span className="legacy-review-actions">
+                        {target ? (
+                          <button className="btn small" disabled={busy || alreadyBlessed} onClick={() => { setPick(target.id); setMsg(`Selected ${target.team}/${target.name}. Use Bless to mint scoped Computer Use authority; old bare-name tokens remain blocked.`); }}>
+                            {alreadyBlessed ? 'Already blessed' : 'Select for bless'}
+                          </button>
+                        ) : null}
+                        {firstAuthority ? (
+                          <button className="btn small" disabled={busy} onClick={() => void copyLegacyAuthority(firstAuthority)}>
+                            Copy scoped authority
+                          </button>
+                        ) : null}
+                      </span>
+                    </div>
+                  );
+                })}
               </div>
             ) : null}
             {msg ? <div className="cu-msg small">{msg}</div> : null}

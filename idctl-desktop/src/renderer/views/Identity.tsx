@@ -66,6 +66,14 @@ function agentKey(a: IdentityAgent): string {
   return `${a.team ?? 'default'}:${a.name}`;
 }
 
+function legacyAuthorityTarget(authority: string, agents: IdentityAgent[]): IdentityAgent | undefined {
+  const sep = authority.indexOf(':');
+  if (sep < 0) return undefined;
+  const team = authority.slice(0, sep);
+  const name = authority.slice(sep + 1);
+  return agents.find((a) => (a.team ?? 'default') === team && a.name === name);
+}
+
 function uniqueAgents(agents: IdentityAgent[]): IdentityAgent[] {
   const seen = new Set<string>();
   return agents.filter((a) => {
@@ -192,6 +200,7 @@ export function Identity({ store }: { store: FleetStore }) {
   const [ttlIdx, setTtlIdx] = useState(1);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [legacyMsg, setLegacyMsg] = useState<string | null>(null);
   const [proofs, setProofs] = useState<Record<string, ControllerProof>>({});
   const [legacyKeys, setLegacyKeys] = useState<LegacyKeyAuthority[]>([]);
 
@@ -457,6 +466,15 @@ export function Identity({ store }: { store: FleetStore }) {
     await act('keys:revoke', fresh.name, current.id, team);
   }
 
+  async function copyLegacyAuthority(authority: string) {
+    try {
+      await navigator.clipboard.writeText(authority);
+      setLegacyMsg(`Copied scoped authority ${authority}.`);
+    } catch {
+      setLegacyMsg(`Copy failed. Scoped authority: ${authority}`);
+    }
+  }
+
   return (
     <div className="view identity-view">
       <header className="view-head">
@@ -524,16 +542,35 @@ export function Identity({ store }: { store: FleetStore }) {
                     Older bare-name key records were found. They are not treated as current scoped authority, so choose a policy before copying, revoking, or deleting them.
                   </p>
                   <div className="risk-list">
-                    {legacyKeys.map((row) => (
-                      <div key={`${row.source}:${row.agent}`} className="risk-row">
-                        <span className="dot warn" />
-                        <b>{row.agent}</b>
-                        <span className="warn-text">
-                          {row.account ? 'account' : 'no account'}{row.deployed ? ' deployed' : ''}; {row.activeSessions}/{row.totalSessions} active sessions{row.nonExpiringSessions ? `, ${row.nonExpiringSessions} non-expiring` : ''}{' -> '}{row.currentAuthorities.join(', ')}
-                        </span>
-                      </div>
-                    ))}
+                    {legacyKeys.map((row) => {
+                      const firstAuthority = row.currentAuthorities[0] ?? '';
+                      const target = row.currentAuthorities.map((a) => legacyAuthorityTarget(a, identityAgents)).find(Boolean);
+                      return (
+                        <div key={`${row.source}:${row.agent}`} className="risk-row">
+                          <span className="dot warn" />
+                          <b>{row.agent}</b>
+                          <span>
+                            <span className="warn-text">
+                              {row.account ? 'account' : 'no account'}{row.deployed ? ' deployed' : ''}; {row.activeSessions}/{row.totalSessions} active sessions{row.nonExpiringSessions ? `, ${row.nonExpiringSessions} non-expiring` : ''}{' -> '}{row.currentAuthorities.join(', ')}
+                            </span>
+                            <span className="legacy-review-actions">
+                              {target ? (
+                                <button className="btn small" disabled={busy} onClick={() => { setSel(agentKey(target)); setLegacyMsg(`Selected ${agentKey(target)}. Recreate scoped account/session authority from the normal controls; legacy records stay blocked.`); }}>
+                                  Select scoped agent
+                                </button>
+                              ) : null}
+                              {firstAuthority ? (
+                                <button className="btn small" disabled={busy} onClick={() => void copyLegacyAuthority(firstAuthority)}>
+                                  Copy scoped authority
+                                </button>
+                              ) : null}
+                            </span>
+                          </span>
+                        </div>
+                      );
+                    })}
                   </div>
+                  {legacyMsg ? <div className="muted small" style={{ marginTop: 8 }}>{legacyMsg}</div> : null}
                 </section>
               ) : null}
 
