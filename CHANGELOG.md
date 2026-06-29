@@ -8,6 +8,9 @@ Every change pushed or merged to `main` carries its version number in the commit
 subject (`vX.Y.Z: …`), stamped automatically by the `commit-msg` hook — see
 [CONTRIBUTING.md](CONTRIBUTING.md).
 
+## [0.1.274] — 2026-06-29
+- Capabilities Brain dashboard tab launcher
+
 ## [0.1.273] — 2026-06-29
 - Automated release of outstanding ID Agents Control Center code.
 

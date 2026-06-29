@@ -39,6 +39,33 @@ type BrainSkillSyncResult = {
   generatedAt?: string;
 };
 type SkillBrainDrift = { kind: 'created' | 'deleted' | 'retagged'; skill: string; at: number };
+type BrainDashboardTab = 'fleet' | 'health' | 'skills' | 'learning' | 'agents' | 'graph';
+
+const BRAIN_DASHBOARD_TABS: { tab: BrainDashboardTab; label: string; path: string }[] = [
+  { tab: 'fleet', label: 'Fleet', path: '/dashboard' },
+  { tab: 'health', label: 'Health', path: '/dashboard/health' },
+  { tab: 'skills', label: 'Skills', path: '/dashboard/skills' },
+  { tab: 'learning', label: 'Learning', path: '/dashboard/learning' },
+  { tab: 'agents', label: 'Agents', path: '/dashboard/agents' },
+  { tab: 'graph', label: 'Graph', path: '/dashboard/graph' },
+];
+
+function brainDashboardTabForPath(pathname: string): BrainDashboardTab | null {
+  return BRAIN_DASHBOARD_TABS.find((x) => x.path === pathname)?.tab ?? null;
+}
+
+function BrainDashboardLauncher({ compact = false }: { compact?: boolean }) {
+  return (
+    <span className={`brain-dashboard-tabs${compact ? ' compact' : ''}`} title="Open a whitelisted Brain dashboard tab">
+      {!compact ? <span className="muted small">Brain</span> : null}
+      {BRAIN_DASHBOARD_TABS.map((x) => (
+        <button key={x.tab} className="btn small" onClick={() => void call('brain:openDashboard', x.tab)}>
+          {x.label}
+        </button>
+      ))}
+    </span>
+  );
+}
 
 /** Strip the registry-only `enabled` flag to get the on-the-wire spec. */
 function toSpec(p: McpServerProfile): McpServerSpec {
@@ -63,9 +90,11 @@ function LinkedDescription({ text }: { text?: string | null }) {
     if (match.index > last) parts.push(<Fragment key={`t-${last}`}>{text.slice(last, match.index)}</Fragment>);
     const [, label, href] = match;
     const url = new URL(href);
-    const isBrainGraph = url.host === '127.0.0.1:4200' && url.pathname.endsWith('/dashboard/graph');
-    parts.push(isBrainGraph ? (
-      <a key={`a-${match.index}`} className="ext-link" href="#" onClick={(e) => { e.preventDefault(); void call('brain:openGraph'); }}>
+    const brainTab = url.port === '4200' && (url.hostname === '127.0.0.1' || url.hostname === 'localhost')
+      ? brainDashboardTabForPath(url.pathname)
+      : null;
+    parts.push(brainTab ? (
+      <a key={`a-${match.index}`} className="ext-link" href="#" onClick={(e) => { e.preventDefault(); void call('brain:openDashboard', brainTab); }}>
         {label}
       </a>
     ) : (
@@ -888,7 +917,7 @@ export function Modules({ store }: { store: FleetStore }) {
 
       {tab === 'skills' ? (
       <section className="card grow">
-        <div className="row-actions" style={{ alignItems: 'baseline' }}>
+        <div className="row-actions" style={{ alignItems: 'baseline', flexWrap: 'wrap' }}>
           <h3 className="grow">Skill catalog — know-how for the agent</h3>
           <span className="chip tag" title="Local SKILL.md folders found in the manager library">
             Local {skills.length}
@@ -899,7 +928,7 @@ export function Modules({ store }: { store: FleetStore }) {
           <button className="btn small" disabled={brainSyncing || skills.length === 0} title="Preview, fresh-read, then upsert the local skill catalog into Brain /skills/index" onClick={() => void syncSkillsToBrain()}>
             {brainSyncing ? 'Syncing…' : 'Preview & sync'}
           </button>
-          <button className="btn small" title="Open the Brain graph dashboard" onClick={() => void call('brain:openGraph')}>Graph</button>
+          <BrainDashboardLauncher />
           <button className="btn primary small" onClick={() => setShowCreate((s) => !s)}>
             {showCreate ? '− Cancel' : '+ Create skill'}
           </button>
@@ -917,7 +946,7 @@ export function Modules({ store }: { store: FleetStore }) {
             <button className="btn small" disabled={brainSyncing || skills.length === 0} onClick={() => void syncSkillsToBrain()}>
               {brainSyncing ? 'Syncing…' : 'Preview & sync'}
             </button>
-            <button className="btn small" onClick={() => void call('brain:openGraph')}>Graph</button>
+            <BrainDashboardLauncher compact />
           </div>
         ) : null}
 
