@@ -8,6 +8,9 @@ Every change pushed or merged to `main` carries its version number in the commit
 subject (`vX.Y.Z: …`), stamped automatically by the `commit-msg` hook — see
 [CONTRIBUTING.md](CONTRIBUTING.md).
 
+## [0.1.260] — 2026-06-29
+- Capabilities Skills catalog flags local-vs-Brain drift after local edits and keeps Sync Brain explicit/additive.
+
 ## [0.1.259] — 2026-06-29
 - Capabilities: require MCP replacement arm
 

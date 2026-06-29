@@ -38,6 +38,7 @@ type BrainSkillSyncResult = {
   summary?: BrainSkillStats | null;
   generatedAt?: string;
 };
+type SkillBrainDrift = { kind: 'created' | 'deleted' | 'retagged'; skill: string; at: number };
 
 /** Strip the registry-only `enabled` flag to get the on-the-wire spec. */
 function toSpec(p: McpServerProfile): McpServerSpec {
@@ -156,6 +157,7 @@ export function Modules({ store }: { store: FleetStore }) {
   const [categorizing, setCategorizing] = useState(false);
   const [brainSkills, setBrainSkills] = useState<BrainSkillSummary>(null);
   const [brainSyncing, setBrainSyncing] = useState(false);
+  const [brainDrift, setBrainDrift] = useState<SkillBrainDrift | null>(null);
   const [plugins, setPlugins] = useState<LibraryPluginEntry[]>([]);
   const [busy, setBusy] = useState(false);
   const [note, setNote] = useState<string>('');
@@ -303,7 +305,11 @@ export function Modules({ store }: { store: FleetStore }) {
   // Re-run AI categorization for all untagged skills (ignores the cache).
   async function recategorize() {
     setCategorizing(true);
-    try { setAutoTags(await call<Record<string, string[]>>('skills:categorize', true)); }
+    try {
+      setAutoTags(await call<Record<string, string[]>>('skills:categorize', true));
+      if (skills.length) setBrainDrift({ kind: 'retagged', skill: 'skill tags', at: Date.now() });
+      setNote('updated skill categories — Sync Brain to refresh graph tags');
+    }
     catch (e) { setNote(`categorize failed: ${e instanceof Error ? e.message : String(e)}`); }
     finally { setCategorizing(false); }
   }
@@ -317,6 +323,7 @@ export function Modules({ store }: { store: FleetStore }) {
     try {
       const r = await call<BrainSkillSyncResult>('skills:syncBrain');
       setBrainSkills({ summary: r.summary ?? undefined, meta: { generatedAt: r.generatedAt } });
+      setBrainDrift(null);
       setNote(`synced ${r.count}/${r.total} skills to Brain${r.memory ? ' · shared memory ✓' : ''}`);
     } catch (e) {
       setNote(`Brain skill sync failed: ${e instanceof Error ? e.message : String(e)}`);
@@ -490,10 +497,11 @@ export function Modules({ store }: { store: FleetStore }) {
         return;
       }
       await call('deleteSkill', name);
-      setNote(`deleted skill ${name} ✓`);
       setConfirmDel(null);
       setTagFilter(new Set());
       await reload();
+      setBrainDrift({ kind: 'deleted', skill: name, at: Date.now() });
+      setNote(`deleted skill ${name} ✓ — Brain catalog review needed`);
     } catch (err) {
       setNote(`delete failed: ${err instanceof Error ? err.message : String(err)}`);
     } finally {
@@ -562,6 +570,7 @@ export function Modules({ store }: { store: FleetStore }) {
       setNs(blankSkill);
       setShowCreate(false);
       await reload();
+      setBrainDrift({ kind: 'created', skill: entry.name, at: Date.now() });
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       setNote(`create failed: ${/already_exists/.test(msg) ? 'a skill with that name already exists' : msg}`);
@@ -573,6 +582,31 @@ export function Modules({ store }: { store: FleetStore }) {
   // # selected agents that have at least one MCP server attached (→ show Rebuild).
   const anyAttached = targetAgents.some((a) => curMcp(a).length > 0);
   const targetLabel = targetCount === 0 ? 'no agents' : targetCount === 1 ? targetAgents[0].name : `${targetCount} agents`;
+  const brainTotal = brainSkills?.summary?.totalSkills;
+  const brainMissingLocal = typeof brainTotal === 'number' && brainTotal < skills.length;
+  const brainExtraNodes = typeof brainTotal === 'number' && brainTotal > skills.length;
+  const brainNeedsLocalSync = !!brainDrift || brainMissingLocal;
+  const brainStatusLabel = !brainSkills?.summary
+    ? 'Brain --'
+    : brainDrift
+      ? 'Brain review'
+      : brainMissingLocal
+        ? `Brain behind ${brainTotal}/${skills.length}`
+        : brainExtraNodes
+          ? `Brain +${brainTotal - skills.length}`
+          : `Brain ${brainTotal}`;
+  const brainStatusTitle = [
+    brainSkills?.meta?.generatedAt ? `Brain index generated ${brainSkills.meta.generatedAt}` : 'Brain skill index unavailable',
+    `Local catalog ${skills.length}${typeof brainTotal === 'number' ? `; Brain index ${brainTotal}` : ''}`,
+    brainExtraNodes ? 'Brain may include learned or previously synced skill nodes that are not in the local catalog.' : '',
+  ].filter(Boolean).join('\n');
+  const brainReviewDetail = brainDrift?.kind === 'created'
+    ? `Created ${brainDrift.skill} locally. Sync Brain to make the definition visible in Brain Skills and Graph.`
+    : brainDrift?.kind === 'deleted'
+      ? `Deleted ${brainDrift.skill} locally. Sync Brain refreshes shared catalog memory, but Brain-only skill nodes are intentionally retained for learned history.`
+      : brainDrift?.kind === 'retagged'
+        ? 'Skill auto-tags changed locally. Sync Brain to refresh graph tags and the shared skill memory.'
+        : `Local catalog has ${skills.length} skills while Brain reports ${brainTotal ?? 'unknown'}. Sync Brain to upsert current local definitions.`;
   const catalogDraft = buildCatalog();
   const customDraft = buildCustom();
   const catalogReplace = catalogDraft ? mcp.find((p) => p.name === catalogDraft.name) : undefined;
@@ -807,8 +841,11 @@ export function Modules({ store }: { store: FleetStore }) {
       <section className="card grow">
         <div className="row-actions" style={{ alignItems: 'baseline' }}>
           <h3 className="grow">Skill catalog — know-how for the agent</h3>
-          <span className={`chip ${brainSkills?.summary ? 'tag' : ''}`} title={brainSkills?.meta?.generatedAt ? `Brain index generated ${brainSkills.meta.generatedAt}` : 'Brain skill index unavailable'}>
-            Brain {brainSkills?.summary?.totalSkills ?? '—'}
+          <span className="chip tag" title="Local SKILL.md folders found in the manager library">
+            Local {skills.length}
+          </span>
+          <span className={`chip ${brainNeedsLocalSync ? 'brain-review' : brainSkills?.summary ? 'tag' : ''}`} title={brainStatusTitle}>
+            {brainStatusLabel}
           </span>
           <button className="btn small" disabled={brainSyncing || skills.length === 0} title="Upsert the local skill catalog into Brain /skills/index" onClick={() => void syncSkillsToBrain()}>
             {brainSyncing ? 'Syncing…' : 'Sync Brain'}
@@ -821,6 +858,19 @@ export function Modules({ store }: { store: FleetStore }) {
         <p className="muted small" style={{ marginTop: -4 }}>
           Markdown instructions (the <a className="ext-link" href="https://agentskills.io" target="_blank" rel="noreferrer">agentskills.io</a> <span className="mono">SKILL.md</span> standard) that teach an agent <i>how</i> to do things with the tools it already has. Browse, filter by tag, then install on <b>{targetLabel}</b> — applies to every selected agent immediately.
         </p>
+
+        {brainNeedsLocalSync ? (
+          <div className="skill-brain-review">
+            <div className="grow">
+              <b>Brain catalog review needed</b>
+              <div className="muted small">{brainReviewDetail}</div>
+            </div>
+            <button className="btn small" disabled={brainSyncing || skills.length === 0} onClick={() => void syncSkillsToBrain()}>
+              {brainSyncing ? 'Syncing…' : 'Sync Brain'}
+            </button>
+            <button className="btn small" onClick={() => void call('brain:openGraph')}>Graph</button>
+          </div>
+        ) : null}
 
         {showCreate ? (
           <div className="create-skill">

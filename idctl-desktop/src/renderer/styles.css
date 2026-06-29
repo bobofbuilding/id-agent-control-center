@@ -203,6 +203,7 @@ button.chip:hover { border-color: var(--muted); }
 button.chip.on { background: var(--accent); color: #04121c; border-color: var(--accent); }
 button.chip.tag { color: var(--muted); }
 button.chip.tag.on { color: #04121c; }
+.chip.brain-review { color: var(--warn); border-color: color-mix(in srgb, var(--warn) 58%, var(--line)); background: color-mix(in srgb, var(--warn) 10%, transparent); }
 /* Runtime can't use the active capability (e.g. ollama + MCP) — shown, not hidden. */
 button.chip.incompat { color: var(--muted); border-style: dashed; opacity: 0.55; cursor: not-allowed; text-decoration: line-through; }
 button.chip.incompat:hover { border-color: var(--line); }
@@ -228,6 +229,7 @@ button.chip.incompat:hover { border-color: var(--line); }
 
 .create-skill { border: 1px solid var(--line); border-radius: 8px; padding: 12px; margin: 8px 0; background: var(--bg-2); }
 .create-skill textarea { background: var(--bg-3); border: 1px solid var(--line); border-radius: 6px; color: var(--text); padding: 6px 8px; font: inherit; resize: vertical; }
+.skill-brain-review { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin: 8px 0; padding: 9px 10px; border: 1px solid color-mix(in srgb, var(--warn) 48%, var(--line)); border-radius: 8px; background: color-mix(in srgb, var(--warn) 7%, var(--bg)); }
 .skill-catalog { display: flex; flex-direction: column; gap: 8px; margin-top: 10px; }
 .skill-card { border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; background: var(--bg-2); }
 .skill-card-head { display: flex; align-items: center; gap: 8px; }
