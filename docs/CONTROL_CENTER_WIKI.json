@@ -2567,6 +2567,139 @@
       "body": "# Settings\n\nSettings contains local desktop configuration for hardware, manager connection, coordinator defaults, self-update, subscriptions, Ollama, image services, local stacks, and inference backends.\n\n## Use it for\n\n- Fix manager connectivity or confirm the manager URL used by the app.\n- Review subscription CLI state, local model providers, image generation services, and inference defaults.\n- Check for, stage, and relaunch into app updates.\n\n## Boundary\n\nThese settings are app-local configuration, not manager task data. Because release and update behavior is surfaced here, keep this page aligned with the package version and release process; the wiki drift check exists to catch stale release-facing documentation before shipping."
     },
     {
+      "id": "guardrails-audit",
+      "component": "Wiki",
+      "nav": {
+        "label": "Sync & Guardrails Audit",
+        "icon": "!",
+        "order": 119,
+        "visible": false
+      },
+      "sourceFiles": [
+        "docs/CONTROL_CENTER_WIKI.json",
+        "idctl-desktop/src/renderer/views/dashboard/ControlDrawer.tsx",
+        "idctl-desktop/src/renderer/dashboard/commands.ts",
+        "idctl-desktop/src/renderer/views/Tasks.tsx",
+        "idctl-desktop/src/renderer/views/Plans.tsx",
+        "idctl-desktop/src/renderer/views/Goals.tsx",
+        "idctl-desktop/src/renderer/views/Schedule.tsx",
+        "idctl-desktop/src/renderer/views/Loops.tsx",
+        "idctl-desktop/src/renderer/views/Dream.tsx",
+        "idctl-desktop/src/renderer/views/Projects.tsx",
+        "idctl-desktop/src/main/projects.ts",
+        "idctl-desktop/src/renderer/views/Health.tsx",
+        "idctl-desktop/src/renderer/views/AgentTable.tsx",
+        "idctl-desktop/src/renderer/views/Identity.tsx",
+        "idctl-desktop/src/renderer/views/Teams.tsx",
+        "idctl-desktop/src/main/orgSync.ts",
+        "idctl-desktop/src/renderer/views/Modules.tsx",
+        "idctl-desktop/src/renderer/views/ComputerUse.tsx",
+        "idctl-desktop/src/main/computeruse/broker.ts",
+        "idctl-desktop/src/renderer/views/Settings.tsx"
+      ],
+      "purpose": "Current audit record for controls that can rewrite live agent, task, project, capability, identity, or provider state and therefore need review, confirmation, or stronger state synchronization.",
+      "scope": "Documentation-only page for the current v0.1.215 build. It records the first full dashboard-page audit and the policy decisions that should be resolved before implementing disruptive guardrails.",
+      "tabs": [
+        {
+          "id": "dashboard",
+          "label": "Dashboard",
+          "description": "Primary-lead selection, org sync, project sync, and command-palette dispatch can mutate hierarchy, goals, projects, or live agent routing from the home surface."
+        },
+        {
+          "id": "work",
+          "label": "Work",
+          "description": "Task lane drag/drop, reconcile/redispatch, plan work, goal autopilot, schedules, loops, and dream scheduling can change task ownership, plan state, or recurring manager behavior."
+        },
+        {
+          "id": "projects",
+          "label": "Projects",
+          "description": "Git actions, direct commit/push, auto-commit, first-run workspace sync, repo create/link/fork, and pull actions can change repository or project-tracker state."
+        },
+        {
+          "id": "health",
+          "label": "Health",
+          "description": "Runtime/model/effort/speed selectors, reset session, rebuild, make lead, team probes, and Headroom pilot settings affect active agents and routing policy."
+        },
+        {
+          "id": "identity",
+          "label": "Identity & Keys",
+          "description": "Controller proof gates privileged actions, but selected account/proof state is still keyed by agent name and can collide across teams."
+        },
+        {
+          "id": "hr-manager",
+          "label": "HR Manager",
+          "description": "Coordinator changes, primary lead promotion, relay overrides, instruction saves with rebuild, team builder auto-wiring, and org sync can reshape fleet behavior."
+        },
+        {
+          "id": "capabilities",
+          "label": "Capabilities",
+          "description": "Bulk skill/MCP apply defaults to broad scopes and MCP attach/detach computes a full server list from the current UI snapshot."
+        },
+        {
+          "id": "computer-use",
+          "label": "Computer Use",
+          "description": "Broker-side arming, blessed agents, per-agent tokens, supervised approvals, pause, disarm, and panic are strong; remaining issues are supervised-mode downgrade confirmation and name-scoped authorization."
+        },
+        {
+          "id": "settings",
+          "label": "Settings",
+          "description": "Provider default/toggle/remove and coordinator selection are immediate settings writes; provider changes can break future runtime/model routing."
+        }
+      ],
+      "controls": [
+        {
+          "id": "preview-before-apply",
+          "label": "Preview before apply",
+          "type": "guardrail pattern",
+          "description": "Use for org sync, git commit/push, capability bulk apply, and hierarchy/routing changes. The preview should show target agents/teams, files or repos touched, and whether a rebuild or push will happen."
+        },
+        {
+          "id": "fresh-read-before-wholesale-write",
+          "label": "Fresh read before full-list write",
+          "type": "guardrail pattern",
+          "description": "Use for MCP server attach/detach and any API that posts a complete list. Refetch current agent metadata immediately before constructing the next list so stale UI state cannot erase another page's change."
+        },
+        {
+          "id": "team-scoped-identity",
+          "label": "Team/id scoped authority",
+          "type": "guardrail pattern",
+          "description": "Use for Identity & Keys and Computer Use so accounts, proofs, session grants, broker tokens, and blessed authority cannot collide when teams contain same-named agents."
+        },
+        {
+          "id": "destructive-two-step",
+          "label": "Two-step destructive actions",
+          "type": "guardrail pattern",
+          "description": "Use for reset session, rebuild active agents, provider removal, disabling the last usable backend, disabling Computer Use supervised mode, and stopping/removing recurring schedules."
+        },
+        {
+          "id": "observe-first-dashboard",
+          "label": "Observe-first Dashboard",
+          "type": "UX simplification",
+          "description": "Keep Dashboard focused on observe, talk, refresh, and status. Move high-impact mutators such as primary-lead changes and org sync to HR Manager or require an explicit confirmation flow."
+        }
+      ],
+      "routing": {
+        "decisionStatus": "The audit findings are surfaced. Implementation should wait for operator policy on how much friction to add to one-click workflows.",
+        "recommendedFirstPass": [
+          "Dashboard: observe/chat/refresh only; confirm or move primary-lead and org-sync actions.",
+          "Projects: review diff, branch, remote, and push intent before commit/push; make background auto-commit opt-in and confirm per project.",
+          "Capabilities: default scope to this team or confirm all-team bulk apply; refetch metadata before MCP full-list writes.",
+          "Identity and Computer Use: use team/id scoped authority instead of agent-name-only keys.",
+          "HR Manager: preview/confirm coordinator, primary lead, relay, instruction+rebuild, and org-sync changes.",
+          "Health: stage runtime/model/effort/speed changes and confirm reset/rebuild for active agents.",
+          "Settings: confirm provider removal/default/toggle when it affects defaults, enabled backends, or the last usable backend."
+        ],
+        "releaseState": "This wiki page documents the current v0.1.215 audit state. Code guardrails and a follow-up release should be published after policy decisions are approved."
+      },
+      "notes": [
+        "Existing protections already found: delete task, delete project, combine duplicate projects, sign out, RPC removal, model removal, stack install/uninstall, team stop/rebuild, empty-team delete, Identity privileged actions, and Computer Use broker actions have confirmations or gates.",
+        "Most dangerous stale-write class found: UI computes a replacement state from a snapshot and sends a wholesale write, especially MCP server lists and git/project automation.",
+        "Most dangerous background automation found: project auto-commit can commit and push after task completion without another user click.",
+        "Most important simplification: separate status/observation pages from mutation/control surfaces wherever possible."
+      ],
+      "body": "# Sync & Guardrails Audit\n\nThis page records the first full pass over the dashboard pages in order: Dashboard, Work, Projects, Health, Identity & Keys, HR Manager, Capabilities, Computer Use, and Settings. It is documentation for the current v0.1.215 build state and a decision log for the next guardrail pass.\n\n## Current build state\n\nThe dashboard family is now sync-bus aware: dashboard, work, projects, health, brain-backed plans/goals/loops/schedules/dreams, agent capability changes, and org sync emit coarse domain invalidations so mounted pages refresh together after relevant mutations. That solves the basic page freshness problem, but several controls can still overwrite live state too easily.\n\n## Hard guardrail candidates\n\n- Project commit and push, especially auto-commit from task completion, should require review of diff, branch, remote, and push target before changing a repo.\n- Org sync, primary lead changes, coordinator changes, and relay changes should show the hierarchy and affected agents before applying.\n- MCP attach/detach should refetch current agent metadata before replacing the full MCP server list.\n- Identity and Computer Use should key authority by team/id, not just agent name.\n- Reset session, active-agent rebuild, disabling Computer Use supervised approval, provider removal, and disabling the last usable backend should require an explicit destructive confirmation.\n\n## UX simplification target\n\nDashboard should stay mostly observe, talk, and refresh. Work should stage or preview bulk redistribution and recurring behavior. Projects should separate tracker edits from repository-changing operations. HR Manager should own hierarchy and org-sync controls. Capabilities should make bulk scope obvious before applying tools across teams.\n\n## Open operator decisions\n\n- Should high-impact Dashboard actions be removed from Dashboard entirely, or stay there with confirmation?\n- Should Projects keep auto-commit as a feature if it becomes explicit, reviewed, and per-project, or should it be removed from the UI?\n- Should Capabilities default to this team instead of all teams, or keep all teams with a bulk confirmation?\n- Should runtime/model changes in Health be staged until an Apply button, or remain dropdown-driven with confirmation only for active agents?\n- Should org sync provide a dry-run preview, or is a confirmation with affected-counts enough for the next pass?"
+    },
+    {
       "id": "wiki",
       "route": "wiki",
       "component": "Wiki",
@@ -2627,5 +2760,5 @@
       "body": "# Wiki\n\nWiki is both the human documentation page and the editable schematic for the Control Center UI. Each article explains the operator purpose of a page; the structured sections below preserve tabs, tiles, fields, controls, displays, routes, and source files for implementation detail.\n\n## Use it for\n\n- Search pages, controls, routes, source files, and notes from inside the desktop app.\n- Confirm how a UI surface is intended to behave before editing code or filing follow-up work.\n- Keep app navigation metadata and human documentation in one reviewed JSON artifact.\n\n## Editing rule\n\nThe desktop app hot-reload polls CONTROL_CENTER_WIKI.json through the main-process wiki bridge. Sidebar labels, icons, order, and visibility still come from pages[].nav for implemented routes, so documentation edits must preserve that metadata and keep every page.body non-empty."
     }
   ],
-  "appVersion": "0.1.215"
+  "appVersion": "0.1.216"
 }
