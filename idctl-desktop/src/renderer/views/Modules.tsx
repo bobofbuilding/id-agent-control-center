@@ -126,6 +126,15 @@ function mcpProfileStamp(p: McpServerProfile): string {
 function sortedKey(values: string[]): string {
   return [...new Set(values.map(String).filter(Boolean))].sort().join('|');
 }
+function skillCatalogStamp(skills: LibrarySkillEntry[], autoTags: Record<string, string[]>): string {
+  return JSON.stringify(skills
+    .map((skill) => ({
+      name: skill.name,
+      description: skill.description ?? '',
+      tags: sortedKey([...(skill.tags ?? []), ...(autoTags[skill.name] ?? [])].map((tag) => String(tag ?? '').trim().slice(0, 80))),
+    }))
+    .sort((a, b) => a.name.localeCompare(b.name)));
+}
 function mcpKey(a: { metadata?: unknown }): string {
   const servers = (((a.metadata as any)?.mcpServers ?? []) as McpServerSpec[])
     .map((s) => JSON.stringify({ name: s.name, transport: s.transport, command: s.command, args: s.args ?? [], url: s.url ?? '', env: s.env ?? {}, headers: s.headers ?? {} }))
@@ -319,9 +328,49 @@ export function Modules({ store }: { store: FleetStore }) {
       return;
     }
     setBrainSyncing(true);
-    setNote('syncing skill catalog to Brain…');
+    setNote('checking local skill catalog before Brain sync…');
     try {
-      const r = await call<BrainSkillSyncResult>('skills:syncBrain');
+      const [latestSkills, latestTags, latestBrain] = await Promise.all([
+        call<LibrarySkillEntry[]>('librarySkills').catch(() => skills),
+        call<Record<string, string[]>>('skills:autoTags').catch(() => autoTags),
+        call<BrainSkillSummary>('skills:brainSummary').catch(() => brainSkills),
+      ]);
+      const renderedStamp = skillCatalogStamp(skills, autoTags);
+      const latestStamp = skillCatalogStamp(latestSkills, latestTags);
+      if (latestStamp !== renderedStamp) {
+        setSkills(latestSkills);
+        setAutoTags(latestTags);
+        setBrainSkills(latestBrain);
+        setBrainDrift({ kind: 'retagged', skill: 'skill catalog', at: Date.now() });
+        setNote('Brain sync blocked: local skill catalog changed. Review the refreshed catalog, then sync again.');
+        return;
+      }
+      const brainCount = latestBrain?.summary?.totalSkills;
+      const preview = [
+        'Sync local skill catalog to Brain?',
+        '',
+        `Local SKILL.md entries: ${latestSkills.length}`,
+        `Brain /skills/index before sync: ${typeof brainCount === 'number' ? brainCount : 'unknown or unavailable'}`,
+        brainDrift ? `Review reason: ${brainReviewDetail}` : 'Review reason: manual refresh',
+        '',
+        'This additively upserts IDACC skill nodes and rewrites the shared skill-catalog memory.',
+        'It does not delete Brain-only skill nodes or install/uninstall skills on agents.',
+      ].join('\n');
+      if (!window.confirm(preview)) return;
+      setNote('rechecking skill catalog before Brain write…');
+      const [afterSkills, afterTags] = await Promise.all([
+        call<LibrarySkillEntry[]>('librarySkills').catch(() => latestSkills),
+        call<Record<string, string[]>>('skills:autoTags').catch(() => latestTags),
+      ]);
+      if (skillCatalogStamp(afterSkills, afterTags) !== latestStamp) {
+        setSkills(afterSkills);
+        setAutoTags(afterTags);
+        setBrainDrift({ kind: 'retagged', skill: 'skill catalog', at: Date.now() });
+        setNote('Brain sync blocked: skill catalog changed after preview. Review the refreshed catalog and sync again.');
+        return;
+      }
+      setNote('syncing skill catalog to Brain…');
+      const r = await call<BrainSkillSyncResult>('skills:syncBrain', { catalogStamp: latestStamp });
       setBrainSkills({ summary: r.summary ?? undefined, meta: { generatedAt: r.generatedAt } });
       setBrainDrift(null);
       setNote(`synced ${r.count}/${r.total} skills to Brain${r.memory ? ' · shared memory ✓' : ''}`);
@@ -847,8 +896,8 @@ export function Modules({ store }: { store: FleetStore }) {
           <span className={`chip ${brainNeedsLocalSync ? 'brain-review' : brainSkills?.summary ? 'tag' : ''}`} title={brainStatusTitle}>
             {brainStatusLabel}
           </span>
-          <button className="btn small" disabled={brainSyncing || skills.length === 0} title="Upsert the local skill catalog into Brain /skills/index" onClick={() => void syncSkillsToBrain()}>
-            {brainSyncing ? 'Syncing…' : 'Sync Brain'}
+          <button className="btn small" disabled={brainSyncing || skills.length === 0} title="Preview, fresh-read, then upsert the local skill catalog into Brain /skills/index" onClick={() => void syncSkillsToBrain()}>
+            {brainSyncing ? 'Syncing…' : 'Preview & sync'}
           </button>
           <button className="btn small" title="Open the Brain graph dashboard" onClick={() => void call('brain:openGraph')}>Graph</button>
           <button className="btn primary small" onClick={() => setShowCreate((s) => !s)}>
@@ -866,7 +915,7 @@ export function Modules({ store }: { store: FleetStore }) {
               <div className="muted small">{brainReviewDetail}</div>
             </div>
             <button className="btn small" disabled={brainSyncing || skills.length === 0} onClick={() => void syncSkillsToBrain()}>
-              {brainSyncing ? 'Syncing…' : 'Sync Brain'}
+              {brainSyncing ? 'Syncing…' : 'Preview & sync'}
             </button>
             <button className="btn small" onClick={() => void call('brain:openGraph')}>Graph</button>
           </div>

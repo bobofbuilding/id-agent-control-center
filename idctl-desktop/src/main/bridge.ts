@@ -419,6 +419,16 @@ function skillCatalogMemory(skills: LibrarySkillEntry[], nodes: BrainSkillNode[]
     }),
   ].join('\n');
 }
+
+function skillCatalogStamp(skills: LibrarySkillEntry[], autoTags: Record<string, string[]>): string {
+  return JSON.stringify(skills
+    .map((skill) => ({
+      name: skill.name,
+      description: skill.description ?? '',
+      tags: uniqueTags([...(skill.tags ?? []), ...(autoTags[skill.name] ?? [])]).sort().join('|'),
+    }))
+    .sort((a, b) => a.name.localeCompare(b.name)));
+}
 import type { LibrarySkillEntry, McpServerSpec, CreateSkillInput } from '../../../idctl/src/api/client.ts';
 import { brokerServerPath, mintAgentToken, revokeAgentToken, brokerUrl } from './computeruse/broker.ts';
 // The Computer Use MCP server name. NEVER "computer-use" — Claude Code reserves that
@@ -833,9 +843,14 @@ const METHODS: Record<string, (...a: any[]) => Promise<unknown>> = {
     return loadSettings().skillTags ?? {};
   },
   'skills:brainSummary': async (): Promise<BrainSkillIndex | null> => brain.skillIndex(),
-  'skills:syncBrain': async () => {
+  'skills:syncBrain': async (opts?: { catalogStamp?: string }) => {
     const skills = await client.librarySkills();
-    const nodes = brainSkillNodes(skills, loadSettings().skillTags ?? {});
+    const autoTags = loadSettings().skillTags ?? {};
+    const stamp = skillCatalogStamp(skills, autoTags);
+    if (opts?.catalogStamp && opts.catalogStamp !== stamp) {
+      throw new Error('Local skill catalog changed before Brain sync; refresh and try again.');
+    }
+    const nodes = brainSkillNodes(skills, autoTags);
     const synced = await brain.syncSkillNodes(nodes);
     if (!synced?.ok) throw new Error('Brain skill graph sync failed or Brain is offline.');
     const memory = await brain.memory('control-center', {
