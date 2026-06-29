@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
 import { call, type FleetStore } from '../store.ts';
+import type { Agent } from '../../../../idctl/src/api/types.ts';
 
 /**
  * Computer Use (Phase 1): watch your Mac live, and let a blessed Claude/codex
@@ -23,6 +24,8 @@ interface Status { armed: boolean; watching: boolean; port: number; url: string;
 interface FrameMsg { jpegBase64: string; width: number; height: number; ts: number; display?: { bounds: { width: number; height: number } } }
 interface AuditEntry { ts: number; agent: string; action: string; detail: string; decision: 'executed' | 'blocked'; reason?: string }
 type AttachedAgent = { id: string; name: string; team?: string; authority?: string };
+type ComputerUseTarget = Agent & { team?: string };
+type TeamAgentsGroup = { team: string; agents: Agent[] };
 interface LegacyComputerUseAuthority { agent: string; currentAuthorities: string[]; tokenCount: number; source: string; note: string }
 
 const ACT_ICON: Record<string, string> = { screenshot: '📷', mouse_move: '➜', left_click: '🖱', right_click: '🖱', middle_click: '🖱', double_click: '🖱', left_click_drag: '✣', type: '⌨', key: '⌨', scroll: '↕' };
@@ -31,6 +34,29 @@ function agentRuntime(a: { runtime?: string; metadata?: { runtime?: string } }):
   return a.runtime ?? a.metadata?.runtime ?? '';
 }
 function mcpCapable(rt: string): boolean { return /claude|codex/i.test(rt); }
+function sortedKey(values: string[]): string {
+  return [...new Set(values.map(String).filter(Boolean))].sort().join('|');
+}
+function mcpKey(a: { metadata?: unknown }): string {
+  const servers = (((a.metadata as any)?.mcpServers ?? []) as Record<string, unknown>[])
+    .map((s) => JSON.stringify({ name: s.name, transport: s.transport, command: s.command, args: s.args ?? [], url: s.url ?? '', env: s.env ?? {}, headers: s.headers ?? {} }))
+    .sort();
+  return servers.join('|');
+}
+function computerUseAgentStamp(a: ComputerUseTarget, fallbackTeam: string): string {
+  return JSON.stringify({
+    id: a.id,
+    name: a.name,
+    team: a.team ?? fallbackTeam,
+    runtime: agentRuntime(a) ?? '',
+    status: a.status ?? '',
+    health: a.health ?? '',
+    mcp: mcpKey(a),
+  });
+}
+function pendingStamp(p: PendingAction): string {
+  return JSON.stringify({ id: p.id, agent: p.agent, action: p.action, preview: p.preview, ts: p.ts, expiresAt: p.expiresAt });
+}
 function permissionText(status: PermissionState | undefined): string {
   switch (status) {
     case 'granted': return 'Granted';
@@ -107,7 +133,7 @@ export function ComputerUse({ store }: { store: FleetStore }) {
 
   const eligible = store.agents.filter((a) => mcpCapable(agentRuntime(a)));
   const activeTeam = store.team ?? 'default';
-  const authorityOf = (a: { name: string; team?: string; authority?: string }) => a.authority ?? `${a.team ?? activeTeam}:${a.name}`;
+  const authorityOf = (a: { name: string; team?: string; authority?: string }, fallbackTeam = activeTeam) => a.authority ?? `${a.team ?? fallbackTeam}:${a.name}`;
   const armed = !!status?.armed;
   const srGranted = perms?.screenRecording === 'granted';
   const axGranted = perms?.accessibility === true;
@@ -116,6 +142,11 @@ export function ComputerUse({ store }: { store: FleetStore }) {
   const recentlyActed = auditLog.length > 0 && Date.now() - auditLog[auditLog.length - 1].ts < 3500;
   const tccUnreadable = perms?.platform === 'darwin' && perms?.tcc?.readable === false
     && (perms.inputMonitoring === 'unknown' || perms.automation.status === 'unknown');
+  const attachedStamp = (list: AttachedAgent[]) => sortedKey((list ?? []).map((a) => `${a.id}:${authorityOf(a)}`));
+  const describeAttached = (list: AttachedAgent[]) => list.length
+    ? list.map((a) => `${a.team ?? activeTeam}/${a.name}`).join(', ')
+    : 'no blessed agents';
+  const isTeamAuthority = (authority: string, team: string) => authority.startsWith(`${team}:`);
 
   async function refresh() {
     const authorityTargets = eligible.map((a) => ({ name: a.name, team: activeTeam }));
@@ -133,14 +164,78 @@ export function ComputerUse({ store }: { store: FleetStore }) {
     setLegacyAuthority(legacy ?? []);
   }
 
-  async function panic() { setBusy(true); try { await call('cu:panic'); setFrame(''); setFrameMeta(null); await refresh(); } finally { setBusy(false); } }
-  async function toggleSupervised() {
-    const next = status?.supervised === false;
-    if (!next && !window.confirm('Turn off approval for ordinary Computer Use actions?\n\nBlessed agents will be able to click and type without per-action approval. Risky actions still require approval.')) return;
-    try { await call('cu:setSupervised', next); } catch (e) { setMsg(`✗ couldn't change mode: ${e instanceof Error ? e.message : e}`); } finally { await refresh(); }
+  async function panic() {
+    try {
+      await call('cu:panic');
+      setFrame('');
+      setFrameMeta(null);
+      await refresh();
+    } catch (e) {
+      setMsg(`✗ couldn't panic-stop Computer Use: ${e instanceof Error ? e.message : e}`);
+    }
   }
-  async function togglePause() { try { await call('cu:pause', !status?.paused); } catch (e) { setMsg(`✗ couldn't ${status?.paused ? 'resume' : 'pause'}: ${e instanceof Error ? e.message : e}`); } finally { await refresh(); } }
-  async function confirmPending(id: string, allow: boolean) { resolvedRef.current.add(id); setPending((ps) => ps.filter((p) => p.id !== id)); await call('cu:confirm', id, allow).catch(() => {}); }
+  async function toggleSupervised() {
+    const rendered = status;
+    try {
+      const current = await call<Status>('cu:status');
+      if (rendered && current.supervised !== rendered.supervised) {
+        setStatus(current);
+        applyPending(current.pending ?? []);
+        setMsg('Safety mode changed since this page rendered. Refreshed; review the current mode before changing it.');
+        return;
+      }
+      const next = current.supervised === false;
+      if (!next && !window.confirm('Turn off approval for ordinary Computer Use actions?\n\nBlessed agents will be able to click and type without per-action approval. Risky actions still require approval.')) return;
+      const afterPrompt = await call<Status>('cu:status');
+      if (afterPrompt.supervised !== current.supervised) {
+        setStatus(afterPrompt);
+        applyPending(afterPrompt.pending ?? []);
+        setMsg('Safety mode changed during confirmation. Refreshed; review the current mode before changing it.');
+        return;
+      }
+      await call('cu:setSupervised', next);
+    } catch (e) {
+      setMsg(`✗ couldn't change mode: ${e instanceof Error ? e.message : e}`);
+    } finally {
+      await refresh();
+    }
+  }
+  async function togglePause() {
+    const renderedPaused = status?.paused;
+    try {
+      const current = await call<Status>('cu:status');
+      if (renderedPaused !== undefined && current.paused !== renderedPaused) {
+        setStatus(current);
+        applyPending(current.pending ?? []);
+        setMsg('Pause state changed since this page rendered. Refreshed; review the current state before changing it.');
+        return;
+      }
+      await call('cu:pause', !current.paused);
+    } catch (e) {
+      setMsg(`✗ couldn't ${status?.paused ? 'resume' : 'pause'}: ${e instanceof Error ? e.message : e}`);
+    } finally {
+      await refresh();
+    }
+  }
+  async function confirmPending(action: PendingAction, allow: boolean) {
+    const current = await call<PendingAction[]>('cu:pending').catch(() => pending);
+    const latest = current.find((p) => p.id === action.id);
+    if (!latest) {
+      resolvedRef.current.add(action.id);
+      applyPending(current);
+      setMsg('That Computer Use request was already resolved or expired. Refreshed pending approvals.');
+      return;
+    }
+    if (pendingStamp(latest) !== pendingStamp(action)) {
+      applyPending(current);
+      setMsg('That Computer Use request changed since it rendered. Review the current approval prompt before deciding.');
+      return;
+    }
+    resolvedRef.current.add(action.id);
+    setPending((ps) => ps.filter((p) => p.id !== action.id));
+    const res = await call<{ ok: boolean }>('cu:confirm', action.id, allow).catch(() => ({ ok: false }));
+    if (!res.ok) setMsg('That Computer Use request was already resolved or expired.');
+  }
 
   useEffect(() => {
     // Tell the broker the live pane is on screen, so the full-screen capture pump
@@ -169,31 +264,154 @@ export function ComputerUse({ store }: { store: FleetStore }) {
 
   async function arm() {
     setBusy(true);
+    setMsg('');
     try {
       // Bless = the agents that currently have the computer-use tool attached,
       // captured at arm. Re-arm to refresh after blessing/removing an agent.
-      const at = await call<AttachedAgent[]>('cu:attached', activeTeam).catch(() => []);
-      await call('cu:arm', (at ?? []).map(authorityOf));
+      const [currentStatus, at] = await Promise.all([
+        call<Status>('cu:status'),
+        call<AttachedAgent[]>('cu:attached', activeTeam),
+      ]);
+      if (currentStatus.armed) {
+        setStatus(currentStatus);
+        applyPending(currentStatus.pending ?? []);
+        setMsg('Computer Use is already armed. Refreshed the current broker state.');
+        return;
+      }
+      const beforeStamp = attachedStamp(at ?? []);
+      const detail = at?.length
+        ? `Agents: ${describeAttached(at)}`
+        : 'No agents are blessed. This starts the live view for permission testing, but no agent can drive until one is blessed and armed.';
+      if (!window.confirm(`Arm Computer Use now?\n\n${detail}\n\nOnly the current blessed list can request screenshots or input. Input actions still follow the approval mode shown on this page.`)) return;
+      const [afterStatus, latestAttached] = await Promise.all([
+        call<Status>('cu:status'),
+        call<AttachedAgent[]>('cu:attached', activeTeam),
+      ]);
+      if (afterStatus.armed) {
+        setStatus(afterStatus);
+        applyPending(afterStatus.pending ?? []);
+        setMsg('Computer Use was armed elsewhere while you were confirming. Refreshed the current state.');
+        return;
+      }
+      if (attachedStamp(latestAttached ?? []) !== beforeStamp) {
+        setAttached(latestAttached ?? []);
+        setMsg('Blessed agents changed during confirmation. Refreshed; review Who can drive and press Arm again.');
+        return;
+      }
+      await call('cu:arm', (latestAttached ?? []).map((a) => authorityOf(a, activeTeam)));
       await refresh();
     } finally { setBusy(false); }
   }
-  async function disarm() { setBusy(true); try { await call('cu:disarm'); setFrame(''); setFrameMeta(null); await refresh(); } finally { setBusy(false); } }
+  async function disarm() {
+    try {
+      await call('cu:disarm');
+      setFrame('');
+      setFrameMeta(null);
+      await refresh();
+    } catch (e) {
+      setMsg(`✗ couldn't disarm: ${e instanceof Error ? e.message : e}`);
+    }
+  }
 
-  async function bless(a: { id: string; name: string; team?: string }) {
+  async function freshGroups(): Promise<TeamAgentsGroup[]> {
+    return call<TeamAgentsGroup[]>('agents:allTeams').catch(() => []);
+  }
+  function findFreshTarget(groups: TeamAgentsGroup[], rendered: ComputerUseTarget): ComputerUseTarget | null {
+    const expectedTeam = rendered.team ?? activeTeam;
+    const agents = groups.find((g) => g.team === expectedTeam)?.agents ?? [];
+    const found = agents.find((x) => x.id === rendered.id) ?? agents.find((x) => x.name === rendered.name);
+    return found ? { ...found, team: expectedTeam } : null;
+  }
+  async function ensureFreshTarget(rendered: ComputerUseTarget, label: string): Promise<ComputerUseTarget | null> {
+    const team = rendered.team ?? activeTeam;
+    const groups = await freshGroups();
+    const current = findFreshTarget(groups, { ...rendered, team });
+    if (!current) {
+      setMsg(`${label} blocked: ${team}/${rendered.name} is no longer in the current roster. Refreshed; review the target and try again.`);
+      store.refresh();
+      return null;
+    }
+    if (!mcpCapable(agentRuntime(current))) {
+      setMsg(`${label} blocked: ${team}/${current.name} no longer supports MCP-backed Computer Use. Refreshed; review the target and try again.`);
+      store.refresh();
+      return null;
+    }
+    if (computerUseAgentStamp(current, team) !== computerUseAgentStamp({ ...rendered, team }, team)) {
+      setMsg(`${label} blocked: ${team}/${rendered.name} changed since this page rendered. Refreshed; review the current row before changing Computer Use access.`);
+      store.refresh();
+      return null;
+    }
+    return current;
+  }
+  function findAttached(list: AttachedAgent[], rendered: AttachedAgent): AttachedAgent | null {
+    const team = rendered.team ?? activeTeam;
+    return list.find((a) => a.id === rendered.id)
+      ?? list.find((a) => authorityOf(a, team) === authorityOf(rendered, team))
+      ?? list.find((a) => a.name === rendered.name && (a.team ?? activeTeam) === team)
+      ?? null;
+  }
+  async function ensureFreshAttached(rendered: AttachedAgent, label: string): Promise<AttachedAgent | null> {
+    const team = rendered.team ?? activeTeam;
+    const latest = await call<AttachedAgent[]>('cu:attached', team);
+    const current = findAttached(latest ?? [], { ...rendered, team });
+    if (!current) {
+      setAttached(latest ?? []);
+      setMsg(`${label} blocked: ${team}/${rendered.name} is no longer blessed. Refreshed Who can drive.`);
+      return null;
+    }
+    const before = `${rendered.id}:${authorityOf({ ...rendered, team }, team)}`;
+    const after = `${current.id}:${authorityOf(current, team)}`;
+    if (before !== after) {
+      setAttached(latest ?? []);
+      setMsg(`${label} blocked: ${team}/${rendered.name} changed authority since this page rendered. Refreshed; review Who can drive and try again.`);
+      return null;
+    }
+    return current;
+  }
+  async function syncArmedBlessedForTeam(team: string): Promise<void> {
+    const [currentStatus, currentAttached] = await Promise.all([
+      call<Status>('cu:status'),
+      call<AttachedAgent[]>('cu:attached', team),
+    ]);
+    if (!currentStatus.armed) return;
+    const next = sortedKey([
+      ...(currentStatus.blessed ?? []).filter((a) => !isTeamAuthority(a, team)),
+      ...(currentAttached ?? []).map((a) => authorityOf(a, team)),
+    ]).split('|').filter(Boolean);
+    await call('cu:arm', next);
+  }
+
+  async function bless(a: ComputerUseTarget) {
     setBusy(true); setMsg('');
     const team = a.team ?? activeTeam;
-    const authority = authorityOf({ ...a, team });
     try {
-      await call('cu:attach', a.id, a.name, team);      // throws on failure → caught below (never silently "succeeds")
-      setMsg(`Attaching computer-use to ${team}/${a.name} — rebuilding so it picks up the tool…`);
+      const current = await ensureFreshTarget({ ...a, team }, 'Bless');
+      if (!current) return;
+      const beforeAttached = await call<AttachedAgent[]>('cu:attached', team);
+      if (findAttached(beforeAttached ?? [], current)) {
+        setAttached(beforeAttached ?? []);
+        setMsg(`${team}/${current.name} is already blessed for Computer Use. Refreshed Who can drive.`);
+        return;
+      }
+      if (!window.confirm(`Bless ${team}/${current.name} for Computer Use?\n\nThis attaches the local computer-use MCP server and rebuilds the agent so it can request screenshots and input while Computer Use is armed.`)) return;
+      const afterConfirm = await ensureFreshTarget(current, 'Bless');
+      if (!afterConfirm) return;
+      const latestAttached = await call<AttachedAgent[]>('cu:attached', team);
+      if (findAttached(latestAttached ?? [], afterConfirm)) {
+        setAttached(latestAttached ?? []);
+        setMsg(`${team}/${afterConfirm.name} was blessed while you were confirming. Refreshed Who can drive.`);
+        return;
+      }
+      await call('cu:attach', afterConfirm.id, afterConfirm.name, team);      // throws on failure → caught below (never silently "succeeds")
+      setMsg(`Attaching computer-use to ${team}/${afterConfirm.name} — rebuilding so it picks up the tool…`);
       try {
-        await call('rebuildAgent', a.name, team);       // the rebuild is what actually wires the tool
-        if (status?.armed) await call('cu:arm', [...(status.blessed ?? []), authority]); // re-sync the live bless-list so it works without a manual re-arm
+        await call('rebuildAgent', afterConfirm.name, team);       // the rebuild is what actually wires the tool
+        await syncArmedBlessedForTeam(team); // re-sync the live bless-list from the current attached list if already armed
         await refresh();
-        setMsg(`✅ ${team}/${a.name} can now see + control your Mac (when armed). Ask it to take a screenshot.`);
+        setMsg(`✅ ${team}/${afterConfirm.name} can now see + control your Mac (when armed). Ask it to take a screenshot.`);
       } catch (e) {
         await refresh();
-        setMsg(`⚠ Attached, but the rebuild failed (${e instanceof Error ? e.message : e}). Rebuild ${team}/${a.name} from Health, then it can see the screen.`);
+        setMsg(`⚠ Attached, but the rebuild failed (${e instanceof Error ? e.message : e}). Rebuild ${team}/${afterConfirm.name} from Health, then it can see the screen.`);
       }
     } catch (e) {
       setMsg(`✗ Couldn't bless ${team}/${a.name}: ${e instanceof Error ? e.message : e}`);
@@ -203,10 +421,16 @@ export function ComputerUse({ store }: { store: FleetStore }) {
     setBusy(true); setMsg('');
     const team = a.team ?? activeTeam;
     try {
-      await call('cu:detach', a.id, a.name, team);
-      await call('rebuildAgent', a.name, team).catch(() => {});
+      const current = await ensureFreshAttached({ ...a, team }, 'Remove');
+      if (!current) return;
+      if (!window.confirm(`Remove Computer Use from ${team}/${current.name}?\n\nThis detaches the local computer-use MCP server and rebuilds the agent. If Computer Use is armed, its live blessed list will be refreshed afterward.`)) return;
+      const afterConfirm = await ensureFreshAttached(current, 'Remove');
+      if (!afterConfirm) return;
+      await call('cu:detach', afterConfirm.id, afterConfirm.name, team);
+      await call('rebuildAgent', afterConfirm.name, team).catch(() => {});
+      await syncArmedBlessedForTeam(team);
       await refresh();
-      setMsg(`Removed computer-use from ${team}/${a.name}.`);
+      setMsg(`Removed computer-use from ${team}/${afterConfirm.name}.`);
     } catch (e) {
       setMsg(`✗ Couldn't remove from ${team}/${a.name}: ${e instanceof Error ? e.message : e}`);
     } finally { setBusy(false); }
@@ -221,14 +445,14 @@ export function ComputerUse({ store }: { store: FleetStore }) {
         <div className="row-actions" style={{ alignItems: 'center', gap: 10 }}>
           {armed ? (
             <>
-              <button className={`btn ${status?.paused ? 'primary' : ''}`} disabled={busy} onClick={() => void togglePause()} title="Block the agent's input without disarming">{status?.paused ? 'Resume' : 'Pause'}</button>
+              <button className={`btn ${status?.paused ? 'primary' : ''}`} onClick={() => void togglePause()} title="Block the agent's input without disarming">{status?.paused ? 'Resume' : 'Pause'}</button>
               {/* PANIC is the emergency stop — NEVER gated by `busy`, so a slow op (e.g. a rebuild) can't block it. */}
               <button className="btn cu-panic" onClick={() => void panic()} title={status?.panicHotkey ? 'Stop everything now (⌘⌥⇧P)' : 'Stop everything now'}>■ PANIC</button>
             </>
           ) : null}
           <span className={`cu-armpill ${armed ? 'on' : ''}`}>{armed ? (status?.paused ? '❚❚ paused' : '● ARMED') : '○ disarmed'}</span>
           {armed
-            ? <button className="btn icon-danger" disabled={busy} onClick={() => void disarm()}>Disarm</button>
+            ? <button className="btn icon-danger" onClick={() => void disarm()}>Disarm</button>
             : <button className="btn primary" disabled={busy || !srGranted} title={srGranted ? '' : 'Grant Screen Recording first'} onClick={() => void arm()}>Arm</button>}
         </div>
       </header>
@@ -243,8 +467,8 @@ export function ComputerUse({ store }: { store: FleetStore }) {
               <span className="cu-approval-text"><b>{p.agent}</b> wants to <b>{p.preview}</b></span>
               <span className="grow" />
               {/* Approval is safety-critical — independent of `busy` so a rebuild can't stall it into the 60s auto-decline. */}
-              <button className="btn primary" onClick={() => void confirmPending(p.id, true)}>Allow</button>
-              <button className="btn icon-danger" onClick={() => void confirmPending(p.id, false)}>Deny</button>
+              <button className="btn primary" onClick={() => void confirmPending(p, true)}>Allow</button>
+              <button className="btn icon-danger" onClick={() => void confirmPending(p, false)}>Deny</button>
             </div>
           ))}
         </div>
@@ -345,7 +569,7 @@ export function ComputerUse({ store }: { store: FleetStore }) {
                   <option key={a.id} value={a.id}>{a.name} · {agentRuntime(a)}</option>
                 ))}
               </select>
-              <button className="btn primary" disabled={busy || !pick} onClick={() => { const a = eligible.find((x) => x.id === pick); if (a) void bless({ id: a.id, name: a.name, team: activeTeam }); }}>Bless</button>
+              <button className="btn primary" disabled={busy || !pick} onClick={() => { const a = eligible.find((x) => x.id === pick); if (a) void bless({ ...a, team: activeTeam }); }}>Bless</button>
             </div>
             {attached.length ? (
               <div className="cu-blessed">
