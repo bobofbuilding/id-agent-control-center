@@ -8,6 +8,9 @@ Every change pushed or merged to `main` carries its version number in the commit
 subject (`vX.Y.Z: …`), stamped automatically by the `commit-msg` hook — see
 [CONTRIBUTING.md](CONTRIBUTING.md).
 
+## [0.1.254] — 2026-06-29
+- Health cooldowns and manager socket hardening
+
 ## [0.1.253] — 2026-06-29
 - Health: surface runtime lane cooldowns
 - Manager API: drain responses, bound timeouts, and coalesce reads to prevent socket buildup
