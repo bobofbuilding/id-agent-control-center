@@ -27,6 +27,30 @@ export interface ContextBudgetRecord {
   rawPromptPersisted: false;
 }
 
+export interface ContextBudgetMeasurement {
+  inspected: number;
+  optimized: number;
+  direct: number;
+  protectedDirect: number;
+  originalTokens: number;
+  sentTokens: number;
+  savedTokens: number;
+  savingsRatio: number;
+  bySource: Record<string, number>;
+  byTeam: Record<string, number>;
+  byRoute: Record<string, number>;
+  byTransform: Record<string, number>;
+  byProtectedContent: Record<string, number>;
+}
+
+export interface ContextBudgetPersistentStats {
+  updatedAt: number;
+  storageFile: string;
+  allTime: ContextBudgetMeasurement;
+  today: ContextBudgetMeasurement;
+  last7Days: ContextBudgetMeasurement;
+}
+
 export interface ContextBudgetReport {
   coreEnabled: true;
   frontendSurface: 'hidden';
@@ -40,6 +64,7 @@ export interface ContextBudgetReport {
   savingsRatio: number;
   recent: ContextBudgetRecord[];
   storageDir: string;
+  persisted: ContextBudgetPersistentStats;
   policy: {
     route: 'deterministic-first';
     headroomEngine: 'not-required-for-core-budgeting';
@@ -58,6 +83,13 @@ export type ContextBudgetDecisionView = Omit<ContextBudgetDecision, 'command' | 
 
 const MAX_RECENT = 80;
 const recent: ContextBudgetRecord[] = [];
+type MutableMeasurement = Omit<ContextBudgetMeasurement, 'savingsRatio'>;
+interface StatsFile {
+  version: 1;
+  updatedAt: number;
+  allTime: MutableMeasurement;
+  days: Record<string, MutableMeasurement>;
+}
 const totals = {
   inspected: 0,
   optimized: 0,
@@ -68,11 +100,16 @@ const totals = {
   savedTokens: 0,
 };
 let migratedStoredRecords = false;
+let statsCache: StatsFile | null = null;
 
 function budgetDir(): string {
   const dir = join(configDir(resolveConfigPath()), 'context-budget');
   mkdirSync(dir, { recursive: true, mode: 0o700 });
   return dir;
+}
+
+function statsFile(): string {
+  return join(budgetDir(), 'stats.json');
 }
 
 function hashText(text: string): string {
@@ -94,6 +131,164 @@ function writeRecord(record: ContextBudgetRecord): void {
     try { rmSync(tmp, { force: true }); } catch { /* ignore cleanup */ }
     throw err;
   }
+}
+
+function emptyMeasurement(): MutableMeasurement {
+  return {
+    inspected: 0,
+    optimized: 0,
+    direct: 0,
+    protectedDirect: 0,
+    originalTokens: 0,
+    sentTokens: 0,
+    savedTokens: 0,
+    bySource: {},
+    byTeam: {},
+    byRoute: {},
+    byTransform: {},
+    byProtectedContent: {},
+  };
+}
+
+function cleanCountMap(value: unknown): Record<string, number> {
+  if (!value || typeof value !== 'object') return {};
+  const out: Record<string, number> = {};
+  for (const [key, raw] of Object.entries(value as Record<string, unknown>)) {
+    const cleanKey = String(key || '').replace(/\s+/g, ' ').trim().slice(0, 120);
+    const count = Number(raw);
+    if (cleanKey && Number.isFinite(count) && count > 0) out[cleanKey] = Math.floor(count);
+  }
+  return out;
+}
+
+function normalizeMeasurement(raw: unknown): MutableMeasurement {
+  const input = raw && typeof raw === 'object' ? raw as Partial<MutableMeasurement> : {};
+  return {
+    inspected: Math.max(0, Math.floor(Number(input.inspected) || 0)),
+    optimized: Math.max(0, Math.floor(Number(input.optimized) || 0)),
+    direct: Math.max(0, Math.floor(Number(input.direct) || 0)),
+    protectedDirect: Math.max(0, Math.floor(Number(input.protectedDirect) || 0)),
+    originalTokens: Math.max(0, Math.floor(Number(input.originalTokens) || 0)),
+    sentTokens: Math.max(0, Math.floor(Number(input.sentTokens) || 0)),
+    savedTokens: Math.max(0, Math.floor(Number(input.savedTokens) || 0)),
+    bySource: cleanCountMap(input.bySource),
+    byTeam: cleanCountMap(input.byTeam),
+    byRoute: cleanCountMap(input.byRoute),
+    byTransform: cleanCountMap(input.byTransform),
+    byProtectedContent: cleanCountMap(input.byProtectedContent),
+  };
+}
+
+function measurementView(bucket: MutableMeasurement): ContextBudgetMeasurement {
+  return {
+    ...bucket,
+    savingsRatio: bucket.originalTokens > 0 ? bucket.savedTokens / bucket.originalTokens : 0,
+  };
+}
+
+function addMapValue(map: Record<string, number>, key: string | undefined, amount = 1): void {
+  const clean = String(key || 'unknown').replace(/\s+/g, ' ').trim().slice(0, 120) || 'unknown';
+  map[clean] = (map[clean] ?? 0) + amount;
+}
+
+function addMeasurement(target: MutableMeasurement, decision: ContextBudgetDecision): void {
+  target.inspected += 1;
+  target.originalTokens += decision.originalTokens;
+  target.sentTokens += decision.sentTokens;
+  target.savedTokens += decision.savedTokens;
+  if (decision.changed) target.optimized += 1;
+  else target.direct += 1;
+  if (decision.protectedContent.length) target.protectedDirect += 1;
+  addMapValue(target.bySource, decision.source);
+  addMapValue(target.byTeam, decision.team ?? 'default');
+  addMapValue(target.byRoute, decision.route);
+  for (const transform of decision.transforms) addMapValue(target.byTransform, transform);
+  for (const label of decision.protectedContent) addMapValue(target.byProtectedContent, label);
+}
+
+function mergeMeasurement(into: MutableMeasurement, from: MutableMeasurement): MutableMeasurement {
+  into.inspected += from.inspected;
+  into.optimized += from.optimized;
+  into.direct += from.direct;
+  into.protectedDirect += from.protectedDirect;
+  into.originalTokens += from.originalTokens;
+  into.sentTokens += from.sentTokens;
+  into.savedTokens += from.savedTokens;
+  for (const [key, count] of Object.entries(from.bySource)) addMapValue(into.bySource, key, count);
+  for (const [key, count] of Object.entries(from.byTeam)) addMapValue(into.byTeam, key, count);
+  for (const [key, count] of Object.entries(from.byRoute)) addMapValue(into.byRoute, key, count);
+  for (const [key, count] of Object.entries(from.byTransform)) addMapValue(into.byTransform, key, count);
+  for (const [key, count] of Object.entries(from.byProtectedContent)) addMapValue(into.byProtectedContent, key, count);
+  return into;
+}
+
+function normalizeStats(raw: unknown): StatsFile {
+  const input = raw && typeof raw === 'object' ? raw as Partial<StatsFile> : {};
+  const days: Record<string, MutableMeasurement> = {};
+  const rawDays = input.days && typeof input.days === 'object' ? input.days : {};
+  for (const [day, value] of Object.entries(rawDays)) {
+    if (/^\d{4}-\d{2}-\d{2}$/.test(day)) days[day] = normalizeMeasurement(value);
+  }
+  return {
+    version: 1,
+    updatedAt: Math.max(0, Math.floor(Number(input.updatedAt) || 0)),
+    allTime: normalizeMeasurement(input.allTime),
+    days,
+  };
+}
+
+function loadStats(): StatsFile {
+  if (statsCache) return statsCache;
+  try {
+    statsCache = normalizeStats(JSON.parse(readFileSync(statsFile(), 'utf8')) as unknown);
+  } catch {
+    statsCache = { version: 1, updatedAt: 0, allTime: emptyMeasurement(), days: {} };
+  }
+  return statsCache;
+}
+
+function saveStats(stats: StatsFile): void {
+  const file = statsFile();
+  const tmp = `${file}.${process.pid}.tmp`;
+  writeFileSync(tmp, JSON.stringify(stats, null, 2) + '\n', { mode: 0o600 });
+  try {
+    renameSync(tmp, file);
+  } catch (err) {
+    try { rmSync(tmp, { force: true }); } catch { /* ignore cleanup */ }
+    throw err;
+  }
+}
+
+function recordPersistentMeasurement(decision: ContextBudgetDecision): void {
+  try {
+    const stats = loadStats();
+    const day = new Date().toISOString().slice(0, 10);
+    addMeasurement(stats.allTime, decision);
+    addMeasurement(stats.days[day] ??= emptyMeasurement(), decision);
+    stats.updatedAt = Date.now();
+    saveStats(stats);
+  } catch {
+    /* Measurement is best-effort; dispatch must not fail because stats could not write. */
+  }
+}
+
+function persistentStatsView(): ContextBudgetPersistentStats {
+  const stats = loadStats();
+  const todayKey = new Date().toISOString().slice(0, 10);
+  const cutoffDate = new Date();
+  cutoffDate.setUTCDate(cutoffDate.getUTCDate() - 6);
+  const cutoffDay = cutoffDate.toISOString().slice(0, 10);
+  const last7 = emptyMeasurement();
+  for (const [day, bucket] of Object.entries(stats.days)) {
+    if (day >= cutoffDay) mergeMeasurement(last7, bucket);
+  }
+  return {
+    updatedAt: stats.updatedAt,
+    storageFile: statsFile(),
+    allTime: measurementView(stats.allTime),
+    today: measurementView(stats.days[todayKey] ?? emptyMeasurement()),
+    last7Days: measurementView(last7),
+  };
 }
 
 function migrateStoredRecordFiles(): void {
@@ -174,6 +369,7 @@ function remember(decision: ContextBudgetDecision): void {
   if (decision.changed) totals.optimized += 1;
   else totals.direct += 1;
   if (decision.protectedContent.length) totals.protectedDirect += 1;
+  recordPersistentMeasurement(decision);
 
   if (!decision.changed) return;
   const originalHash = hashText(decision.originalCommand);
@@ -231,6 +427,7 @@ export function contextBudgetReport(): ContextBudgetReport {
     savingsRatio: originalTokens > 0 ? savedTokens / originalTokens : 0,
     recent: recent.slice(0, 20),
     storageDir: budgetDir(),
+    persisted: persistentStatsView(),
     policy: {
       route: 'deterministic-first',
       headroomEngine: 'not-required-for-core-budgeting',

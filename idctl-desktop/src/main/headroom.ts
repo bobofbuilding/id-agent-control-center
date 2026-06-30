@@ -26,7 +26,7 @@ export interface HeadroomCoreAudit {
   blockedInsertionPoints: string[];
   requiredForCore: string[];
   safeToday: string[];
-  contextBudget?: Pick<ContextBudgetReport, 'coreEnabled' | 'frontendSurface' | 'inspected' | 'optimized' | 'direct' | 'protectedDirect' | 'savedTokens' | 'savingsRatio' | 'policy' | 'qualityGuards'>;
+  contextBudget?: Pick<ContextBudgetReport, 'coreEnabled' | 'frontendSurface' | 'inspected' | 'optimized' | 'direct' | 'protectedDirect' | 'savedTokens' | 'savingsRatio' | 'persisted' | 'policy' | 'qualityGuards'>;
   policy?: Pick<HeadroomPilotSettings, 'enabled' | 'mode' | 'minContextTokens' | 'passthroughContent' | 'validationGates' | 'updatedAt'>;
 }
 
@@ -117,6 +117,7 @@ export async function headroomCoreAudit(pilot?: HeadroomPilotSettings): Promise<
       protectedDirect: budget.protectedDirect,
       savedTokens: budget.savedTokens,
       savingsRatio: budget.savingsRatio,
+      persisted: budget.persisted,
       policy: budget.policy,
       qualityGuards: budget.qualityGuards,
     },

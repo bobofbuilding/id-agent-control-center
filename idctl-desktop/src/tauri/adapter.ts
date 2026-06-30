@@ -443,6 +443,21 @@ function budgetTauriCommand(command: string, source: string, selectedTeam?: stri
 }
 
 function contextBudgetReport() {
+  const measurement = {
+    inspected: contextBudgetStats.inspected,
+    optimized: contextBudgetStats.optimized,
+    direct: contextBudgetStats.direct,
+    protectedDirect: contextBudgetStats.protectedDirect,
+    originalTokens: contextBudgetStats.originalTokens,
+    sentTokens: contextBudgetStats.sentTokens,
+    savedTokens: contextBudgetStats.savedTokens,
+    savingsRatio: contextBudgetStats.originalTokens > 0 ? contextBudgetStats.savedTokens / contextBudgetStats.originalTokens : 0,
+    bySource: {},
+    byTeam: {},
+    byRoute: {},
+    byTransform: {},
+    byProtectedContent: {},
+  };
   return {
     coreEnabled: true,
     frontendSurface: 'hidden',
@@ -456,6 +471,13 @@ function contextBudgetReport() {
     savingsRatio: contextBudgetStats.originalTokens > 0 ? contextBudgetStats.savedTokens / contextBudgetStats.originalTokens : 0,
     recent: contextBudgetStats.recent.map(contextDecisionView),
     storageDir: '(unavailable in Tauri webview shell)',
+    persisted: {
+      updatedAt: 0,
+      storageFile: '(unavailable in Tauri webview shell)',
+      allTime: measurement,
+      today: measurement,
+      last7Days: measurement,
+    },
     policy: {
       route: 'deterministic-first',
       headroomEngine: 'not-required-for-core-budgeting',

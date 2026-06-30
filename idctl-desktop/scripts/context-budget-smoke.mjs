@@ -1,11 +1,14 @@
 import assert from 'node:assert/strict';
+import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import {
   auditPreview,
   optimizeAskCommandCore,
   quoteSlashArg,
   redactSensitiveText,
 } from '../src/shared/contextBudget.ts';
-import { contextBudgetDryRun } from '../src/main/contextBudget.ts';
+import { contextBudgetDryRun, contextBudgetReport, optimizeAskCommand } from '../src/main/contextBudget.ts';
 
 function largeBackgroundCommand() {
   const body = Array.from({ length: 1200 }, (_, i) =>
@@ -91,6 +94,30 @@ assert.equal('originalCommand' in dryRun, false, 'dry-run view must not expose r
 assert.equal(dryRun.rawPromptPersisted, false);
 assert.ok(dryRun.redactions.length >= 1, 'dry-run view should carry redaction metadata');
 assert.ok(!dryRun.originalPreview.includes('apple banana cherry'), 'dry-run preview must redact seed phrase text');
+
+const statsRoot = mkdtempSync(join(tmpdir(), 'idacc-context-budget-'));
+try {
+  process.env.IDCTL_CONFIG = join(statsRoot, 'config.json');
+  const persistedOptimized = optimizeAskCommand(largeBackgroundCommand(), { source: 'test:persistent-large', team: 'default' });
+  const persistedProtected = optimizeAskCommand(`/ask lead ${quoteSlashArg(protectedCases[0].text)}`, { source: 'test:persistent-protected', team: 'default' });
+  const report = contextBudgetReport();
+  assert.equal(report.frontendSurface, 'hidden');
+  assert.equal(report.persisted.allTime.inspected, 2, 'persistent stats should count inspected decisions');
+  assert.equal(report.persisted.allTime.optimized, 1, 'persistent stats should count optimized decisions');
+  assert.equal(report.persisted.allTime.protectedDirect, 1, 'persistent stats should count protected direct decisions');
+  assert.equal(report.persisted.allTime.savedTokens, persistedOptimized.savedTokens + persistedProtected.savedTokens);
+  assert.equal(report.persisted.today.bySource['test:persistent-large'], 1);
+  assert.equal(report.persisted.today.byProtectedContent['secret/auth material'], 1);
+  assert.ok(existsSync(report.persisted.storageFile), 'stats file should be written');
+  const statsText = readFileSync(report.persisted.storageFile, 'utf8');
+  assert.ok(!statsText.includes('originalCommand'), 'persistent stats must not contain originalCommand');
+  assert.ok(!statsText.includes('sentCommand'), 'persistent stats must not contain sentCommand');
+  assert.ok(!statsText.includes('Authorization: Bearer'), 'persistent stats must not contain bearer header text');
+  assert.ok(!statsText.includes('aaaaaaaaaaaaaaaa'), 'persistent stats must not contain token-like values');
+} finally {
+  rmSync(statsRoot, { recursive: true, force: true });
+  delete process.env.IDCTL_CONFIG;
+}
 
 const measured = [oversized, ...protectedCases.map((tc) => optimizeAskCommandCore(`/ask lead ${quoteSlashArg(tc.text)}`, { source: `measure:${tc.name}` })), nonAsk];
 const totals = measured.reduce((acc, d) => ({
