@@ -23,6 +23,20 @@ const WIKI_URL = 'docs/CONTROL_CENTER_WIKI.json';
 let managerUrl = localStorage.getItem('idctl.managerUrl') || MGR_DEFAULT;
 let team = localStorage.getItem('idctl.team') || 'default';
 let client = makeClient();
+const PRIMARY_TEAM = 'default';
+const DEFAULT_PRIMARY_AGENT = 'lead';
+
+function assertDefaultPrimaryWrite(targetTeam: string, agent: string): void {
+  if (targetTeam !== PRIMARY_TEAM || agent !== DEFAULT_PRIMARY_AGENT) {
+    throw new Error(`primary lead is locked to ${PRIMARY_TEAM}/${DEFAULT_PRIMARY_AGENT}`);
+  }
+}
+
+function assertDefaultCoordinatorWrite(targetTeam: string, agent: string): void {
+  if (targetTeam === PRIMARY_TEAM && agent !== DEFAULT_PRIMARY_AGENT) {
+    throw new Error(`default coordinator is locked to ${PRIMARY_TEAM}/${DEFAULT_PRIMARY_AGENT}`);
+  }
+}
 
 interface WikiPayload {
   path: string;
@@ -600,14 +614,18 @@ export async function tauriCall(method: string, args: unknown[] = []): Promise<{
       return { ok: true, result: lsGet<Record<string, string>>('idctl.coordinators', {})[String(args[0] ?? team)] ?? null };
     }
     if (method === 'coordinator:set') {
+      const targetTeam = String(args[0]);
+      const agent = String(args[1]);
+      assertDefaultCoordinatorWrite(targetTeam, agent);
       const map = lsGet<Record<string, string>>('idctl.coordinators', {});
-      map[String(args[0])] = String(args[1]);
+      map[targetTeam] = agent;
       lsSet('idctl.coordinators', map);
       return { ok: true, result: { ok: true } };
     }
     if (method === 'coordinator:setPrimary') {
       const t = String(args[0]);
       const a = String(args[1]);
+      assertDefaultPrimaryWrite(t, a);
       lsSet('idctl.primaryCoordinator', { team: t, agent: a });
       const map = lsGet<Record<string, string>>('idctl.coordinators', {});
       map[t] = a; // primary is also its team's lead

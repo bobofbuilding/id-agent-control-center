@@ -24,6 +24,8 @@ import { isActiveStatus } from './work.ts';
 
 const ORG_BEGIN = '<!-- BEGIN id-agents org -->';
 const ORG_END = '<!-- END id-agents org -->';
+const PRIMARY_TEAM = 'default';
+const DEFAULT_PRIMARY_AGENT = 'lead';
 // Cap rebuilds per pass so a fleet-wide instruction change doesn't restart everyone at once
 // (writes are cheap and unbounded; only the disruptive rebuilds are throttled).
 const MAX_REBUILDS_PER_PASS = 3;
@@ -99,6 +101,7 @@ function defaultSecondaries(teams: string[]): SecondaryLead[] {
 function mergeConfiguredSecondaries(configured: SecondaryLead[], teams: string[]): SecondaryLead[] {
   const configuredCopy = configured.map((s) => ({
     ...s,
+    team: PRIMARY_TEAM,
     leadsTeams: Array.from(new Set(s.leadsTeams ?? [])).sort((a, b) => a.localeCompare(b)),
   }));
   const covered = new Set(configuredCopy.flatMap((s) => s.leadsTeams));
@@ -128,8 +131,8 @@ function mergeConfiguredSecondaries(configured: SecondaryLead[], teams: string[]
 export async function buildOrgHierarchy(client: ManagerClient): Promise<OrgHierarchy> {
   const cfg = loadSettings();
   const teams = (await client.teams().catch(() => [])).map((t) => t.name).filter(Boolean).sort((a, b) => a.localeCompare(b));
-  const coordinators = cfg.coordinators ?? {};
-  const primary = cfg.primaryCoordinator ?? null;
+  const coordinators = { ...(cfg.coordinators ?? {}), [PRIMARY_TEAM]: DEFAULT_PRIMARY_AGENT };
+  const primary = { team: PRIMARY_TEAM, agent: DEFAULT_PRIMARY_AGENT };
   const secondaries = cfg.secondaryLeads?.length ? mergeConfiguredSecondaries(cfg.secondaryLeads, teams) : defaultSecondaries(teams);
   return { primary, secondaries, coordinators, teams };
 }
@@ -141,8 +144,8 @@ type RoleInfo =
   | { role: 'worker'; team: string; lead?: string };
 
 function classify(agentName: string, team: string, hier: OrgHierarchy): RoleInfo {
-  if (hier.primary && agentName === hier.primary.agent) return { role: 'primary' };
-  const sec = hier.secondaries.find((s) => s.agent === agentName);
+  if (hier.primary && team === hier.primary.team && agentName === hier.primary.agent) return { role: 'primary' };
+  const sec = hier.secondaries.find((s) => s.team === team && s.agent === agentName);
   if (sec) return { role: 'secondary', sec };
   if (hier.coordinators[team] === agentName) {
     return { role: 'teamlead', team, secondary: hier.secondaries.find((s) => s.leadsTeams.includes(team)) };
@@ -165,8 +168,9 @@ function composeOrgBlock(
 
   // The default-team validation pair (coder + researcher): completed work flows UP to them; they
   // validate + combine it and relay findings to the primary lead. They are NOT downward delegators.
-  const validators = hier.secondaries.map((s) => s.agent);
-  const validatorList = validators.map((v) => `**${v}**`).join(' and ') || '**coder** and **researcher**';
+  const validatorTargets = hier.secondaries.map((s) => `${s.team}/${s.agent}`);
+  const validatorTargetList = validatorTargets.map((v) => `**${v}**`).join(' and ') || '**default/coder** and **default/researcher**';
+  const primaryTarget = hier.primary ? `${hier.primary.team}/${hier.primary.agent}` : primaryName;
   const validatorFocus = (name: string): string =>
     name === 'researcher'
       ? 'evidence quality, reasoning, sourcing, policy fit, and completeness'
@@ -181,18 +185,18 @@ function composeOrgBlock(
   if (info.role === 'primary') {
     out.push('You are the **PRIMARY LEAD** of the whole fleet.');
     const leadList = teamLeads.map(([t, a]) => `**${a}** (${t})`).join(', ');
-    out.push(`You delegate DOWN **only to the other team leads**: ${leadList || '— none yet —'}. Hand each a scoped objective with \`/ask <team-lead> "<objective>"\`; their team members execute the work.`);
-    out.push(`Your own default-team ${validatorList} are your **validation pair — NOT delegation targets**. Never hand them work to execute. When the team leads complete work, the completed tasks are relayed to ${validatorList}; they validate it, combine the inputs into one consolidated result, and relay their findings back up to you. Expect consolidated, validated findings from them — not raw per-team chatter.`);
+    out.push(`You delegate DOWN **only to the other team leads**: ${leadList || '— none yet —'}. Hand each a scoped objective with \`/ask <team>/<lead> "<objective>"\`; their team members execute the work.`);
+    out.push(`Your own default-team ${validatorTargetList} are your **validation pair — NOT delegation targets**. Never hand them work to execute. When the team leads complete work, the completed tasks are relayed to ${validatorTargetList}; they validate it, combine the inputs into one consolidated result, and relay their findings back up to you. Expect consolidated, validated findings from them — not raw per-team chatter.`);
   } else if (info.role === 'secondary') {
     const partner = hier.secondaries.filter((s) => s.agent !== agentName).map((s) => `**${s.agent}**`);
     out.push(`You are a **DEFAULT-TEAM VALIDATOR**${partner.length ? ` (the validation pair with ${partner.join(', ')})` : ''}, reporting up to the primary lead **${primaryName}**.`);
     out.push(`You do **NOT** delegate work down the chain — the primary lead hands objectives directly to the team leads, and their members execute. When work is completed, the completed tasks are relayed to you.`);
-    out.push(`Your job: **validate** the completed work — focus on ${validatorFocus(agentName)} — then **combine** the inputs from across the teams into one consolidated result and **relay your findings UP** with \`/ask ${primaryName} "<validated, consolidated findings>"\`. If the work is unsatisfactory, return it to the applicable team lead with concrete, actionable feedback for another delegation/refinement cycle until it passes or a blocker must be escalated.`);
+    out.push(`Your job: **validate** the completed work — focus on ${validatorFocus(agentName)} — then **combine** the inputs from across the teams into one consolidated result and **relay your findings UP** with \`/ask ${primaryTarget} "<validated, consolidated findings>"\`. If the work is unsatisfactory, return it to the applicable team lead with concrete, actionable feedback for another delegation/refinement cycle until it passes or a blocker must be escalated.`);
   } else if (info.role === 'teamlead') {
     out.push(`You are the **LEAD of the ${team} team**.`);
     const mates = (rosters[team] ?? []).filter((n) => n !== agentName);
     out.push(`You receive scoped objectives **directly from the primary lead ${primaryName}**.${mates.length ? ` Break each into tasks for your teammates: ${mates.map((m) => `**${m}**`).join(', ')}; assign and track to completion.` : ''}`);
-    out.push(`When the work is complete, relay the completed tasks to the default-team validators — ${validators.map((v) => `\`/ask ${v} "<completed work + summary>"\``).join(' and ') || validatorList} — who validate and consolidate it before it reaches the primary lead. Surface blockers up the same path; never dump unreviewed work straight to the primary.`);
+    out.push(`When the work is complete, relay the completed tasks to the default-team validators — ${validatorTargets.map((v) => `\`/ask ${v} "<completed work + summary>"\``).join(' and ') || validatorTargetList} — who validate and consolidate it before it reaches the primary lead. Surface blockers up the same path; never dump unreviewed work straight to the primary.`);
   } else {
     out.push(`You are a **member of the ${team} team**.`);
     if (info.lead) out.push(`Your team lead is **${info.lead}**. Do your assigned tasks, mark them done when finished, and surface blockers or questions with \`/ask ${info.lead} "..."\` — your lead relays them up the chain.`);
@@ -229,15 +233,15 @@ async function brainInstructions(team: string): Promise<string[]> {
 
 function renderOrgSummary(hier: OrgHierarchy): string {
   const primaryName = hier.primary?.agent ?? '(unset)';
-  const validators = hier.secondaries.map((s) => s.agent);
+  const validatorTargets = hier.secondaries.map((s) => `${s.team}/${s.agent}`);
   const teamLeads = Object.entries(hier.coordinators)
     .filter(([t, a]) => !!a && t !== hier.primary?.team && t !== 'public')
     .sort((a, b) => a[0].localeCompare(b[0]));
   const lines = [
     'Fleet leadership & relay policy (org chart):',
-    `- Primary lead: ${primaryName} (${hier.primary?.team ?? '?'}) — delegates ONLY to the team leads below; never hands execution work to its own default-team ${validators.join('/') || 'validators'}. Receives consolidated, validated findings from the validators.`,
-    `- Default-team validators: ${validators.join(', ') || '—'} — receive every completed task from the team leads, validate + combine it, and relay findings up to ${primaryName} (coder: implementation/technical/operational/code-quality; researcher: evidence/reasoning/sourcing/policy/completeness).`,
-    `- Team leads (delegated to directly by ${primaryName}; execute via their own members; relay completed work to ${validators.join(' & ') || 'the validators'}):`,
+    `- Primary lead: ${primaryName} (${hier.primary?.team ?? '?'}) — delegates ONLY to the team leads below; never hands execution work to its own default-team ${validatorTargets.join(', ') || 'validators'}. Receives consolidated, validated findings from the validators.`,
+    `- Default-team validators: ${validatorTargets.join(', ') || '—'} — receive every completed task from the team leads, validate + combine it, and relay findings up to ${primaryName} (coder: implementation/technical/operational/code-quality; researcher: evidence/reasoning/sourcing/policy/completeness).`,
+    `- Team leads (delegated to directly by ${primaryName}; execute via their own members; relay completed work to ${validatorTargets.join(' & ') || 'the validators'}):`,
   ];
   for (const [t, a] of teamLeads) lines.push(`    - ${t}: ${a}`);
   return lines.join('\n');

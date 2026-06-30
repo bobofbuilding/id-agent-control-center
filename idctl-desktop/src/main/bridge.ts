@@ -73,6 +73,30 @@ interface ControllerProofRecord {
 const CONTROLLER_PROOF_TTL_MS = 10 * 60_000;
 const controllerProofs = new Map<string, ControllerProofRecord>();
 const ETH_ADDRESS_RE = /^0x[0-9a-fA-F]{40}$/;
+const PRIMARY_TEAM = 'default';
+const DEFAULT_PRIMARY_AGENT = 'lead';
+
+function assertDefaultPrimaryWrite(team: string, agent: string): void {
+  if (team !== PRIMARY_TEAM || agent !== DEFAULT_PRIMARY_AGENT) {
+    throw new Error(`primary lead is locked to ${PRIMARY_TEAM}/${DEFAULT_PRIMARY_AGENT}`);
+  }
+}
+
+function assertDefaultCoordinatorWrite(team: string, agent: string): void {
+  if (team === PRIMARY_TEAM && agent !== DEFAULT_PRIMARY_AGENT) {
+    throw new Error(`default coordinator is locked to ${PRIMARY_TEAM}/${DEFAULT_PRIMARY_AGENT}`);
+  }
+}
+
+function normalizeSecondaryLeadWrites(leads: SecondaryLead[]): SecondaryLead[] {
+  return leads
+    .map((lead) => ({
+      agent: String(lead.agent ?? '').trim(),
+      team: PRIMARY_TEAM,
+      leadsTeams: Array.from(new Set((lead.leadsTeams ?? []).map((t) => String(t).trim()).filter((t) => t && t !== PRIMARY_TEAM && t !== 'public'))).sort((a, b) => a.localeCompare(b)),
+    }))
+    .filter((lead) => lead.agent);
+}
 
 function controllerProofKey(agent: string, team?: string): string {
   return team ? `${team}:${agent}` : agent;
@@ -1189,11 +1213,17 @@ async function callRaw(method: string, args: unknown[] = []): Promise<unknown> {
   if (method === 'info') return info();
   if (method === 'coordinator:get') return getCoordinator(String(args[0] ?? client.team ?? 'default')) ?? null;
   if (method === 'coordinator:set') {
-    setCoordinator(String(args[0]), String(args[1]));
+    const team = String(args[0]);
+    const agent = String(args[1]);
+    assertDefaultCoordinatorWrite(team, agent);
+    setCoordinator(team, agent);
     return { ok: true };
   }
   if (method === 'coordinator:setPrimary') {
-    setPrimaryCoordinator(String(args[0]), String(args[1]));
+    const team = String(args[0]);
+    const agent = String(args[1]);
+    assertDefaultPrimaryWrite(team, agent);
+    setPrimaryCoordinator(team, agent);
     return info();
   }
   if (method === 'coordinator:hierarchy') {
@@ -1206,7 +1236,7 @@ async function callRaw(method: string, args: unknown[] = []): Promise<unknown> {
   if (method === 'org:sync') return syncOrg(client, (args[0] as { autoRebuild?: boolean }) ?? {});
   if (method === 'org:getSecondaryLeads') return getSecondaryLeads();
   if (method === 'org:setSecondaryLeads') {
-    setSecondaryLeads((args[0] as SecondaryLead[]) ?? []);
+    setSecondaryLeads(normalizeSecondaryLeadWrites((args[0] as SecondaryLead[]) ?? []));
     return { ok: true };
   }
   if (method === 'org:getConfig') return loadSettings().orgSync ?? { enabled: true, autoRebuild: true };
