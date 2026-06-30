@@ -1,6 +1,6 @@
 # ID Agents Control Center — Product Spec
 
-_Updated 2026-06-30 · reflects app **v0.1.383**. This is a page-by-page specification of
+_Updated 2026-06-30 · reflects app **v0.1.384**. This is a page-by-page specification of
 the desktop app as it actually ships today, produced by reviewing every page._
 
 ---
@@ -375,14 +375,17 @@ selection in the active team.
   review states guard the Brain launchers but do not render as Skills-tab notices.
 - **Brain dashboard popouts**: Fleet, Health, Skills, Learning, Agents, and Graph are treated as
   read-only observation surfaces. They lead with `/fleet-report`'s IDACC manager authority when live,
-  fall back to Brain cache only with explicit cache/partial warnings, expose redacted SkillMesh/public
-  identity and advertised-skill summaries, and avoid dashboard-side approval/replay POST controls.
+  fall back to Brain cache only with explicit cache/partial warnings, expose redacted optional-provider
+  evidence such as SkillMesh public identity and advertised-skill summaries, and avoid dashboard-side
+  approval/replay POST controls.
   Brain Agents now mirrors the Identity & Keys controller-wallet precedence (`ows_address`, then
-  SkillMesh address, then address-shaped OWS wallet) and shows per-agent total ETH gas spend vs
-  last-24h ETH gas from Brain timeline transaction/gas evidence.
+  optional SkillMesh provider address, then address-shaped OWS wallet) and shows per-agent total ETH
+  gas spend vs last-24h ETH gas from Brain timeline transaction/gas evidence.
   The Brain listener snapshots every manager team into team-qualified cache rows, retires
   no-longer-live rows as stale, and `/fleet-report` excludes stale rows when comparing live manager
   totals against Brain cache, so duplicate bare-name agents do not create false drift.
+  SkillMesh is treated as a bundled optional provider: neutral agents do not receive SkillMesh keys
+  or env vars unless the SkillMesh plugin/provider is attached or explicit opt-in env is set.
 - **Brain Graph**: `/graph/app/data` is a sanitized node-link snapshot. Entity data is reduced to
   safe matching/display fields; live lifecycle, SkillMesh address, and skill counts come only from
   the unambiguous `/fleet-report` overlay; raw metadata, private keys, creator keys, auth tokens,
