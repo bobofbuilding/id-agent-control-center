@@ -6,6 +6,12 @@ import type { DiscoveredServer } from '../../../../idctl/src/settings/localDisco
 import { PROVIDER_CATALOG, findProvider } from '../../../../idctl/src/settings/providerCatalog.ts';
 import { TOP_LOCAL_MODEL_CATALOG, type ModelCapability, type LocalModelEntry } from '../../../../idctl/src/settings/modelCatalog.ts';
 import { TOP_LOCAL_STACKS, type LocalStackEntry } from '../../../../idctl/src/settings/localStacks.ts';
+import {
+  CONTROL_CENTER_API_VERSION,
+  CONTROL_CENTER_REQUIRED_FEATURES,
+  CONTROL_CENTER_REQUIRED_ROUTES,
+  controlCenterRouteKey,
+} from '../../../../idctl/src/api/controlCenterContract.ts';
 
 const MODEL_CAPS: ModelCapability[] = ['general', 'tools', 'reasoning', 'coding', 'vision', 'embedding', 'fast'];
 const STARTER_LOCAL_MODEL_ID = 'qwen3:1.7b';
@@ -28,8 +34,6 @@ type ManagerCapabilities = {
   features?: string[];
   routes?: { method: string; path: string; group: string }[];
 } | null;
-
-const REQUIRED_MANAGER_FEATURES = ['observability', 'agent-config', 'team-config', 'library', 'brain-context', 'stalled-sweep'];
 
 function timeAgo(ms: number): string {
   const s = Math.max(0, Math.round((Date.now() - ms) / 1000));
@@ -760,16 +764,22 @@ export function Settings({ store, navigate }: { store: FleetStore; navigate?: (v
   const syncCandidate = defaultProvider && !defaultRouteReady ? defaultProvider : enabledProviders.find((p) => providerKeyReady(p) && !providerRouteReady(p));
   const textRuntimeReady = store.connection === 'online' && (defaultRouteReady || routeReadyProviders.length > 0);
   const managerFeatureSet = new Set(managerCaps?.features ?? []);
-  const missingManagerFeatures = REQUIRED_MANAGER_FEATURES.filter((feature) => !managerFeatureSet.has(feature));
+  const managerRouteSet = new Set((managerCaps?.routes ?? []).map(controlCenterRouteKey));
+  const missingManagerFeatures = CONTROL_CENTER_REQUIRED_FEATURES.filter((feature) => !managerFeatureSet.has(feature));
+  const missingManagerRoutes = CONTROL_CENTER_REQUIRED_ROUTES.filter((route) => !managerRouteSet.has(controlCenterRouteKey(route)));
+  const managerExtensionIssues = [
+    ...missingManagerFeatures.map((feature) => `feature:${feature}`),
+    ...missingManagerRoutes.map(controlCenterRouteKey),
+  ];
   const managerApiVersion = managerCaps?.cc_api_version ?? 0;
-  const managerExtensionReady = store.connection === 'online' && !!managerCaps && managerApiVersion >= 1 && missingManagerFeatures.length === 0;
+  const managerExtensionReady = store.connection === 'online' && !!managerCaps && managerApiVersion >= CONTROL_CENTER_API_VERSION && managerExtensionIssues.length === 0;
   const managerExtensionTone = store.connection !== 'online'
     ? 'err'
     : managerCaps === undefined
       ? 'warn'
       : !managerCaps
         ? 'err'
-        : managerApiVersion < 1 || missingManagerFeatures.length
+        : managerApiVersion < CONTROL_CENTER_API_VERSION || managerExtensionIssues.length
           ? 'warn'
           : 'ok';
   const managerExtensionTitle = store.connection !== 'online'
@@ -778,10 +788,12 @@ export function Settings({ store, navigate }: { store: FleetStore; navigate?: (v
       ? 'checking...'
       : !managerCaps
         ? 'stock/unknown'
-        : managerApiVersion < 1
+        : managerApiVersion < CONTROL_CENTER_API_VERSION
           ? `CC API v${managerApiVersion || '?'}`
-          : missingManagerFeatures.length
-            ? `${REQUIRED_MANAGER_FEATURES.length - missingManagerFeatures.length}/${REQUIRED_MANAGER_FEATURES.length} features`
+        : missingManagerFeatures.length
+            ? `${CONTROL_CENTER_REQUIRED_FEATURES.length - missingManagerFeatures.length}/${CONTROL_CENTER_REQUIRED_FEATURES.length} features`
+            : missingManagerRoutes.length
+              ? `${CONTROL_CENTER_REQUIRED_ROUTES.length - missingManagerRoutes.length}/${CONTROL_CENTER_REQUIRED_ROUTES.length} routes`
             : `CC API v${managerApiVersion}`;
   const managerExtensionDetail = store.connection !== 'online'
     ? 'connect manager first'
@@ -791,9 +803,13 @@ export function Settings({ store, navigate }: { store: FleetStore; navigate?: (v
         ? 'missing /capabilities; update id-agents manager'
         : missingManagerFeatures.length
           ? `missing ${missingManagerFeatures.slice(0, 3).join(', ')}${missingManagerFeatures.length > 3 ? '...' : ''}`
+          : missingManagerRoutes.length
+            ? `missing ${missingManagerRoutes.slice(0, 2).map(controlCenterRouteKey).join(', ')}${missingManagerRoutes.length > 2 ? '...' : ''}`
           : `${managerCaps.routes?.length ?? 0} extension routes`;
   const readinessState = store.connection !== 'online'
     ? 'manager offline'
+    : managerCaps === undefined
+      ? 'checking manager'
     : !managerExtensionReady
       ? 'manager update'
       : textRuntimeReady
@@ -932,7 +948,7 @@ export function Settings({ store, navigate }: { store: FleetStore; navigate?: (v
           <div className={`readiness-check ${managerExtensionTone}`}>
             <span>Manager extension</span>
             <b>{managerExtensionTitle}</b>
-            <small title={missingManagerFeatures.length ? `Missing: ${missingManagerFeatures.join(', ')}` : managerCaps?.extension}>{managerExtensionDetail}</small>
+            <small title={managerExtensionIssues.length ? `Missing: ${managerExtensionIssues.join(', ')}` : managerCaps?.extension}>{managerExtensionDetail}</small>
           </div>
           <div className={`readiness-check ${defaultRouteReady ? 'ok' : routeReadyProviders.length ? 'warn' : 'err'}`}>
             <span>Routing</span>
