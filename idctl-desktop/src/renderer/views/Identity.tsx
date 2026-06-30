@@ -556,12 +556,20 @@ export function Identity({ store }: { store: FleetStore }) {
   async function createAccount() {
     const fresh = await ensureSelectedFresh('creating account');
     if (!fresh) return;
+    if (!controllerProofValidFor(fresh)) {
+      setError('Create account requires a signed controller-wallet challenge first.');
+      return;
+    }
     const key = agentKey(fresh);
     const reviewedAccount = await latestAccountFor(key);
     const team = fresh.team ?? 'default';
     if (!window.confirm(`Create account for ${team}/${fresh.name}?\n\nThis ensures a smart-account record for the selected agent.`)) return;
     const afterConfirm = await ensureSelectedFresh('creating account after review');
     if (!afterConfirm) return;
+    if (!controllerProofValidFor(afterConfirm)) {
+      setError('Controller proof expired or changed after confirmation. Sign a fresh challenge before creating the account.');
+      return;
+    }
     const latestAccount = await latestAccountFor(agentKey(afterConfirm));
     if (accountStamp(latestAccount) !== accountStamp(reviewedAccount)) {
       setError('Account state changed after confirmation. Identity has refreshed the latest account state; review and retry.');
@@ -837,7 +845,7 @@ export function Identity({ store }: { store: FleetStore }) {
                         Provision wallet
                       </button>
                     ) : null}
-                    <button className="btn" disabled={busy} onClick={() => void createAccount()}>
+                    <button className="btn" disabled={busy || !controllerVerified} onClick={() => void createAccount()}>
                       Create account
                     </button>
                     <button className="btn" disabled={busy || !controllerVerified} onClick={() => void identityAction('register')}>

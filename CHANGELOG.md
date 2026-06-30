@@ -8,6 +8,9 @@ Every change pushed or merged to `main` carries its version number in the commit
 subject (`vX.Y.Z: …`), stamped automatically by the `commit-msg` hook — see
 [CONTRIBUTING.md](CONTRIBUTING.md).
 
+## [0.1.326] — 2026-06-30
+- Identity account creation controller-proof guardrail
+
 ## [0.1.325] — 2026-06-30
 - Guard Health all-team Probe all
 

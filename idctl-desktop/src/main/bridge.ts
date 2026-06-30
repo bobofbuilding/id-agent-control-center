@@ -1063,7 +1063,12 @@ const METHODS: Record<string, (...a: any[]) => Promise<unknown>> = {
   'keys:caps': async () => keys.capabilities(),
   'keys:list': (agents: string[]) => keys.listAccounts(agents ?? []),
   'keys:legacyAuthority': async (targets: KeyAuthorityTarget[]) => legacyMockAuthorityReport(targets ?? []),
-  'keys:ensure': (agent: string, team?: string) => keys.ensureAccount(scopedAgentKey(String(agent), team ? String(team) : undefined)),
+  'keys:ensure': async (agent: string, team?: string) => {
+    const name = String(agent);
+    const teamName = team ? String(team) : undefined;
+    await requireControllerProof(name, teamName);
+    return keys.ensureAccount(scopedAgentKey(name, teamName));
+  },
   'keys:deploy': async (agent: string, team?: string) => {
     const name = String(agent);
     const teamName = team ? String(team) : undefined;

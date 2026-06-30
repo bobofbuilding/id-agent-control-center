@@ -483,6 +483,7 @@ const M: Record<string, (...a: any[]) => Promise<unknown>> = {
   },
   'keys:legacyAuthority': async (targets: KeyAuthorityTarget[]) => legacyKeyAuthorityReport(targets ?? []),
   'keys:ensure': async (agent: string, selectedTeam?: string) => {
+    await requireControllerProof(String(agent), selectedTeam ? String(selectedTeam) : undefined);
     const key = scopedAgentKey(String(agent), selectedTeam ? String(selectedTeam) : undefined);
     const st = keysState();
     if (!st.accounts[key]) {
