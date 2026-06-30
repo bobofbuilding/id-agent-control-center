@@ -1,6 +1,6 @@
 # ID Agents Control Center — Product Spec
 
-_Updated 2026-06-24 · reflects app **v0.1.117**. This is a page-by-page specification of
+_Updated 2026-06-30 · reflects app **v0.1.381**. This is a page-by-page specification of
 the desktop app as it actually ships today, produced by reviewing every page._
 
 ---
@@ -373,6 +373,14 @@ selection in the active team.
   **auto-categorize** (+ ↻ re-categorize), **Create skill**, low-noise Brain skill count/sync chip,
   and explicit **Preview & sync** for Brain catalog writes. Brain-wide Health/Fleet/Agents/Graph
   review states guard the Brain launchers but do not render as Skills-tab notices.
+- **Brain dashboard popouts**: Fleet, Health, Skills, Learning, Agents, and Graph are treated as
+  read-only observation surfaces. They lead with `/fleet-report`'s IDACC manager authority when live,
+  fall back to Brain cache only with explicit cache/partial warnings, expose redacted SkillMesh/public
+  identity and advertised-skill summaries, and avoid dashboard-side approval/replay POST controls.
+- **Brain Graph**: `/graph/app/data` is a sanitized node-link snapshot. Entity data is reduced to
+  safe matching/display fields; live lifecycle, SkillMesh address, and skill counts come only from
+  the unambiguous `/fleet-report` overlay; raw metadata, private keys, creator keys, auth tokens,
+  wallet secrets, and MCP env values are not exposed.
 - **Plugins**: compact active-package table (package, kind, reach, action). Instruction-only wrappers
   can be **Digest** after a fresh-read guard, then disappear from Plugins and live in Skills; a small
   **In Skills** count shows what moved. Tool-bearing/hybrid packages stay here until reviewed adapters exist.
