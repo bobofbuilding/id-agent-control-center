@@ -48,6 +48,12 @@ type SyncPreview = {
   adoptNames: string[];
   error?: string;
 };
+type ProjectOrgHierarchy = {
+  primary: { team: string; agent: string } | null;
+  secondaries: { agent: string; team: string; leadsTeams: string[] }[];
+  coordinators: Record<string, string>;
+  teams: string[];
+};
 
 function newId(): string {
   return `p_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 7)}`;
@@ -221,8 +227,10 @@ function uniqStrings(arr: string[]): string[] {
 
 export function Projects({ store }: { store: FleetStore }) {
   const syncVersion = useSyncVersion(['projects', 'dashboard', 'brain']);
+  const hierarchySyncVersion = useSyncVersion(['org', 'agents', 'projects']);
   const toast = useToast();
   const [projects, setProjects] = useState<ProjectEntry[]>([]);
+  const [hier, setHier] = useState<ProjectOrgHierarchy>({ primary: null, secondaries: [], coordinators: {}, teams: [] });
   const [gitMap, setGitMap] = useState<Record<string, GitInfo>>({});
   const [gitOut, setGitOut] = useState<Record<string, { action: string; output: string }>>({});
   const [gitBusy, setGitBusy] = useState<string | null>(null);
@@ -248,12 +256,24 @@ export function Projects({ store }: { store: FleetStore }) {
   const [linkUrl, setLinkUrl] = useState('');
   const [automationFor, setAutomationFor] = useState<string | null>(null);
 
-  const lead = resolveCoordinator(store.agents, store.coordinator);
   // New projects default to the DEFAULT team, which delegates git work to the
   // responsible agent (git-manager). Falls back to the first team if absent.
   const defaultTeamName = useMemo(() => (store.teams.some((t) => t.name === 'default') ? 'default' : (store.teams[0]?.name ?? '')), [store.teams]);
-  // Resolve a team's lead/coordinator (who owns + delegates the commit).
-  const teamLeadOf = (team?: string) => resolveCoordinator(store.allAgents.filter((a) => a.team === (team || defaultTeamName)), undefined) || 'lead';
+  // Resolve a team's lead/coordinator through HR's hierarchy before falling back to the local role heuristic.
+  const teamAgentsFor = (team: string) => {
+    const scoped = store.allAgents.filter((a) => a.team === team);
+    if (scoped.length) return scoped;
+    if (team === store.team) return store.agents.map((a) => ({ ...a, team }));
+    return [];
+  };
+  const teamLeadOf = (team?: string) => {
+    const name = team || defaultTeamName;
+    const agents = teamAgentsFor(name);
+    const configured = hier.coordinators[name] || (name === store.team ? store.coordinator : undefined);
+    return resolveCoordinator(agents, configured) ?? '';
+  };
+  const formLead = teamLeadOf(form.team || defaultTeamName);
+  const defaultProjectLead = teamLeadOf(defaultTeamName);
   // Per-project checkpoint state: completed-task refs seen so far (baseline) + last
   // auto-commit time (throttle). A ref so the 45s watcher doesn't trigger re-renders.
   const autoSeenRef = useRef<Record<string, { seen: Set<string>; lastFire: number }>>({});
@@ -262,6 +282,12 @@ export function Projects({ store }: { store: FleetStore }) {
   const dupCount = useMemo(() => {
     return duplicateProjectGroups(projects).reduce((n, g) => n + g.length - 1, 0);
   }, [projects]);
+
+  useEffect(() => {
+    let live = true;
+    void call<ProjectOrgHierarchy>('org:hierarchy').then((h) => { if (live && h) setHier(h); }).catch(() => {});
+    return () => { live = false; };
+  }, [store.lastUpdated, hierarchySyncVersion]);
 
   // Checkpoint auto-commit watcher: poll every team's tasks; when a NEW matching
   // completion appears for an auto-enabled project AND its repo is dirty, request a
@@ -474,7 +500,7 @@ export function Projects({ store }: { store: FleetStore }) {
       const src = meta.ok && meta.description ? 'GitHub' : readme.found ? 'README' : 'folder';
       setNote(ghMode === 'fork'
         ? `forked → ${forkSlug ?? c.name} ✓ (upstream wired); review & Save`
-        : `cloned ${c.name} ✓ — auto-filled from ${src}; review & Save${lead ? ' (or “Refine with lead”)' : ''}`);
+        : `cloned ${c.name} ✓ — auto-filled from ${src}; review & Save${defaultProjectLead ? ' (or “Refine with lead”)' : ''}`);
     } finally {
       setBusy(false);
     }
@@ -483,12 +509,13 @@ export function Projects({ store }: { store: FleetStore }) {
   async function refineWithLead() {
     const slug = form.links.split(/[,\n]/)[0]?.trim() || form.name.trim();
     if (!slug) { setNote('need a repo or name to summarize'); return; }
-    if (!lead) { setNote('no team lead online to route through'); return; }
+    const projectLead = teamLeadOf(form.team || defaultTeamName);
+    if (!projectLead) { setNote(`no ${form.team || defaultTeamName || 'project'} team lead online to route through`); return; }
     setBusy(true);
-    setNote(`asking ${lead} to summarize…`);
+    setNote(`asking ${form.team || defaultTeamName}/${projectLead} to summarize…`);
     try {
       const ask = `Summarize the GitHub repo ${slug} for a project tracker. Use your GitHub tools to look it up if needed. Reply with ONLY a JSON object and nothing else: {"description":"<one concise sentence>","tags":["tag1","tag2","tag3"]}. Tags lowercase, 3-6 of them.`;
-      const reply = await call<string>('dispatch', `/ask ${lead} ${ask}`).catch(() => '');
+      const reply = await call<string>('dispatch', `/ask ${projectLead} ${ask}`).catch(() => '');
       const m = String(reply).match(/\{[\s\S]*\}/);
       if (m) {
         try {
@@ -497,12 +524,12 @@ export function Projects({ store }: { store: FleetStore }) {
           const tags = Array.isArray(o.tags) ? o.tags.map((t) => String(t).trim()).filter(Boolean) : [];
           if (desc || tags.length) {
             setForm((f) => ({ ...f, description: desc || f.description, tags: tags.length ? tags.join(', ') : f.tags }));
-            setNote(`refined by ${lead} ✓ — review & Save`);
+            setNote(`refined by ${form.team || defaultTeamName}/${projectLead} ✓ — review & Save`);
             return;
           }
         } catch { /* unparseable — fall through */ }
       }
-      setNote(`${lead} reply wasn’t usable — kept current values`);
+      setNote(`${projectLead} reply wasn’t usable — kept current values`);
     } finally {
       setBusy(false);
     }
@@ -645,20 +672,21 @@ export function Projects({ store }: { store: FleetStore }) {
   // commit message (subject + bullets), pre-filling the composer for review.
   async function draftCommit(p: ProjectEntry) {
     if (!p.path) return;
-    if (!lead) { setNote('no team lead online to draft with'); return; }
     setDrafting(true);
     try {
       const fresh = await ensureProjectFresh(p, 'drafting commit');
       if (!fresh?.path) return;
+      const projectLead = teamLeadOf(fresh.team || defaultTeamName);
+      if (!projectLead) { setNote(`no ${fresh.team || defaultTeamName || 'project'} team lead online to draft with`); return; }
       const d = await call<{ ok: boolean; stat: string; diff: string; untracked: string[]; error?: string }>('project:diff', fresh.path).catch(() => null);
       if (!d || !d.ok) { setNote(`couldn't read the diff: ${d?.error ?? 'unknown'}`); return; }
       if (!d.stat && !d.diff && !d.untracked.length) { setNote('no working changes to summarize'); return; }
       const ask = `Draft a git commit message for the project "${fresh.name}". Working changes below.\n\nFiles changed (git diff --stat):\n${d.stat || '(none tracked)'}\n\nUntracked files: ${d.untracked.join(', ') || 'none'}\n\nDiff:\n${d.diff || '(no tracked changes)'}\n\nReply with ONLY the commit message: a concise imperative subject line (≤72 chars), then a blank line, then 1-4 short bullet points. No code fences, no preamble.`;
-      const reply = await call<string>('dispatch', `/ask ${lead} ${q(ask)}`).catch(() => '');
+      const reply = await call<string>('dispatch', `/ask ${projectLead} ${q(ask)}`).catch(() => '');
       const clean = String(reply || '').replace(/^```[a-z]*\n?/i, '').replace(/```$/,'').trim();
-      if (!clean) { setNote(`${lead} didn't return a draft — write one manually`); return; }
+      if (!clean) { setNote(`${projectLead} didn't return a draft — write one manually`); return; }
       setCommitMsg(clean);
-      setNote(`drafted by ${lead} — review & request`);
+      setNote(`drafted by ${fresh.team || defaultTeamName}/${projectLead} — review & commit`);
     } finally {
       setDrafting(false);
     }
@@ -686,7 +714,7 @@ export function Projects({ store }: { store: FleetStore }) {
       const links = uniqStrings([r.slug ?? '', ...((latest.current.links ?? []) as string[])]);
       const list = await call<ProjectEntry[]>('projects:save', { ...latest.current, links, updatedAt: Date.now() });
       replaceProjects(list);
-      t.update({ kind: 'success', text: `Created ${r.slug} ✓ — origin connected. Use ⤴ Request commit to push your files.` });
+      t.update({ kind: 'success', text: `Created ${r.slug} ✓ — origin connected. Use ⤴ Commit to push your files.` });
       setRepoFor(null); setRepoName('');
       setCommitFor(latest.current.id); setCommitMsg(''); // open the composer so they can push content right away
     } catch (e) {
@@ -717,7 +745,7 @@ export function Projects({ store }: { store: FleetStore }) {
       const links = uniqStrings([link, ...((latest.current.links ?? []) as string[])]);
       const list = await call<ProjectEntry[]>('projects:save', { ...latest.current, links, updatedAt: Date.now() });
       replaceProjects(list);
-      t.update({ kind: 'success', text: `Linked ${r.slug} ✓ — origin connected + fetched. Pull to sync, then ⤴ Request commit.` });
+      t.update({ kind: 'success', text: `Linked ${r.slug} ✓ — origin connected + fetched. Pull to sync, then ⤴ Commit.` });
       setLinkFor(null); setLinkUrl('');
     } catch (e) {
       t?.update({ kind: 'error', text: `Link failed: ${e instanceof Error ? e.message : String(e)}` });
@@ -794,8 +822,8 @@ export function Projects({ store }: { store: FleetStore }) {
     delete autoSeenRef.current[fresh.id]; // re-baseline on the next watcher tick
     setNote(val === 'off' ? `auto-commit off for ${fresh.name}` : `auto-commit on (${val === 'plan' ? 'plan validation' : 'any task'}) for ${fresh.name} — needs a team + uncommitted changes`);
   }
-  // Fire a checkpoint commit: AI-draft a message from the diff (best-effort), then
-  // route the commit & push via the owning team → git-manager (normal request flow).
+  // Fire a checkpoint commit: AI-draft a message from the project team's lead (best-effort),
+  // then use the same guarded direct commit path as the manual composer.
   async function autoCommitNow(p: ProjectEntry, triggerRef: string, kind: Exclude<AutoCommitMode, 'off'>) {
     const fresh = await ensureProjectFresh(p, 'auto-commit checkpoint', { quiet: true });
     if (!fresh?.path) {
@@ -817,15 +845,16 @@ export function Projects({ store }: { store: FleetStore }) {
     }
     let msg = '';
     try {
-      if (d?.ok && lead && (d.stat || d.diff || d.untracked.length)) {
+      const projectLead = teamLeadOf(fresh.team || defaultTeamName);
+      if (d?.ok && projectLead && (d.stat || d.diff || d.untracked.length)) {
         const ask = `Draft a git commit message for the project "${fresh.name}". Files (git diff --stat):\n${d.stat || '(none)'}\n\nUntracked: ${d.untracked.join(', ') || 'none'}\n\nDiff:\n${d.diff || '(no tracked changes)'}\n\nReply with ONLY the commit message: a concise imperative subject (≤72 chars), blank line, then 1-4 bullets. No code fences.`;
-        const reply = await call<string>('dispatch', `/ask ${lead} ${q(ask)}`).catch(() => '');
+        const reply = await call<string>('dispatch', `/ask ${projectLead} ${q(ask)}`).catch(() => '');
         msg = String(reply || '').replace(/^```[a-z]*\n?/i, '').replace(/```$/, '').trim();
       }
     } catch { /* fall back to a generic message */ }
     if (!msg) msg = `Checkpoint commit for ${fresh.name}.`;
     msg = `${msg}\n\n(auto-commit checkpoint — triggered by completed ${kind === 'plan' ? 'plan-validation ' : ''}task ${triggerRef})`;
-    toast({ kind: 'info', text: `⟳ Auto-commit checkpoint for “${fresh.name}” (task ${triggerRef} done) → ${fresh.team || defaultTeamName} delegates to git-manager` });
+    toast({ kind: 'info', text: `⟳ Auto-commit checkpoint for “${fresh.name}” (task ${triggerRef} done) → guarded direct commit` });
     await submitCommit(fresh, msg, { confirm: false, quietStale: true });
   }
 
@@ -918,8 +947,8 @@ export function Projects({ store }: { store: FleetStore }) {
           <b><textarea style={{ width: '100%', minHeight: 60 }} placeholder="freeform notes" value={form.notes} onChange={(e) => setForm((f) => ({ ...f, notes: e.target.value }))} /></b>
         </div>
         <div className="row-actions" style={{ marginTop: 10 }}>
-          {lead && (form.links.trim() || form.name.trim()) ? (
-            <button className="btn" disabled={busy} title={`Have ${lead} write a cleaner description + tags`} onClick={() => void refineWithLead()}>✨ Refine with lead</button>
+          {formLead && (form.links.trim() || form.name.trim()) ? (
+            <button className="btn" disabled={busy} title={`Have ${form.team || defaultTeamName}/${formLead} write a cleaner description + tags`} onClick={() => void refineWithLead()}>✨ Refine with lead</button>
           ) : null}
           <span className="grow" />
           <button className="btn" disabled={busy} onClick={() => { setEditing(null); setEditBaseline(null); }}>Cancel</button>
@@ -1004,6 +1033,7 @@ export function Projects({ store }: { store: FleetStore }) {
         {shown.map((p) => {
           const g = gitMap[p.id];
           const out = gitOut[p.id];
+          const cardLead = teamLeadOf(p.team || defaultTeamName);
           if (editing === p.id) {
             // Edit in place — the form replaces this card's body so you stay put.
             return <div className="skill-card editing" key={p.id}>{projectForm()}</div>;
@@ -1039,7 +1069,7 @@ export function Projects({ store }: { store: FleetStore }) {
                       <button className="btn small" title="Connect this folder to a GitHub repo that ALREADY exists — sets it as origin (SSH) and fetches" onClick={() => { setLinkFor(linkFor === p.id ? null : p.id); setLinkUrl((p.links ?? []).find((l) => /github\.com/i.test(l)) ?? ''); setRepoFor(null); setNote(''); }}>{linkFor === p.id ? '− Cancel' : '🔗 Link existing repo'}</button>
                       <button className="btn small" title="Create a NEW GitHub repo for this folder and connect it as origin (SSH)" onClick={() => { setRepoFor(repoFor === p.id ? null : p.id); setRepoName(p.name || ''); setLinkFor(null); setNote(''); }}>{repoFor === p.id ? '− Cancel' : '＋ Create GitHub repo'}</button>
                     </>) : null}
-                    <button className="btn small primary" title="Commit & push this project's changes — optionally let AI draft the message (the owning team delegates the push to git-manager)" onClick={() => { setCommitFor(commitFor === p.id ? null : p.id); setCommitMsg(''); setNote(''); }}>{commitFor === p.id ? '− Cancel' : '⤴ Request commit'}</button>
+                    <button className="btn small primary" title="Commit & push this project's changes directly after reviewed git/diff checks; optionally let the project team's lead draft the message" onClick={() => { setCommitFor(commitFor === p.id ? null : p.id); setCommitMsg(''); setNote(''); }}>{commitFor === p.id ? '− Cancel' : '⤴ Commit'}</button>
                     <button className="btn small" title="Open folder" onClick={() => void openProjectFolder(p)}>open ↗</button>
                   </div>
                   <div className="muted small mono project-path" title={p.path}>{p.path}</div>
@@ -1097,12 +1127,12 @@ export function Projects({ store }: { store: FleetStore }) {
                       <div className="row-actions" style={{ gap: 6, alignItems: 'center' }}>
                         <span className="muted small">commit message / change notes</span>
                         <span className="grow" />
-                        <button className="btn small" disabled={drafting || !lead} title={lead ? `Let ${lead} read the working diff and draft a commit message` : 'no team lead online to draft with'} onClick={() => void draftCommit(p)}>{drafting ? '✨ Drafting…' : '✨ Draft with AI'}</button>
+                        <button className="btn small" disabled={drafting || !cardLead} title={cardLead ? `Let ${p.team || defaultTeamName}/${cardLead} read the working diff and draft a commit message` : 'no project team lead online to draft with'} onClick={() => void draftCommit(p)}>{drafting ? '✨ Drafting…' : '✨ Draft with AI'}</button>
                       </div>
                       <textarea style={{ width: '100%', minHeight: 80 }} value={commitMsg} placeholder="Describe the change, or click “✨ Draft with AI” to summarize the working diff." onChange={(e) => setCommitMsg(e.target.value)} />
                       <div className="row-actions" style={{ gap: 6 }}>
                         <span className="grow" />
-                        <button className="btn small primary" disabled={!commitMsg.trim()} onClick={() => void submitCommit(p, commitMsg)}>⤴ Request commit &amp; push</button>
+                        <button className="btn small primary" disabled={!commitMsg.trim()} onClick={() => void submitCommit(p, commitMsg)}>⤴ Commit &amp; push</button>
                       </div>
                     </div>
                   ) : null}

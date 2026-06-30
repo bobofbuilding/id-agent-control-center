@@ -8,6 +8,9 @@ Every change pushed or merged to `main` carries its version number in the commit
 subject (`vX.Y.Z: …`), stamped automatically by the `commit-msg` hook — see
 [CONTRIBUTING.md](CONTRIBUTING.md).
 
+## [0.1.350] — 2026-06-30
+- Align Projects commit labels and project-team lead routing
+
 ## [0.1.349] — 2026-06-30
 - Resolve Work cross-team lead targets through org hierarchy
 
