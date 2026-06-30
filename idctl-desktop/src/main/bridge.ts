@@ -485,6 +485,18 @@ function scopedAgentKey(agent: string, team?: string): string {
   return team ? `${String(team)}:${name}` : name;
 }
 
+function requireCurrentComputerUseAgent(agents: Agent[], agentId: string, agentName?: string): Agent {
+  const id = String(agentId ?? '').trim();
+  const name = String(agentName ?? '').trim();
+  if (!id) throw new Error('computer-use agent id is required; refresh and choose the current roster row.');
+  const found = agents.find((x) => String(x.id) === id);
+  if (!found) throw new Error(`computer-use target no longer exists: ${name || id}`);
+  if (name && String(found.name) !== name) {
+    throw new Error(`computer-use target changed from ${name} to ${found.name}; refresh before changing access.`);
+  }
+  return found;
+}
+
 // idctl-desktop is the operator's local control center talking to 127.0.0.1,
 // so it is a legitimate admin client (admin-gated routes: skill install, MCP attach).
 let cfg: Config = loadConfig({ team: 'default', admin: true });
@@ -939,8 +951,7 @@ const METHODS: Record<string, (...a: any[]) => Promise<unknown>> = {
     // it throw, and fail closed if the agent isn't found, so we only ever merge
     // onto a known-good current list.
     const agents = await scopedClient.agents();
-    const a = agents.find((x) => x.id === agentId || x.name === agentId || x.name === agentName);
-    if (!a) throw new Error(`agent not found: ${agentName || agentId}`);
+    const a = requireCurrentComputerUseAgent(agents, agentId, agentName);
     const cur = (((a.metadata as any)?.mcpServers) ?? []) as McpServerSpec[];
     const authorityTeam = teamName ?? client.team ?? 'default';
     const authority = scopedAgentKey(a.name, authorityTeam);
@@ -956,8 +967,7 @@ const METHODS: Record<string, (...a: any[]) => Promise<unknown>> = {
     const teamName = team ? String(team) : undefined;
     const scopedClient = teamName ? client.withTeam(teamName) : client;
     const agents = await scopedClient.agents();
-    const a = agents.find((x) => x.id === agentId || x.name === agentId || x.name === agentName);
-    if (!a) throw new Error(`agent not found: ${agentName || agentId}`);
+    const a = requireCurrentComputerUseAgent(agents, agentId, agentName);
     revokeAgentToken(scopedAgentKey(a.name, teamName ?? client.team ?? 'default'));
     const cur = (((a.metadata as any)?.mcpServers) ?? []) as McpServerSpec[];
     return scopedClient.setAgentMcp(a.id, cur.filter((s) => !CU_MCP_ALIASES.includes(s.name)));
@@ -967,7 +977,7 @@ const METHODS: Record<string, (...a: any[]) => Promise<unknown>> = {
   'cu:attached': async (team?: string) => {
     const teamName = team ? String(team) : undefined;
     const scopedClient = teamName ? client.withTeam(teamName) : client;
-    const agents = await scopedClient.agents().catch(() => [] as Awaited<ReturnType<typeof client.agents>>);
+    const agents = await scopedClient.agents();
     return agents
       .filter((a) => (((a.metadata as any)?.mcpServers ?? []) as { name: string }[]).some((s) => CU_MCP_ALIASES.includes(s.name)))
       .map((a) => ({ id: a.id, name: a.name, team: teamName ?? client.team ?? 'default', authority: scopedAgentKey(a.name, teamName ?? client.team ?? 'default') }));

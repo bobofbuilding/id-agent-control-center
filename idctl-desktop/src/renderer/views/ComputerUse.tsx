@@ -410,7 +410,8 @@ export function ComputerUse({ store }: { store: FleetStore }) {
   async function syncArmedBlessedForTeam(team: string): Promise<void> {
     const currentStatus = await call<Status>('cu:status');
     if (!currentStatus.armed) return;
-    await call('cu:arm', team);
+    const latestAttached = await call<AttachedAgent[]>('cu:attached', team);
+    await call('cu:arm', team, attachedStamp(latestAttached ?? []));
   }
 
   async function bless(a: ComputerUseTarget) {
