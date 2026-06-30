@@ -768,6 +768,11 @@ export function Modules({ store }: { store: FleetStore }) {
         call<Record<string, string[]>>('skills:autoTags').catch(() => autoTags),
         call<BrainSkillSummary>('skills:brainSummary').catch(() => brainSkills),
       ]);
+      if (!brainSkillContractCurrent(latestBrain)) {
+        setBrainSkills(latestBrain);
+        setNote(`Brain sync blocked: ${brainSkillContractDetail(latestBrain)}`);
+        return;
+      }
       const renderedStamp = skillCatalogStamp(skills, autoTags);
       const latestStamp = skillCatalogStamp(latestSkills, latestTags);
       if (latestStamp !== renderedStamp) {
@@ -1195,9 +1200,12 @@ export function Modules({ store }: { store: FleetStore }) {
     graph: brainGraphNeedsReview ? brainGraphDetail : undefined,
   };
   const brainSyncWriteBlocked = !brainCore || brainCore.ok !== true;
-  const brainSyncDisabled = brainSyncing || skills.length === 0 || brainSyncWriteBlocked;
+  const brainSyncContractBlocked = brainContractNeedsReview;
+  const brainSyncDisabled = brainSyncing || skills.length === 0 || brainSyncWriteBlocked || brainSyncContractBlocked;
   const brainSyncTitle = brainSyncWriteBlocked
     ? 'Brain core health is unavailable or not ok; open Brain Skills/Health before writing the skill catalog'
+    : brainSyncContractBlocked
+      ? brainSkillContractDetail(brainSkills)
     : 'Preview, fresh-read, then upsert the local skill catalog into Brain /skills/index';
   const brainDomainFacets = (brainSkills?.facets?.domains ?? []).map(brainFacetLabel).filter(Boolean).slice(0, 4);
   const brainTagFacets = (brainSkills?.facets?.tags ?? []).map(brainFacetLabel).filter(Boolean).slice(0, 4);
