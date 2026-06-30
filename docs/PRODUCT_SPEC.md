@@ -105,7 +105,7 @@ replies into Work › Plans.
 
 **What you can do**
 - Compose & send (Enter sends, Shift+Enter newline); **target any agent** from the Address sidebar;
-  set the ★ coordinator there.
+  view the coordinator marker there; routing changes hand off to HR Manager Route.
 - **Focus on a project** (dropdown) — adds a `[Focus: …]` context line and sets the attachment
   destination; banner with **open ↗** to Finder.
 - **Attach files** (📎 / paste / drop) — chips with remove; land in `<project>/uploads` or the
@@ -123,7 +123,7 @@ replies into Work › Plans.
 **Data & actions:** `chats:list/get/save/patch/remove/inflight/markRead/unreadCount`,
 `chat:genTitle/pickFiles/saveFiles/savePasted`, `dispatch:start` + `query:poll`, `activity:get`,
 `image:models/generate/read`, `projects:list`, `project:openFolder`, `plans:save`,
-`coordinator:set`.
+`App navigation:teams:route`.
 
 **Known issues / polish**
 - "untitled chat" placeholder copy vs always-auto-named sessions (cosmetic).
@@ -414,9 +414,14 @@ subscriptions/local models/image servers, and self-update. (Team composition is 
 Manager; this is the plumbing.)
 
 **What you can do** (by card):
+- **First-run readiness**: manager connection, Control Center manager-extension
+  feature/route compatibility, provider routing, local runtime readiness, backend
+  readiness, **Re-check manager**, and **Copy manager report** for stale or stock
+  managers.
 - **Hardware**: read-only host compute (chip, cores, GPU, memory, disk) — used for local-model fit
   warnings.
-- **Connection**: manager URL + active team (read-only here), and the team **coordinator** dropdown.
+- **Connection**: manager URL, active team, read-only coordinator status, and an HR Manager Route
+  handoff for hierarchy/routing changes.
 - **Self-update**: version, status, **auto-upgrade** toggle, **Check now**.
 - **Subscriptions (Claude · ChatGPT · Cursor)**: runtime OAuth (no API key) — sign in / switch /
   sign out / install CLI / re-check; powers the `claude-*`, `codex`, `cursor-cli` runtimes.
@@ -424,12 +429,13 @@ Manager; this is the plumbing.)
   (streamed progress), a searchable **catalog** with capability filters and hardware fit-warnings.
 - **Local image generator**: URL + API style (Automatic1111 / OpenAI-images), **Detect**, Save/Clear
   (used first for in-chat images; cloud is fallback).
-- **Local LLM stacks**: curated list, **⟳ Scan running**, Install/Run-in-Terminal/Uninstall, docs ↗.
+- **Local LLM stacks**: starter-first curated list, **⟳ Scan running**, reviewed Install/Run-in-Terminal/
+  Uninstall actions, setup notes, docs ↗.
 - **Inference backends**: **⟳ Discover local servers** (+ Add / Add all), provider table (★ default,
   enable, key badge, status, model list, **Connect & sync**, ✕), **Add a backend** (catalog or custom;
   cloud keys auto-detected from env).
 
-**Data & actions:** `app:hardware`, `coordinator:set`, `app:version`, `update:status/check/
+**Data & actions:** `app:hardware`, `manager:capabilities`, `app:version`, `update:status/check/
 getSettings/setSettings`, `subs:status/signin/signout/install`, `manager:localConcurrency/
 setLocalConcurrency`, `ollama:tags/pull/remove`, `image:getServer/setServer/detectServer`,
 `app:runInTerminal`, `providers:list/add/remove/setDefault/toggle/connect/discover`.

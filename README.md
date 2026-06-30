@@ -50,7 +50,12 @@ In short: install and run a team with **id-agents**, then open
 > id-agents manager"* and the rest of the app keeps working — the live dashboard,
 > manager chat, teams, tasks, health, schedule, and identity panels run against
 > any current manager. Point it at a manager that includes those routes to use
-> the full feature set.
+> the full feature set. Settings → **First-run readiness** checks the manager's
+> `GET /capabilities` response against the Control Center extension contract,
+> including exact feature and route coverage. If it reports **manager update**,
+> use **Copy manager report** to capture the manager URL, reported API version,
+> extension id, missing features, and missing routes before updating or swapping
+> the manager.
 
 ### What the control center adds on top of the raw manager
 
@@ -90,7 +95,10 @@ headless platform doesn't ship a UI for:
 You need a reachable **id-agents manager** first (see the
 [id-agents](https://github.com/idchain-world/id-agents) README to run one). By
 default the control center connects to `http://127.0.0.1:4100`; point it elsewhere
-with `MANAGER_URL`. Some panels need a manager that exposes their routes — see
+with `MANAGER_URL`. After launch, open Settings and check **First-run readiness**:
+the app can observe a stock manager, but the full downloadable control-center
+experience needs a manager that advertises the Control Center extension contract
+via `GET /capabilities`. Some panels need those manager routes — see
 **[Manager compatibility](#how-this-relates-to-id-agents-the-difference)** above.
 
 ### Desktop GUI
