@@ -1071,18 +1071,22 @@ export function Teams({ store, focus, onFocusHandled }: { store: FleetStore; foc
   // Whole-team lifecycle (start / stop / probe / rebuild every agent in a team).
   const [teamOpBusy, setTeamOpBusy] = useState(false);
   const [teamOpMsg, setTeamOpMsg] = useState('');
-  async function currentTeamSnapshot(team: string): Promise<{ exists: boolean; agents: Agent[]; running: number; total: number }> {
+  async function currentTeamSnapshot(team: string): Promise<TeamSnapshot> {
     const [teams, groups] = await Promise.all([
       call<Array<{ name: string; agentCount?: number }>>('teams').catch(() => []),
-      freshHrGroups(),
+      call<TeamAgentsGroup[]>('agents:allTeams').catch(() => null),
     ]);
-    const agents = agentsForTeam(groups, team);
     const row = teams.find((t) => t.name === team);
+    const group = groups?.find((g) => g.team === team);
+    const agents = group?.agents ?? [];
+    const rowCount = Number(row?.agentCount) || 0;
+    const rosterKnown = Boolean(group) || (groups !== null && rowCount === 0);
     return {
-      exists: Boolean(row) || groups.some((g) => g.team === team),
+      exists: Boolean(row) || Boolean(group),
       agents,
       running: agents.filter(isRunnableAgent).length,
-      total: agents.length || Number(row?.agentCount) || 0,
+      total: rosterKnown ? agents.length : rowCount,
+      rosterKnown,
     };
   }
   async function runTeamOp(team: string, op: 'start' | 'stop' | 'probe' | 'rebuild') {
@@ -1094,23 +1098,34 @@ export function Teams({ store, focus, onFocusHandled }: { store: FleetStore; foc
         store.refresh();
         return;
       }
-      if (op !== 'probe') {
-        if (snap.total === 0) {
-          setTeamOpMsg(`${op} blocked: team ${team} has no current agents.`);
-          store.refresh();
-          return;
-        }
-        const verb = op === 'start' ? 'Start' : op === 'stop' ? 'Stop' : 'Rebuild';
-        const note = op === 'rebuild'
-          ? 'This restarts every current agent so config and instructions take effect.'
-          : op === 'stop'
-            ? 'This stops every current agent in the team.'
+      if (!snap.rosterKnown) {
+        setTeamOpMsg(`${op} blocked: could not verify the current ${team} roster. Refresh and try again.`);
+        store.refresh();
+        return;
+      }
+      if (snap.total === 0) {
+        setTeamOpMsg(`${op} blocked: team ${team} has no current agents.`);
+        store.refresh();
+        return;
+      }
+      const verb = op === 'start' ? 'Start' : op === 'stop' ? 'Stop' : op === 'probe' ? 'Probe' : 'Rebuild';
+      const note = op === 'rebuild'
+        ? 'This restarts every current agent so config and instructions take effect.'
+        : op === 'stop'
+          ? 'This stops every current agent in the team.'
+          : op === 'probe'
+            ? 'This probes every current agent in the team and may refresh health status.'
             : 'This starts every current agent in the team.';
-        const protectedAgents = snap.agents.filter((a) => isDefaultBackboneAgent(team, a.name)).map((a) => `${team}/${a.name}`);
-        const protectedNote = protectedAgents.length && (op === 'stop' || op === 'rebuild')
-          ? `\n\nGuardrail: this includes locked default leadership roles (${protectedAgents.join(', ')}). Their roles stay locked, but their running state will change.`
-          : '';
-        if (!window.confirm(`${verb} all current agents in ${team}?\n\nCurrent state: ${snap.running}/${snap.total} running.\n\n${note}${protectedNote}`)) return;
+      const protectedAgents = snap.agents.filter((a) => isDefaultBackboneAgent(team, a.name)).map((a) => `${team}/${a.name}`);
+      const protectedNote = protectedAgents.length && (op === 'stop' || op === 'rebuild')
+        ? `\n\nGuardrail: this includes locked default leadership roles (${protectedAgents.join(', ')}). Their roles stay locked, but their running state will change.`
+        : '';
+      if (!window.confirm(`${verb} all current agents in ${team}?\n\nCurrent state: ${snap.running}/${snap.total} running.\nTargets: ${teamSnapshotSummary(snap)}\n\n${note}${protectedNote}`)) return;
+      const afterConfirm = await currentTeamSnapshot(team);
+      if (!afterConfirm.exists || !afterConfirm.rosterKnown || teamSnapshotStamp(afterConfirm) !== teamSnapshotStamp(snap)) {
+        setTeamOpMsg(`${op} blocked: ${team} roster changed after confirmation. Review refreshed state before retrying.`);
+        store.refresh();
+        return;
       }
       setTeamOpMsg(`${op} ${team}…`);
       if (op === 'probe') {
