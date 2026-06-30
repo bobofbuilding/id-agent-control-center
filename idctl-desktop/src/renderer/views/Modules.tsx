@@ -574,6 +574,9 @@ function capabilityAgentStamp(a: TargetAgent, fallbackTeam: string): string {
     skills: skillsKey(a),
   });
 }
+function capabilityTargetSetStamp(agents: TargetAgent[], fallbackTeam: string): string {
+  return sortedKey(agents.map((a) => `${a.team ?? fallbackTeam}:${a.id || a.name}`));
+}
 
 export function Modules({ store }: { store: FleetStore }) {
   const [mcp, setMcp] = useState<McpServerProfile[]>([]);
@@ -605,7 +608,15 @@ export function Modules({ store }: { store: FleetStore }) {
   // the agent's OWN team.
   const [scope, setScope] = useState<'team' | 'all' | 'leads'>('team');
   const [coords, setCoords] = useState<Record<string, string>>({});
-  useEffect(() => { call<{ coordinators?: Record<string, string> }>('coordinator:hierarchy').then((h) => setCoords(h.coordinators ?? {})).catch(() => {}); }, [store.lastUpdated]);
+  useEffect(() => {
+    call<{ primary?: { team: string; agent: string } | null; coordinators?: Record<string, string> }>('coordinator:hierarchy')
+      .then((h) => {
+        const next = { ...(h.coordinators ?? {}) };
+        if (h.primary && !next[h.primary.team]) next[h.primary.team] = h.primary.agent;
+        setCoords(next);
+      })
+      .catch(() => {});
+  }, [store.lastUpdated]);
   // Capability gating: an agent can only be a target for the active tab's
   // capability if its runtime can actually consume it (e.g. ollama can't use
   // MCP — see LOCAL_MODEL_TOOL_CALLING_PLAN.md). Incompatible agents are shown
@@ -896,6 +907,33 @@ export function Modules({ store }: { store: FleetStore }) {
   }
   async function freshCapabilityTargets(label: string): Promise<TargetAgent[] | null> {
     const groups = await freshGroups();
+    if (scope !== 'team' || !touched) {
+      let latestCoords = coords;
+      if (scope === 'leads') {
+        const hierarchy = await call<{ primary?: { team: string; agent: string } | null; coordinators?: Record<string, string> }>('coordinator:hierarchy').catch(() => null);
+        if (!hierarchy) {
+          setNote(`${label} blocked: could not verify the current lead hierarchy. Refresh and try again.`);
+          return null;
+        }
+        latestCoords = { ...(hierarchy.coordinators ?? {}) };
+        if (hierarchy.primary && !latestCoords[hierarchy.primary.team]) latestCoords[hierarchy.primary.team] = hierarchy.primary.agent;
+        setCoords(latestCoords);
+      }
+      const currentScopeTargets: TargetAgent[] =
+        scope === 'team'
+          ? (groups.find((g) => g.team === activeTeam)?.agents ?? []).map((a) => ({ ...a, team: activeTeam })).filter(agentSupports)
+          : scope === 'leads'
+            ? groups.flatMap((g) => {
+              const lead = latestCoords[g.team];
+              return lead ? g.agents.filter((a) => a.name === lead).map((a) => ({ ...a, team: g.team })) : [];
+            }).filter(agentSupports)
+            : groups.flatMap((g) => g.agents.map((a) => ({ ...a, team: g.team }))).filter(agentSupports);
+      if (capabilityTargetSetStamp(currentScopeTargets, activeTeam) !== capabilityTargetSetStamp(targetAgents, activeTeam)) {
+        setNote(`${label} blocked: the ${scope === 'team' ? 'team' : scope === 'leads' ? 'team-lead' : 'all-team'} target set changed. Refreshed; review the current targets before applying.`);
+        store.refresh();
+        return null;
+      }
+    }
     const fresh: TargetAgent[] = [];
     for (const rendered of targetAgents) {
       const expectedTeam = targetTeamOf(rendered);
