@@ -370,9 +370,9 @@ selection in the active team.
 - **Skills**: catalog cards (license, install `have/target`, tags incl. **auto-categorized**),
   **Install / Uninstall** per selection, two-step **delete**, search + tag filter, batch
   **auto-categorize** (+ ↻ re-categorize), **Create skill** (validated `SKILL.md`).
-- **Plugins**: neutral catalog table (name, version, source, status, adapters, selected reach,
-  catalog action, description). Instruction-only plugin wrappers can be **Digest as skill** after a
-  fresh-read guard; tool-bearing/hybrid packages stay as plugins until reviewed adapters exist.
+- **Plugins**: compact active-package table (package, kind, reach, action). Instruction-only wrappers
+  can be **Digest** after a fresh-read guard, then disappear from Plugins and live in Skills; a small
+  **In Skills** count shows what moved. Tool-bearing/hybrid packages stay here until reviewed adapters exist.
 
 **Data & actions:** `mcp:list/add/remove/test`, `librarySkills`, `libraryPlugins`,
 `libraryPluginInspections`, `skills:autoTags/categorize`, `createSkill`, `projectPluginSkill`,

@@ -527,19 +527,24 @@ function pluginClassificationLabel(p: PluginRow): string {
 function pluginProjectionLabel(p: PluginRow): string {
   if (p.classification === 'portable-package') return 'Adapter package';
   switch (p.skillProjection) {
-    case 'available': return 'Digest as skill';
-    case 'already-in-catalog': return 'Skill exists';
-    case 'blocked-tools': return 'Keep as plugin';
-    default: return 'No skill body';
+    case 'available': return 'Digest';
+    case 'already-in-catalog': return 'In Skills';
+    case 'blocked-tools': return 'Adapter review';
+    default: return 'Plugin';
   }
 }
 function pluginAdapterSummary(p: PluginRow): string {
-  if (p.name === 'idacc-context-retrieval') return 'Portable: Skill/instruction adapter, MCP tool adapter, native runtime adapter, universal direct fallback';
-  if (p.classification === 'instruction-skill') return 'Instruction-only plugin wrapper; safe to project into the SKILL.md catalog before Brain sync.';
-  if (p.classification === 'hybrid-tool-plugin') return 'SKILL.md plus local tools; project only through a reviewed adapter so tool calls are not lost.';
-  if (p.classification === 'native-tool-plugin') return 'Tool-bearing native inventory; verify MCP/direct-fallback adapters before cross-runtime use.';
-  if (p.classification === 'manifest-only') return 'Manifest is visible, but no root SKILL.md or tools were detected.';
-  return 'Native plugin inventory; inspect detail before cross-runtime use';
+  if (p.name === 'idacc-context-retrieval') return 'Skill + MCP + native + fallback';
+  if (p.classification === 'instruction-skill') return 'Instruction wrapper';
+  if (p.classification === 'hybrid-tool-plugin') return 'Skill + tools';
+  if (p.classification === 'native-tool-plugin') return 'Tools';
+  if (p.classification === 'manifest-only') return 'Manifest';
+  return 'Unverified';
+}
+function pluginIsDigestedSkill(p: PluginRow): boolean {
+  return p.name !== 'idacc-context-retrieval'
+    && p.classification === 'instruction-skill'
+    && p.skillProjection === 'already-in-catalog';
 }
 function capabilitySurface(tab: CapabilityTab, runtime: string | undefined): { label: string; title: string; advisory?: boolean } {
   const rt = runtime ?? 'unknown runtime';
@@ -585,15 +590,15 @@ function pluginRuntimeReach(p: PluginRow, agents: TargetAgent[]): string {
   const mcp = agents.filter((agent) => runtimeSupports(agentRuntime(agent), 'mcp')).length;
   const skill = agents.filter((agent) => runtimeSupports(agentRuntime(agent), 'skills')).length;
   if (p.classification === 'portable-package') {
-    return `Selected ${agents.length}: native ${native}, MCP ${mcp}, Skill ${skill}, fallback ${agents.length}`;
+    return `native ${native} · MCP ${mcp} · Skill ${skill} · fallback ${agents.length}`;
   }
   if (p.classification === 'instruction-skill') {
-    return `Selected ${agents.length}: Skill ${skill}, prompt/workspace fallback ${agents.length}`;
+    return `Skill ${skill} · fallback ${agents.length}`;
   }
   if (p.classification === 'hybrid-tool-plugin' || p.classification === 'native-tool-plugin') {
-    return `Selected ${agents.length}: native ${native}, adapter review ${agents.length - native}`;
+    return `native ${native} · review ${agents.length - native}`;
   }
-  return `Selected ${agents.length}: native ${native}, portable manifest unknown`;
+  return `native ${native} · unverified`;
 }
 function mcpProfileStamp(p: McpServerProfile): string {
   return JSON.stringify({
@@ -1259,7 +1264,7 @@ export function Modules({ store }: { store: FleetStore }) {
   // # selected agents that have at least one MCP server attached (→ show Rebuild).
   const anyAttached = targetAgents.some((a) => curMcp(a).length > 0);
   const targetLabel = targetCount === 0 ? 'no agents' : targetCount === 1 ? targetAgents[0].name : `${targetCount} agents`;
-  const pluginRows = useMemo<PluginRow[]>(() => {
+  const allPluginRows = useMemo<PluginRow[]>(() => {
     const inspectionByName = new Map(pluginInspections.map((inspection) => [inspection.name, inspection]));
     const idaccPortableDefaults: Partial<PluginRow> = {
       hasSkillMd: true,
@@ -1293,6 +1298,8 @@ export function Modules({ store }: { store: FleetStore }) {
     }
     return rows;
   }, [plugins, pluginInspections]);
+  const digestedPluginRows = useMemo(() => allPluginRows.filter(pluginIsDigestedSkill), [allPluginRows]);
+  const pluginRows = useMemo(() => allPluginRows.filter((plugin) => !pluginIsDigestedSkill(plugin)), [allPluginRows]);
   function skillFleetUsage(skill: string): TargetAgent[] {
     return store.allAgents
       .filter((a) => (((a.metadata as any)?.skills ?? []) as string[]).includes(skill))
@@ -1862,78 +1869,62 @@ export function Modules({ store }: { store: FleetStore }) {
 
       {tab === 'plugins' ? (
       <section className="card grow">
-        <h3>Plugins — portable packages</h3>
-        <p className="muted small" style={{ marginTop: -4 }}>
-          IDACC treats plugins as portable packages when they declare adapters: Skill instructions, MCP tools, native runtime bundles where supported, and direct fallback when a runtime has no tool surface. Packages can target local, API, and subscription runtimes at the assignment layer; the selected adapter decides how the runtime actually receives tools or instructions.
-        </p>
-        <div className="skill-brain-review" style={{ marginTop: 8 }}>
-          <div className="grow">
-            <b>Neutral plugin contract</b>
-            <div className="muted small">
-              Portable package = Skill adapter + optional MCP adapter + optional native runtime adapter + direct fallback. A single native plugin loader is not treated as runtime-neutral.
-            </div>
-          </div>
-          <span className="chip tag" title="Instruction adapters deploy through SKILL.md, workspace, or prompt-side manager support">Skill: neutral</span>
-          <span className="chip tag" title="Tool adapters follow the runtime or manager MCP/tool surface">MCP: tool-capable</span>
-          <span className="chip tag" title="Native adapters are optional per runtime family">Native: optional</span>
-          <span className="chip tag" title="Exact prompt route for protected or unsupported cases">Fallback: universal</span>
+        <div className="row-actions" style={{ alignItems: 'baseline', flexWrap: 'wrap' }}>
+          <h3 className="grow">Plugins</h3>
+          <span className="chip tag" title="Packages still shown in the plugin catalog">Active {pluginRows.length}</span>
+          {digestedPluginRows.length > 0 ? (
+            <span className="chip tag" title={`${digestedPluginRows.map((p) => p.name).join(', ')} now live in Skills`}>
+              In Skills {digestedPluginRows.length}
+            </span>
+          ) : null}
         </div>
+        <p className="muted small" style={{ marginTop: -4 }}>
+          Adapter packages stay here. Digested instruction wrappers move to Skills.
+        </p>
         <table className="grid">
           <thead>
             <tr>
-              <th>name</th>
-              <th>version</th>
-              <th>source</th>
-              <th>status</th>
-              <th>selected reach</th>
-              <th>catalog</th>
-              <th>description</th>
+              <th>package</th>
+              <th>kind</th>
+              <th>reach</th>
+              <th>action</th>
             </tr>
           </thead>
           <tbody>
             {pluginRows.map((p) => {
               const provider = p.author || p.source || null;
               const isUrl = !!provider && /^https?:\/\//i.test(provider);
-              const adapterKinds = p.adapterKinds ?? [];
               return (
                 <tr key={p.name}>
                   <td>
                     <div className="b">{p.name}</div>
-                    {p.hasTools ? (
-                      <div className="muted small" title={(p.tools ?? []).join(', ')}>
-                        {p.toolCount ?? p.tools?.length ?? 0} tool{(p.toolCount ?? p.tools?.length ?? 0) === 1 ? '' : 's'}
-                      </div>
-                    ) : p.hasSkillMd ? (
-                      <div className="muted small">root SKILL.md</div>
-                    ) : null}
-                  </td>
-                  <td className="muted small">{p.version ?? '—'}</td>
-                  <td className="muted small" title={p.source ?? undefined}>
-                    <span>{p.packageSource}</span>
-                    {provider == null ? null : isUrl ? (
-                      <a className="ext-link" href={provider} target="_blank" rel="noreferrer">
-                        {' '}{provider.replace(/^https?:\/\//i, '').replace(/\/$/, '')}
-                      </a>
-                    ) : <span> · {provider}</span>}
+                    <div className="muted small" title={p.source ?? undefined}>
+                      {p.version ?? '—'} · {p.packageSource}
+                      {provider == null ? null : isUrl ? (
+                        <>
+                          {' · '}
+                          <a className="ext-link" href={provider} target="_blank" rel="noreferrer">
+                            {provider.replace(/^https?:\/\//i, '').replace(/\/$/, '')}
+                          </a>
+                        </>
+                      ) : <span> · {provider}</span>}
+                    </div>
+                    {p.description ? <div className="muted small"><LinkedDescription text={p.description} /></div> : null}
                   </td>
                   <td>
-                    <div className="chips">
-                      <span className={`chip tag${p.classification === 'portable-package' ? ' on' : ''}`} title={(p.notes ?? []).join('\n') || pluginAdapterSummary(p)}>
-                        {pluginClassificationLabel(p)}
-                      </span>
-                      {adapterKinds.map((kind) => (
-                        <span key={kind} className="chip tag" title={`${kind} adapter declared or inferred`}>
-                          {kind}
-                        </span>
-                      ))}
+                    <span className={`chip tag${p.classification === 'portable-package' ? ' on' : ''}`} title={(p.notes ?? []).join('\n') || pluginAdapterSummary(p)}>
+                      {pluginClassificationLabel(p)}
+                    </span>
+                    <div className="muted small" title={(p.tools ?? []).join(', ')}>
+                      {pluginAdapterSummary(p)}
+                      {p.hasTools ? ` · ${p.toolCount ?? p.tools?.length ?? 0} tool${(p.toolCount ?? p.tools?.length ?? 0) === 1 ? '' : 's'}` : p.hasSkillMd ? ' · SKILL.md' : ''}
                     </div>
-                    <div className="muted small">{pluginAdapterSummary(p)}</div>
                   </td>
                   <td className="muted small">{pluginRuntimeReach(p, targetAgents)}</td>
                   <td>
                     {p.skillProjection === 'available' ? (
                       <button className="btn small" disabled={busy} title="Fresh-read and project this instruction-only plugin into the skill catalog" onClick={() => void digestPluginAsSkill(p)}>
-                        Digest as skill
+                        Digest
                       </button>
                     ) : (
                       <span className="muted small" title={(p.notes ?? []).join('\n')}>
@@ -1947,8 +1938,8 @@ export function Modules({ store }: { store: FleetStore }) {
             })}
             {pluginRows.length === 0 ? (
               <tr>
-                <td colSpan={7} className="muted center pad">
-                  No plugins found. Native plugins live in <span className="mono">plugins/claude-code</span>; portable IDACC packages can also ship Skill, MCP, and direct-fallback adapters.
+                <td colSpan={4} className="muted center pad">
+                  No active plugin packages. Digested wrappers now live in Skills.
                 </td>
               </tr>
             ) : null}
