@@ -950,12 +950,20 @@ export function Modules({ store }: { store: FleetStore }) {
     setNote(`checking MCP registry for ${name}…`);
     try {
       const latest = await call<McpServerProfile[]>('mcp:list').catch(() => []);
-      if (!latest.some((p) => p.name === name)) {
+      const existing = latest.find((p) => p.name === name);
+      if (!existing) {
         setNote(`remove blocked: MCP server "${name}" is no longer in the registry.`);
         setMcp(latest);
         return;
       }
       if (!window.confirm(`Remove MCP server "${name}" from the current registry?\n\nThis does not detach it from agents that already have it, but it will no longer be available to attach from this catalog.`)) return;
+      const afterConfirm = await call<McpServerProfile[]>('mcp:list').catch(() => latest);
+      const still = afterConfirm.find((p) => p.name === name);
+      if (!still || mcpProfileStamp(still) !== mcpProfileStamp(existing)) {
+        setMcp(afterConfirm);
+        setNote(`remove blocked: MCP server "${name}" changed during confirmation. Review the current registry and try again.`);
+        return;
+      }
       setMcp(await call<McpServerProfile[]>('mcp:remove', name));
       setNote(`removed MCP server ${name} ✓`);
     } finally {
@@ -978,7 +986,11 @@ export function Modules({ store }: { store: FleetStore }) {
     setBusy(true);
     setNote(`checking skill ${name}…`);
     try {
-      const installed = skillFleetUsage(name);
+      const installed = await freshSkillFleetUsage(name);
+      if (!installed) {
+        setNote(`delete blocked: could not verify current fleet skill usage for ${name}. Refresh and try again.`);
+        return;
+      }
       if (installed.length) {
         setNote(`delete blocked: ${name} is still installed on ${installed.length} fleet agent${installed.length === 1 ? '' : 's'} (${describeTargets(installed.slice(0, 6))}${installed.length > 6 ? ', ...' : ''}). Uninstall it from all teams before deleting the library SKILL.md.`);
         return;
@@ -1098,6 +1110,13 @@ export function Modules({ store }: { store: FleetStore }) {
     return store.allAgents
       .filter((a) => (((a.metadata as any)?.skills ?? []) as string[]).includes(skill))
       .map((a) => ({ ...a, team: a.team ?? activeTeam }));
+  }
+  async function freshSkillFleetUsage(skill: string): Promise<TargetAgent[] | null> {
+    const groups = await call<TeamAgentsGroup[]>('agents:allTeams').catch(() => null);
+    if (!groups) return null;
+    return groups
+      .flatMap((g) => g.agents.map((a) => ({ ...a, team: g.team })))
+      .filter((a) => (((a.metadata as any)?.skills ?? []) as string[]).includes(skill));
   }
   const brainTotal = brainSkills?.summary?.totalSkills;
   const brainMissingLocal = typeof brainTotal === 'number' && brainTotal < skills.length;

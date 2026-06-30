@@ -8,6 +8,9 @@ Every change pushed or merged to `main` carries its version number in the commit
 subject (`vX.Y.Z: …`), stamped automatically by the `commit-msg` hook — see
 [CONTRIBUTING.md](CONTRIBUTING.md).
 
+## [0.1.328] — 2026-06-30
+- Capabilities catalog delete recheck guardrails
+
 ## [0.1.327] — 2026-06-30
 - HR Manager team ops exact roster guardrail
 
