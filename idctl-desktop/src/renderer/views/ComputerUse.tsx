@@ -134,6 +134,7 @@ export function ComputerUse({ store }: { store: FleetStore }) {
 
   const eligible = store.agents.filter((a) => mcpCapable(agentRuntime(a)));
   const activeTeam = store.team ?? 'default';
+  const selectedBlessTarget = eligible.find((a) => a.id === pick && !attached.some((x) => x.id === a.id));
   const authorityOf = (a: { name: string; team?: string; authority?: string }, fallbackTeam = activeTeam) => a.authority ?? `${a.team ?? fallbackTeam}:${a.name}`;
   const armed = !!status?.armed;
   const srGranted = perms?.screenRecording === 'granted';
@@ -148,7 +149,6 @@ export function ComputerUse({ store }: { store: FleetStore }) {
     ? list.map((a) => `${a.team ?? activeTeam}/${a.name}`).join(', ')
     : 'no blessed agents';
   const emptyArmNeedsReview = !armed && srGranted && attached.length === 0;
-  const isTeamAuthority = (authority: string, team: string) => authority.startsWith(`${team}:`);
   function eligibleByAuthority(authority: string): ComputerUseTarget | undefined {
     const sep = authority.indexOf(':');
     if (sep < 0) return undefined;
@@ -274,6 +274,11 @@ export function ComputerUse({ store }: { store: FleetStore }) {
     return () => { clearInterval(t); off(); offPending(); offPanic(); void call('cu:watch', false); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeTeam]);
+  useEffect(() => {
+    setPick('');
+    setMsg('');
+    setAllowEmptyArm(false);
+  }, [activeTeam]);
   // Also pause the pump when the OS window is hidden/minimized.
   useEffect(() => {
     const onVis = () => { void call('cu:watch', document.visibilityState === 'visible'); };
@@ -325,7 +330,7 @@ export function ComputerUse({ store }: { store: FleetStore }) {
         setMsg('Blessed agents changed during confirmation. Refreshed; review Who can drive and press Arm again.');
         return;
       }
-      await call('cu:arm', (latestAttached ?? []).map((a) => authorityOf(a, activeTeam)));
+      await call('cu:arm', activeTeam, beforeStamp);
       setAllowEmptyArm(false);
       await refresh();
     } finally { setBusy(false); }
@@ -403,16 +408,9 @@ export function ComputerUse({ store }: { store: FleetStore }) {
     return current;
   }
   async function syncArmedBlessedForTeam(team: string): Promise<void> {
-    const [currentStatus, currentAttached] = await Promise.all([
-      call<Status>('cu:status'),
-      call<AttachedAgent[]>('cu:attached', team),
-    ]);
+    const currentStatus = await call<Status>('cu:status');
     if (!currentStatus.armed) return;
-    const next = sortedKey([
-      ...(currentStatus.blessed ?? []).filter((a) => !isTeamAuthority(a, team)),
-      ...(currentAttached ?? []).map((a) => authorityOf(a, team)),
-    ]).split('|').filter(Boolean);
-    await call('cu:arm', next);
+    await call('cu:arm', team);
   }
 
   async function bless(a: ComputerUseTarget) {
@@ -621,7 +619,7 @@ export function ComputerUse({ store }: { store: FleetStore }) {
                   <option key={a.id} value={a.id}>{a.name} · {agentRuntime(a)}</option>
                 ))}
               </select>
-              <button className="btn primary" disabled={busy || !pick} onClick={() => { const a = eligible.find((x) => x.id === pick); if (a) void bless({ ...a, team: activeTeam }); }}>Bless</button>
+              <button className="btn primary" disabled={busy || !selectedBlessTarget} onClick={() => { if (selectedBlessTarget) void bless({ ...selectedBlessTarget, team: activeTeam }); }}>Bless</button>
             </div>
             {attached.length ? (
               <div className="cu-blessed">

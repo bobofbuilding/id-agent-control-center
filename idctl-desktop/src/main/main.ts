@@ -6,7 +6,7 @@
 import { app, BrowserWindow, ipcMain, shell, Menu, MenuItem, globalShortcut, screen, safeStorage } from 'electron';
 import { join } from 'node:path';
 import { readFileSync, writeFileSync } from 'node:fs';
-import { call, startGoalDriver, startOrgSync, startModelRefreshLoop } from './bridge.ts';
+import { call as bridgeCall, startGoalDriver, startOrgSync, startModelRefreshLoop } from './bridge.ts';
 import { recordControlAction } from './controlLog.ts';
 import { startUpdater, stopUpdater, checkForUpdate, getStatus, applyStagedAndRelaunch } from './updater.ts';
 import { subsStatus, subsSignin, subsSignout, subsInstall, type SubProvider } from './subscriptions.ts';
@@ -77,6 +77,36 @@ async function openBrainDashboard(value: unknown): Promise<{ ok: true; tab: Brai
     await brainDashboardWin.loadURL(url);
   }
   return { ok: true, tab, url };
+}
+
+type ComputerUseAttachedAgent = { id?: string; name?: string; team?: string; authority?: string };
+
+function sortedComputerUseKey(values: string[]): string {
+  return [...new Set(values.map(String).filter(Boolean))].sort().join('|');
+}
+
+function scopedComputerUseAuthority(agent: ComputerUseAttachedAgent, fallbackTeam: string): string {
+  return String(agent.authority ?? `${agent.team ?? fallbackTeam}:${agent.name ?? ''}`).trim();
+}
+
+function attachedComputerUseStamp(agents: ComputerUseAttachedAgent[], team: string): string {
+  return sortedComputerUseKey(agents.map((a) => `${a.id ?? ''}:${scopedComputerUseAuthority(a, team)}`));
+}
+
+async function armComputerUseFromCurrentAttached(teamArg: unknown, expectedAttachedStampArg?: unknown) {
+  const team = typeof teamArg === 'string' && teamArg.trim() ? teamArg.trim() : 'default';
+  const attached = await bridgeCall('cu:attached', [team]) as ComputerUseAttachedAgent[];
+  const expected = typeof expectedAttachedStampArg === 'string' ? expectedAttachedStampArg : '';
+  const actualStamp = attachedComputerUseStamp(attached ?? [], team);
+  if (expected && expected !== actualStamp) {
+    throw new Error('Computer Use blessed agents changed before arming; refresh and review Who can drive.');
+  }
+  const status = brokerStatus();
+  const next = sortedComputerUseKey([
+    ...(status.blessed ?? []).filter((authority: string) => !authority.startsWith(`${team}:`)),
+    ...(attached ?? []).map((agent) => scopedComputerUseAuthority(agent, team)),
+  ]).split('|').filter(Boolean);
+  return { ...armBroker(next), team, attached: attached?.length ?? 0 };
 }
 
 function publishStoreChange(method: string): void {
@@ -614,7 +644,7 @@ async function appCall(method: string, args: unknown[]): Promise<unknown> {
     case 'cu:status':
       return brokerStatus();
     case 'cu:arm':
-      return armBroker(args[0] as string[] | undefined);
+      return armComputerUseFromCurrentAttached(args[0], args[1]);
     case 'cu:disarm':
       return disarmBroker();
     case 'cu:watch':
@@ -641,7 +671,7 @@ async function appCall(method: string, args: unknown[]): Promise<unknown> {
       relaunchApp();
       return { ok: true };
     default:
-      return call(method, args);
+      return bridgeCall(method, args);
   }
 }
 
