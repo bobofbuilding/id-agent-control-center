@@ -6,15 +6,11 @@ import {
   type McpTransport,
 } from '../../../../idctl/src/settings/schema.ts';
 import { MCP_CATALOG, buildFromCatalog } from '../../../../idctl/src/settings/mcpCatalog.ts';
-import { runtimeSupports, capabilityDenyReason, type RuntimeCapability } from '../../../../idctl/src/settings/runtimeCatalog.ts';
+import { runtimeSupports } from '../../../../idctl/src/settings/runtimeCatalog.ts';
 import type { Agent } from '../../../../idctl/src/api/types.ts';
 
-/** Each Capabilities tab maps to the runtime capability an agent must support. */
-const TAB_CAPABILITY: Record<'mcp' | 'skills' | 'plugins', RuntimeCapability> = {
-  mcp: 'mcp',
-  skills: 'skills',
-  plugins: 'portablePlugins',
-};
+type CapabilityTab = 'mcp' | 'skills' | 'plugins';
+
 /** An agent's effective runtime (top-level, falling back to metadata). */
 function agentRuntime(a: Agent): string | undefined {
   return a.runtime ?? a.metadata?.runtime;
@@ -25,6 +21,7 @@ const TRANSPORTS: McpTransport[] = ['stdio', 'http', 'sse'];
 interface TestResult { ok?: boolean; tools?: string[]; error?: string; testing?: boolean }
 type TargetAgent = Agent & { team?: string };
 type TeamAgentsGroup = { team: string; agents: Agent[] };
+type PluginRow = LibraryPluginEntry & { packageSource: string; bundledPortable?: boolean };
 type BrainSkillStats = { totalSkills?: number; chainable?: number; nonChainable?: number; domains?: number; tags?: number; averageComputeCost?: number | null; maxUseCount?: number };
 type BrainSkillFacet = { domain?: string; tag?: string; name?: string; count?: number };
 type BrainSkillSummary = {
@@ -518,8 +515,56 @@ function mcpEndpoint(p: McpServerProfile): string {
     : p.url ?? '(none)';
 }
 function pluginAdapterSummary(name: string): string {
-  if (name === 'idacc-context-retrieval') return 'Portable: Skill all local, MCP Claude/Codex/Ollama, native Claude, direct fallback all';
+  if (name === 'idacc-context-retrieval') return 'Portable: Skill/instruction adapter, MCP tool adapter, native runtime adapter, universal direct fallback';
   return 'Native plugin inventory; verify portable adapter manifest before cross-runtime use';
+}
+function capabilitySurface(tab: CapabilityTab, runtime: string | undefined): { label: string; title: string; advisory?: boolean } {
+  const rt = runtime ?? 'unknown runtime';
+  if (tab === 'mcp') {
+    if (runtimeSupports(runtime, 'mcp')) {
+      return { label: 'MCP-ready', title: `${rt}: native MCP/tool-calling path is available when the model/harness supports tools.` };
+    }
+    return {
+      label: 'MCP fallback',
+      title: `${rt}: MCP attachment is allowed as neutral metadata, but this runtime needs manager-side resolution, a runtime switch, or direct fallback before tools can execute.`,
+      advisory: true,
+    };
+  }
+  if (tab === 'skills') {
+    if (runtimeSupports(runtime, 'skills')) return { label: 'Skill-ready', title: `${rt}: SKILL.md instructions can be assigned through the manager skill surface.` };
+    return {
+      label: 'Skill fallback',
+      title: `${rt}: skill assignment is allowed, but the manager/runtime must provide a workspace or prompt-side adapter before instructions are deployed natively.`,
+      advisory: true,
+    };
+  }
+  if (runtimeSupports(runtime, 'plugins')) return { label: 'Native+portable', title: `${rt}: native plugin, Skill, MCP, and direct-fallback adapters may all be available depending on the package manifest.` };
+  if (runtimeSupports(runtime, 'mcp')) return { label: 'MCP+Skill', title: `${rt}: portable plugin packages can route through MCP tools plus Skill/direct-fallback adapters.` };
+  if (runtimeSupports(runtime, 'skills')) return { label: 'Skill+fallback', title: `${rt}: portable plugin packages can route through Skill instructions plus direct fallback.` };
+  return {
+    label: 'Fallback',
+    title: `${rt}: portable plugin assignment is allowed, but this runtime needs a package-declared fallback or manager adapter before native features execute.`,
+    advisory: true,
+  };
+}
+function capabilitySurfaceSummary(tab: CapabilityTab, agents: TargetAgent[]): string {
+  if (!agents.length) return 'No targets in scope.';
+  const counts = new Map<string, number>();
+  for (const agent of agents) {
+    const surface = capabilitySurface(tab, agentRuntime(agent)).label;
+    counts.set(surface, (counts.get(surface) ?? 0) + 1);
+  }
+  return [...counts.entries()].map(([label, count]) => `${label} ${count}`).join(' · ');
+}
+function pluginRuntimeReach(name: string, agents: TargetAgent[]): string {
+  if (!agents.length) return 'No selected targets';
+  const native = agents.filter((agent) => runtimeSupports(agentRuntime(agent), 'plugins')).length;
+  const mcp = agents.filter((agent) => runtimeSupports(agentRuntime(agent), 'mcp')).length;
+  const skill = agents.filter((agent) => runtimeSupports(agentRuntime(agent), 'skills')).length;
+  if (name === 'idacc-context-retrieval') {
+    return `Selected ${agents.length}: native ${native}, MCP ${mcp}, Skill ${skill}, fallback ${agents.length}`;
+  }
+  return `Selected ${agents.length}: native ${native}, portable manifest unknown`;
 }
 function mcpProfileStamp(p: McpServerProfile): string {
   return JSON.stringify({
@@ -599,7 +644,7 @@ export function Modules({ store }: { store: FleetStore }) {
   const [plugins, setPlugins] = useState<LibraryPluginEntry[]>([]);
   const [busy, setBusy] = useState(false);
   const [note, setNote] = useState<string>('');
-  const [tab, setTab] = useState<'mcp' | 'skills' | 'plugins'>(() => {
+  const [tab, setTab] = useState<CapabilityTab>(() => {
     const t = new URLSearchParams(window.location.search).get('tab');
     return t === 'skills' || t === 'plugins' ? t : 'mcp';
   });
@@ -621,16 +666,14 @@ export function Modules({ store }: { store: FleetStore }) {
       })
       .catch(() => {});
   }, [store.lastUpdated]);
-  // Capability gating: an agent can only be a target for the active tab's
-  // capability if its runtime can actually consume it (e.g. ollama can't use
-  // MCP — see LOCAL_MODEL_TOOL_CALLING_PLAN.md). Incompatible agents are shown
-  // disabled and excluded from every apply/attach/install action.
-  const capForTab: RuntimeCapability = TAB_CAPABILITY[tab];
-  const agentSupports = (a: Agent) => runtimeSupports(agentRuntime(a), capForTab);
+  // Capability assignment is runtime-neutral at the IDACC layer. Native runtime
+  // support is shown as an advisory execution surface, not used as a hard target
+  // filter, so API/subscription/local runtimes can all receive MCP, skills, and
+  // portable plugin package state without silently dropping agents.
   const baseAgents: TargetAgent[] =
     scope === 'team' ? store.agents : scope === 'leads' ? store.allAgents.filter((a) => coords[a.team ?? ''] === a.name) : store.allAgents;
-  const eligibleAgents = baseAgents.filter(agentSupports);
-  const incompatAgents = baseAgents.filter((a) => !agentSupports(a));
+  const eligibleAgents = baseAgents;
+  const advisoryAgents = baseAgents.filter((a) => capabilitySurface(tab, agentRuntime(a)).advisory);
   const targetTeamOf = (a: { team?: string }) => a.team ?? activeTeam;
 
   const [touched, setTouched] = useState(false);
@@ -645,8 +688,8 @@ export function Modules({ store }: { store: FleetStore }) {
     setTouched(false);
     setExplicit(new Set());
   }, [tab]);
-  // Default (untouched) = every ELIGIBLE agent; an explicit set is always
-  // intersected with eligibility so an incompatible agent can never be a target.
+  // Default (untouched) = every current agent in scope. Runtime-specific feature
+  // readiness is advisory; stale rows are still blocked by fresh-read stamps.
   const selectedIds: Set<string> = touched ? explicit : new Set(eligibleAgents.map((a) => a.id));
   // Team scope honors the chip selection; cross-team scopes target every eligible agent.
   const targetAgents = scope === 'team' ? eligibleAgents.filter((a) => selectedIds.has(a.id)) : eligibleAgents;
@@ -925,13 +968,13 @@ export function Modules({ store }: { store: FleetStore }) {
       }
       const currentScopeTargets: TargetAgent[] =
         scope === 'team'
-          ? (groups.find((g) => g.team === activeTeam)?.agents ?? []).map((a) => ({ ...a, team: activeTeam })).filter(agentSupports)
+          ? (groups.find((g) => g.team === activeTeam)?.agents ?? []).map((a) => ({ ...a, team: activeTeam }))
           : scope === 'leads'
             ? groups.flatMap((g) => {
               const lead = latestCoords[g.team];
               return lead ? g.agents.filter((a) => a.name === lead).map((a) => ({ ...a, team: g.team })) : [];
-            }).filter(agentSupports)
-            : groups.flatMap((g) => g.agents.map((a) => ({ ...a, team: g.team }))).filter(agentSupports);
+            })
+            : groups.flatMap((g) => g.agents.map((a) => ({ ...a, team: g.team })));
       if (capabilityTargetSetStamp(currentScopeTargets, activeTeam) !== capabilityTargetSetStamp(targetAgents, activeTeam)) {
         setNote(`${label} blocked: the ${scope === 'team' ? 'team' : scope === 'leads' ? 'team-lead' : 'all-team'} target set changed. Refreshed; review the current targets before applying.`);
         store.refresh();
@@ -944,11 +987,6 @@ export function Modules({ store }: { store: FleetStore }) {
       const current = findFreshTarget(groups, rendered);
       if (!current) {
         setNote(`${label} blocked: ${expectedTeam}/${rendered.name} is no longer in the current roster. Refreshed; review targets and try again.`);
-        store.refresh();
-        return null;
-      }
-      if (!agentSupports(current)) {
-        setNote(`${label} blocked: ${expectedTeam}/${current.name} no longer supports ${tab === 'mcp' ? 'MCP' : tab}. Refreshed; review targets and try again.`);
         store.refresh();
         return null;
       }
@@ -1162,6 +1200,25 @@ export function Modules({ store }: { store: FleetStore }) {
   // # selected agents that have at least one MCP server attached (→ show Rebuild).
   const anyAttached = targetAgents.some((a) => curMcp(a).length > 0);
   const targetLabel = targetCount === 0 ? 'no agents' : targetCount === 1 ? targetAgents[0].name : `${targetCount} agents`;
+  const pluginRows = useMemo<PluginRow[]>(() => {
+    const rows: PluginRow[] = plugins.map((plugin) => ({
+      ...plugin,
+      packageSource: plugin.name === 'idacc-context-retrieval' ? 'manager + IDACC portable package' : 'manager native inventory',
+      bundledPortable: plugin.name === 'idacc-context-retrieval',
+    }));
+    if (!rows.some((plugin) => plugin.name === 'idacc-context-retrieval')) {
+      rows.unshift({
+        name: 'idacc-context-retrieval',
+        version: '0.1.0',
+        description: 'IDACC portable retrieval-handle resolver for future Headroom-backed context compression pilots.',
+        source: 'bundled with IDACC',
+        hasManifest: true,
+        packageSource: 'IDACC bundled portable package',
+        bundledPortable: true,
+      });
+    }
+    return rows;
+  }, [plugins]);
   function skillFleetUsage(skill: string): TargetAgent[] {
     return store.allAgents
       .filter((a) => (((a.metadata as any)?.skills ?? []) as string[]).includes(skill))
@@ -1268,7 +1325,9 @@ export function Modules({ store }: { store: FleetStore }) {
             <option value="leads">All team leads</option>
           </select>
           {scope !== 'team' ? (
-            <span className="muted small" title="every eligible agent across all teams (incompatible runtimes excluded)">apply to <b>{eligibleAgents.length}</b> {scope === 'leads' ? 'team lead' : 'agent'}{eligibleAgents.length === 1 ? '' : 's'} across all teams{incompatAgents.length ? ` · ${incompatAgents.length} excluded` : ''}</span>
+            <span className="muted small" title={`Runtime-neutral target scope. ${capabilitySurfaceSummary(tab, eligibleAgents)}`}>
+              apply to <b>{eligibleAgents.length}</b> {scope === 'leads' ? 'team lead' : 'agent'}{eligibleAgents.length === 1 ? '' : 's'} across all teams
+            </span>
           ) : (
           <>
           <span className="muted small">team</span>
@@ -1284,18 +1343,17 @@ export function Modules({ store }: { store: FleetStore }) {
             <>
               <span className="chips">
                 {store.agents.map((a) => {
-                  const compat = agentSupports(a);
-                  const on = compat && selectedIds.has(a.id);
-                  const why = compat ? undefined : `${a.name} · ${agentRuntime(a) ?? 'unknown runtime'} — ${capabilityDenyReason(agentRuntime(a), capForTab)}`;
+                  const surface = capabilitySurface(tab, agentRuntime(a));
+                  const on = selectedIds.has(a.id);
                   return (
                     <button
                       key={a.id}
-                      className={`chip${on ? ' on' : ''}${compat ? '' : ' incompat'}`}
-                      disabled={busy || !compat}
-                      title={why}
-                      onClick={() => compat && toggleAgent(a.id)}
+                      className={`chip${on ? ' on' : ''}${surface.advisory ? ' incompat' : ''}`}
+                      disabled={busy}
+                      title={`${a.name} · ${agentRuntime(a) ?? 'unknown runtime'} — ${surface.title}`}
+                      onClick={() => toggleAgent(a.id)}
                     >
-                      {on ? '✓ ' : ''}{a.name}{compat ? '' : ' ⊘'}
+                      {on ? '✓ ' : ''}{a.name} · {surface.label}
                     </button>
                   );
                 })}
@@ -1315,16 +1373,16 @@ export function Modules({ store }: { store: FleetStore }) {
           ['mcp', 'MCP servers'],
           ['skills', 'Skills'],
           ['plugins', 'Plugins'],
-        ] as ['mcp' | 'skills' | 'plugins', string][]).map(([id, label]) => (
+        ] as [CapabilityTab, string][]).map(([id, label]) => (
           <button key={id} className={`tab${tab === id ? ' active' : ''}`} onClick={() => setTab(id)}>
             {label}
           </button>
         ))}
       </div>
 
-      {incompatAgents.length > 0 ? (
-        <div className="muted small" title={incompatAgents.map((a) => `${a.name} (${agentRuntime(a) ?? 'unknown'})`).join(', ')}>
-          ⊘ {incompatAgents.length} agent{incompatAgents.length > 1 ? 's' : ''} can’t use {tab === 'mcp' ? 'MCP' : tab === 'plugins' ? 'portable plugins' : tab} on their runtime{eligibleAgents.length === 0 ? ' — no eligible agents in this team' : ''} — {incompatAgents.map((a) => a.name).join(', ')}.
+      {eligibleAgents.length > 0 ? (
+        <div className="muted small" title={eligibleAgents.map((a) => `${targetTeamOf(a)}/${a.name}: ${capabilitySurface(tab, agentRuntime(a)).title}`).join('\n')}>
+          Runtime-neutral targeting: {capabilitySurfaceSummary(tab, eligibleAgents)}{advisoryAgents.length ? ` · ${advisoryAgents.length} fallback/advisory` : ''}.
         </div>
       ) : null}
 
@@ -1334,7 +1392,7 @@ export function Modules({ store }: { store: FleetStore }) {
       <section className="card grow">
         <h3>MCP servers — new tools via external servers</h3>
         <p className="muted small" style={{ marginTop: -4 }}>
-          External tool servers your agent connects to — they give it brand-new <b>tools</b> (filesystem, web search, databases, GitHub…). Pick one, <b>Test</b> it (launches it and lists its tools), then <b>Attach</b> to <b>{targetLabel}</b> and Rebuild. Attach/Detach apply to every selected agent. Claude, Codex, and Ollama runtimes can use MCP when their harness/model has tool support.
+          External tool servers your agent connects to — they give it brand-new <b>tools</b> (filesystem, web search, databases, GitHub…). Pick one, <b>Test</b> it (launches it and lists its tools), then <b>Attach</b> to <b>{targetLabel}</b> and Rebuild. Attach/Detach apply to every selected agent as neutral capability metadata; runtimes with native MCP/tool-calling can execute immediately, while others keep the attachment for manager adapters, runtime changes, or direct fallback.
         </p>
         <table className="grid">
           <thead>
@@ -1512,7 +1570,7 @@ export function Modules({ store }: { store: FleetStore }) {
           </button>
         </div>
         <p className="muted small" style={{ marginTop: -4 }}>
-          Markdown instructions (the <a className="ext-link" href="https://agentskills.io" target="_blank" rel="noreferrer">agentskills.io</a> <span className="mono">SKILL.md</span> standard) that teach an agent <i>how</i> to do things with the tools it already has. Browse, filter by tag, then install on <b>{targetLabel}</b> — applies to every selected agent immediately.
+          Markdown instructions (the <a className="ext-link" href="https://agentskills.io" target="_blank" rel="noreferrer">agentskills.io</a> <span className="mono">SKILL.md</span> standard) that teach an agent <i>how</i> to do things with the tools it already has. Browse, filter by tag, then install on <b>{targetLabel}</b> — the assignment is runtime-neutral, and deployment falls through the manager's runtime-aware skill, workspace, or prompt-side adapter.
         </p>
 
         {brainCatalogNeedsReview ? (
@@ -1732,32 +1790,33 @@ export function Modules({ store }: { store: FleetStore }) {
       <section className="card grow">
         <h3>Plugins — portable packages</h3>
         <p className="muted small" style={{ marginTop: -4 }}>
-          IDACC treats plugins as portable packages when they declare adapters: Skill instructions for every local runtime, MCP tools for Claude/Codex/Ollama, native Claude plugin bundles where supported, and direct fallback when a runtime has no tool surface. Manager inventory can still include native Claude Code plugins from <span className="mono">plugins/claude-code</span>, so adapter coverage matters before routing work through one.
+          IDACC treats plugins as portable packages when they declare adapters: Skill instructions, MCP tools, native runtime bundles where supported, and direct fallback when a runtime has no tool surface. Packages can target local, API, and subscription runtimes at the assignment layer; the selected adapter decides how the runtime actually receives tools or instructions.
         </p>
         <div className="skill-brain-review" style={{ marginTop: 8 }}>
           <div className="grow">
             <b>Neutral plugin contract</b>
             <div className="muted small">
-              Portable package = Skill adapter + optional MCP adapter + optional native plugin adapter + direct fallback. Native Claude plugin alone is not treated as runtime-neutral.
+              Portable package = Skill adapter + optional MCP adapter + optional native runtime adapter + direct fallback. A single native plugin loader is not treated as runtime-neutral.
             </div>
           </div>
-          <span className="chip tag" title="Instruction adapter deploys through SKILL.md">Skill: all local</span>
-          <span className="chip tag" title="Tool adapter follows runtime MCP support">MCP: Claude/Codex/Ollama</span>
-          <span className="chip tag" title="Native Claude Code plugin adapter">Native: Claude</span>
-          <span className="chip tag" title="Exact prompt route for protected or unsupported cases">Fallback: all</span>
+          <span className="chip tag" title="Instruction adapters deploy through SKILL.md, workspace, or prompt-side manager support">Skill: neutral</span>
+          <span className="chip tag" title="Tool adapters follow the runtime or manager MCP/tool surface">MCP: tool-capable</span>
+          <span className="chip tag" title="Native adapters are optional per runtime family">Native: optional</span>
+          <span className="chip tag" title="Exact prompt route for protected or unsupported cases">Fallback: universal</span>
         </div>
         <table className="grid">
           <thead>
             <tr>
               <th>name</th>
               <th>version</th>
-              <th>provider</th>
+              <th>source</th>
               <th>adapters</th>
+              <th>selected reach</th>
               <th>description</th>
             </tr>
           </thead>
           <tbody>
-            {plugins.map((p) => {
+            {pluginRows.map((p) => {
               const provider = p.author || p.source || null;
               const isUrl = !!provider && /^https?:\/\//i.test(provider);
               return (
@@ -1765,21 +1824,23 @@ export function Modules({ store }: { store: FleetStore }) {
                   <td className="b">{p.name}</td>
                   <td className="muted small">{p.version ?? '—'}</td>
                   <td className="muted small" title={p.source ?? undefined}>
-                    {provider == null ? '—' : isUrl ? (
+                    <span>{p.packageSource}</span>
+                    {provider == null ? null : isUrl ? (
                       <a className="ext-link" href={provider} target="_blank" rel="noreferrer">
-                        {provider.replace(/^https?:\/\//i, '').replace(/\/$/, '')}
+                        {' '}{provider.replace(/^https?:\/\//i, '').replace(/\/$/, '')}
                       </a>
-                    ) : provider}
+                    ) : <span> · {provider}</span>}
                   </td>
                   <td className="muted small">{pluginAdapterSummary(p.name)}</td>
+                  <td className="muted small">{pluginRuntimeReach(p.name, targetAgents)}</td>
                   <td className="muted"><LinkedDescription text={p.description} /></td>
                 </tr>
               );
             })}
-            {plugins.length === 0 ? (
+            {pluginRows.length === 0 ? (
               <tr>
-                <td colSpan={5} className="muted center pad">
-                  No manager plugins found. Native plugins live in <span className="mono">plugins/claude-code</span>; portable IDACC packages can also ship Skill, MCP, and direct-fallback adapters.
+                <td colSpan={6} className="muted center pad">
+                  No plugins found. Native plugins live in <span className="mono">plugins/claude-code</span>; portable IDACC packages can also ship Skill, MCP, and direct-fallback adapters.
                 </td>
               </tr>
             ) : null}

@@ -17,9 +17,12 @@ import type { ProviderKind, ProviderProfile } from './schema.ts';
 export const RUNTIMES = ['claude-agent-sdk', 'claude-code-cli', 'claude-code-local', 'codex', 'cursor-cli', 'ollama'];
 
 /**
- * Capabilities an agent's runtime may or may not be able to consume. Attaching
- * a capability to an agent whose runtime can't use it is a silent dead-end (the
- * manager serializes it but the harness ignores it), so the UI gates on this.
+ * Native capability support an agent runtime may or may not be able to consume
+ * directly. Capabilities assignment in IDACC is broader than this table: the
+ * Capabilities page can attach MCP metadata, skills, and portable plugin package
+ * state to any local/API/subscription runtime, then surfaces whether the current
+ * runtime has a native adapter, MCP/tool surface, Skill/workspace surface, or
+ * direct fallback.
  *
  * "plugins" below means native Claude Code plugin bundles. IDACC-level portable
  * plugin packages use "portablePlugins" and must declare runtime adapters such
@@ -29,7 +32,8 @@ export const RUNTIMES = ['claude-agent-sdk', 'claude-code-cli', 'claude-code-loc
 export type RuntimeCapability = 'mcp' | 'plugins' | 'portablePlugins' | 'skills';
 
 /**
- * Which runtimes can actually USE each capability.
+ * Which runtimes can directly USE each native capability today. Do not use this
+ * table as a blanket "can select target" gate for portable capabilities.
  *
  * MCP — hard runtime feature: the Claude runtimes embed the SDK/CLI MCP client,
  * codex received `-c mcp_servers.*` config injection (2026-06), and ollama now
@@ -58,10 +62,10 @@ const RUNTIME_CAPABILITIES: Record<RuntimeCapability, string[]> = {
 
 /** Short, user-facing reason a runtime can't use a capability (for tooltips). */
 const CAPABILITY_DENY_REASON: Record<RuntimeCapability, string> = {
-  mcp: 'This runtime has no MCP client. Claude, Codex, and Ollama (local models with tool support) can use MCP servers — this runtime cannot.',
-  skills: 'Skills deploy into a local agent workspace — a remote-endpoint runtime has none.',
-  plugins: 'Plugins load only on the Claude-family runtimes (Claude Code plugin bundles).',
-  portablePlugins: 'Portable plugin packages require a declared adapter for this runtime.',
+  mcp: 'This runtime has no native MCP client today; attach can still be stored as neutral metadata when a manager adapter, runtime change, or direct fallback is available.',
+  skills: 'This runtime has no native skill workspace today; assignment can still be stored when a manager prompt-side adapter or direct fallback is available.',
+  plugins: 'Native plugin loaders are runtime-specific; Claude Code plugin bundles load only on Claude-family runtimes.',
+  portablePlugins: 'Portable plugin packages require a declared Skill, MCP, native, or fallback adapter for this runtime.',
 };
 
 /** Does this runtime support the given capability? Unknown runtime → false. */

@@ -8,6 +8,9 @@ Every change pushed or merged to `main` carries its version number in the commit
 subject (`vX.Y.Z: …`), stamped automatically by the `commit-msg` hook — see
 [CONTRIBUTING.md](CONTRIBUTING.md).
 
+## [0.1.376] — 2026-06-30
+- Make Capabilities target assignment runtime-neutral
+
 ## [0.1.375] — 2026-06-30
 - Add portable plugin adapter coverage for runtime-neutral Headroom resolver
 
