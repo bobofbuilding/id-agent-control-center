@@ -54,6 +54,39 @@ function scopedAgentKey(agent: string, selectedTeam?: string): string {
   return selectedTeam ? `${selectedTeam}:${agent}` : agent;
 }
 
+const COMPUTER_USE_UNAVAILABLE = 'Computer Use requires the Electron desktop broker; this shell cannot capture or drive the screen.';
+function computerUseUnavailableStatus() {
+  return {
+    available: false,
+    unavailableReason: COMPUTER_USE_UNAVAILABLE,
+    armed: false,
+    watching: false,
+    port: 0,
+    url: '',
+    lastAgent: '',
+    actions: 0,
+    serverStaged: false,
+    captureFailing: false,
+    blessed: [] as string[],
+    driverOk: false,
+    accessibility: false,
+    supervised: true,
+    paused: false,
+    pending: [] as unknown[],
+    panicHotkey: false,
+  };
+}
+function computerUseUnavailablePermissions() {
+  return {
+    screenRecording: 'unknown',
+    accessibility: false,
+    inputMonitoring: 'unknown',
+    automation: { status: 'unknown', targets: [] as string[] },
+    tcc: { readable: false, error: COMPUTER_USE_UNAVAILABLE },
+    platform: 'webview',
+  };
+}
+
 // ---- localStorage helpers --------------------------------------------------
 function lsGet<T>(key: string, fallback: T): T {
   try {
@@ -593,6 +626,22 @@ const M: Record<string, (...a: any[]) => Promise<unknown>> = {
     const have = new Set(lsGet<ProviderProfile[]>('idctl.providers', []).map((p) => norm(p.baseUrl)));
     return found.map((s: DiscoveredServer) => ({ ...s, alreadyAdded: have.has(norm(s.baseUrl)) }));
   },
+  'cu:permissions': async () => computerUseUnavailablePermissions(),
+  'cu:status': async () => computerUseUnavailableStatus(),
+  'cu:attached': async () => [],
+  'cu:audit': async () => [],
+  'cu:pending': async () => [],
+  'cu:watch': async () => ({ ok: false, unavailable: true, message: COMPUTER_USE_UNAVAILABLE }),
+  'cu:arm': async () => computerUseUnavailableStatus(),
+  'cu:disarm': async () => ({ ok: false, unavailable: true, message: COMPUTER_USE_UNAVAILABLE }),
+  'cu:panic': async () => ({ ok: false, unavailable: true, message: COMPUTER_USE_UNAVAILABLE }),
+  'cu:setSupervised': async () => computerUseUnavailableStatus(),
+  'cu:pause': async () => computerUseUnavailableStatus(),
+  'cu:confirm': async () => ({ ok: false }),
+  'cu:attach': async () => { throw new Error(COMPUTER_USE_UNAVAILABLE); },
+  'cu:detach': async () => { throw new Error(COMPUTER_USE_UNAVAILABLE); },
+  'cu:openPermission': async () => ({ ok: false, unavailable: true, message: COMPUTER_USE_UNAVAILABLE }),
+  'cu:relaunch': async () => ({ ok: false, unavailable: true, message: COMPUTER_USE_UNAVAILABLE }),
   'cu:legacyAuthority': async () => [],
 };
 

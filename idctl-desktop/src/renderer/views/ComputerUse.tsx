@@ -20,13 +20,18 @@ interface Perms {
   platform: string;
 }
 interface PendingAction { id: string; agent: string; action: string; preview: string; ts: number; expiresAt: number }
-interface Status { armed: boolean; watching: boolean; port: number; url: string; lastAgent: string; actions: number; serverStaged: boolean; captureFailing: boolean; blessed: string[]; driverOk: boolean; accessibility: boolean; supervised: boolean; paused: boolean; pending: PendingAction[]; panicHotkey: boolean }
+interface Status { armed: boolean; watching: boolean; port: number; url: string; lastAgent: string; actions: number; serverStaged: boolean; captureFailing: boolean; blessed: string[]; driverOk: boolean; accessibility: boolean; supervised: boolean; paused: boolean; pending: PendingAction[]; panicHotkey: boolean; available?: boolean; unavailableReason?: string }
 interface FrameMsg { jpegBase64: string; width: number; height: number; ts: number; display?: { bounds: { width: number; height: number } } }
 interface AuditEntry { ts: number; agent: string; action: string; detail: string; decision: 'executed' | 'blocked'; reason?: string }
 type AttachedAgent = { id: string; name: string; team?: string; authority?: string };
 type ComputerUseTarget = Agent & { team?: string };
 type TeamAgentsGroup = { team: string; agents: Agent[] };
 interface LegacyComputerUseAuthority { agent: string; currentAuthorities: string[]; tokenCount: number; source: string; note: string }
+type ComputerUseEventApi = {
+  onComputerFrame?: (cb: (frame: unknown) => void) => () => void;
+  onComputerPending?: (cb: (evt: unknown) => void) => () => void;
+  onComputerPanic?: (cb: (evt: unknown) => void) => () => void;
+};
 
 const ACT_ICON: Record<string, string> = { screenshot: '📷', mouse_move: '➜', left_click: '🖱', right_click: '🖱', middle_click: '🖱', double_click: '🖱', left_click_drag: '✣', type: '⌨', key: '⌨', scroll: '↕' };
 
@@ -137,6 +142,8 @@ export function ComputerUse({ store }: { store: FleetStore }) {
   const selectedBlessTarget = eligible.find((a) => a.id === pick && !attached.some((x) => x.id === a.id));
   const authorityOf = (a: { name: string; team?: string; authority?: string }, fallbackTeam = activeTeam) => a.authority ?? `${a.team ?? fallbackTeam}:${a.name}`;
   const armed = !!status?.armed;
+  const cuUnavailable = status?.available === false;
+  const cuUnavailableReason = status?.unavailableReason ?? 'Computer Use requires the Electron desktop broker.';
   const srGranted = perms?.screenRecording === 'granted';
   const axGranted = perms?.accessibility === true;
   const imGranted = perms?.inputMonitoring === 'granted';
@@ -262,15 +269,16 @@ export function ComputerUse({ store }: { store: FleetStore }) {
     void call('cu:watch', true);
     void refresh();
     const t = setInterval(() => void refresh(), 2500);
-    const off = window.idagents.onComputerFrame((f) => {
+    const eventApi = (window as { idagents?: ComputerUseEventApi }).idagents;
+    const off = eventApi?.onComputerFrame?.((f) => {
       const fm = f as FrameMsg;
       if (!fm?.jpegBase64) return;
       lastFrameAt.current = Date.now();
       setFrame(`data:image/jpeg;base64,${fm.jpegBase64}`);
       setFrameMeta(fm);
-    });
-    const offPending = window.idagents.onComputerPending((e) => { const ev = e as { pending?: PendingAction[] }; applyPending(ev?.pending ?? []); });
-    const offPanic = window.idagents.onComputerPanic(() => { setPanicFlash(true); setTimeout(() => setPanicFlash(false), 2500); void refresh(); });
+    }) ?? (() => {});
+    const offPending = eventApi?.onComputerPending?.((e) => { const ev = e as { pending?: PendingAction[] }; applyPending(ev?.pending ?? []); }) ?? (() => {});
+    const offPanic = eventApi?.onComputerPanic?.(() => { setPanicFlash(true); setTimeout(() => setPanicFlash(false), 2500); void refresh(); }) ?? (() => {});
     return () => { clearInterval(t); off(); offPending(); offPanic(); void call('cu:watch', false); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeTeam]);
@@ -492,8 +500,8 @@ export function ComputerUse({ store }: { store: FleetStore }) {
             ? <button className="btn icon-danger" onClick={() => void disarm()}>Disarm</button>
             : <button
                 className="btn primary"
-                disabled={busy || !srGranted || (emptyArmNeedsReview && !allowEmptyArm)}
-                title={!srGranted ? 'Grant Screen Recording first' : emptyArmNeedsReview && !allowEmptyArm ? 'Review empty arm first' : ''}
+                disabled={busy || cuUnavailable || !srGranted || (emptyArmNeedsReview && !allowEmptyArm)}
+                title={cuUnavailable ? cuUnavailableReason : !srGranted ? 'Grant Screen Recording first' : emptyArmNeedsReview && !allowEmptyArm ? 'Review empty arm first' : ''}
                 onClick={() => void arm()}
               >Arm</button>}
         </div>
@@ -521,6 +529,7 @@ export function ComputerUse({ store }: { store: FleetStore }) {
         Nothing happens unless you <b>Arm</b> it; only agents you bless can act; and while it's driving, <b>move your
         own mouse or hit Disarm to take back control</b>. Every action is logged below.
       </div>
+      {cuUnavailable ? <div className="cu-msg small">{cuUnavailableReason}</div> : null}
       {emptyArmNeedsReview ? (
         <div className="cu-empty-arm">
           <label className="small" style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
@@ -614,20 +623,20 @@ export function ComputerUse({ store }: { store: FleetStore }) {
             <h3>Who can drive</h3>
             <div className="muted small">Bless a Claude/codex agent to let it see + control your Mac. It rebuilds to pick up the tools and is scoped to the active team.</div>
             <div className="cu-bless-add">
-              <select className="cell-select" value={pick} disabled={busy} onChange={(e) => setPick(e.target.value)}>
+              <select className="cell-select" value={pick} disabled={busy || cuUnavailable} onChange={(e) => setPick(e.target.value)}>
                 <option value="">choose an agent…</option>
                 {eligible.filter((a) => !attached.some((x) => x.id === a.id)).map((a) => (
                   <option key={a.id} value={a.id}>{a.name} · {agentRuntime(a)}</option>
                 ))}
               </select>
-              <button className="btn primary" disabled={busy || !selectedBlessTarget} onClick={() => { if (selectedBlessTarget) void bless({ ...selectedBlessTarget, team: activeTeam }); }}>Bless</button>
+              <button className="btn primary" disabled={busy || cuUnavailable || !selectedBlessTarget} title={cuUnavailable ? cuUnavailableReason : undefined} onClick={() => { if (selectedBlessTarget) void bless({ ...selectedBlessTarget, team: activeTeam }); }}>Bless</button>
             </div>
             {attached.length ? (
               <div className="cu-blessed">
                 {attached.map((a) => (
                   <div key={a.id} className="cu-blessed-row">
                     <span>🖥️ {a.team ?? activeTeam}/{a.name}</span>
-                    <button className="btn icon-danger" disabled={busy} onClick={() => void unbless(a)}>Remove</button>
+                    <button className="btn icon-danger" disabled={busy || cuUnavailable} title={cuUnavailable ? cuUnavailableReason : undefined} onClick={() => void unbless(a)}>Remove</button>
                   </div>
                 ))}
               </div>
@@ -683,7 +692,7 @@ export function ComputerUse({ store }: { store: FleetStore }) {
           <section className="card cu-safety">
             <h3>Safety</h3>
             <label className="cu-mode-row">
-              <input type="checkbox" checked={status?.supervised !== false} onChange={() => void toggleSupervised()} />
+              <input type="checkbox" checked={status?.supervised !== false} disabled={cuUnavailable} onChange={() => void toggleSupervised()} />
               <span>
                 <b>Approve every action</b> <span className="muted small">(recommended)</span>
                 <div className="muted small">{status?.supervised !== false
