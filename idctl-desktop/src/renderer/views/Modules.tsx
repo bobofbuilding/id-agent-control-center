@@ -13,7 +13,7 @@ import type { Agent } from '../../../../idctl/src/api/types.ts';
 const TAB_CAPABILITY: Record<'mcp' | 'skills' | 'plugins', RuntimeCapability> = {
   mcp: 'mcp',
   skills: 'skills',
-  plugins: 'plugins',
+  plugins: 'portablePlugins',
 };
 /** An agent's effective runtime (top-level, falling back to metadata). */
 function agentRuntime(a: Agent): string | undefined {
@@ -516,6 +516,10 @@ function mcpEndpoint(p: McpServerProfile): string {
   return p.transport === 'stdio'
     ? [p.command, ...(p.args ?? [])].filter(Boolean).join(' ') || '(none)'
     : p.url ?? '(none)';
+}
+function pluginAdapterSummary(name: string): string {
+  if (name === 'idacc-context-retrieval') return 'Portable: Skill all local, MCP Claude/Codex/Ollama, native Claude, direct fallback all';
+  return 'Native plugin inventory; verify portable adapter manifest before cross-runtime use';
 }
 function mcpProfileStamp(p: McpServerProfile): string {
   return JSON.stringify({
@@ -1320,7 +1324,7 @@ export function Modules({ store }: { store: FleetStore }) {
 
       {incompatAgents.length > 0 ? (
         <div className="muted small" title={incompatAgents.map((a) => `${a.name} (${agentRuntime(a) ?? 'unknown'})`).join(', ')}>
-          ⊘ {incompatAgents.length} agent{incompatAgents.length > 1 ? 's' : ''} can’t use {tab === 'mcp' ? 'MCP' : tab} on their runtime{eligibleAgents.length === 0 ? ' — no eligible agents in this team' : ''} — {incompatAgents.map((a) => a.name).join(', ')}.
+          ⊘ {incompatAgents.length} agent{incompatAgents.length > 1 ? 's' : ''} can’t use {tab === 'mcp' ? 'MCP' : tab === 'plugins' ? 'portable plugins' : tab} on their runtime{eligibleAgents.length === 0 ? ' — no eligible agents in this team' : ''} — {incompatAgents.map((a) => a.name).join(', ')}.
         </div>
       ) : null}
 
@@ -1330,7 +1334,7 @@ export function Modules({ store }: { store: FleetStore }) {
       <section className="card grow">
         <h3>MCP servers — new tools via external servers</h3>
         <p className="muted small" style={{ marginTop: -4 }}>
-          External tool servers your agent connects to — they give it brand-new <b>tools</b> (filesystem, web search, databases, GitHub…). Pick one, <b>Test</b> it (launches it and lists its tools), then <b>Attach</b> to <b>{targetLabel}</b> and Rebuild. Attach/Detach apply to every selected agent. <b>Claude & Codex runtimes</b> only — local models gain MCP once the tool-calling loop ships.
+          External tool servers your agent connects to — they give it brand-new <b>tools</b> (filesystem, web search, databases, GitHub…). Pick one, <b>Test</b> it (launches it and lists its tools), then <b>Attach</b> to <b>{targetLabel}</b> and Rebuild. Attach/Detach apply to every selected agent. Claude, Codex, and Ollama runtimes can use MCP when their harness/model has tool support.
         </p>
         <table className="grid">
           <thead>
@@ -1726,16 +1730,29 @@ export function Modules({ store }: { store: FleetStore }) {
 
       {tab === 'plugins' ? (
       <section className="card grow">
-        <h3>Plugins — bundled extensions</h3>
+        <h3>Plugins — portable packages</h3>
         <p className="muted small" style={{ marginTop: -4 }}>
-          Packaged Claude Code extensions that can bundle skills, MCP servers, slash-commands, and scripts together. These ship with the manager (<span className="mono">plugins/claude-code</span>); they're attached to agents via team config.
+          IDACC treats plugins as portable packages when they declare adapters: Skill instructions for every local runtime, MCP tools for Claude/Codex/Ollama, native Claude plugin bundles where supported, and direct fallback when a runtime has no tool surface. Manager inventory can still include native Claude Code plugins from <span className="mono">plugins/claude-code</span>, so adapter coverage matters before routing work through one.
         </p>
+        <div className="skill-brain-review" style={{ marginTop: 8 }}>
+          <div className="grow">
+            <b>Neutral plugin contract</b>
+            <div className="muted small">
+              Portable package = Skill adapter + optional MCP adapter + optional native plugin adapter + direct fallback. Native Claude plugin alone is not treated as runtime-neutral.
+            </div>
+          </div>
+          <span className="chip tag" title="Instruction adapter deploys through SKILL.md">Skill: all local</span>
+          <span className="chip tag" title="Tool adapter follows runtime MCP support">MCP: Claude/Codex/Ollama</span>
+          <span className="chip tag" title="Native Claude Code plugin adapter">Native: Claude</span>
+          <span className="chip tag" title="Exact prompt route for protected or unsupported cases">Fallback: all</span>
+        </div>
         <table className="grid">
           <thead>
             <tr>
               <th>name</th>
               <th>version</th>
               <th>provider</th>
+              <th>adapters</th>
               <th>description</th>
             </tr>
           </thead>
@@ -1754,14 +1771,15 @@ export function Modules({ store }: { store: FleetStore }) {
                       </a>
                     ) : provider}
                   </td>
+                  <td className="muted small">{pluginAdapterSummary(p.name)}</td>
                   <td className="muted"><LinkedDescription text={p.description} /></td>
                 </tr>
               );
             })}
             {plugins.length === 0 ? (
               <tr>
-                <td colSpan={4} className="muted center pad">
-                  No plugins found. Plugins live in <span className="mono">plugins/claude-code</span> on the manager host.
+                <td colSpan={5} className="muted center pad">
+                  No manager plugins found. Native plugins live in <span className="mono">plugins/claude-code</span>; portable IDACC packages can also ship Skill, MCP, and direct-fallback adapters.
                 </td>
               </tr>
             ) : null}

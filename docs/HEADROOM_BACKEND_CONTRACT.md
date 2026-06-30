@@ -6,10 +6,11 @@ IDACC now has a core deterministic context-budget layer. Headroom remains a cand
 
 1. Keep live `/ask` dispatch on the existing manager route.
 2. Measure current behavior with hidden context-budget stats and local chat-history replay.
-3. Bundle and smoke-test an optional `idacc-context-retrieval` plugin candidate as a pilot resolver.
-4. Attach the plugin through the existing id-agents plugin mechanism instead of requiring a new manager fork.
-5. Treat plugin-only routing as pilot-scoped because id-agents plugins load only on Claude-family runtimes.
-6. Promote Headroom retrieval-handle routing only when `/capabilities` can report the contract and every dispatch has direct fallback.
+3. Bundle and smoke-test an optional `idacc-context-retrieval` resolver candidate as a pilot adapter.
+4. Package that resolver as an IDACC portable plugin: Skill instructions for every local runtime, stdio MCP for tool-capable runtimes, a native Claude plugin adapter for Claude-family runtimes, and direct fallback for every runtime.
+5. Treat native-plugin-only routing as pilot-scoped because native id-agents plugin loaders are runtime-specific.
+6. Treat MCP resolver routing as a broader pilot surface for MCP-capable runtimes, while keeping Skill/direct fallback for runtimes without a resolver surface.
+7. Promote Headroom retrieval-handle routing only when `/capabilities` can report the contract and every dispatch has direct fallback.
 
 ## Required Runtime Contract
 
@@ -22,21 +23,23 @@ IDACC now has a core deterministic context-budget layer. Headroom remains a cand
 
 ## Runtime Coverage Decision
 
-- `idacc-context-retrieval` plugin: valid as a Claude-family pilot resolver.
-- Headroom MCP: better core candidate surface because Claude, Codex, and Ollama can use MCP-capable tools.
+- `idacc-context-retrieval` portable plugin package: valid as a neutral package only because it declares Skill, MCP, native plugin, and direct-fallback adapters.
+- `idacc-context-retrieval` native plugin adapter: valid as a Claude-family pilot resolver.
+- `idacc-context-retrieval` MCP: the same guarded resolver exposed through a runtime-neutral tool boundary for Claude, Codex, and Ollama.
+- Headroom MCP: a separate compression-engine candidate surface when the Headroom CLI/proxy is installed and smoke-tested.
 - Manager retrieval contract: required before core activation because it lets IDACC feature-detect support and keep stock/stale managers on direct routing.
 - Direct deterministic fallback: remains universal for all runtimes and protected content.
 
-Plugin-only routing is not core-ready because it would exclude Codex, cursor-cli, Ollama, and future runtimes. The plugin path validates the shape of a resolver, not the final platform-wide dependency.
+Native-plugin-only routing is not core-ready because it would exclude Codex, cursor-cli, Ollama, and future runtimes. MCP closes much of that gap for Claude, Codex, and Ollama, while Skill/direct fallback covers cursor-cli and unsupported future runtimes. The bundled portable plugin validates the shape of a guarded retrieval contract; it is not the final platform-wide dependency by itself.
 
 ## Validation Gates
 
 - Historical chat replay shows savings without exposing or persisting raw chat text.
 - Deterministic smoke tests continue to prove protected-content direct fallback.
-- A retrieval plugin smoke test proves store, resolve, hash-match, expiry, protected-content reject, and direct fallback.
+- A retrieval resolver smoke test proves portable manifest adapter coverage, store, resolve, hash-match, expiry, protected-content reject, direct fallback, and MCP tool listing/calls.
 - Manager `/capabilities` reports the retrieval contract version before IDACC enables handle routing.
 - Quality review compares original objective, compressed prompt, resolved context, and final response for drift.
 
 ## Current Decision
 
-The plugin path is validated for pilot work, not core activation. IDACC now bundles an `idacc-context-retrieval` candidate and a smoke test that verifies manifest shape, resolver instructions, source-hash checks, expiry, and protected-content rejection. The core Headroom path still requires runtime-neutral support through MCP or a manager-advertised retrieval contract, plus direct fallback, so token compression does not block AI orchestration or persistent memory features.
+The portable resolver path is validated for pilot work, not core activation. IDACC now bundles an `idacc-context-retrieval` candidate and smoke tests that verify portable adapter coverage, resolver instructions, source-hash checks, expiry, protected-content rejection, and stdio MCP tool calls. The core Headroom path still requires manager-advertised retrieval support plus direct fallback, so token compression does not block AI orchestration, local LLMs, or persistent memory features.

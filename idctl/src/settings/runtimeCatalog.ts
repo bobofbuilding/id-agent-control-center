@@ -20,8 +20,13 @@ export const RUNTIMES = ['claude-agent-sdk', 'claude-code-cli', 'claude-code-loc
  * Capabilities an agent's runtime may or may not be able to consume. Attaching
  * a capability to an agent whose runtime can't use it is a silent dead-end (the
  * manager serializes it but the harness ignores it), so the UI gates on this.
+ *
+ * "plugins" below means native Claude Code plugin bundles. IDACC-level portable
+ * plugin packages use "portablePlugins" and must declare runtime adapters such
+ * as SKILL.md, MCP, native plugin, or direct fallback instead of pretending one
+ * native plugin loader works everywhere.
  */
-export type RuntimeCapability = 'mcp' | 'plugins' | 'skills';
+export type RuntimeCapability = 'mcp' | 'plugins' | 'portablePlugins' | 'skills';
 
 /**
  * Which runtimes can actually USE each capability.
@@ -39,11 +44,16 @@ export type RuntimeCapability = 'mcp' | 'plugins' | 'skills';
  * runtime (no workspace) is excluded. (getRuntimePaths in id-agents.)
  *
  * plugins — Claude Code plugin bundles; only the Claude-family runtimes load them.
+ *
+ * portablePlugins — IDACC plugin packages that declare adapters. Every local
+ * runtime can consume at least the instruction/fallback portion, while tool
+ * adapters still gate independently through MCP or native plugin support.
  */
 const RUNTIME_CAPABILITIES: Record<RuntimeCapability, string[]> = {
   mcp: ['claude-agent-sdk', 'claude-code-cli', 'claude-code-local', 'codex', 'ollama'],
   skills: ['claude-agent-sdk', 'claude-code-cli', 'claude-code-local', 'codex', 'cursor-cli', 'ollama'],
   plugins: ['claude-agent-sdk', 'claude-code-cli', 'claude-code-local'],
+  portablePlugins: ['claude-agent-sdk', 'claude-code-cli', 'claude-code-local', 'codex', 'cursor-cli', 'ollama'],
 };
 
 /** Short, user-facing reason a runtime can't use a capability (for tooltips). */
@@ -51,6 +61,7 @@ const CAPABILITY_DENY_REASON: Record<RuntimeCapability, string> = {
   mcp: 'This runtime has no MCP client. Claude, Codex, and Ollama (local models with tool support) can use MCP servers — this runtime cannot.',
   skills: 'Skills deploy into a local agent workspace — a remote-endpoint runtime has none.',
   plugins: 'Plugins load only on the Claude-family runtimes (Claude Code plugin bundles).',
+  portablePlugins: 'Portable plugin packages require a declared adapter for this runtime.',
 };
 
 /** Does this runtime support the given capability? Unknown runtime → false. */

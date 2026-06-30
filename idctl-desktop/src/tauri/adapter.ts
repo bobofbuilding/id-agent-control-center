@@ -541,6 +541,16 @@ function headroomPluginPathFallback() {
       skillOk: false,
       toolOk: false,
       smokeOk: false,
+      mcpOk: false,
+      portableOk: false,
+      adapterCoverage: {
+        portablePluginRuntimes: [],
+        skillRuntimes: [],
+        mcpRuntimes: [],
+        nativePluginRuntimes: [],
+        directFallbackRuntimes: [],
+        unsupportedRuntimes: ['claude-agent-sdk', 'claude-code-cli', 'claude-code-local', 'codex', 'cursor-cli', 'ollama'],
+      },
       smokeError: 'Plugin candidate validation requires Electron packaged resources.',
     },
     manager: {
@@ -557,6 +567,7 @@ function headroomPluginPathFallback() {
     runtimeCoverage: {
       allRuntimes: ['claude-agent-sdk', 'claude-code-cli', 'claude-code-local', 'codex', 'cursor-cli', 'ollama'],
       pluginRuntimes: ['claude-agent-sdk', 'claude-code-cli', 'claude-code-local'],
+      portablePluginRuntimes: ['claude-agent-sdk', 'claude-code-cli', 'claude-code-local', 'codex', 'cursor-cli', 'ollama'],
       mcpRuntimes: ['claude-agent-sdk', 'claude-code-cli', 'claude-code-local', 'codex', 'ollama'],
       directFallbackRuntimes: ['claude-agent-sdk', 'claude-code-cli', 'claude-code-local', 'codex', 'cursor-cli', 'ollama'],
       pluginOnlyWouldExclude: ['codex', 'cursor-cli', 'ollama'],
@@ -564,9 +575,11 @@ function headroomPluginPathFallback() {
     modeMatrix: [
       { mode: 'direct-deterministic', coreEligible: true, pilotEligible: true, reason: 'Universal fallback.' },
       { mode: 'idacc-context-retrieval-plugin', coreEligible: false, pilotEligible: false, reason: 'Electron packaged resources are required for validation.' },
+      { mode: 'idacc-portable-plugin-package', coreEligible: false, pilotEligible: false, reason: 'Electron packaged resources are required for portable adapter validation.' },
     ],
     guardrails: [
       'Plugin-only routing is not core-eligible because it would exclude non-Claude runtimes.',
+      'IDACC plugins are runtime-neutral only as portable packages with declared Skill, MCP, native-plugin, and direct-fallback adapters; native plugin loaders remain runtime-specific.',
       'Direct deterministic routing remains the universal fallback for stock managers and unsupported runtimes.',
     ],
     blockers: ['Use the Electron build to validate packaged plugin resources and Headroom CLI/proxy status.'],

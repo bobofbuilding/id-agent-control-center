@@ -34,6 +34,10 @@ function safeJson(value) {
   process.stdout.write(`${JSON.stringify(value, null, 2)}\n`);
 }
 
+function jsonText(value) {
+  return JSON.stringify(value);
+}
+
 function readStdin() {
   try {
     return readFileSync(0, 'utf8');
@@ -140,6 +144,150 @@ function capabilities() {
   };
 }
 
+const MCP_TOOLS = [
+  {
+    name: 'idacc_context_capabilities',
+    description: 'Report IDACC context retrieval handle capabilities and guardrails.',
+    inputSchema: {
+      type: 'object',
+      additionalProperties: false,
+      properties: {},
+    },
+  },
+  {
+    name: 'idacc_context_store',
+    description: 'Store non-protected context behind an expiring idacc-context:// retrieval handle.',
+    inputSchema: {
+      type: 'object',
+      additionalProperties: false,
+      required: ['content'],
+      properties: {
+        content: { type: 'string' },
+        ttlMs: { type: 'number', minimum: 60000, maximum: 86400000 },
+      },
+    },
+  },
+  {
+    name: 'idacc_context_resolve',
+    description: 'Resolve an idacc-context:// handle and verify id shape, expiry, and source hash.',
+    inputSchema: {
+      type: 'object',
+      additionalProperties: false,
+      properties: {
+        id: { type: 'string' },
+        uri: { type: 'string' },
+        sourceHash: { type: 'string' },
+      },
+    },
+  },
+];
+
+function toolCallResult(value, isError = false) {
+  return {
+    content: [{ type: 'text', text: jsonText(value) }],
+    ...(isError ? { isError: true } : {}),
+  };
+}
+
+function writeRpc(payload) {
+  const body = jsonText(payload);
+  process.stdout.write(`Content-Length: ${Buffer.byteLength(body, 'utf8')}\r\n\r\n${body}`);
+}
+
+function rpcResult(id, result) {
+  if (id === undefined || id === null) return;
+  writeRpc({ jsonrpc: '2.0', id, result });
+}
+
+function rpcError(id, code, message) {
+  if (id === undefined || id === null) return;
+  writeRpc({ jsonrpc: '2.0', id, error: { code, message } });
+}
+
+function callMcpTool(name, args) {
+  try {
+    if (name === 'idacc_context_capabilities') return toolCallResult(capabilities());
+    if (name === 'idacc_context_store') return toolCallResult(storeRecord(args || {}));
+    if (name === 'idacc_context_resolve') return toolCallResult(resolveRecord(args || {}));
+    return toolCallResult({ ok: false, error: 'unknown_tool', tool: name }, true);
+  } catch (err) {
+    return toolCallResult({ ok: false, error: err instanceof Error ? err.message : String(err) }, true);
+  }
+}
+
+function handleRpcMessage(message) {
+  const id = message?.id;
+  const method = String(message?.method || '');
+  if (!method) {
+    rpcError(id, -32600, 'invalid request');
+    return;
+  }
+  if (method === 'initialize') {
+    rpcResult(id, {
+      protocolVersion: message?.params?.protocolVersion || '2024-11-05',
+      capabilities: { tools: {} },
+      serverInfo: { name: CANDIDATE_NAME, version: '0.1.0' },
+    });
+    return;
+  }
+  if (method === 'notifications/initialized') return;
+  if (method === 'tools/list') {
+    rpcResult(id, { tools: MCP_TOOLS });
+    return;
+  }
+  if (method === 'tools/call') {
+    const params = message?.params || {};
+    rpcResult(id, callMcpTool(String(params.name || ''), params.arguments || params.args || {}));
+    return;
+  }
+  rpcError(id, -32601, `method not found: ${method}`);
+}
+
+function runMcp() {
+  let buffer = Buffer.alloc(0);
+  const headerBreak = Buffer.from('\r\n\r\n');
+  process.stdin.on('data', (chunk) => {
+    buffer = Buffer.concat([buffer, Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk)]);
+    while (buffer.length) {
+      const headerEnd = buffer.indexOf(headerBreak);
+      if (headerEnd >= 0) {
+        const header = buffer.subarray(0, headerEnd).toString('utf8');
+        const match = /content-length:\s*(\d+)/i.exec(header);
+        if (!match) {
+          rpcError(null, -32700, 'missing content-length');
+          buffer = Buffer.alloc(0);
+          return;
+        }
+        const length = Number(match[1]);
+        const bodyStart = headerEnd + headerBreak.length;
+        if (buffer.length < bodyStart + length) return;
+        const body = buffer.subarray(bodyStart, bodyStart + length).toString('utf8');
+        buffer = buffer.subarray(bodyStart + length);
+        try {
+          handleRpcMessage(JSON.parse(body));
+        } catch {
+          rpcError(null, -32700, 'parse error');
+        }
+        continue;
+      }
+
+      const asText = buffer.toString('utf8');
+      if (/^content-length:/i.test(asText)) return;
+      const newline = asText.indexOf('\n');
+      if (newline < 0) return;
+      const line = asText.slice(0, newline).trim();
+      buffer = Buffer.from(asText.slice(newline + 1));
+      if (!line) continue;
+      try {
+        handleRpcMessage(JSON.parse(line));
+      } catch {
+        rpcError(null, -32700, 'parse error');
+      }
+    }
+  });
+  process.stdin.resume();
+}
+
 async function smoke() {
   const root = join(tmpdir(), `idacc-context-retrieval-smoke-${process.pid}-${Date.now()}`);
   process.env.IDACC_CONTEXT_RETRIEVAL_STORE = root;
@@ -166,12 +314,14 @@ async function smoke() {
   }
 }
 
+const CANDIDATE_NAME = 'idacc-context-retrieval';
 const cmd = process.argv[2] || 'capabilities';
 try {
   if (cmd === 'capabilities') safeJson(capabilities());
   else if (cmd === 'store') safeJson(storeRecord(parseInput(process.argv[3])));
   else if (cmd === 'resolve') safeJson(resolveRecord(parseInput(process.argv[3])));
   else if (cmd === 'smoke') await smoke();
+  else if (cmd === 'mcp') runMcp();
   else {
     safeJson({ ok: false, error: 'unknown_command', command: cmd });
     process.exitCode = 2;

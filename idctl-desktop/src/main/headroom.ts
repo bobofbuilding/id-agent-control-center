@@ -44,7 +44,7 @@ export interface HeadroomBackendContractAudit {
   pluginCandidate: {
     name: string;
     installSurface: 'Capabilities or Settings reviewed install';
-    managerRequirement: 'existing id-agents plugin attachment and rebuild flow';
+    managerRequirement: 'existing id-agents plugin/skill/MCP attachment and rebuild flows; manager retrieval contract before core routing';
     purpose: string;
   };
   pluginPath?: Pick<HeadroomPluginPathAudit, 'coreReady' | 'pilotReady' | 'verdict' | 'candidate' | 'manager' | 'headroom' | 'runtimeCoverage' | 'guardrails' | 'blockers'>;
@@ -180,16 +180,16 @@ export async function headroomBackendContractAudit(pluginPath?: HeadroomPluginPa
     phases: [
       'Phase 0: keep deterministic context budgeting as the hidden core path; no manager changes.',
       'Phase 1: replay local chat history as an aggregate dry-run corpus; no manager contact and no raw prompt output.',
-      'Phase 2: validate the bundled IDACC context-retrieval plugin candidate through the existing id-agents plugin attachment flow.',
-      'Phase 3: keep plugin-only routing pilot-scoped because plugins load only on Claude-family runtimes; use MCP or manager retrieval contracts for runtime-neutral core routing.',
+      'Phase 2: validate the bundled IDACC context-retrieval portable plugin package, including native plugin, Skill, MCP, and direct-fallback adapters.',
+      'Phase 3: keep native-plugin-only routing pilot-scoped because native plugin loaders are runtime-specific; use portable adapters or manager retrieval contracts for runtime-neutral core routing.',
       'Phase 4: require manager /capabilities to advertise a retrieval contract before IDACC sends retrieval handles.',
       'Phase 5: enable an explicit pilot only after retrieval, hash verification, expiry, direct fallback, and quality review pass.',
     ],
     pluginCandidate: {
       name: 'idacc-context-retrieval',
       installSurface: 'Capabilities or Settings reviewed install',
-      managerRequirement: 'existing id-agents plugin attachment and rebuild flow',
-      purpose: 'Expose a narrow local retrieval tool for context handles without forking the base manager hot path.',
+      managerRequirement: 'existing id-agents plugin/skill/MCP attachment and rebuild flows; manager retrieval contract before core routing',
+      purpose: 'Expose a narrow portable retrieval package for context handles without forking the base manager hot path.',
     },
     pluginPath: pluginPath ? {
       coreReady: pluginPath.coreReady,
@@ -212,14 +212,14 @@ export async function headroomBackendContractAudit(pluginPath?: HeadroomPluginPa
     validationGates: [
       'Historical replay demonstrates useful savings on real saved chats without surfacing raw text.',
       'Context-budget smoke tests continue to prove protected direct fallback and redacted reports.',
-      'Plugin smoke tests prove compress, resolve, hash-match, expiry, and missing-plugin direct fallback.',
+      'Portable plugin smoke tests prove manifest adapter coverage, MCP tool listing/calls, resolve, hash-match, expiry, and protected-content direct fallback.',
       'Manager capability checks prove the retrieval contract is installed before any handle route is eligible.',
       'Quality review compares original objective, compressed payload, resolved context, and final response for material drift.',
     ],
     blockers: [
       'No retrieval handles should be sent to the manager until the optional plugin and /capabilities contract exist.',
       'Headroom CLI/proxy presence alone is not enough; retrieval and direct fallback must be verified at dispatch time.',
-      'Plugin-only routing is not a core path because it excludes non-Claude runtimes; Codex, Ollama, and future orchestration paths need MCP/manager contract fallback.',
+      'Native-plugin-only routing is not a core path because it excludes non-Claude runtimes; portable packages must include Skill/MCP/direct-fallback adapters and still prefer a manager contract for core routing.',
       'The downloaded IDACC app must remain useful with a stock or older id-agents manager, so unsupported managers keep direct deterministic routing.',
     ],
   };
