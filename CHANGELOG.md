@@ -8,6 +8,9 @@ Every change pushed or merged to `main` carries its version number in the commit
 subject (`vX.Y.Z: …`), stamped automatically by the `commit-msg` hook — see
 [CONTRIBUTING.md](CONTRIBUTING.md).
 
+## [0.1.382] — 2026-06-30
+- Brain Agents Identity & Keys wallet alignment plus ETH gas spend readout
+
 ## [0.1.381] — 2026-06-30
 - Brain dashboard popout read-only IDACC authority and redacted SkillMesh sync
 

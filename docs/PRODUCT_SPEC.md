@@ -1,6 +1,6 @@
 # ID Agents Control Center — Product Spec
 
-_Updated 2026-06-30 · reflects app **v0.1.381**. This is a page-by-page specification of
+_Updated 2026-06-30 · reflects app **v0.1.382**. This is a page-by-page specification of
 the desktop app as it actually ships today, produced by reviewing every page._
 
 ---
@@ -377,6 +377,9 @@ selection in the active team.
   read-only observation surfaces. They lead with `/fleet-report`'s IDACC manager authority when live,
   fall back to Brain cache only with explicit cache/partial warnings, expose redacted SkillMesh/public
   identity and advertised-skill summaries, and avoid dashboard-side approval/replay POST controls.
+  Brain Agents now mirrors the Identity & Keys controller-wallet precedence (`ows_address`, then
+  SkillMesh address, then address-shaped OWS wallet) and shows per-agent total ETH gas spend vs
+  last-24h ETH gas from Brain timeline transaction/gas evidence.
 - **Brain Graph**: `/graph/app/data` is a sanitized node-link snapshot. Entity data is reduced to
   safe matching/display fields; live lifecycle, SkillMesh address, and skill counts come only from
   the unambiguous `/fleet-report` overlay; raw metadata, private keys, creator keys, auth tokens,
