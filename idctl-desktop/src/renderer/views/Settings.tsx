@@ -555,7 +555,7 @@ export function Settings({ store, navigate }: { store: FleetStore; navigate?: (v
   const [modelQuery, setModelQuery] = useState('');
   const [modelCap, setModelCap] = useState<ModelCapability | 'all'>('all');
   const [showHeavy, setShowHeavy] = useState(false); // reveal models too heavy for this machine
-  const [stackTag, setStackTag] = useState<string>('all');
+  const [stackTag, setStackTag] = useState<string>('start-here');
   const [hardware, setHardware] = useState<HardwareInfo | null>(null);
   const [confirmRemove, setConfirmRemove] = useState<string | null>(null);
   const [removing, setRemoving] = useState<string | null>(null);
@@ -697,7 +697,12 @@ export function Settings({ store, navigate }: { store: FleetStore; navigate?: (v
     const q = modelQuery.trim().toLowerCase();
     return !q || m.id.toLowerCase().includes(q) || m.family.toLowerCase().includes(q) || (m.blurb ?? '').toLowerCase().includes(q);
   });
-  const stackTags = Array.from(new Set(TOP_LOCAL_STACKS.flatMap((s) => s.tags ?? []))).sort();
+  const stackTagOrder = ['start-here', 'easy', 'guided', 'advanced', 'expert', 'desktop', 'gui', 'apple-silicon'];
+  const stackTags = Array.from(new Set(TOP_LOCAL_STACKS.flatMap((s) => s.tags ?? []))).sort((a, b) => {
+    const ai = stackTagOrder.indexOf(a);
+    const bi = stackTagOrder.indexOf(b);
+    return (ai === -1 ? 999 : ai) - (bi === -1 ? 999 : bi) || a.localeCompare(b);
+  });
   const filteredStacks = stackTag === 'all' ? TOP_LOCAL_STACKS : TOP_LOCAL_STACKS.filter((s) => (s.tags ?? []).includes(stackTag));
   const runningPorts = new Set((discovered ?? []).map((d) => d.port));
   const addProviderName = name.trim() || kind;
@@ -795,6 +800,14 @@ export function Settings({ store, navigate }: { store: FleetStore; navigate?: (v
     if (s.installEase === 'advanced') return 'advanced';
     if (s.installEase === 'expert') return 'expert';
     return '';
+  }
+  function stackPrimaryAction(s: LocalStackEntry): boolean {
+    return s.installEase === 'start-here' || s.installEase === 'easy';
+  }
+  function stackActionLabel(s: LocalStackEntry): string {
+    if (stackPrimaryAction(s)) return 'Install';
+    if (s.installEase === 'guided') return 'Review steps';
+    return 'Review command';
   }
   function stackInstallCmd(s: LocalStackEntry): string | null { const c = stackCmd(s); return c && RUNNABLE_RE.test(c) ? c : null; }
   function stackUninstallCmd(s: LocalStackEntry): string | null {
@@ -1288,16 +1301,17 @@ export function Settings({ store, navigate }: { store: FleetStore; navigate?: (v
                   <a className="ext-link small" href={s.homepage} target="_blank" rel="noreferrer">docs ↗</a>
                 </div>
                 <p className="muted small stack-blurb">{s.blurb}</p>
+                {s.installNote ? <p className="muted small stack-blurb">{s.installNote}</p> : null}
                 <div className="stack-install">
                   {ic ? (
                     stackConfirm === `i:${s.id}` ? (
                       <>
                         <code className="mono">{ic}</code>
-                        <button className="btn small primary" title="Runs in your Terminal — visible and abortable" onClick={() => void runStackCmd(ic)}>Run in Terminal</button>
+                        <button className={`btn small${stackPrimaryAction(s) ? ' primary' : ''}`} title="Runs in your Terminal — visible and abortable" onClick={() => void runStackCmd(ic)}>Run in Terminal</button>
                         <button className="btn small" onClick={() => setStackConfirm(null)}>Cancel</button>
                       </>
                     ) : (
-                      <button className="btn small primary" title={ic} onClick={() => setStackConfirm(`i:${s.id}`)}>Install</button>
+                      <button className={`btn small${stackPrimaryAction(s) ? ' primary' : ''}`} title={ic} onClick={() => setStackConfirm(`i:${s.id}`)}>{stackActionLabel(s)}</button>
                     )
                   ) : (
                     <a className="btn small" href={s.homepage} target="_blank" rel="noreferrer" title="No CLI install — opens the download page">Get ↗</a>
