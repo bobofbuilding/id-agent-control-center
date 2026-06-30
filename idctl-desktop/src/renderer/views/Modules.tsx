@@ -1138,7 +1138,7 @@ export function Modules({ store }: { store: FleetStore }) {
       setTagFilter(new Set());
       await reload();
       setBrainDrift({ kind: 'deleted', skill: name, at: Date.now() });
-      setNote(`deleted skill ${name} ✓ — Brain catalog review needed`);
+      setNote(`deleted skill ${name} ✓ — Brain skill sync pending`);
     } catch (err) {
       setNote(`delete failed: ${err instanceof Error ? err.message : String(err)}`);
     } finally {
@@ -1379,15 +1379,19 @@ export function Modules({ store }: { store: FleetStore }) {
     { label: brainAgentsStatus, title: brainAgentsTitle, review: brainAgentsNeedOperatorReview },
     { label: brainGraphStatus, title: brainGraphTitle, review: brainGraphNeedsReview },
   ];
-  const brainReviewCount = brainCheckItems.filter((item) => item.review).length;
-  const brainCombinedStatusLabel = brainReviewCount
-    ? `Brain review ${brainReviewCount}`
-    : brainSkills?.summary || brainCore || brainFleet || brainAgents || brainGraph
-      ? 'Brain OK'
+  const brainDashboardReviewCount = brainCheckItems.filter((item) => item.review).length;
+  const brainSkillSyncVisible = brainNeedsLocalSync;
+  const brainSkillStatusLabel = brainSkillSyncVisible
+    ? 'Brain sync needed'
+    : typeof brainTotal === 'number'
+      ? `Brain ${brainTotal}`
       : 'Brain --';
-  const brainCombinedStatusTitle = brainCheckItems
-    .map((item) => `${item.label}\n${item.title}`)
-    .join('\n\n');
+  const brainSkillStatusTitle = [
+    brainStatusTitle,
+    brainDashboardReviewCount
+      ? `${brainDashboardReviewCount} Brain dashboard check${brainDashboardReviewCount === 1 ? '' : 's'} need review. These stay in guarded Brain tab launchers, not the Skills catalog.`
+      : '',
+  ].filter(Boolean).join('\n\n');
   const brainDashboardReviewTabs: BrainDashboardReviewMap = {
     fleet: brainFleetNeedsReview ? brainFleetDetail : undefined,
     health: brainCoreNeedsOperatorReview ? brainCoreDetail : undefined,
@@ -1657,8 +1661,8 @@ export function Modules({ store }: { store: FleetStore }) {
           <span className="chip tag" title="Local SKILL.md folders found in the manager library">
             Local {skills.length}
           </span>
-          <span className={`chip ${brainReviewCount ? 'brain-review' : brainSkills?.summary || brainCore || brainFleet || brainAgents || brainGraph ? 'tag' : ''}`} title={brainCombinedStatusTitle}>
-            {brainCombinedStatusLabel}
+          <span className={`chip ${brainSkillSyncVisible ? 'brain-review' : typeof brainTotal === 'number' ? 'tag' : ''}`} title={brainSkillStatusTitle}>
+            {brainSkillStatusLabel}
           </span>
           <button className="btn small" disabled={brainSyncDisabled} title={brainSyncTitle} onClick={() => void syncSkillsToBrain()}>
             {brainSyncing ? 'Syncing…' : 'Preview & sync'}
@@ -1672,58 +1676,15 @@ export function Modules({ store }: { store: FleetStore }) {
           SKILL.md instructions for <b>{targetLabel}</b>. Install to targets, then sync Brain when the catalog changes.
         </p>
 
-        {brainCatalogNeedsReview ? (
+        {brainSkillSyncVisible ? (
           <div className="skill-brain-review">
             <div className="grow">
-              <b>Brain catalog review needed</b>
+              <b>Brain skill sync pending</b>
               <div className="muted small">{brainReviewDetail}</div>
             </div>
-            {brainNeedsLocalSync ? (
-              <button className="btn small" disabled={brainSyncDisabled} title={brainSyncTitle} onClick={() => void syncSkillsToBrain()}>
-                {brainSyncing ? 'Syncing…' : 'Preview & sync'}
-              </button>
-            ) : null}
-            <BrainDashboardLauncher compact reviewTabs={brainDashboardReviewTabs} />
-          </div>
-        ) : null}
-
-        {brainCoreNeedsOperatorReview ? (
-          <div className="skill-brain-review">
-            <div className="grow">
-              <b>Brain core health review</b>
-              <div className="muted small">{brainCoreDetail}</div>
-            </div>
-            <BrainDashboardLauncher compact reviewTabs={brainDashboardReviewTabs} />
-          </div>
-        ) : null}
-
-        {brainFleetNeedsReview ? (
-          <div className="skill-brain-review">
-            <div className="grow">
-              <b>Brain fleet authority review</b>
-              <div className="muted small">{brainFleetDetail}</div>
-            </div>
-            <BrainDashboardLauncher compact reviewTabs={brainDashboardReviewTabs} />
-          </div>
-        ) : null}
-
-        {brainAgentsNeedOperatorReview ? (
-          <div className="skill-brain-review">
-            <div className="grow">
-              <b>Brain agents authority review</b>
-              <div className="muted small">{brainAgentsDetail}</div>
-            </div>
-            <BrainDashboardLauncher compact reviewTabs={brainDashboardReviewTabs} />
-          </div>
-        ) : null}
-
-        {brainGraphNeedsReview ? (
-          <div className="skill-brain-review">
-            <div className="grow">
-              <b>Brain graph contract review</b>
-              <div className="muted small">{brainGraphDetail}</div>
-            </div>
-            <BrainDashboardLauncher compact reviewTabs={brainDashboardReviewTabs} />
+            <button className="btn small" disabled={brainSyncDisabled} title={brainSyncTitle} onClick={() => void syncSkillsToBrain()}>
+              {brainSyncing ? 'Syncing…' : 'Preview & sync'}
+            </button>
           </div>
         ) : null}
 

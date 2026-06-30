@@ -8,6 +8,9 @@ Every change pushed or merged to `main` carries its version number in the commit
 subject (`vX.Y.Z: …`), stamped automatically by the `commit-msg` hook — see
 [CONTRIBUTING.md](CONTRIBUTING.md).
 
+## [0.1.380] — 2026-06-30
+- Demote Brain-wide Skills notices
+
 ## [0.1.379] — 2026-06-30
 - Simplify Capabilities MCP and Skills tabs
 
