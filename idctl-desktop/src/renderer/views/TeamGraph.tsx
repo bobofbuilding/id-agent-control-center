@@ -59,12 +59,12 @@ export function TeamGraph({
   onSelect: (sel: GraphSelection) => void;
 }) {
   // Primary team's column first — the org's top lead reads left-to-right, then the rest.
+  // Keep empty/offline teams visible so HR can inspect structure even before agents run.
   const primaryTeam = hier.primary?.team;
   const teams = groups
-    .filter((g) => g.agents.length > 0)
     .sort((a, b) => (a.team === primaryTeam ? -1 : b.team === primaryTeam ? 1 : a.team.localeCompare(b.team)));
   if (teams.length === 0) {
-    return <div className="muted center pad">No agents yet — build a team to see its structure here.</div>;
+    return <div className="muted center pad">No teams yet — build a team to see its structure here.</div>;
   }
 
   // Headroom above the lead row for the cross-team hierarchy arcs (primary → each team lead).
@@ -83,6 +83,7 @@ export function TeamGraph({
     const cx = colX + NODE_W / 2;
     const leadName = leadOf(g.team, g.agents);
     const lead = g.agents.find((a) => a.name === leadName) ?? g.agents[0];
+    if (!lead) return;
     const leadKey = `agent:${g.team}:${lead.name}`;
     const isPrimary = leadKey === primaryKey;
     leadCenters.push({ team: g.team, x: cx, y: leadY });
