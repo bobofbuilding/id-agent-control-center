@@ -122,6 +122,7 @@ type BrainDashboardTabSpec = {
   };
 };
 type LiveFleetTotals = { total: number; running: number };
+type BrainDashboardReviewMap = Partial<Record<BrainDashboardTab, string | null | undefined>>;
 
 const BRAIN_DASHBOARD_TABS: BrainDashboardTabSpec[] = [
   { tab: 'fleet', label: 'Fleet', path: '/dashboard' },
@@ -148,12 +149,19 @@ const BRAIN_DASHBOARD_TABS: BrainDashboardTabSpec[] = [
   { tab: 'graph', label: 'Graph', path: '/dashboard/graph' },
 ];
 
-function brainDashboardTabForPath(pathname: string): BrainDashboardTab | null {
-  return BRAIN_DASHBOARD_TABS.find((x) => x.path === pathname)?.tab ?? null;
+function brainDashboardTabForPath(pathname: string): BrainDashboardTabSpec | null {
+  return BRAIN_DASHBOARD_TABS.find((x) => x.path === pathname) ?? null;
 }
 
-function openBrainDashboardTab(tab: BrainDashboardTabSpec) {
-  if (tab.guard && !window.confirm(tab.guard.confirm)) return;
+function openBrainDashboardTab(tab: BrainDashboardTabSpec, reviewReason?: string | null) {
+  const review = reviewReason?.trim();
+  if (tab.guard || review) {
+    const base = tab.guard?.confirm ?? `Open Brain ${tab.label}?`;
+    const message = review
+      ? `${base}\n\nCurrent IDACC review:\n${review}\n\nContinue only if you are intentionally reviewing this Brain tab.`
+      : base;
+    if (!window.confirm(message)) return;
+  }
   void call('brain:openDashboard', tab.tab);
 }
 
@@ -406,20 +414,23 @@ function brainGraphReviewDetail(report: BrainGraphReport): string {
   return 'Brain Graph source contract is current.';
 }
 
-function BrainDashboardLauncher({ compact = false }: { compact?: boolean }) {
+function BrainDashboardLauncher({ compact = false, reviewTabs = {} }: { compact?: boolean; reviewTabs?: BrainDashboardReviewMap }) {
   return (
     <span className={`brain-dashboard-tabs${compact ? ' compact' : ''}`} title="Open a whitelisted Brain dashboard tab">
       {!compact ? <span className="muted small">Brain</span> : null}
-      {BRAIN_DASHBOARD_TABS.map((x) => (
-        <button
-          key={x.tab}
-          className={`btn small${x.guard ? ' guarded' : ''}`}
-          title={x.guard?.title ?? `Open Brain ${x.label}`}
-          onClick={() => openBrainDashboardTab(x)}
-        >
-          {x.label}
-        </button>
-      ))}
+      {BRAIN_DASHBOARD_TABS.map((x) => {
+        const review = reviewTabs[x.tab]?.trim();
+        return (
+          <button
+            key={x.tab}
+            className={`btn small${x.guard ? ' guarded' : ''}${review ? ' review' : ''}`}
+            title={[review ? `Review active: ${review}` : '', x.guard?.title ?? `Open Brain ${x.label}`].filter(Boolean).join('\n')}
+            onClick={() => openBrainDashboardTab(x, review)}
+          >
+            {x.label}
+          </button>
+        );
+      })}
     </span>
   );
 }
@@ -451,7 +462,7 @@ function LinkedDescription({ text }: { text?: string | null }) {
       ? brainDashboardTabForPath(url.pathname)
       : null;
     parts.push(brainTab ? (
-      <a key={`a-${match.index}`} className="ext-link" href="#" onClick={(e) => { e.preventDefault(); void call('brain:openDashboard', brainTab); }}>
+      <a key={`a-${match.index}`} className="ext-link" href="#" onClick={(e) => { e.preventDefault(); openBrainDashboardTab(brainTab); }}>
         {label}
       </a>
     ) : (
@@ -1147,6 +1158,14 @@ export function Modules({ store }: { store: FleetStore }) {
   const brainGraphStatus = brainGraphStatusLabel(brainGraph);
   const brainGraphTitle = brainGraphStatusTitle(brainGraph);
   const brainGraphDetail = brainGraphReviewDetail(brainGraph);
+  const brainDashboardReviewTabs: BrainDashboardReviewMap = {
+    fleet: brainFleetNeedsReview ? brainFleetDetail : undefined,
+    health: brainCoreNeedsOperatorReview ? brainCoreDetail : undefined,
+    skills: brainCatalogNeedsReview ? brainReviewDetail : undefined,
+    learning: brainCoreNeedsOperatorReview ? brainCoreDetail : undefined,
+    agents: brainAgentsNeedOperatorReview ? brainAgentsDetail : undefined,
+    graph: brainGraphNeedsReview ? brainGraphDetail : undefined,
+  };
   const brainSyncWriteBlocked = !brainCore || brainCore.ok !== true;
   const brainSyncDisabled = brainSyncing || skills.length === 0 || brainSyncWriteBlocked;
   const brainSyncTitle = brainSyncWriteBlocked
@@ -1409,7 +1428,7 @@ export function Modules({ store }: { store: FleetStore }) {
           <button className="btn small" disabled={brainSyncDisabled} title={brainSyncTitle} onClick={() => void syncSkillsToBrain()}>
             {brainSyncing ? 'Syncing…' : 'Preview & sync'}
           </button>
-          <BrainDashboardLauncher />
+          <BrainDashboardLauncher reviewTabs={brainDashboardReviewTabs} />
           <button className="btn primary small" onClick={() => setShowCreate((s) => !s)}>
             {showCreate ? '− Cancel' : '+ Create skill'}
           </button>
@@ -1429,7 +1448,7 @@ export function Modules({ store }: { store: FleetStore }) {
                 {brainSyncing ? 'Syncing…' : 'Preview & sync'}
               </button>
             ) : null}
-            <BrainDashboardLauncher compact />
+            <BrainDashboardLauncher compact reviewTabs={brainDashboardReviewTabs} />
           </div>
         ) : null}
 
@@ -1439,7 +1458,7 @@ export function Modules({ store }: { store: FleetStore }) {
               <b>Brain core health review</b>
               <div className="muted small">{brainCoreDetail}</div>
             </div>
-            <BrainDashboardLauncher compact />
+            <BrainDashboardLauncher compact reviewTabs={brainDashboardReviewTabs} />
           </div>
         ) : null}
 
@@ -1449,7 +1468,7 @@ export function Modules({ store }: { store: FleetStore }) {
               <b>Brain fleet authority review</b>
               <div className="muted small">{brainFleetDetail}</div>
             </div>
-            <BrainDashboardLauncher compact />
+            <BrainDashboardLauncher compact reviewTabs={brainDashboardReviewTabs} />
           </div>
         ) : null}
 
@@ -1459,7 +1478,7 @@ export function Modules({ store }: { store: FleetStore }) {
               <b>Brain agents authority review</b>
               <div className="muted small">{brainAgentsDetail}</div>
             </div>
-            <BrainDashboardLauncher compact />
+            <BrainDashboardLauncher compact reviewTabs={brainDashboardReviewTabs} />
           </div>
         ) : null}
 
@@ -1469,7 +1488,7 @@ export function Modules({ store }: { store: FleetStore }) {
               <b>Brain graph contract review</b>
               <div className="muted small">{brainGraphDetail}</div>
             </div>
-            <BrainDashboardLauncher compact />
+            <BrainDashboardLauncher compact reviewTabs={brainDashboardReviewTabs} />
           </div>
         ) : null}
 
