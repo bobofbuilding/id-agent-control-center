@@ -976,6 +976,16 @@ export class ManagerClient {
     }
   }
 
+  /** Detail for a single library plugin. Used for read-only adapter inspection. */
+  async libraryPluginDetail(name: string, signal?: AbortSignal): Promise<LibraryPluginDetail | null> {
+    try {
+      return await this.get<LibraryPluginDetail>(`/library/plugins/${encodeURIComponent(name)}`, signal);
+    } catch (err) {
+      if (err instanceof ManagerError && err.status === 404) return null;
+      throw err;
+    }
+  }
+
   /** Install a library skill onto an agent (persists to metadata + live deploy). */
   async installSkill(skill: string, agent: string, signal?: AbortSignal): Promise<InstallSkillResult> {
     return this.requireRoute('Install a library skill', () =>
@@ -1164,6 +1174,169 @@ export interface LibraryPluginEntry {
   author?: string | null;
   /** Origin: repository/homepage/marketplace URL, or "bundled (local)". */
   source?: string | null;
+}
+
+export interface LibraryPluginDetail extends LibraryPluginEntry {
+  /** Full plugin.json contents from the manager, when the detail route exists. */
+  manifest?: Record<string, unknown> | null;
+  /** Root SKILL.md body from the plugin, when present. */
+  skillBody?: string | null;
+}
+
+export type LibraryPluginAdapterKind = 'skill' | 'mcp' | 'native-plugin' | 'direct-fallback';
+export type LibraryPluginClassification =
+  | 'portable-package'
+  | 'instruction-skill'
+  | 'hybrid-tool-plugin'
+  | 'native-tool-plugin'
+  | 'manifest-only'
+  | 'unknown';
+export type LibraryPluginSkillProjection = 'available' | 'already-in-catalog' | 'blocked-tools' | 'not-available';
+
+/** Sanitized plugin inspection for neutral Capabilities UI. No raw SKILL body is exposed. */
+export interface LibraryPluginInspection extends LibraryPluginEntry {
+  hasSkillMd: boolean;
+  hasTools: boolean;
+  toolCount: number;
+  tools: string[];
+  entrypoint?: string | null;
+  adapterKinds: LibraryPluginAdapterKind[];
+  classification: LibraryPluginClassification;
+  skillProjection: LibraryPluginSkillProjection;
+  notes: string[];
+}
+
+export interface ProjectPluginSkillResult {
+  ok: boolean;
+  plugin: string;
+  projected: boolean;
+  entry?: LibrarySkillEntry;
+  inspection?: LibraryPluginInspection;
+}
+
+function manifestObject(manifest: unknown): Record<string, unknown> {
+  return manifest && typeof manifest === 'object' && !Array.isArray(manifest) ? manifest as Record<string, unknown> : {};
+}
+
+function manifestString(manifest: Record<string, unknown>, key: string): string | null {
+  const value = manifest[key];
+  return typeof value === 'string' && value.trim() ? value.trim() : null;
+}
+
+function pushUnique(out: string[], value: unknown): void {
+  const text = String(value ?? '').replace(/\s+/g, ' ').trim();
+  if (text && !out.includes(text)) out.push(text.slice(0, 120));
+}
+
+function manifestScriptNames(manifest: Record<string, unknown>): string[] {
+  const out: string[] = [];
+  const scripts = manifest.scripts;
+  if (Array.isArray(scripts)) {
+    for (const item of scripts) {
+      if (typeof item === 'string') pushUnique(out, item);
+      else if (item && typeof item === 'object') {
+        const script = item as Record<string, unknown>;
+        pushUnique(out, script.name ?? script.command ?? script.path);
+      }
+    }
+  } else if (scripts && typeof scripts === 'object') {
+    for (const key of Object.keys(scripts)) pushUnique(out, key);
+  }
+  const tools = manifest.tools;
+  if (Array.isArray(tools)) {
+    for (const item of tools) {
+      if (typeof item === 'string') pushUnique(out, item);
+      else if (item && typeof item === 'object') pushUnique(out, (item as Record<string, unknown>).name);
+    }
+  } else if (tools && typeof tools === 'object') {
+    for (const key of Object.keys(tools)) pushUnique(out, key);
+  }
+  return out;
+}
+
+function skillBodyToolNames(pluginName: string, skillBody?: string | null): string[] {
+  if (!skillBody) return [];
+  const out: string[] = [];
+  const quoted = pluginName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const re = new RegExp(`plugins/${quoted}/tools/([A-Za-z0-9._-]+)`, 'g');
+  for (const match of skillBody.matchAll(re)) pushUnique(out, match[1]);
+  return out;
+}
+
+function manifestPortableAdapters(manifest: Record<string, unknown>): LibraryPluginAdapterKind[] {
+  const out: LibraryPluginAdapterKind[] = [];
+  const portable = manifestObject(manifest.idaccPortablePlugin);
+  const adapters = manifestObject(portable.adapters);
+  if (adapters.skill) out.push('skill');
+  if (adapters.mcp) out.push('mcp');
+  if (adapters.nativePlugin || adapters.native || adapters.plugin) out.push('native-plugin');
+  if (adapters.directFallback || adapters.fallback) out.push('direct-fallback');
+  return out;
+}
+
+export function inspectLibraryPluginMetadata(
+  entry: LibraryPluginEntry,
+  detail: LibraryPluginDetail | null,
+  skillNames: Iterable<string> = [],
+  extraToolNames: string[] = [],
+): LibraryPluginInspection {
+  const manifest = manifestObject(detail?.manifest);
+  const entrypoint = manifestString(manifest, 'entrypoint');
+  const hasSkillMd = Boolean(detail?.skillBody) || /^SKILL\.md$/i.test(entrypoint ?? '');
+  const toolNames = [...new Set([
+    ...manifestScriptNames(manifest),
+    ...skillBodyToolNames(entry.name, detail?.skillBody),
+    ...extraToolNames,
+  ].map((tool) => String(tool).trim()).filter(Boolean))].sort((a, b) => a.localeCompare(b));
+  const portableAdapters = manifestPortableAdapters(manifest);
+  const hasTools = toolNames.length > 0;
+  const hasDeclaredPortableFallback = portableAdapters.includes('direct-fallback');
+  const adapterKinds = [...portableAdapters];
+  if (!adapterKinds.includes('skill') && hasSkillMd) adapterKinds.push('skill');
+  if (!adapterKinds.includes('native-plugin') && hasTools) adapterKinds.push('native-plugin');
+  const classification: LibraryPluginClassification = hasDeclaredPortableFallback && adapterKinds.includes('skill')
+    ? 'portable-package'
+    : hasSkillMd && hasTools
+      ? 'hybrid-tool-plugin'
+      : hasSkillMd
+        ? 'instruction-skill'
+        : hasTools
+          ? 'native-tool-plugin'
+          : entry.hasManifest || detail?.hasManifest
+            ? 'manifest-only'
+            : 'unknown';
+  const catalogHasSkill = new Set([...skillNames].map((name) => String(name).trim())).has(entry.name);
+  const skillProjection: LibraryPluginSkillProjection = !hasSkillMd || !detail?.skillBody
+    ? 'not-available'
+    : catalogHasSkill
+      ? 'already-in-catalog'
+      : hasTools
+        ? 'blocked-tools'
+        : 'available';
+  const notes: string[] = [];
+  if (!detail) notes.push('Plugin detail route unavailable; showing list metadata only.');
+  if (classification === 'portable-package') notes.push('Declares portable adapters, including direct fallback.');
+  if (classification === 'instruction-skill') notes.push('Root SKILL.md has no detected tools; it can be digested into the skill catalog.');
+  if (classification === 'hybrid-tool-plugin') notes.push('Root SKILL.md references tools; keep tool execution behind a plugin, MCP, or fallback adapter.');
+  if (classification === 'native-tool-plugin') notes.push('Tool-bearing package; do not assume cross-runtime support without adapter metadata.');
+  if (skillProjection === 'already-in-catalog') notes.push('A same-named skill already exists in the library catalog.');
+  if (skillProjection === 'blocked-tools') notes.push('Skill projection is blocked because tool calls would be lost.');
+  const detailEntry = detail ? { ...detail } : {};
+  delete (detailEntry as Partial<LibraryPluginDetail>).manifest;
+  delete (detailEntry as Partial<LibraryPluginDetail>).skillBody;
+  return {
+    ...entry,
+    ...detailEntry,
+    hasSkillMd,
+    hasTools,
+    toolCount: toolNames.length,
+    tools: toolNames,
+    entrypoint,
+    adapterKinds,
+    classification,
+    skillProjection,
+    notes,
+  };
 }
 
 /** Input for createSkill — mirrors the agentskills.io SKILL.md frontmatter. */

@@ -5,7 +5,7 @@
  * allow-listed methods below over IPC.
  */
 
-import { ManagerClient } from '../../../idctl/src/api/client.ts';
+import { inspectLibraryPluginMetadata, ManagerClient } from '../../../idctl/src/api/client.ts';
 import type { Agent } from '../../../idctl/src/api/types.ts';
 import { brain } from '../../../idctl/src/api/brain.ts';
 import type { BrainAgentsReport, BrainControllerReport, BrainCoreHealthReport, BrainFleetReport, BrainGraphReport, BrainSkillIndex, BrainSkillNode } from '../../../idctl/src/api/brain.ts';
@@ -56,7 +56,7 @@ import { replayContextBudgetFromChatHistory, type ContextBudgetHistoryReplayOpti
 import { decomposeWork, createAndDispatchPlan, fanOutObjective, teamLeads, triageUnassigned, type SubTask } from './work.ts';
 import { normalizeGoalDriverConfig, runGoalDriverOnce, startGoalDriverLoop, syncActiveWorkGoalInstructions, type GoalDriverConfig } from './goaldriver.ts';
 import { buildOrgHierarchy, previewOrgSync, syncOrg, startOrgSyncLoop } from './orgSync.ts';
-import { readFileSync, statSync } from 'node:fs';
+import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { homedir } from 'node:os';
 import type { ProviderKind } from '../../../idctl/src/settings/schema.ts';
@@ -512,7 +512,77 @@ function skillCatalogStamp(skills: LibrarySkillEntry[], autoTags: Record<string,
     }))
     .sort((a, b) => a.name.localeCompare(b.name)));
 }
-import type { LibrarySkillEntry, McpServerSpec, CreateSkillInput } from '../../../idctl/src/api/client.ts';
+function pluginFsToolNames(sourcePath?: string): string[] {
+  if (!sourcePath) return [];
+  const toolsDir = join(sourcePath, 'tools');
+  try {
+    if (!existsSync(toolsDir) || !statSync(toolsDir).isDirectory()) return [];
+    return readdirSync(toolsDir, { withFileTypes: true })
+      .filter((entry) => entry.isFile() && !entry.name.startsWith('.'))
+      .map((entry) => entry.name.replace(/\.[cm]?js$/i, ''))
+      .sort((a, b) => a.localeCompare(b));
+  } catch {
+    return [];
+  }
+}
+
+function stripMarkdownFrontmatter(markdown: string): string {
+  const text = markdown.replace(/^\uFEFF/, '');
+  const match = text.match(/^---\r?\n[\s\S]*?\r?\n---\r?\n?/);
+  return (match ? text.slice(match[0].length) : text).trim();
+}
+
+function projectedSkillDescription(name: string, detailDescription?: string | null, body?: string): string {
+  const fromDetail = String(detailDescription ?? '').replace(/\s+/g, ' ').trim();
+  if (fromDetail) return fromDetail.slice(0, 1024);
+  const heading = body?.match(/^#\s+(.+)$/m)?.[1]?.replace(/\s+/g, ' ').trim();
+  return (heading ? `Projected plugin skill: ${heading}` : `Projected instruction skill from plugin ${name}`).slice(0, 1024);
+}
+
+async function inspectLibraryPlugins(): Promise<LibraryPluginInspection[]> {
+  const [plugins, skills] = await Promise.all([
+    client.libraryPlugins(),
+    client.librarySkills().catch(() => [] as LibrarySkillEntry[]),
+  ]);
+  const skillNames = skills.map((skill) => skill.name);
+  const inspections = await Promise.all(plugins.map(async (plugin) => {
+    const detail = await client.libraryPluginDetail(plugin.name).catch(() => null);
+    return inspectLibraryPluginMetadata(plugin, detail, skillNames, pluginFsToolNames(detail?.source_path ?? plugin.source_path));
+  }));
+  return inspections;
+}
+
+async function projectPluginSkill(name: string): Promise<ProjectPluginSkillResult> {
+  const pluginName = String(name ?? '').trim();
+  if (!/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(pluginName)) {
+    throw new Error('Plugin skill projection requires a lowercase agentskills.io-compatible name.');
+  }
+  const [plugins, skills] = await Promise.all([client.libraryPlugins(), client.librarySkills()]);
+  const plugin = plugins.find((entry) => entry.name === pluginName);
+  if (!plugin) throw new Error(`Plugin ${pluginName} is no longer in the manager inventory.`);
+  const detail = await client.libraryPluginDetail(pluginName);
+  const inspection = inspectLibraryPluginMetadata(
+    plugin,
+    detail,
+    skills.map((skill) => skill.name),
+    pluginFsToolNames(detail?.source_path ?? plugin.source_path),
+  );
+  if (inspection.skillProjection !== 'available' || !detail?.skillBody) {
+    throw new Error(`Plugin ${pluginName} cannot be digested as a plain skill: ${inspection.notes.join(' ') || inspection.skillProjection}`);
+  }
+  const body = stripMarkdownFrontmatter(detail.skillBody);
+  const entry = await client.createSkill({
+    name: pluginName,
+    description: projectedSkillDescription(pluginName, detail.description ?? plugin.description, body),
+    metadata: {
+      tags: 'plugin,skill-catalog',
+      source: 'plugin',
+    },
+    body,
+  });
+  return { ok: true, plugin: pluginName, projected: true, entry, inspection };
+}
+import type { LibrarySkillEntry, McpServerSpec, CreateSkillInput, LibraryPluginInspection, ProjectPluginSkillResult } from '../../../idctl/src/api/client.ts';
 import { brokerServerPath, mintAgentToken, revokeAgentToken, brokerUrl } from './computeruse/broker.ts';
 // The Computer Use MCP server name. NEVER "computer-use" — Claude Code reserves that
 // name and rejects the entire MCP config, breaking every dispatch. CU_MCP_ALIASES
@@ -557,6 +627,7 @@ const COALESCED_READ_METHODS = new Set([
   'runtime:models',
   'runtime:freshness',
   'runtime:cooldowns',
+  'libraryPluginInspections',
   'query:poll',
 ]);
 const inFlightReadCalls = new Map<string, Promise<unknown>>();
@@ -955,6 +1026,7 @@ const METHODS: Record<string, (...a: any[]) => Promise<unknown>> = {
   // modules: skills + plugins catalog, install, MCP attach + rebuild
   librarySkills: () => client.librarySkills(),
   libraryPlugins: () => client.libraryPlugins(),
+  libraryPluginInspections: () => inspectLibraryPlugins(),
   // Skill auto-categorization (app-side tag overlay; never writes the SKILL.md).
   // Returns the cached name→tags overlay merged into the Capabilities catalog.
   'skills:autoTags': () => Promise.resolve(loadSettings().skillTags ?? {}),
@@ -1005,6 +1077,7 @@ const METHODS: Record<string, (...a: any[]) => Promise<unknown>> = {
     };
   },
   installSkill: (skill: string, agent: string, team?: string) => (team ? client.withTeam(String(team)) : client).installSkill(String(skill), String(agent)),
+  projectPluginSkill: (name: string) => projectPluginSkill(name),
   createSkill: (input: CreateSkillInput) => client.createSkill(input),
   deleteSkill: (name: string) => client.deleteSkill(String(name)),
   uninstallSkill: (skill: string, agent: string, team?: string) => (team ? client.withTeam(String(team)) : client).uninstallSkill(String(skill), String(agent)),

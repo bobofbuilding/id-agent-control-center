@@ -6,7 +6,7 @@
  * call via store.ts `call()`.
  */
 
-import { ManagerClient } from '../../../idctl/src/api/client.ts';
+import { inspectLibraryPluginMetadata, ManagerClient } from '../../../idctl/src/api/client.ts';
 import type { Agent } from '../../../idctl/src/api/types.ts';
 import { ProviderClient } from '../../../idctl/src/settings/ProviderClient.ts';
 import { discoverLocalServers, type DiscoveredServer } from '../../../idctl/src/settings/localDiscovery.ts';
@@ -14,7 +14,7 @@ import { SCOPE_PRESETS, TTL_PRESETS } from '../../../idctl/src/keys/types.ts';
 import type { AgentAccount, KeyAuthorityTarget, LegacyKeyAuthority, SessionKey } from '../../../idctl/src/keys/types.ts';
 import { defaultHeadroomPilotSettings, kindNeedsKey, type HeadroomPilotSettings, type ProviderProfile, type McpServerProfile, type ProjectEntry } from '../../../idctl/src/settings/schema.ts';
 import { buildRuntimeCatalog } from '../../../idctl/src/settings/runtimeCatalog.ts';
-import type { McpServerSpec, CreateSkillInput } from '../../../idctl/src/api/client.ts';
+import type { LibraryPluginInspection, LibrarySkillEntry, McpServerSpec, CreateSkillInput, ProjectPluginSkillResult } from '../../../idctl/src/api/client.ts';
 import { secp256k1 } from '@noble/curves/secp256k1.js';
 import { keccak_256 } from '@noble/hashes/sha3.js';
 import { auditPreview, optimizeAskCommandCore, type ContextBudgetDecision } from '../shared/contextBudget.ts';
@@ -586,6 +586,58 @@ function headroomPluginPathFallback() {
   };
 }
 
+function stripMarkdownFrontmatter(markdown: string): string {
+  const text = markdown.replace(/^\uFEFF/, '');
+  const match = text.match(/^---\r?\n[\s\S]*?\r?\n---\r?\n?/);
+  return (match ? text.slice(match[0].length) : text).trim();
+}
+
+function projectedSkillDescription(name: string, detailDescription?: string | null, body?: string): string {
+  const fromDetail = String(detailDescription ?? '').replace(/\s+/g, ' ').trim();
+  if (fromDetail) return fromDetail.slice(0, 1024);
+  const heading = body?.match(/^#\s+(.+)$/m)?.[1]?.replace(/\s+/g, ' ').trim();
+  return (heading ? `Projected plugin skill: ${heading}` : `Projected instruction skill from plugin ${name}`).slice(0, 1024);
+}
+
+async function inspectLibraryPlugins(): Promise<LibraryPluginInspection[]> {
+  const [plugins, skills] = await Promise.all([
+    client.libraryPlugins(),
+    client.librarySkills().catch(() => [] as LibrarySkillEntry[]),
+  ]);
+  const skillNames = skills.map((skill) => skill.name);
+  const inspections = await Promise.all(plugins.map(async (plugin) => {
+    const detail = await client.libraryPluginDetail(plugin.name).catch(() => null);
+    return inspectLibraryPluginMetadata(plugin, detail, skillNames);
+  }));
+  return inspections;
+}
+
+async function projectPluginSkill(name: string): Promise<ProjectPluginSkillResult> {
+  const pluginName = String(name ?? '').trim();
+  if (!/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(pluginName)) {
+    throw new Error('Plugin skill projection requires a lowercase agentskills.io-compatible name.');
+  }
+  const [plugins, skills] = await Promise.all([client.libraryPlugins(), client.librarySkills()]);
+  const plugin = plugins.find((entry) => entry.name === pluginName);
+  if (!plugin) throw new Error(`Plugin ${pluginName} is no longer in the manager inventory.`);
+  const detail = await client.libraryPluginDetail(pluginName);
+  const inspection = inspectLibraryPluginMetadata(plugin, detail, skills.map((skill) => skill.name));
+  if (inspection.skillProjection !== 'available' || !detail?.skillBody) {
+    throw new Error(`Plugin ${pluginName} cannot be digested as a plain skill: ${inspection.notes.join(' ') || inspection.skillProjection}`);
+  }
+  const body = stripMarkdownFrontmatter(detail.skillBody);
+  const entry = await client.createSkill({
+    name: pluginName,
+    description: projectedSkillDescription(pluginName, detail.description ?? plugin.description, body),
+    metadata: {
+      tags: 'plugin,skill-catalog',
+      source: 'plugin',
+    },
+    body,
+  });
+  return { ok: true, plugin: pluginName, projected: true, entry, inspection };
+}
+
 const M: Record<string, (...a: any[]) => Promise<unknown>> = {
   info: async () => ({ managerUrl, team, coordinator: lsGet<Record<string, string>>('idctl.coordinators', {})[team] ?? null }),
   health: () => client.health(),
@@ -735,7 +787,9 @@ const M: Record<string, (...a: any[]) => Promise<unknown>> = {
   // modules: skills + plugins catalog, install, MCP attach + rebuild
   librarySkills: () => client.librarySkills(),
   libraryPlugins: () => client.libraryPlugins(),
+  libraryPluginInspections: () => inspectLibraryPlugins(),
   installSkill: (skill: string, agent: string, team?: string) => (team ? client.withTeam(String(team)) : client).installSkill(String(skill), String(agent)),
+  projectPluginSkill: (name: string) => projectPluginSkill(name),
   createSkill: (input: CreateSkillInput) => client.createSkill(input),
   deleteSkill: (name: string) => client.deleteSkill(String(name)),
   uninstallSkill: (skill: string, agent: string, team?: string) => (team ? client.withTeam(String(team)) : client).uninstallSkill(String(skill), String(agent)),

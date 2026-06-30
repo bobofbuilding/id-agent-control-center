@@ -26,7 +26,7 @@ const RULES: Array<[RegExp, string[]]> = [
   [/^(addHeartbeat|addCalendarCheckin|pauseSchedule|resumeSchedule|removeSchedule|checkins:close)$/, ['schedules', 'checkins', 'loops', 'work', 'brain']],
   [/^projects:(save|remove|syncRoot)$/, ['projects', 'dashboard', 'brain']],
   [/^(coordinator:|org:)/, ['org', 'dashboard', 'agents', 'work', 'brain']],
-  [/^(setAgent|agent:|spawnAgent|deployTeam|team:|rebuildAgent|installSkill|uninstallSkill|createSkill|deleteSkill|setTeamDelegates|setAgentDelegates)/, ['agents', 'teams', 'dashboard', 'brain']],
+  [/^(setAgent|agent:|spawnAgent|deployTeam|team:|rebuildAgent|installSkill|uninstallSkill|createSkill|projectPluginSkill|deleteSkill|setTeamDelegates|setAgentDelegates)/, ['agents', 'teams', 'dashboard', 'brain', 'modules']],
   [/^skills:(syncBrain|categorize)$/, ['modules', 'brain']],
   [/^(mcp:|providers:|runtime:probe|manager:setLocalConcurrency|headroom:setPilot|evmRpc:|image:setServer)/, ['settings', 'modules', 'brain']],
   [/^(chats:(save|rename|remove|markRead|patch)|chat:saveFiles|chat:savePasted)$/, ['chats', 'dashboard']],

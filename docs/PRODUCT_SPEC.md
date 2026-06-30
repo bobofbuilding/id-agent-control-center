@@ -357,24 +357,26 @@ agent (fresh team fails with no guidance); `makePrimary` can silently no-op.
 ## 11. Capabilities (nav: "Capabilities" ◫, route: `modules`)
 
 **Purpose:** One workbench to extend what agents can *do* — register/test/attach **MCP** tool-servers,
-browse/create/install **Skills**, inspect bundled **Plugins** — applied across a multi-agent
+browse/create/install **Skills**, inspect/digest neutral **Plugins** — applied across a multi-agent
 selection in the active team.
 
 **What you can do**
-- **Shared header**: team dropdown + an **"apply to" agent chip row** (default = all eligible; click
-  to make an explicit set; all/none). **Runtime capability gating** disables `⊘` chips whose runtime
-  can't use the active tab's capability (e.g. ollama can't use MCP) and excludes them from actions.
+- **Shared header**: team dropdown + an **"apply to" agent chip row** (default = all in scope; click
+  to make an explicit set; all/none). Runtime support is advisory, so local/API/subscription
+  runtimes can receive neutral MCP/skill/plugin metadata while execution adapters remain explicit.
 - **MCP servers**: registry table (endpoint, attached `have/target`, **Test**), per-row **Attach /
   Detach / Test / ✕**, **Rebuild <targets>** (attach/detach take effect on rebuild); **Add from
   catalog** (guided, validated inputs, secret masking) + **Add custom (advanced)** (stdio/http/sse).
 - **Skills**: catalog cards (license, install `have/target`, tags incl. **auto-categorized**),
   **Install / Uninstall** per selection, two-step **delete**, search + tag filter, batch
   **auto-categorize** (+ ↻ re-categorize), **Create skill** (validated `SKILL.md`).
-- **Plugins**: read-only table (name, version, provider, description) — attached via team config.
+- **Plugins**: neutral catalog table (name, version, source, status, adapters, selected reach,
+  catalog action, description). Instruction-only plugin wrappers can be **Digest as skill** after a
+  fresh-read guard; tool-bearing/hybrid packages stay as plugins until reviewed adapters exist.
 
 **Data & actions:** `mcp:list/add/remove/test`, `librarySkills`, `libraryPlugins`,
-`skills:autoTags/categorize`, `createSkill`, `deleteSkill`, `installSkill/uninstallSkill`,
-`setAgentMcp`, `rebuildAgent`.
+`libraryPluginInspections`, `skills:autoTags/categorize`, `createSkill`, `projectPluginSkill`,
+`deleteSkill`, `installSkill/uninstallSkill`, `setAgentMcp`, `rebuildAgent`.
 
 **Polish:** the Rebuild button disappears after detaching the *last* server (can't trigger the
 rebuild that applies it); `setAgentMcp` is a wholesale replace (can clobber concurrent changes);
@@ -450,8 +452,9 @@ running/queued figures are a snapshot; clipboard fallbacks fail silently.
 
 - **Active-team scoping**: everything is scoped to `store.team`; switch via the status-bar selector.
 - **Runtimes**: `claude-*` / `codex` / `cursor-cli` use logged-in CLI subscriptions; `ollama` /
-  local servers and metered API providers are configured in Settings → Inference. MCP currently
-  works on Claude & Codex runtimes; skills on all; plugins via team config.
+  local servers and metered API providers are configured in Settings → Inference. MCP works where a
+  runtime/tool harness supports it; skills and portable plugin packages are assigned as neutral
+  metadata with Skill/MCP/native/direct-fallback adapters deciding execution.
 - **Active-agent routing**: assignment, decomposition, triage, and fan-out target only **running**
   agents; stopped agents are skipped and reported.
 - **Cross-team fan-out**: an objective can be handed to several teams' active leads at once

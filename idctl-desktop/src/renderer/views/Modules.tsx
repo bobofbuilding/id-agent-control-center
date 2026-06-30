@@ -1,6 +1,6 @@
 import { Fragment, useEffect, useMemo, useState } from 'react';
 import { call, type FleetStore } from '../store.ts';
-import type { LibrarySkillEntry, LibraryPluginEntry, McpServerSpec, SetMcpResult, CreateSkillInput } from '../../../../idctl/src/api/client.ts';
+import type { LibrarySkillEntry, LibraryPluginEntry, LibraryPluginInspection, McpServerSpec, SetMcpResult, CreateSkillInput, ProjectPluginSkillResult } from '../../../../idctl/src/api/client.ts';
 import {
   type McpServerProfile,
   type McpTransport,
@@ -21,7 +21,7 @@ const TRANSPORTS: McpTransport[] = ['stdio', 'http', 'sse'];
 interface TestResult { ok?: boolean; tools?: string[]; error?: string; testing?: boolean }
 type TargetAgent = Agent & { team?: string };
 type TeamAgentsGroup = { team: string; agents: Agent[] };
-type PluginRow = LibraryPluginEntry & { packageSource: string; bundledPortable?: boolean };
+type PluginRow = LibraryPluginEntry & Partial<LibraryPluginInspection> & { packageSource: string; bundledPortable?: boolean };
 type BrainSkillStats = { totalSkills?: number; chainable?: number; nonChainable?: number; domains?: number; tags?: number; averageComputeCost?: number | null; maxUseCount?: number };
 type BrainSkillFacet = { domain?: string; tag?: string; name?: string; count?: number };
 type BrainSkillSummary = {
@@ -514,9 +514,32 @@ function mcpEndpoint(p: McpServerProfile): string {
     ? [p.command, ...(p.args ?? [])].filter(Boolean).join(' ') || '(none)'
     : p.url ?? '(none)';
 }
-function pluginAdapterSummary(name: string): string {
-  if (name === 'idacc-context-retrieval') return 'Portable: Skill/instruction adapter, MCP tool adapter, native runtime adapter, universal direct fallback';
-  return 'Native plugin inventory; verify portable adapter manifest before cross-runtime use';
+function pluginClassificationLabel(p: PluginRow): string {
+  switch (p.classification) {
+    case 'portable-package': return 'Portable package';
+    case 'instruction-skill': return 'Skill digestible';
+    case 'hybrid-tool-plugin': return 'Hybrid tools';
+    case 'native-tool-plugin': return 'Tool plugin';
+    case 'manifest-only': return 'Manifest only';
+    default: return 'Uninspected';
+  }
+}
+function pluginProjectionLabel(p: PluginRow): string {
+  if (p.classification === 'portable-package') return 'Adapter package';
+  switch (p.skillProjection) {
+    case 'available': return 'Digest as skill';
+    case 'already-in-catalog': return 'Skill exists';
+    case 'blocked-tools': return 'Keep as plugin';
+    default: return 'No skill body';
+  }
+}
+function pluginAdapterSummary(p: PluginRow): string {
+  if (p.name === 'idacc-context-retrieval') return 'Portable: Skill/instruction adapter, MCP tool adapter, native runtime adapter, universal direct fallback';
+  if (p.classification === 'instruction-skill') return 'Instruction-only plugin wrapper; safe to project into the SKILL.md catalog before Brain sync.';
+  if (p.classification === 'hybrid-tool-plugin') return 'SKILL.md plus local tools; project only through a reviewed adapter so tool calls are not lost.';
+  if (p.classification === 'native-tool-plugin') return 'Tool-bearing native inventory; verify MCP/direct-fallback adapters before cross-runtime use.';
+  if (p.classification === 'manifest-only') return 'Manifest is visible, but no root SKILL.md or tools were detected.';
+  return 'Native plugin inventory; inspect detail before cross-runtime use';
 }
 function capabilitySurface(tab: CapabilityTab, runtime: string | undefined): { label: string; title: string; advisory?: boolean } {
   const rt = runtime ?? 'unknown runtime';
@@ -556,13 +579,19 @@ function capabilitySurfaceSummary(tab: CapabilityTab, agents: TargetAgent[]): st
   }
   return [...counts.entries()].map(([label, count]) => `${label} ${count}`).join(' · ');
 }
-function pluginRuntimeReach(name: string, agents: TargetAgent[]): string {
+function pluginRuntimeReach(p: PluginRow, agents: TargetAgent[]): string {
   if (!agents.length) return 'No selected targets';
   const native = agents.filter((agent) => runtimeSupports(agentRuntime(agent), 'plugins')).length;
   const mcp = agents.filter((agent) => runtimeSupports(agentRuntime(agent), 'mcp')).length;
   const skill = agents.filter((agent) => runtimeSupports(agentRuntime(agent), 'skills')).length;
-  if (name === 'idacc-context-retrieval') {
+  if (p.classification === 'portable-package') {
     return `Selected ${agents.length}: native ${native}, MCP ${mcp}, Skill ${skill}, fallback ${agents.length}`;
+  }
+  if (p.classification === 'instruction-skill') {
+    return `Selected ${agents.length}: Skill ${skill}, prompt/workspace fallback ${agents.length}`;
+  }
+  if (p.classification === 'hybrid-tool-plugin' || p.classification === 'native-tool-plugin') {
+    return `Selected ${agents.length}: native ${native}, adapter review ${agents.length - native}`;
   }
   return `Selected ${agents.length}: native ${native}, portable manifest unknown`;
 }
@@ -642,6 +671,7 @@ export function Modules({ store }: { store: FleetStore }) {
   const [brainSyncing, setBrainSyncing] = useState(false);
   const [brainDrift, setBrainDrift] = useState<SkillBrainDrift | null>(null);
   const [plugins, setPlugins] = useState<LibraryPluginEntry[]>([]);
+  const [pluginInspections, setPluginInspections] = useState<LibraryPluginInspection[]>([]);
   const [busy, setBusy] = useState(false);
   const [note, setNote] = useState<string>('');
   const [tab, setTab] = useState<CapabilityTab>(() => {
@@ -767,6 +797,7 @@ export function Modules({ store }: { store: FleetStore }) {
     setMcp(await call<McpServerProfile[]>('mcp:list').catch(() => []));
     setSkills(await call<LibrarySkillEntry[]>('librarySkills').catch(() => []));
     setPlugins(await call<LibraryPluginEntry[]>('libraryPlugins').catch(() => []));
+    setPluginInspections(await call<LibraryPluginInspection[]>('libraryPluginInspections').catch(() => []));
     setAutoTags(await call<Record<string, string[]>>('skills:autoTags').catch(() => ({})));
     setBrainSkills(await call<BrainSkillSummary>('skills:brainSummary').catch(() => null));
     setBrainCore(await call<BrainCoreHealthReport>('brain:coreHealth').catch(() => null));
@@ -1197,12 +1228,54 @@ export function Modules({ store }: { store: FleetStore }) {
     }
   }
 
+  async function digestPluginAsSkill(plugin: PluginRow) {
+    if (plugin.skillProjection !== 'available') return;
+    const message = [
+      `Digest plugin "${plugin.name}" into the SKILL.md catalog?`,
+      '',
+      'IDACC will fresh-read the plugin detail and current skill catalog before writing.',
+      'Only instruction-only plugins are allowed here; tool-bearing packages stay as plugins until they have reviewed adapters.',
+      '',
+      'After this succeeds, Preview & sync Brain is still required before Brain Skills/Graph use the new skill node.',
+    ].join('\n');
+    if (!window.confirm(message)) return;
+    setBusy(true);
+    setNote('');
+    try {
+      const result = await call<ProjectPluginSkillResult>('projectPluginSkill', plugin.name);
+      const skillName = result.entry?.name ?? plugin.name;
+      setNote(`digested plugin ${plugin.name} into skill ${skillName} ✓ — sync Brain when ready`);
+      await reload();
+      setBrainDrift({ kind: 'created', skill: skillName, at: Date.now() });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      setNote(`digest failed: ${msg}`);
+      await reload();
+    } finally {
+      setBusy(false);
+    }
+  }
+
   // # selected agents that have at least one MCP server attached (→ show Rebuild).
   const anyAttached = targetAgents.some((a) => curMcp(a).length > 0);
   const targetLabel = targetCount === 0 ? 'no agents' : targetCount === 1 ? targetAgents[0].name : `${targetCount} agents`;
   const pluginRows = useMemo<PluginRow[]>(() => {
+    const inspectionByName = new Map(pluginInspections.map((inspection) => [inspection.name, inspection]));
+    const idaccPortableDefaults: Partial<PluginRow> = {
+      hasSkillMd: true,
+      hasTools: true,
+      toolCount: 3,
+      tools: ['contract', 'mcp', 'resolve'],
+      entrypoint: 'SKILL.md',
+      adapterKinds: ['skill', 'mcp', 'native-plugin', 'direct-fallback'],
+      classification: 'portable-package',
+      skillProjection: 'blocked-tools',
+      notes: ['Bundled IDACC package with Skill, MCP, native plugin, and direct-fallback adapters.'],
+    };
     const rows: PluginRow[] = plugins.map((plugin) => ({
       ...plugin,
+      ...(inspectionByName.get(plugin.name) ?? {}),
+      ...(plugin.name === 'idacc-context-retrieval' ? idaccPortableDefaults : {}),
       packageSource: plugin.name === 'idacc-context-retrieval' ? 'manager + IDACC portable package' : 'manager native inventory',
       bundledPortable: plugin.name === 'idacc-context-retrieval',
     }));
@@ -1213,12 +1286,13 @@ export function Modules({ store }: { store: FleetStore }) {
         description: 'IDACC portable retrieval-handle resolver for future Headroom-backed context compression pilots.',
         source: 'bundled with IDACC',
         hasManifest: true,
+        ...idaccPortableDefaults,
         packageSource: 'IDACC bundled portable package',
         bundledPortable: true,
       });
     }
     return rows;
-  }, [plugins]);
+  }, [plugins, pluginInspections]);
   function skillFleetUsage(skill: string): TargetAgent[] {
     return store.allAgents
       .filter((a) => (((a.metadata as any)?.skills ?? []) as string[]).includes(skill))
@@ -1810,8 +1884,9 @@ export function Modules({ store }: { store: FleetStore }) {
               <th>name</th>
               <th>version</th>
               <th>source</th>
-              <th>adapters</th>
+              <th>status</th>
               <th>selected reach</th>
+              <th>catalog</th>
               <th>description</th>
             </tr>
           </thead>
@@ -1819,9 +1894,19 @@ export function Modules({ store }: { store: FleetStore }) {
             {pluginRows.map((p) => {
               const provider = p.author || p.source || null;
               const isUrl = !!provider && /^https?:\/\//i.test(provider);
+              const adapterKinds = p.adapterKinds ?? [];
               return (
                 <tr key={p.name}>
-                  <td className="b">{p.name}</td>
+                  <td>
+                    <div className="b">{p.name}</div>
+                    {p.hasTools ? (
+                      <div className="muted small" title={(p.tools ?? []).join(', ')}>
+                        {p.toolCount ?? p.tools?.length ?? 0} tool{(p.toolCount ?? p.tools?.length ?? 0) === 1 ? '' : 's'}
+                      </div>
+                    ) : p.hasSkillMd ? (
+                      <div className="muted small">root SKILL.md</div>
+                    ) : null}
+                  </td>
                   <td className="muted small">{p.version ?? '—'}</td>
                   <td className="muted small" title={p.source ?? undefined}>
                     <span>{p.packageSource}</span>
@@ -1831,15 +1916,38 @@ export function Modules({ store }: { store: FleetStore }) {
                       </a>
                     ) : <span> · {provider}</span>}
                   </td>
-                  <td className="muted small">{pluginAdapterSummary(p.name)}</td>
-                  <td className="muted small">{pluginRuntimeReach(p.name, targetAgents)}</td>
+                  <td>
+                    <div className="chips">
+                      <span className={`chip tag${p.classification === 'portable-package' ? ' on' : ''}`} title={(p.notes ?? []).join('\n') || pluginAdapterSummary(p)}>
+                        {pluginClassificationLabel(p)}
+                      </span>
+                      {adapterKinds.map((kind) => (
+                        <span key={kind} className="chip tag" title={`${kind} adapter declared or inferred`}>
+                          {kind}
+                        </span>
+                      ))}
+                    </div>
+                    <div className="muted small">{pluginAdapterSummary(p)}</div>
+                  </td>
+                  <td className="muted small">{pluginRuntimeReach(p, targetAgents)}</td>
+                  <td>
+                    {p.skillProjection === 'available' ? (
+                      <button className="btn small" disabled={busy} title="Fresh-read and project this instruction-only plugin into the skill catalog" onClick={() => void digestPluginAsSkill(p)}>
+                        Digest as skill
+                      </button>
+                    ) : (
+                      <span className="muted small" title={(p.notes ?? []).join('\n')}>
+                        {pluginProjectionLabel(p)}
+                      </span>
+                    )}
+                  </td>
                   <td className="muted"><LinkedDescription text={p.description} /></td>
                 </tr>
               );
             })}
             {pluginRows.length === 0 ? (
               <tr>
-                <td colSpan={6} className="muted center pad">
+                <td colSpan={7} className="muted center pad">
                   No plugins found. Native plugins live in <span className="mono">plugins/claude-code</span>; portable IDACC packages can also ship Skill, MCP, and direct-fallback adapters.
                 </td>
               </tr>
