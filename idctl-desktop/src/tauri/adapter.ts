@@ -17,6 +17,7 @@ import { buildRuntimeCatalog } from '../../../idctl/src/settings/runtimeCatalog.
 import type { McpServerSpec, CreateSkillInput } from '../../../idctl/src/api/client.ts';
 import { secp256k1 } from '@noble/curves/secp256k1.js';
 import { keccak_256 } from '@noble/hashes/sha3.js';
+import { optimizeAskCommandCore, type ContextBudgetDecision } from '../shared/contextBudget.ts';
 
 const MGR_DEFAULT = 'http://127.0.0.1:4100';
 const WIKI_URL = 'docs/CONTROL_CENTER_WIKI.json';
@@ -400,6 +401,59 @@ function clientFor(selectedTeam?: string): ManagerClient {
   return selected ? client.withTeam(selected) : client;
 }
 
+const contextBudgetStats = {
+  inspected: 0,
+  optimized: 0,
+  direct: 0,
+  protectedDirect: 0,
+  originalTokens: 0,
+  sentTokens: 0,
+  savedTokens: 0,
+  recent: [] as ContextBudgetDecision[],
+};
+
+function budgetTauriCommand(command: string, source: string, selectedTeam?: string): string {
+  const decision = optimizeAskCommandCore(command, { source, team: selectedTeam ?? team });
+  contextBudgetStats.inspected += 1;
+  contextBudgetStats.originalTokens += decision.originalTokens;
+  contextBudgetStats.sentTokens += decision.sentTokens;
+  contextBudgetStats.savedTokens += decision.savedTokens;
+  if (decision.changed) contextBudgetStats.optimized += 1;
+  else contextBudgetStats.direct += 1;
+  if (decision.protectedContent.length) contextBudgetStats.protectedDirect += 1;
+  contextBudgetStats.recent.unshift(decision);
+  contextBudgetStats.recent.splice(20);
+  return decision.command;
+}
+
+function contextBudgetReport() {
+  return {
+    coreEnabled: true,
+    frontendSurface: 'hidden',
+    inspected: contextBudgetStats.inspected,
+    optimized: contextBudgetStats.optimized,
+    direct: contextBudgetStats.direct,
+    protectedDirect: contextBudgetStats.protectedDirect,
+    originalTokens: contextBudgetStats.originalTokens,
+    sentTokens: contextBudgetStats.sentTokens,
+    savedTokens: contextBudgetStats.savedTokens,
+    savingsRatio: contextBudgetStats.originalTokens > 0 ? contextBudgetStats.savedTokens / contextBudgetStats.originalTokens : 0,
+    recent: contextBudgetStats.recent,
+    storageDir: '(unavailable in Tauri webview shell)',
+    policy: {
+      route: 'deterministic-first',
+      headroomEngine: 'not-required-for-core-budgeting',
+      retrieval: 'in-memory-only',
+    },
+    qualityGuards: [
+      'Only /ask payloads are eligible; manager lifecycle commands pass through unchanged.',
+      'Secrets, auth material, agent instruction sidecars, active code patches, and wallet/key material always use the direct route.',
+      'The hot path uses deterministic compaction only; no AI summarizer rewrites prompts before dispatch.',
+      'If savings are below the minimum gate, the exact original prompt is sent.',
+    ],
+  };
+}
+
 const M: Record<string, (...a: any[]) => Promise<unknown>> = {
   info: async () => ({ managerUrl, team, coordinator: lsGet<Record<string, string>>('idctl.coordinators', {})[team] ?? null }),
   health: () => client.health(),
@@ -417,8 +471,11 @@ const M: Record<string, (...a: any[]) => Promise<unknown>> = {
   events: (since: number) => client.events(Number(since) || 0, { wait: 20, limit: 100 }),
   inboxPending: () => client.inboxPending(),
   tasks: () => client.tasks(),
-  dispatch: (cmd: string) => client.dispatch(String(cmd)),
-  remote: (cmd: string, agent?: string, selectedTeam?: string) => clientFor(selectedTeam).remote(String(cmd), agent),
+  dispatch: (cmd: string) => client.dispatch(budgetTauriCommand(String(cmd), 'tauri:dispatch', team)),
+  remote: (cmd: string, agent?: string, selectedTeam?: string) => {
+    const c = clientFor(selectedTeam);
+    return c.remote(budgetTauriCommand(String(cmd), 'tauri:remote', selectedTeam ?? c.team), agent);
+  },
   probeAll: () => client.probeAll(),
   probeOne: (n: string, selectedTeam?: string) => clientFor(selectedTeam).probeOne(String(n)),
   'headroom:status': async () => ({
@@ -451,6 +508,11 @@ const M: Record<string, (...a: any[]) => Promise<unknown>> = {
     lsSet('idctl.headroomPilot', next);
     return headroomPilotState();
   },
+  'context:budgetReport': async () => contextBudgetReport(),
+  'context:budgetRecent': async () => contextBudgetStats.recent,
+  'context:budgetRecord': async () => null,
+  'context:budgetDryRun': async (command: string, source?: string, selectedTeam?: string) =>
+    optimizeAskCommandCore(String(command), { source: source ? String(source) : 'tauri:dry-run', team: selectedTeam ? String(selectedTeam) : team }),
   checkins: () => client.checkins(),
   schedules: () => client.schedules(),
   addHeartbeat: (agent: string, seconds: number, message: string, delivery?: 'internal' | 'talk') => client.addHeartbeat(String(agent), Number(seconds), String(message), delivery),

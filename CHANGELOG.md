@@ -8,6 +8,9 @@ Every change pushed or merged to `main` carries its version number in the commit
 subject (`vX.Y.Z: …`), stamped automatically by the `commit-msg` hook — see
 [CONTRIBUTING.md](CONTRIBUTING.md).
 
+## [0.1.370] — 2026-06-30
+- Add hidden context budget for guarded token savings
+
 ## [0.1.369] — 2026-06-30
 - Audit Headroom core readiness and remove Health controls
 

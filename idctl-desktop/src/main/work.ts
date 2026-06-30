@@ -9,8 +9,9 @@
  */
 
 import type { ManagerClient } from '../../../idctl/src/api/client.ts';
-import type { Agent, Task } from '../../../idctl/src/api/types.ts';
+import type { Agent, RemoteEnvelope, Task } from '../../../idctl/src/api/types.ts';
 import { setTaskLane, setTaskDeps, loadSettings } from '../../../idctl/src/settings/store.ts';
+import { optimizeAskCommand } from './contextBudget.ts';
 
 export interface SubTask { title: string; description: string; agent: string; dependsOn: number[] }
 export interface CreatedTask { idx: number; ref: string; title: string; agent: string; ok: boolean; error?: string; dependsOn: number[]; dispatched: boolean }
@@ -19,6 +20,15 @@ export interface CreatePlanResult { created: CreatedTask[]; dispatched: number; 
 
 /** Quote a free-text argument as ONE token for the manager tokenizer (matches client qArg). */
 function qArg(s: string): string { return `"${s.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`; }
+function budgetedAskCommand(client: ManagerClient, command: string, source: string): string {
+  return optimizeAskCommand(command, { source, team: client.team }).command;
+}
+function dispatchBudgeted(client: ManagerClient, command: string, source: string): Promise<string> {
+  return client.dispatch(budgetedAskCommand(client, command, source));
+}
+function remoteBudgeted<T = unknown>(client: ManagerClient, command: string, source: string): Promise<RemoteEnvelope<T>> {
+  return client.remote<T>(budgetedAskCommand(client, command, source));
+}
 
 /** A task is complete once the manager reports a done/complete status. */
 function isTaskDone(status?: string): boolean { return /done|complete/i.test(status ?? ''); }
@@ -122,7 +132,7 @@ export async function decomposeWork(
 
   let raw = '';
   try {
-    raw = await client.dispatch(`/ask ${lead} ${qArg(DECOMP_PROMPT(obj, agentLines))}`);
+    raw = await dispatchBudgeted(client, `/ask ${lead} ${qArg(DECOMP_PROMPT(obj, agentLines))}`, 'work:decompose');
   } catch (e) {
     return { ok: false, subtasks: [], raw: '', error: e instanceof Error ? e.message : String(e) };
   }
@@ -279,7 +289,7 @@ export async function createAndDispatchPlan(
     const waits = prevForOwner ? [...deps, prevForOwner] : deps;
     const p = Promise.allSettled(waits).then(async () => {
       c.dispatched = true;
-      await client.dispatch(`/ask ${c.agent} ${qArg(WORK_PROMPT(objective, list[i], c.ref))}`).then(() => {}, () => {});
+      await dispatchBudgeted(client, `/ask ${c.agent} ${qArg(WORK_PROMPT(objective, list[i], c.ref))}`, 'work:createPlan:task-dispatch').then(() => {}, () => {});
       // Hold this task's done-promise open until the task itself finishes — that's what gates
       // its dependents (and its owner's next task).
       await waitForTaskDone(c.ref);
@@ -346,7 +356,7 @@ export async function fanOutObjective(client: ManagerClient, objective: string, 
         const agents = (await tc.agents().catch(() => [])) as Agent[];
         const lead = pickActiveLead(agents);
         if (!lead) return { team, status: 'no-active-agent', detail: agents.length ? `${agents.length} agent(s), none running` : 'no agents' };
-        const env = await tc.remote<{ queryId?: string }>(`/ask ${lead} ${qArg(FANOUT_PROMPT(obj, team))}`);
+        const env = await remoteBudgeted<{ queryId?: string }>(tc, `/ask ${lead} ${qArg(FANOUT_PROMPT(obj, team))}`, 'work:fanout');
         return { team, lead, status: 'dispatched', queryId: env.result?.queryId };
       } catch (e) {
         return { team, status: 'failed', detail: e instanceof Error ? e.message : String(e) };
@@ -419,7 +429,7 @@ export async function triageUnassigned(client: ManagerClient, lead: string, opts
   }).join('\n');
 
   let raw = '';
-  try { raw = await client.dispatch(`/ask ${lead} ${qArg(TRIAGE_PROMPT(taskLines, agentLines))}`); }
+  try { raw = await dispatchBudgeted(client, `/ask ${lead} ${qArg(TRIAGE_PROMPT(taskLines, agentLines))}`, 'work:triage'); }
   catch (e) { return { considered: unassigned.length, assigned: [], skipped: unassigned.length, dispatched: 0, error: e instanceof Error ? e.message : String(e) }; }
 
   const planned = new Map<string, string>(); // ref → agent (validated, active)
@@ -456,7 +466,7 @@ export async function triageUnassigned(client: ManagerClient, lead: string, opts
       if (!t) continue;
       dispatched++;
       const prev = ownerChain[agent] ?? Promise.resolve();
-      ownerChain[agent] = prev.then(() => client.dispatch(`/ask ${agent} ${qArg(TRIAGE_WORK(ref, t.title, clip(t.description ?? '', 400)))}`).then(() => {}, () => {}));
+      ownerChain[agent] = prev.then(() => dispatchBudgeted(client, `/ask ${agent} ${qArg(TRIAGE_WORK(ref, t.title, clip(t.description ?? '', 400)))}`, 'work:triage:task-dispatch').then(() => {}, () => {}));
     }
   }
   return { considered: unassigned.length, assigned, skipped: unassigned.length - assigned.length, dispatched };

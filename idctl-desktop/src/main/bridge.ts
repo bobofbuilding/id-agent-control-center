@@ -50,6 +50,7 @@ import { kindNeedsKey, type HeadroomPilotSettings, type ProviderProfile, type Mc
 import { buildRuntimeCatalog, RUNTIMES, providerKindToRuntimes, isLocalProvider } from '../../../idctl/src/settings/runtimeCatalog.ts';
 import { testMcpServer } from './mcpTest.ts';
 import { headroomCoreAudit, headroomStatus } from './headroom.ts';
+import { contextBudgetDryRun, contextBudgetReport, loadRecentContextBudgetRecords, optimizeAskCommand, readContextBudgetRecord } from './contextBudget.ts';
 import { decomposeWork, createAndDispatchPlan, fanOutObjective, teamLeads, triageUnassigned, type SubTask } from './work.ts';
 import { normalizeGoalDriverConfig, runGoalDriverOnce, startGoalDriverLoop, syncActiveWorkGoalInstructions, type GoalDriverConfig } from './goaldriver.ts';
 import { buildOrgHierarchy, previewOrgSync, syncOrg, startOrgSyncLoop } from './orgSync.ts';
@@ -706,11 +707,17 @@ const METHODS: Record<string, (...a: any[]) => Promise<unknown>> = {
   'tasks:setReview': (ref: string, state: string) => Promise.resolve(setTaskReview(String(ref), String(state ?? '')).taskReview ?? {}),
 
   // dispatch / lifecycle
-  dispatch: (command: string) => client.dispatch(String(command)),
+  dispatch: (command: string) => {
+    const prepared = optimizeAskCommand(String(command), { source: 'bridge:dispatch', team: client.team });
+    return client.dispatch(prepared.command);
+  },
   // team (optional, 3rd arg) routes the command to another team's fleet — used by the
   // holistic "All teams" Dashboard so per-agent actions hit the agent's own team.
-  remote: (command: string, agent?: string, team?: string) =>
-    (team ? client.withTeam(String(team)) : client).remote(String(command), agent),
+  remote: (command: string, agent?: string, team?: string) => {
+    const c = team ? client.withTeam(String(team)) : client;
+    const prepared = optimizeAskCommand(String(command), { source: 'bridge:remote', team: c.team });
+    return c.remote(prepared.command, agent);
+  },
 
   // Resumable dispatch: START returns a queryId (or an inline reply for
   // manager-local commands); POLL checks that query. The renderer owns the loop
@@ -720,7 +727,8 @@ const METHODS: Record<string, (...a: any[]) => Promise<unknown>> = {
     // team (optional) pins this dispatch to a specific team's manager namespace so
     // the caller (e.g. a per-page lead chat) is independent of the global active team.
     const c = team ? client.withTeam(String(team)) : client;
-    const env = await c.remote<{ queryId?: string; status?: string; result?: string; message?: string }>(String(command), undefined, undefined, sessionId ? String(sessionId) : undefined);
+    const prepared = optimizeAskCommand(String(command), { source: 'bridge:dispatch:start', team: c.team });
+    const env = await c.remote<{ queryId?: string; status?: string; result?: string; message?: string }>(prepared.command, undefined, undefined, sessionId ? String(sessionId) : undefined);
     const r = env.result as any;
     const queryId = r?.queryId;
     if (queryId) return { queryId: String(queryId) };
@@ -782,6 +790,11 @@ const METHODS: Record<string, (...a: any[]) => Promise<unknown>> = {
   'headroom:audit': async () => headroomCoreAudit(loadSettings().headroomPilot),
   'headroom:pilot': async () => loadSettings().headroomPilot,
   'headroom:setPilot': async (partial: Partial<HeadroomPilotSettings>) => setHeadroomPilot(partial).headroomPilot,
+  'context:budgetReport': async () => contextBudgetReport(),
+  'context:budgetRecent': async (limit?: number) => loadRecentContextBudgetRecords(Number(limit) || 20),
+  'context:budgetRecord': async (id: string) => readContextBudgetRecord(String(id)),
+  'context:budgetDryRun': async (command: string, source?: string, team?: string) =>
+    contextBudgetDryRun(String(command), { source: source ? String(source) : 'bridge:dry-run', team: team ? String(team) : client.team }),
 
   // scheduling
   checkins: () => client.checkins(),

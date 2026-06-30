@@ -1,6 +1,7 @@
 import { execFile } from 'node:child_process';
 import { homedir } from 'node:os';
 import type { HeadroomPilotSettings } from '../../../idctl/src/settings/schema.ts';
+import { contextBudgetReport, type ContextBudgetReport } from './contextBudget.ts';
 
 export interface HeadroomStatus {
   cli: {
@@ -25,6 +26,7 @@ export interface HeadroomCoreAudit {
   blockedInsertionPoints: string[];
   requiredForCore: string[];
   safeToday: string[];
+  contextBudget?: Pick<ContextBudgetReport, 'coreEnabled' | 'frontendSurface' | 'inspected' | 'optimized' | 'direct' | 'protectedDirect' | 'savedTokens' | 'savingsRatio' | 'policy' | 'qualityGuards'>;
   policy?: Pick<HeadroomPilotSettings, 'enabled' | 'mode' | 'minContextTokens' | 'passthroughContent' | 'validationGates' | 'updatedAt'>;
 }
 
@@ -70,10 +72,11 @@ export async function headroomStatus(): Promise<HeadroomStatus> {
 
 export async function headroomCoreAudit(pilot?: HeadroomPilotSettings): Promise<HeadroomCoreAudit> {
   const status = await headroomStatus();
+  const budget = contextBudgetReport();
   const reasons: string[] = [];
   if (!status.cli.found) reasons.push('Headroom CLI is not installed or not on the app PATH.');
   if (!status.proxy.reachable) reasons.push('Headroom proxy/MCP endpoint is not reachable at the local default URL.');
-  if (!pilot?.enabled) reasons.push('Saved Headroom policy is not enabled; current routing remains direct.');
+  if (!pilot?.enabled) reasons.push('Saved Headroom policy is not enabled; Headroom-specific routing remains direct.');
   reasons.push('IDACC has no manager-side contract that proves a compressed prompt can recover the original source before an agent acts.');
   reasons.push('Work prompts contain protected content classes such as source under active review, instructions, secrets/auth references, and validator evidence that must remain direct unless explicitly proven safe.');
 
@@ -101,9 +104,22 @@ export async function headroomCoreAudit(pilot?: HeadroomPilotSettings): Promise<
     safeToday: [
       'Keep token-throughput analytics visible on Health.',
       'Keep Headroom out of the Health UI so it does not look like active token savings.',
-      'Continue using direct routing for Work, Chat, Plans, Learn, validation, and task lifecycle prompts.',
+      'Use hidden deterministic context budgeting for eligible /ask prompts: exact duplicate/background compaction only, with protected-content direct fallback.',
+      'Continue direct routing for secrets, instruction sidecars, active code patches, wallet/key material, low-context prompts, and prompts that do not clear the savings gate.',
       'Use the existing MCP/provider catalog only for explicit operator experiments, not automatic core routing.',
     ],
+    contextBudget: {
+      coreEnabled: budget.coreEnabled,
+      frontendSurface: budget.frontendSurface,
+      inspected: budget.inspected,
+      optimized: budget.optimized,
+      direct: budget.direct,
+      protectedDirect: budget.protectedDirect,
+      savedTokens: budget.savedTokens,
+      savingsRatio: budget.savingsRatio,
+      policy: budget.policy,
+      qualityGuards: budget.qualityGuards,
+    },
     policy: pilot ? {
       enabled: pilot.enabled,
       mode: pilot.mode,
