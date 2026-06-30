@@ -8,6 +8,9 @@ Every change pushed or merged to `main` carries its version number in the commit
 subject (`vX.Y.Z: …`), stamped automatically by the `commit-msg` hook — see
 [CONTRIBUTING.md](CONTRIBUTING.md).
 
+## [0.1.305] — 2026-06-30
+- Brain Agents controller unavailable state
+
 ## [0.1.304] — 2026-06-29
 - Brain Learning replay confirmation
 
