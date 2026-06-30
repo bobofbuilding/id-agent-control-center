@@ -22,6 +22,12 @@ type AssignScope = 'team' | 'selected-teams' | 'team-leads' | 'all-agents';
 type TaskSnapshot = { status: string; owner?: string; team?: string; lane: Lane };
 type TeamAgentsGroup = { team: string; agents: TeamAgent[] };
 type WorkSchedule = ScheduleEntry & { team?: string };
+type WorkOrgHierarchy = {
+  primary: { team: string; agent: string } | null;
+  secondaries: { agent: string; team: string; leadsTeams: string[] }[];
+  coordinators: Record<string, string>;
+  teams: string[];
+};
 
 type Tab = 'tasks' | 'goals' | 'plans' | 'schedule' | 'loops' | 'dream';
 const TABS: { id: Tab; label: string }[] = [
@@ -147,7 +153,9 @@ export function Tasks({ store, initialTab }: { store: FleetStore; initialTab?: T
 
 function TasksPanel({ store }: { store: FleetStore }) {
   const syncVersion = useSyncVersion(['tasks', 'work', 'questions', 'inbox']);
+  const hierarchySyncVersion = useSyncVersion(['org', 'agents', 'work']);
   const [tasks, setTasks] = useState<Task[]>([]);
+  const [hier, setHier] = useState<WorkOrgHierarchy>({ primary: null, secondaries: [], coordinators: {}, teams: [] });
   const [busy, setBusy] = useState(false);
   const [note, setNote] = useState('');
   const [q, setQ] = useState('');
@@ -190,6 +198,12 @@ function TasksPanel({ store }: { store: FleetStore }) {
   const prompt = usePrompt();
   const toast = useToast();
 
+  useEffect(() => {
+    let live = true;
+    void call<WorkOrgHierarchy>('org:hierarchy').then((h) => { if (live && h) setHier(h); }).catch(() => {});
+    return () => { live = false; };
+  }, [store.lastUpdated, hierarchySyncVersion]);
+
   // Teams with ≥1 running agent (idle teams hidden from the work-team picker).
   const ACTIVE_RE = /stop|offline|dead|exit|error|crash|down|disabled|sleep/i;
   const activeTeams = store.teams.map((t) => t.name).filter((n) => n && store.allAgents.some((a) => a.team === n && !!a.status && !ACTIVE_RE.test(a.status)));
@@ -203,8 +217,19 @@ function TasksPanel({ store }: { store: FleetStore }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeTeams.join(','), store.team]);
   const activeTeam = workTeam || store.team || 'default';
-  const teamAgents = store.allAgents.filter((a) => a.team === activeTeam);
-  const coordinator = resolveCoordinator(teamAgents, activeTeam === store.team ? store.coordinator : undefined) ?? teamAgents[0]?.name ?? '';
+  function agentsForWorkTeam(team: string): TeamAgent[] {
+    const scoped = store.allAgents.filter((a) => a.team === team);
+    if (scoped.length) return scoped;
+    if (team === store.team) return store.agents.map((a) => ({ ...a, team }));
+    return [];
+  }
+  function leadForWorkTeam(team: string): string {
+    const agents = agentsForWorkTeam(team);
+    const configured = hier.coordinators[team] || (team === store.team ? store.coordinator : undefined);
+    return resolveCoordinator(agents, configured) ?? agents[0]?.name ?? '';
+  }
+  const teamAgents = agentsForWorkTeam(activeTeam);
+  const coordinator = leadForWorkTeam(activeTeam);
   const leadName = lead && teamAgents.some((a) => a.name === lead) ? lead : coordinator;
   const otherTeams = store.teams.map((t) => t.name).filter((n) => n && n !== activeTeam);
   const activeTeamAgents = teamAgents.filter((a) => liveAgent(a.status)); // routable members of the chosen team
@@ -213,7 +238,7 @@ function TasksPanel({ store }: { store: FleetStore }) {
   const selectedAssignTeams = assignTeams.size ? assignTeams : new Set([activeTeam]);
   const teamLeadAgents = store.teams.flatMap((t) => {
     const ags = allTeamAgents.filter((a) => a.team === t.name);
-    const leadForTeam = resolveCoordinator(ags, t.name === store.team ? store.coordinator : undefined);
+    const leadForTeam = leadForWorkTeam(t.name);
     const a = leadForTeam ? ags.find((x) => x.name === leadForTeam) : undefined;
     return a && liveAgent(a.status) ? [a] : [];
   });
@@ -588,7 +613,7 @@ function TasksPanel({ store }: { store: FleetStore }) {
     let assigned = 0;
     try {
       for (const team of teamsWithPending) {
-        const tl = resolveCoordinator(store.allAgents.filter((a) => a.team === team), team === store.team ? store.coordinator : undefined) ?? '';
+        const tl = leadForWorkTeam(team);
         if (!tl) continue;
         try { const res = await call<TriageResult>('work:triage', tl, team); assigned += res.assigned?.length ?? 0; } catch { /* keep going */ }
       }
