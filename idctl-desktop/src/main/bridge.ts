@@ -271,6 +271,50 @@ function stableHash(s: string): string {
   return createHash('sha1').update(s).digest('hex').slice(0, 16);
 }
 
+async function previewProjectsSync(rootArg?: string): Promise<{
+  ok: boolean;
+  root: string | null;
+  found: number;
+  added: number;
+  adopted: number;
+  existing: number;
+  total: number;
+  addNames: string[];
+  adoptNames: string[];
+  error?: string;
+}> {
+  const root = detectProjectsRoot(typeof rootArg === 'string' && rootArg.trim() ? rootArg.trim() : loadSettings().projectsRoot);
+  const projects = loadSettings().projects ?? [];
+  if (!root) return { ok: false, root: null, found: 0, added: 0, adopted: 0, existing: 0, total: projects.length, addNames: [], adoptNames: [], error: 'no projects folder found' };
+  const scan = await scanProjectsRoot(root);
+  if (scan.error) return { ok: false, root, found: 0, added: 0, adopted: 0, existing: 0, total: projects.length, addNames: [], adoptNames: [], error: scan.error };
+  const byPath = new Set(projects.map((p) => normPath(p.path)).filter(Boolean) as string[]);
+  const pathlessByName = new Map<string, ProjectEntry>();
+  for (const p of projects) { const k = normName(p.name); if (!p.path && k) pathlessByName.set(k, p); }
+  let added = 0;
+  let adopted = 0;
+  let existing = 0;
+  const addNames: string[] = [];
+  const adoptNames: string[] = [];
+  for (const d of scan.found) {
+    const np = normPath(d.path);
+    if (np && byPath.has(np)) { existing++; continue; }
+    const key = normName(d.name);
+    const adopt = key ? pathlessByName.get(key) : undefined;
+    if (adopt) {
+      adopted++;
+      adoptNames.push(d.name);
+      pathlessByName.delete(key);
+      if (np) byPath.add(np);
+      continue;
+    }
+    added++;
+    addNames.push(d.name);
+    if (np) byPath.add(np);
+  }
+  return { ok: true, root, found: scan.found.length, added, adopted, existing, total: projects.length + added, addNames, adoptNames };
+}
+
 function codexModelsFromCache(): string[] {
   try {
     const raw = readFileSync(join(homedir(), '.codex', 'models_cache.json'), 'utf8');
@@ -953,6 +997,8 @@ const METHODS: Record<string, (...a: any[]) => Promise<unknown>> = {
   },
   // Detect the projects root (returns null if none found).
   'projects:detectRoot': async (root?: string) => detectProjectsRoot(typeof root === 'string' ? root : loadSettings().projectsRoot),
+  // Preview the additive workspace sync before the renderer asks for confirmation.
+  'projects:previewSyncRoot': async (rootArg?: string) => previewProjectsSync(typeof rootArg === 'string' ? rootArg : undefined),
   // Sync the workspace projects folder into the tracker. Additive + idempotent:
   // dedupes by folder path, adopts a path-less manual entry of the same name,
   // never deletes or overwrites your edits. Persists the resolved root.

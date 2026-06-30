@@ -36,6 +36,18 @@ type TaskLite = { shortId?: string; uuid?: string; title: string; status: string
 type GithubMeta = { ok: boolean; name?: string; description?: string; topics?: string[]; language?: string; isPrivate?: boolean; error?: string };
 type CloneResult = { ok: boolean; path?: string; name?: string; error?: string };
 type ProjectDiff = { ok: boolean; stat: string; diff: string; untracked: string[]; error?: string };
+type SyncPreview = {
+  ok: boolean;
+  root: string | null;
+  found: number;
+  added: number;
+  adopted: number;
+  existing: number;
+  total: number;
+  addNames: string[];
+  adoptNames: string[];
+  error?: string;
+};
 
 function newId(): string {
   return `p_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 7)}`;
@@ -123,6 +135,32 @@ function diffStateStamp(d: ProjectDiff | null | undefined): string {
     untracked: [...(d.untracked ?? [])].sort(),
     error: d.error ?? '',
   } : null);
+}
+function syncPreviewStamp(p: SyncPreview): string {
+  return JSON.stringify({
+    ok: p.ok,
+    root: p.root ?? '',
+    found: p.found,
+    added: p.added,
+    adopted: p.adopted,
+    existing: p.existing,
+    total: p.total,
+    addNames: [...(p.addNames ?? [])].sort(),
+    adoptNames: [...(p.adoptNames ?? [])].sort(),
+  });
+}
+function syncPreviewLines(p: SyncPreview): string[] {
+  const lines = [
+    `Root: ${p.root ?? '(none)'}`,
+    `Found: ${p.found} folder${p.found === 1 ? '' : 's'}`,
+    `Already tracked: ${p.existing}`,
+    `Will add: ${p.added}`,
+    `Will adopt/link: ${p.adopted}`,
+    `Tracker total after sync: ${p.total}`,
+  ];
+  if (p.addNames?.length) lines.push(`Add: ${p.addNames.slice(0, 8).join(', ')}${p.addNames.length > 8 ? `, ...and ${p.addNames.length - 8} more` : ''}`);
+  if (p.adoptNames?.length) lines.push(`Adopt: ${p.adoptNames.slice(0, 8).join(', ')}${p.adoptNames.length > 8 ? `, ...and ${p.adoptNames.length - 8} more` : ''}`);
+  return lines;
 }
 function autoCommitBlockers(g: GitInfo | null | undefined, d: ProjectDiff | null | undefined): string[] {
   const out: string[] = [];
@@ -314,9 +352,31 @@ export function Projects({ store }: { store: FleetStore }) {
   /** Scan the workspace projects folder and merge each subfolder into the tracker. */
   async function doSync(rootArg?: string, silent = false) {
     setSyncing(true);
-    if (!silent) setNote('syncing from workspace…');
+    if (!silent) setNote('reviewing workspace sync…');
     try {
-      const res = await call<SyncResult>('projects:syncRoot', rootArg).catch((): SyncResult => ({ ok: false, root: null, added: 0, adopted: 0, total: 0, error: 'sync failed' }));
+      const preview = await call<SyncPreview>('projects:previewSyncRoot', rootArg).catch((): SyncPreview => ({
+        ok: false, root: null, found: 0, added: 0, adopted: 0, existing: 0, total: projects.length, addNames: [], adoptNames: [], error: 'preview failed',
+      }));
+      if (preview.root) setRoot(preview.root);
+      if (!preview.ok) { setNote(preview.error ? `sync preview: ${preview.error}` : 'no projects folder found'); return; }
+      if (!silent) {
+        if (!window.confirm([
+          'Sync workspace projects?',
+          '',
+          ...syncPreviewLines(preview),
+          '',
+          'This is additive: it tracks immediate subfolders, links same-named pathless entries, and does not delete folders or overwrite project notes.',
+        ].join('\n'))) { setNote('workspace sync cancelled'); return; }
+        const afterConfirm = await call<SyncPreview>('projects:previewSyncRoot', preview.root).catch(() => null);
+        if (!afterConfirm || syncPreviewStamp(afterConfirm) !== syncPreviewStamp(preview)) {
+          if (afterConfirm?.root) setRoot(afterConfirm.root);
+          setNote('workspace sync blocked: the folder scan changed during review');
+          window.alert('Workspace sync changed during confirmation. No tracker rows were written; review the current preview and try again.');
+          return;
+        }
+      }
+      setNote('syncing from workspace…');
+      const res = await call<SyncResult>('projects:syncRoot', preview.root ?? rootArg).catch((): SyncResult => ({ ok: false, root: null, added: 0, adopted: 0, total: 0, error: 'sync failed' }));
       if (res.root) setRoot(res.root);
       if (!res.ok) { setNote(res.error ? `sync: ${res.error}` : 'no projects folder found'); return; }
       const list = await call<ProjectEntry[]>('projects:list').catch(() => []);
