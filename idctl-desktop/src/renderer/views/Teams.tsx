@@ -627,6 +627,14 @@ export function Teams({ store, focus, onFocusHandled }: { store: FleetStore; foc
         `This changes which teams ${activeTeam}'s current agents may delegate work to.`,
       ].join('\n');
       if (!window.confirm(preview)) return;
+      const afterConfirm = await call<{ delegates_to: string[] | null }>('teamConfig', activeTeam);
+      if (relayKey(afterConfirm.delegates_to) !== relayKey(fresh.delegates_to)) {
+        setDelegates(afterConfirm.delegates_to);
+        setSavedDelegates(afterConfirm.delegates_to);
+        setMode(modeOf(afterConfirm.delegates_to));
+        setRelayMsg('blocked — relay policy changed after review; review refreshed policy before saving');
+        return;
+      }
       setRelayMsg('saving…');
       const r = await call<{ delegates_to: string[] | null }>('setTeamDelegates', activeTeam, relayPayload);
       setDelegates(r.delegates_to);
@@ -711,8 +719,30 @@ export function Teams({ store, focus, onFocusHandled }: { store: FleetStore; foc
         "This changes this individual agent's cross-team delegation policy immediately.",
       ].join('\n');
       if (!window.confirm(preview)) return false;
+      const [afterTeam, afterGroups] = await Promise.all([
+        call<{ delegates_to: string[] | null }>('teamConfig', activeTeam),
+        freshHrGroups(),
+      ]);
+      if (relayKey(afterTeam.delegates_to) !== relayKey(freshTeam.delegates_to)) {
+        setDelegates(afterTeam.delegates_to);
+        setSavedDelegates(afterTeam.delegates_to);
+        setMode(modeOf(afterTeam.delegates_to));
+        setMsg(`blocked: ${activeTeam} relay policy changed after review; review refreshed policy before overriding ${fresh.name}.`);
+        return false;
+      }
+      const afterAgent = findHrAgent(afterGroups, activeTeam, { id: a.id, name: a.name });
+      if (!afterAgent || hrAgentStamp({ ...afterAgent, team: activeTeam }, activeTeam) !== hrAgentStamp({ ...fresh, team: activeTeam }, activeTeam)) {
+        setMsg(`blocked: ${activeTeam}/${fresh.name} changed after review. Refreshed; review the current row before applying relay.`);
+        store.refresh();
+        return false;
+      }
+      if (relayKey(currentAgentDelegates(afterAgent)) !== relayKey(current)) {
+        setMsg(`blocked: ${activeTeam}/${fresh.name} relay override changed after review. Refreshed; review and try again.`);
+        store.refresh();
+        return false;
+      }
       setMsg(`${label}…`);
-      await call('setAgentDelegates', fresh.id, delegates);
+      await call('setAgentDelegates', afterAgent.id, delegates);
       store.refresh();
       setMsg(`${label} ✓`);
       return true;
@@ -871,7 +901,15 @@ export function Teams({ store, focus, onFocusHandled }: { store: FleetStore; foc
       `This changes the lead that the rest of ${team} reports to.`,
     ].join('\n');
     if (!window.confirm(preview)) return;
-    await call('coordinator:set', team, freshAgent.name).catch(() => {});
+    const afterHier = await call<HrHierarchy>('coordinator:hierarchy').catch(() => ({ primary: null, coordinators: {} }));
+    if (hierarchyStamp(afterHier) !== hierarchyStamp(freshHier)) {
+      setHier(afterHier);
+      setMsg('Set coordinator blocked: lead hierarchy changed after review. Review the refreshed hierarchy first.');
+      return;
+    }
+    const afterAgent = await ensureHierarchyAgent('Set coordinator after review', team, freshAgent.name);
+    if (!afterAgent) return;
+    await call('coordinator:set', team, afterAgent.name).catch(() => {});
     await loadHier();
     store.refresh();
   }
@@ -900,8 +938,17 @@ export function Teams({ store, focus, onFocusHandled }: { store: FleetStore; foc
       'This changes fleet hierarchy routing. Run Org sync afterward to push the hierarchy into agent goals and the brain.',
     ].join('\n');
     if (!window.confirm(preview)) return;
-    await call('coordinator:setPrimary', team, freshAgent.name).catch(() => {});
+    const afterHier = await call<HrHierarchy>('coordinator:hierarchy').catch(() => ({ primary: null, coordinators: {} }));
+    if (hierarchyStamp(afterHier) !== hierarchyStamp(freshHier)) {
+      setHier(afterHier);
+      setMsg('Promote primary blocked: lead hierarchy changed after review. Review the refreshed hierarchy first.');
+      return;
+    }
+    const afterAgent = await ensureHierarchyAgent('Promote primary after review', team, freshAgent.name);
+    if (!afterAgent) return;
+    await call('coordinator:setPrimary', team, afterAgent.name).catch(() => {});
     await loadHier();
+    store.refresh();
   }
 
   // ---- Reactive Org Sync: each agent's goals file composed from the hierarchy + brain ----
@@ -953,6 +1000,7 @@ export function Teams({ store, focus, onFocusHandled }: { store: FleetStore; foc
     if (!(await ensureOrgConfigFresh('Org config change'))) return;
     const label = patch.enabled !== undefined ? `${patch.enabled ? 'Enable' : 'Disable'} org auto-sync` : `${patch.autoRebuild ? 'Enable' : 'Disable'} org auto-rebuild`;
     if (!window.confirm(`${label}?\n\nOrg sync composes agent goals from the hierarchy and brain; auto-rebuild can restart idle agents after goals change.`)) return;
+    if (!(await ensureOrgConfigFresh('Org config change after review'))) return;
     const next = await call<{ enabled?: boolean; autoRebuild?: boolean }>('org:setConfig', patch).catch(() => orgCfg);
     setOrgCfg(next);
   }
