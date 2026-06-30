@@ -3,6 +3,7 @@ import { call, resolveCoordinator, useSyncVersion, type FleetStore, type TeamAge
 import { usePrompt } from '../components/prompt.tsx';
 import { useToast } from '../components/toast.tsx';
 import type { Task } from '../../../../idctl/src/api/types.ts';
+import type { ScheduleEntry } from '../../../../idctl/src/api/client.ts';
 import { Schedule } from './Schedule.tsx';
 import { Loops } from './Loops.tsx';
 import { Plans } from './Plans.tsx';
@@ -19,6 +20,8 @@ type FanoutResult = { team: string; lead?: string; status: 'dispatched' | 'no-ac
 type TriageResult = { considered: number; assigned: { ref: string; agent: string }[]; skipped: number; dispatched: number; error?: string };
 type AssignScope = 'team' | 'selected-teams' | 'team-leads' | 'all-agents';
 type TaskSnapshot = { status: string; owner?: string; team?: string; lane: Lane };
+type TeamAgentsGroup = { team: string; agents: TeamAgent[] };
+type WorkSchedule = ScheduleEntry & { team?: string };
 
 type Tab = 'tasks' | 'goals' | 'plans' | 'schedule' | 'loops' | 'dream';
 const TABS: { id: Tab; label: string }[] = [
@@ -31,6 +34,10 @@ const TABS: { id: Tab; label: string }[] = [
 ];
 
 function qArg(s: string): string { return `"${s.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`; }
+function clipText(s: string, n: number): string {
+  const t = String(s || '').replace(/\s+/g, ' ').trim();
+  return t.length > n ? `${t.slice(0, n)}...` : t;
+}
 const SURFACE_BLOCKERS_PROMPT = (taskList: string) =>
   'Review the team\'s current open tasks below. For any task BLOCKED on a decision only the USER can make ' +
   '(a genuine fork with 2-4 discrete options — NOT work you can just do), produce a question. Return JSON ONLY ' +
@@ -232,10 +239,152 @@ function TasksPanel({ store }: { store: FleetStore }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [showAssign, activeTeam, store.teams.length]);
 
+  async function freshAgentGroups(): Promise<TeamAgentsGroup[]> {
+    const groups = await call<TeamAgentsGroup[]>('agents:allTeams').catch(() => [] as TeamAgentsGroup[]);
+    if (groups.length) return groups;
+    return [{ team: store.team ?? 'default', agents: store.agents.map((a) => ({ ...a, team: store.team ?? 'default' })) }];
+  }
+  function findFreshWorkAgent(groups: TeamAgentsGroup[], team: string, name: string): TeamAgent | null {
+    const found = groups.find((g) => g.team === team)?.agents.find((a) => a.name === name);
+    return found ? { ...found, team } : null;
+  }
+  async function ensureWorkAgentFresh(action: string, team: string, name: string, rendered?: TeamAgent): Promise<TeamAgent | null> {
+    const groups = await freshAgentGroups();
+    const current = findFreshWorkAgent(groups, team, name);
+    if (!current) {
+      window.alert(`${action} blocked: ${team}/${name} is no longer in the current roster.\n\nThe Work page will refresh; review the current target before creating live work.`);
+      store.refresh();
+      return null;
+    }
+    if (rendered?.id && current.id && current.id !== rendered.id) {
+      window.alert(`${action} blocked: ${team}/${name} now points to a different agent id.\n\nThe Work page will refresh; review the current target before creating live work.`);
+      store.refresh();
+      return null;
+    }
+    if (!liveAgent(current.status)) {
+      window.alert(`${action} blocked: ${team}/${name} is no longer running (${current.status || 'unknown'}).\n\nThe Work page will refresh; pick a live target before creating work.`);
+      store.refresh();
+      return null;
+    }
+    return current;
+  }
+  async function ensureWorkTargetsFresh(action: string, targets: TeamAgent[]): Promise<TeamAgent[] | null> {
+    const groups = await freshAgentGroups();
+    const fresh: TeamAgent[] = [];
+    for (const target of targets) {
+      const team = target.team ?? activeTeam;
+      const current = findFreshWorkAgent(groups, team, target.name);
+      if (!current) {
+        window.alert(`${action} blocked: ${team}/${target.name} is no longer in the current roster.\n\nThe Work page will refresh; review the selected targets before dispatching.`);
+        store.refresh();
+        return null;
+      }
+      if (target.id && current.id && target.id !== current.id) {
+        window.alert(`${action} blocked: ${team}/${target.name} changed identity since it was selected.\n\nThe Work page will refresh; review the selected targets before dispatching.`);
+        store.refresh();
+        return null;
+      }
+      if (!liveAgent(current.status)) {
+        window.alert(`${action} blocked: ${team}/${target.name} is no longer running (${current.status || 'unknown'}).\n\nThe Work page will refresh; pick live targets before dispatching.`);
+        store.refresh();
+        return null;
+      }
+      fresh.push(current);
+    }
+    return fresh;
+  }
+  async function ensureProposalOwnersFresh(action: string, team: string, owners: string[]): Promise<boolean> {
+    const wanted = [...new Set(owners.map((o) => o.trim()).filter(Boolean))];
+    if (!wanted.length) return true;
+    const groups = await freshAgentGroups();
+    const liveNames = new Set((groups.find((g) => g.team === team)?.agents ?? []).filter((a) => liveAgent(a.status)).map((a) => a.name));
+    const stale = wanted.filter((name) => !liveNames.has(name));
+    if (stale.length) {
+      window.alert(`${action} blocked: ${team} proposal owner${stale.length === 1 ? '' : 's'} no longer running or present: ${stale.join(', ')}.\n\nRe-run decomposition or pick current owners before creating tasks.`);
+      store.refresh();
+      return false;
+    }
+    return true;
+  }
+  async function freshWorkSchedules(): Promise<WorkSchedule[]> {
+    const all = await call<WorkSchedule[]>('schedules:allTeams').catch(() => [] as WorkSchedule[]);
+    if (all.length) return all;
+    const local = await call<ScheduleEntry[]>('schedules').catch(() => [] as ScheduleEntry[]);
+    return local.map((s) => ({ ...s, team: store.team ?? 'default' }));
+  }
+  function heartbeatsForTarget(list: WorkSchedule[], team: string, agent: string): WorkSchedule[] {
+    return list.filter((s) => s.kind === 'heartbeat' && (s.targets ?? []).includes(agent) && (s.team ?? store.team ?? 'default') === team);
+  }
+  function workScheduleStamp(s: WorkSchedule): string {
+    return JSON.stringify({
+      id: s.id,
+      active: !!s.active,
+      intervalSeconds: s.intervalSeconds ?? null,
+      targets: [...(s.targets ?? [])].sort(),
+      message: s.message ?? '',
+      team: s.team ?? store.team ?? 'default',
+    });
+  }
+  function workScheduleIds(list: WorkSchedule[]): string {
+    return list.map(workScheduleStamp).sort().join('|');
+  }
+  function workScheduleSummary(s: WorkSchedule): string {
+    const cadence = s.intervalSeconds ? intervalLabel(Math.max(1, Math.round(s.intervalSeconds / 60))) : 'interval unknown';
+    return `- ${cadence} ${s.active ? 'active' : 'paused'}: ${clipText(s.message || s.title || '(no message)', 110)}`;
+  }
+  async function confirmRecurringWork(action: string, team: string, agent: string, replacesHeartbeat: boolean, detail: string): Promise<TeamAgent | null> {
+    const beforeAgent = await ensureWorkAgentFresh(action, team, agent);
+    if (!beforeAgent) return null;
+    const beforeHeartbeats = replacesHeartbeat ? heartbeatsForTarget(await freshWorkSchedules(), team, beforeAgent.name) : [];
+    const replacement = beforeHeartbeats.length
+      ? `\n\nExisting interval heartbeat route for ${team}/${beforeAgent.name}:\n${beforeHeartbeats.map(workScheduleSummary).join('\n')}\n\nThis action replaces that recurring route; use the Schedule tab instead if you only meant to inspect it.`
+      : replacesHeartbeat
+        ? `\n\nNo existing interval heartbeat route was found for ${team}/${beforeAgent.name}; this will create one.`
+        : '';
+    if (!window.confirm(`${action}?\n\n${detail}${replacement}`)) return null;
+    const afterAgent = await ensureWorkAgentFresh(action, team, beforeAgent.name, beforeAgent);
+    if (!afterAgent) return null;
+    if (replacesHeartbeat) {
+      const afterHeartbeats = heartbeatsForTarget(await freshWorkSchedules(), team, afterAgent.name);
+      if (workScheduleIds(beforeHeartbeats) !== workScheduleIds(afterHeartbeats)) {
+        window.alert(`${action} blocked: the interval heartbeat route for ${team}/${afterAgent.name} changed during confirmation.\n\nThe Work page will refresh; review Schedule before replacing the current recurring route.`);
+        store.refresh();
+        return null;
+      }
+    }
+    return afterAgent;
+  }
+  async function freshSelectedTeamLeads(teams: string[]): Promise<TeamLead[]> {
+    return call<TeamLead[]>('work:teamLeads', teams).catch(() => [] as TeamLead[]);
+  }
+  function teamLeadStamp(list: TeamLead[]): string {
+    return [...list].sort((a, b) => a.team.localeCompare(b.team)).map((l) => `${l.team}:${l.lead ?? ''}:${l.activeCount}:${l.totalCount}`).join('|');
+  }
+  async function confirmFanoutTargets(teams: string[], objectiveText: string): Promise<TeamLead[] | null> {
+    const before = await freshSelectedTeamLeads(teams);
+    const missing = teams.filter((team) => !before.some((l) => l.team === team));
+    const blocked = before.filter((l) => !l.lead || l.activeCount < 1);
+    if (missing.length || blocked.length) {
+      setAssignNote(`fan-out blocked: no current active lead for ${[...missing, ...blocked.map((l) => l.team)].join(', ')}`);
+      store.refresh();
+      return null;
+    }
+    const lines = before.map((l) => `- ${l.team}/${l.lead} (${l.activeCount}/${l.totalCount} running)`).join('\n');
+    if (!window.confirm(`Fan out objective to ${before.length} team lead${before.length === 1 ? '' : 's'}?\n\n${lines}\n\nObjective: ${clipText(objectiveText, 240)}`)) return null;
+    const after = await freshSelectedTeamLeads(teams);
+    if (teamLeadStamp(before) !== teamLeadStamp(after)) {
+      window.alert('Fan-out blocked: selected team lead availability changed during confirmation.\n\nThe Work page will refresh; review the current leads before dispatching.');
+      store.refresh();
+      return null;
+    }
+    return after;
+  }
+
   async function fanOut() {
     const obj = objective.trim();
     const teams = [...fanTeams];
     if (!obj || !teams.length) return;
+    if (!(await confirmFanoutTargets(teams, obj))) return;
     setProposing(true); setAssignNote(`fanning out to ${teams.length} team${teams.length > 1 ? 's' : ''}…`);
     // Global toast: survives leaving this page; the dispatch runs in the main process.
     const t = toast({ kind: 'progress', text: `Fanning work out to ${teams.length} team${teams.length > 1 ? 's' : ''}…` });
@@ -576,7 +725,9 @@ function TasksPanel({ store }: { store: FleetStore }) {
   }
   async function createPlan() {
     if (!proposal || !proposal.length) return;
+    if (!(await ensureProposalOwnersFresh('Create plan', activeTeam, proposal.map((p) => p.agent)))) return;
     if (!window.confirm(`Create and dispatch ${proposal.length} task${proposal.length === 1 ? '' : 's'} for ${activeTeam}?\n\nThis writes task cards and sends work to the selected owners.`)) return;
+    if (!(await ensureProposalOwnersFresh('Create plan', activeTeam, proposal.map((p) => p.agent)))) return;
     setProposing(true); setAssignNote('creating tasks & dispatching to the fleet…');
     const n = proposal.length;
     // Global toast: persists after the panel closes / you switch pages.
@@ -605,12 +756,16 @@ function TasksPanel({ store }: { store: FleetStore }) {
     const title = objective.trim();
     const agents = selectedAssignTargets.filter((a) => assignOptionKeys.has(agentKey(a, activeTeam)));
     if (!title || !agents.length) { setAssignNote('enter a task and pick at least one agent'); return; }
-    if (!window.confirm(`Assign and dispatch "${title.slice(0, 80)}" to ${agents.length} agent${agents.length === 1 ? '' : 's'}?\n\nThis creates live task card${agents.length === 1 ? '' : 's'} and sends background work immediately.`)) return;
+    const beforeTargets = await ensureWorkTargetsFresh('Assign and dispatch', agents);
+    if (!beforeTargets) return;
+    if (!window.confirm(`Assign and dispatch "${title.slice(0, 80)}" to ${beforeTargets.length} agent${beforeTargets.length === 1 ? '' : 's'}?\n\nTargets:\n${beforeTargets.map((a) => `- ${agentLabel(a, activeTeam)}`).join('\n')}\n\nThis creates live task card${beforeTargets.length === 1 ? '' : 's'} and sends background work immediately.`)) return;
+    const freshTargets = await ensureWorkTargetsFresh('Assign and dispatch', beforeTargets);
+    if (!freshTargets) return;
     setProposing(true);
-    const t = toast({ kind: 'progress', text: `Assigning "${title.slice(0, 40)}" to ${agents.length} agent${agents.length === 1 ? '' : 's'}…` });
+    const t = toast({ kind: 'progress', text: `Assigning "${title.slice(0, 40)}" to ${freshTargets.length} agent${freshTargets.length === 1 ? '' : 's'}…` });
     try {
       const byTeam = new Map<string, TeamAgent[]>();
-      for (const a of agents) {
+      for (const a of freshTargets) {
         const tm = a.team ?? activeTeam;
         byTeam.set(tm, [...(byTeam.get(tm) ?? []), a]);
       }
@@ -621,8 +776,8 @@ function TasksPanel({ store }: { store: FleetStore }) {
       }));
       const ok = results.reduce((n, r) => n + r.ok, 0);
       const dispatched = results.reduce((n, r) => n + r.dispatched, 0);
-      t.update({ kind: ok ? 'success' : 'error', text: `assigned ${ok}/${agents.length} · dispatched ${dispatched} across ${results.length} team${results.length === 1 ? '' : 's'}` });
-      setAssignNote(`assigned to ${agents.map((a) => agentLabel(a, activeTeam)).join(', ')} ✓`);
+      t.update({ kind: ok ? 'success' : 'error', text: `assigned ${ok}/${freshTargets.length} · dispatched ${dispatched} across ${results.length} team${results.length === 1 ? '' : 's'}` });
+      setAssignNote(`assigned to ${freshTargets.map((a) => agentLabel(a, activeTeam)).join(', ')} ✓`);
       setObjective(''); setTaskDesc(''); setAssignTo(new Set()); setShowAssign(false);
       await reload();
     } catch (err) {
@@ -643,14 +798,22 @@ function TasksPanel({ store }: { store: FleetStore }) {
     const msg = objective.trim();
     if (!schedTarget || !msg) { setAssignNote('pick an agent and enter the check-in message'); return; }
     const cadence = schedKind === 'interval' ? `every ${intervalLabel(everyMin)}` : `${calDays} @ ${calTime}`;
-    if (!window.confirm(`Schedule ${schedTarget} (${cadence})?\n\nThis creates a live manager check-in that will keep firing until it is paused or removed.`)) return;
+    const target = await confirmRecurringWork(
+      `Schedule ${activeTeam}/${schedTarget} (${cadence})`,
+      activeTeam,
+      schedTarget,
+      schedKind === 'interval',
+      `This creates a live manager check-in that will keep firing until it is paused or removed. Delivery: ${delivery}.`,
+    );
+    if (!target) return;
+    const targetTeam = target.team ?? activeTeam;
     setProposing(true);
-    const t = toast({ kind: 'progress', text: `Scheduling ${schedTarget} (${cadence})…` });
+    const t = toast({ kind: 'progress', text: `Scheduling ${targetTeam}/${target.name} (${cadence})…` });
     try {
-      if (schedKind === 'interval') await call('addHeartbeat', schedTarget, everyMin * 60, msg, delivery, activeTeam);
-      else await call('addCalendarCheckin', schedTarget, calTime, calDays, msg, { delivery }, activeTeam);
-      t.update({ kind: 'success', text: `Scheduled ${schedTarget} · ${cadence} → see the Schedule tab` });
-      setAssignNote(`scheduled ${schedTarget} ${cadence} ✓`); setObjective(''); setShowAssign(false);
+      if (schedKind === 'interval') await call('addHeartbeat', target.name, everyMin * 60, msg, delivery, targetTeam);
+      else await call('addCalendarCheckin', target.name, calTime, calDays, msg, { delivery }, targetTeam);
+      t.update({ kind: 'success', text: `Scheduled ${targetTeam}/${target.name} · ${cadence} → see the Schedule tab` });
+      setAssignNote(`scheduled ${targetTeam}/${target.name} ${cadence} ✓`); setObjective(''); setShowAssign(false);
     } catch (err) {
       const m = err instanceof Error ? err.message : String(err);
       t.update({ kind: 'error', text: `Schedule failed: ${m}` }); setAssignNote(`schedule failed: ${m}`);
@@ -659,14 +822,22 @@ function TasksPanel({ store }: { store: FleetStore }) {
   async function createLoop() {
     const obj = objective.trim();
     if (!schedTarget || !obj) { setAssignNote('pick an agent and describe the loop objective'); return; }
-    if (!window.confirm(`Start recurring loop for ${schedTarget} every ${intervalLabel(everyMin)}?\n\nThis creates an internal manager heartbeat that continues the objective on its cadence.`)) return;
+    const target = await confirmRecurringWork(
+      `Start recurring loop for ${activeTeam}/${schedTarget}`,
+      activeTeam,
+      schedTarget,
+      true,
+      `This creates/replaces an internal manager heartbeat that continues the objective every ${intervalLabel(everyMin)}.`,
+    );
+    if (!target) return;
+    const targetTeam = target.team ?? activeTeam;
     setProposing(true);
-    const t = toast({ kind: 'progress', text: `Starting loop on ${schedTarget} (every ${intervalLabel(everyMin)})…` });
+    const t = toast({ kind: 'progress', text: `Starting loop on ${targetTeam}/${target.name} (every ${intervalLabel(everyMin)})…` });
     try {
       const msg = `Loop cycle (repeats every ${intervalLabel(everyMin)}). Continue this standing objective: ${obj}. Review what's already done, do the next concrete increment, update any related tasks, and briefly report progress. If it's fully complete, say so.`;
-      await call('addHeartbeat', schedTarget, everyMin * 60, msg, 'internal', activeTeam);
-      t.update({ kind: 'success', text: `Loop running on ${schedTarget} every ${intervalLabel(everyMin)} → Schedule tab` });
-      setAssignNote(`loop started on ${schedTarget} ✓`); setObjective(''); setShowAssign(false);
+      await call('addHeartbeat', target.name, everyMin * 60, msg, 'internal', targetTeam);
+      t.update({ kind: 'success', text: `Loop running on ${targetTeam}/${target.name} every ${intervalLabel(everyMin)} → Schedule tab` });
+      setAssignNote(`loop started on ${targetTeam}/${target.name} ✓`); setObjective(''); setShowAssign(false);
     } catch (err) {
       const m = err instanceof Error ? err.message : String(err);
       t.update({ kind: 'error', text: `Loop failed: ${m}` }); setAssignNote(`loop failed: ${m}`);
@@ -675,14 +846,22 @@ function TasksPanel({ store }: { store: FleetStore }) {
   async function createDream() {
     const vision = objective.trim();
     if (!schedTarget || !vision) { setAssignNote('pick an agent and describe the aspiration'); return; }
-    if (!window.confirm(`Set recurring dream for ${schedTarget} every ${intervalLabel(everyMin)}?\n\nThis creates a background aspiration check-in that should not preempt assigned work.`)) return;
+    const target = await confirmRecurringWork(
+      `Set recurring dream for ${activeTeam}/${schedTarget}`,
+      activeTeam,
+      schedTarget,
+      true,
+      `This creates/replaces a background aspiration heartbeat every ${intervalLabel(everyMin)}. It should not preempt assigned work.`,
+    );
+    if (!target) return;
+    const targetTeam = target.team ?? activeTeam;
     setProposing(true);
-    const t = toast({ kind: 'progress', text: `Setting a dream for ${schedTarget}…` });
+    const t = toast({ kind: 'progress', text: `Setting a dream for ${targetTeam}/${target.name}…` });
     try {
       const msg = `Dream — a standing background aspiration, no deadline (revisited every ${intervalLabel(everyMin)}): ${vision}. When you have spare capacity between assigned tasks, take ONE small concrete step toward it and note what you did. Never let this preempt assigned work.`;
-      await call('addHeartbeat', schedTarget, everyMin * 60, msg, 'internal', activeTeam);
-      t.update({ kind: 'success', text: `Dream set for ${schedTarget} (revisited every ${intervalLabel(everyMin)}) → Schedule tab` });
-      setAssignNote(`dream set for ${schedTarget} ✓`); setObjective(''); setShowAssign(false);
+      await call('addHeartbeat', target.name, everyMin * 60, msg, 'internal', targetTeam);
+      t.update({ kind: 'success', text: `Dream set for ${targetTeam}/${target.name} (revisited every ${intervalLabel(everyMin)}) → Schedule tab` });
+      setAssignNote(`dream set for ${targetTeam}/${target.name} ✓`); setObjective(''); setShowAssign(false);
     } catch (err) {
       const m = err instanceof Error ? err.message : String(err);
       t.update({ kind: 'error', text: `Dream failed: ${m}` }); setAssignNote(`dream failed: ${m}`);
