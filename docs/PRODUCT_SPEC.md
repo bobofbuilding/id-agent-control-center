@@ -1,6 +1,6 @@
 # ID Agents Control Center — Product Spec
 
-_Updated 2026-06-30 · reflects app **v0.1.385**. This is a page-by-page specification of
+_Updated 2026-06-30 · reflects app **v0.1.386**. This is a page-by-page specification of
 the desktop app as it actually ships today, produced by reviewing every page._
 
 ---
@@ -294,21 +294,32 @@ healthy statuses show red).
 
 ## 9. Identity & Keys (nav: "Identity & Keys" ⬡, route: `identity`)
 
-**Purpose:** Manage each agent's onchain identity (ENS/ID-chain domain + OWS wallet) and its
-ERC-4337 smart account, including time-boxed, scope-limited **session keys**. Today it runs against
-a **mock** provider ("Base Sepolia (mock)") that swaps for a real Safe4337 + bundler with no UI change.
+**Purpose:** Manage each agent's onchain identity (ENS/ID-chain domain + OWS/provider wallet) and
+its ERC-4337 smart account, including time-boxed, scope-limited **session keys**. Today it can run
+against a mock provider ("Base Sepolia (mock)") while keeping the same UI contract for a real
+Safe4337 + bundler path.
 
 **What you can do:** pick an agent; see identity (domain/wallet), **Register identity**, **Provision
-wallet**; see the Safe account (deployed vs counterfactual, address, owner), **Create account**,
-**Deploy**; list **session keys** (scope, address, time-remaining / revoked / expired), **Revoke**;
-**Issue a session key** by scope preset (registry-write / skill-publish / payments / full) + TTL
-preset (1h / 24h / 7d / 30d / until revoked).
+wallet**; review Brain controller sync; review onchain metadata standard coverage for ENSIP-24,
+ERC-8004, ERC-8048 / ERC-721T, ERC-8049, and B20 `extraMetadata`; see the Safe account (deployed
+vs counterfactual, address, owner), **Create account**, **Deploy**; list **session keys** (scope,
+address, time-remaining / revoked / expired), **Revoke**; **Issue a session key** by scope preset
+(registry-write / skill-publish / payments / full) + TTL preset (1h / 24h / 7d / 30d / until revoked).
 
 **Data & actions:** `keys:caps/presets/list/ensure/deploy/issue/revoke`, `identity:register`,
 `wallet:provision`.
 
-**Polish:** mock-only today ("· MOCK" header + footnote); write actions have **no error surfacing**
-(silent on failure); Register has no idempotency guard; reload trigger is coarse (`agents.length`).
+**Guardrails:** controller-wallet precedence is OWS address, generic provider-wallet metadata,
+legacy SkillMesh provider metadata, then address-shaped OWS wallet. The standards panel is read-only
+and recognizes common manager metadata fields for ENSIP-24 arbitrary resolver data, ERC-8004 agent
+registry/agentURI/agentWallet evidence, ERC-8048/ERC-721T token-level context/endpoints, ERC-8049
+contract-level metadata, and B20 `extraMetadata` without dumping raw resolver bytes, contract bytes,
+or issuer-defined metadata blobs into the UI. Live resolver/contract reads and manifest/runtime
+signature verification remain pending checks.
+
+**Polish:** Register has no idempotency guard; standards coverage currently reads manager metadata
+and controller evidence only, so live chain reads still need a backend contract before the page can
+mark those standards as externally verified.
 
 ---
 

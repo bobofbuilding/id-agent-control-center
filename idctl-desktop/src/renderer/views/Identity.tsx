@@ -22,6 +22,11 @@ interface ReviewRow {
   note: string;
 }
 
+interface MetadataHit {
+  path: string;
+  value: unknown;
+}
+
 interface BrainControllerLink {
   agent_id?: string;
   agentId?: string;
@@ -95,6 +100,39 @@ function providerWalletFromMetadata(metadata: unknown): string {
   return candidates
     .map((value) => (typeof value === 'string' ? value.trim() : ''))
     .find(isEthAddress) ?? '';
+}
+
+function metadataObject(metadata: unknown): Record<string, unknown> {
+  return metadata && typeof metadata === 'object' ? metadata as Record<string, unknown> : {};
+}
+
+function metadataValueAt(meta: Record<string, unknown>, path: string): unknown {
+  let current: unknown = meta;
+  for (const part of path.split('.')) {
+    if (!current || typeof current !== 'object') return undefined;
+    current = (current as Record<string, unknown>)[part];
+  }
+  return current;
+}
+
+function hasMetadataValue(value: unknown): boolean {
+  if (typeof value === 'string') return value.trim().length > 0;
+  if (typeof value === 'number') return Number.isFinite(value);
+  if (typeof value === 'boolean') return value;
+  if (Array.isArray(value)) return value.length > 0;
+  return Boolean(value && typeof value === 'object' && Object.keys(value).length > 0);
+}
+
+function firstMetadataHit(meta: Record<string, unknown>, paths: string[]): MetadataHit | undefined {
+  for (const path of paths) {
+    const value = metadataValueAt(meta, path);
+    if (hasMetadataValue(value)) return { path, value };
+  }
+  return undefined;
+}
+
+function metadataHitSource(hit: MetadataHit | undefined): string {
+  return hit ? `declared in metadata.${hit.path}` : '';
 }
 
 function controllerWallet(a: Agent | undefined): string {
@@ -173,6 +211,144 @@ function mockProviderWarning(caps: KeyCapabilities | null): string {
   return caps.live ? `${caps.chainLabel} live provider` : `${caps.chainLabel} mock provider; no on-chain authority is created.`;
 }
 
+function identityStandardRows(
+  agent: Agent | undefined,
+  domain: string,
+  wallet: string,
+  acct: AgentAccount | undefined,
+): ReviewRow[] {
+  if (!agent) {
+    return [
+      { label: 'ENS / ENSIP-24', state: 'missing', note: 'select an agent' },
+      { label: 'ERC-8004', state: 'missing', note: 'select an agent' },
+      { label: 'ERC-8048 / ERC-721T', state: 'missing', note: 'select an agent' },
+      { label: 'ERC-8049', state: 'missing', note: 'select an agent' },
+      { label: 'B20 extraMetadata', state: 'missing', note: 'select an agent' },
+    ];
+  }
+
+  const meta = metadataObject(agent.metadata);
+  const ensip24 = firstMetadataHit(meta, [
+    'ensip24',
+    'ensip_24',
+    'ens.data',
+    'ens.resolverData',
+    'resolver.data',
+    'resolverData',
+    'ensip24Data',
+    'dataResolver',
+  ]);
+  const erc8004 = firstMetadataHit(meta, [
+    'erc8004',
+    'erc_8004',
+    'agentRegistry',
+    'agent_registry',
+    'agentId',
+    'agent_id',
+    'agentURI',
+    'agent_uri',
+    'metadata.agentURI',
+    'metadata.agent_uri',
+    'metadataURI',
+    'metadata_uri',
+    'registrationURI',
+    'registration_uri',
+    'agentWallet',
+    'agent_wallet',
+  ]);
+  const erc8048 = firstMetadataHit(meta, [
+    'erc8048',
+    'erc_8048',
+    'erc721t',
+    'erc_721t',
+    'tokenURI',
+    'token_uri',
+    'uri',
+    'tokenId',
+    'token_id',
+    'metadata.context',
+    'metadata.endpoint',
+    'metadata.endpoints',
+    'metadata.endpoints.mcp',
+    'metadata.endpoints.a2a',
+    'metadata.endpoints.web',
+    'metadata.endpoints.x402',
+    'metadata.address',
+    'metadata.addresses',
+    'metadata.metadata_contract',
+    'metadataContract',
+    'metadata_contract',
+  ]);
+  const erc8049 = firstMetadataHit(meta, [
+    'erc8049',
+    'erc_8049',
+    'contractMetadata',
+    'contract_metadata',
+    'contractMetadataContract',
+    'contract_metadata_contract',
+    'contractMetadataKeys',
+    'contract_metadata_keys',
+    'metadata.contractMetadata',
+    'metadata.contract_metadata',
+    'metadata.ens_name',
+  ]);
+  const b20 = firstMetadataHit(meta, [
+    'b20',
+    'b20.extraMetadata',
+    'b20.extra_metadata',
+    'b20ExtraMetadata',
+    'extraMetadata',
+    'extra_metadata',
+    'base.b20',
+    'base.b20.extraMetadata',
+    'token.extraMetadata',
+  ]);
+
+  return [
+    {
+      label: 'ENS / ENSIP-24',
+      state: ensip24 ? 'self' : domain ? 'warn' : 'missing',
+      note: ensip24
+        ? `${metadataHitSource(ensip24)}; resolver data bytes still need a live ENSIP-24 read`
+        : domain
+          ? `${domain}; ENSIP-24 resolver data read pending`
+          : 'no ENS/idchain name or arbitrary-data resolver evidence',
+    },
+    {
+      label: 'ERC-8004',
+      state: erc8004 ? 'self' : wallet ? 'warn' : 'missing',
+      note: erc8004
+        ? `${metadataHitSource(erc8004)}; agentWallet/agentURI should be verified onchain`
+        : wallet
+          ? `controller wallet ${shortAddr(wallet)} can map to agentWallet; agent registry metadata not reported`
+          : 'no agent registry, agentURI, agentId, or agentWallet evidence',
+    },
+    {
+      label: 'ERC-8048 / ERC-721T',
+      state: erc8048 ? 'self' : domain || wallet ? 'warn' : 'missing',
+      note: erc8048
+        ? `${metadataHitSource(erc8048)}; token-level context/endpoints remain untrusted until fetched and verified`
+        : 'no token-level metadata, ERC-721T context, endpoint, address, or metadata_contract evidence',
+    },
+    {
+      label: 'ERC-8049',
+      state: erc8049 ? 'self' : acct?.smartAccount ? 'warn' : 'missing',
+      note: erc8049
+        ? `${metadataHitSource(erc8049)}; contractMetadata(string) read pending`
+        : acct?.smartAccount
+          ? `account ${shortAddr(acct.smartAccount)} has no contract-level onchain metadata evidence yet`
+          : 'no account or contractMetadata evidence',
+    },
+    {
+      label: 'B20 extraMetadata',
+      state: b20 ? 'self' : 'warn',
+      note: b20
+        ? `${metadataHitSource(b20)}; extraMetadata values are acknowledged but not rendered raw`
+        : 'no Base B20 issuer extraMetadata evidence reported for this agent',
+    },
+  ];
+}
+
 function reviewRows(
   agent: Agent | undefined,
   acct: AgentAccount | undefined,
@@ -206,7 +382,7 @@ function reviewRows(
     {
       label: 'Live trust checks',
       state: 'warn',
-      note: agent ? 'ENSIP / manifest / reputation resolver reads are still pending' : 'select an agent',
+      note: agent ? 'ENSIP-24, ERC-8004, ERC-8048/721T, ERC-8049, and B20 live reads are tracked below' : 'select an agent',
     },
   ];
 }
@@ -341,6 +517,8 @@ export function Identity({ store }: { store: FleetStore }) {
   const issueTtl = presets?.ttls[ttlIdx];
   const issueBlocked = !controllerVerified || isUnsafeScope(issueScope) || isUnsafeTtl(issueTtl);
   const review = useMemo(() => reviewRows(selAgent, acct, domain, wallet, controllerVerified), [selAgent, acct, domain, wallet, controllerVerified]);
+  const standardCoverage = useMemo(() => identityStandardRows(selAgent, domain, wallet, acct), [selAgent, domain, wallet, acct]);
+  const standardCovered = standardCoverage.filter((r) => r.state === 'verified' || r.state === 'self').length;
   const readyCount = review.filter((r) => r.state === 'verified').length;
   const brainSelectedController = useMemo(() => brainControllerForAgent(brainControllers, selAgent, duplicateNames), [brainControllers, selAgent, duplicateNames]);
   const brainControllerMatches = useMemo(
@@ -750,6 +928,7 @@ export function Identity({ store }: { store: FleetStore }) {
                 </div>
                 <div className="identity-metrics">
                   <div><b>{readyCount}/{review.length}</b><span>ready checks</span></div>
+                  <div><b>{standardCovered}/{standardCoverage.length}</b><span>standards</span></div>
                   <div><b>{activeSessions.filter((s) => s.status === 'active').length}</b><span>active keys</span></div>
                   <div><b>{acct.deployed ? 'live' : 'draft'}</b><span>Safe account</span></div>
                 </div>
@@ -832,7 +1011,26 @@ export function Identity({ store }: { store: FleetStore }) {
                     <span className={brainAmbiguousLinks ? 'warn-text' : 'muted'}>
                       {brainAmbiguousLinks ? `${brainAmbiguousLinks} bare-name Brain link${brainAmbiguousLinks === 1 ? '' : 's'} ambiguous across duplicate agent names` : 'Scoped or unique matches only; bare duplicate links stay review-only.'}
                     </span>
-                  </div>
+	                  </div>
+	                </div>
+	              </section>
+
+              <section className="card identity-standards" role="status">
+                <div className="identity-legacy-head">
+                  <h3>Onchain Metadata Standards</h3>
+                  <StatusPill state={standardCovered === standardCoverage.length ? 'verified' : standardCovered ? 'warn' : 'missing'} />
+                </div>
+                <p className="muted small">
+                  Read-only coverage check for public identity metadata. Raw resolver bytes, contract bytes, and issuer extraMetadata are not displayed here.
+                </p>
+                <div className="risk-list">
+                  {standardCoverage.map((row) => (
+                    <div key={row.label} className="risk-row">
+                      <span className={`dot ${dotTone(row.state)}`} />
+                      <b>{row.label}</b>
+                      <span className={statusTone(row.state)}>{row.note}</span>
+                    </div>
+                  ))}
                 </div>
               </section>
 
@@ -992,12 +1190,12 @@ export function Identity({ store }: { store: FleetStore }) {
                     <b>{selAgent?.model ?? '-'}</b>
                     <span>Provider</span>
                     <b>{caps?.provider ?? '-'}</b>
-                  </div>
-                  <div className="auth-list">
-                    <div><StatusPill state="warn" /><span>Live ENSIP-25/26 resolver checks are still pending.</span></div>
-                    <div><StatusPill state="warn" /><span>Manifest hash and runtime signature verification are still pending.</span></div>
-                    <div><StatusPill state="self" /><span>Better Auth proves operator login only; it is not wallet or agent identity proof.</span></div>
-                  </div>
+	                  </div>
+	                  <div className="auth-list">
+	                    <div><StatusPill state="warn" /><span>Live ENSIP-24 / ERC-8004 / ERC-8048 / ERC-8049 / B20 reads are tracked in the standards panel.</span></div>
+	                    <div><StatusPill state="warn" /><span>Manifest hash, metadata hook trust, and runtime signature verification are still pending.</span></div>
+	                    <div><StatusPill state="self" /><span>Better Auth proves operator login only; it is not wallet or agent identity proof.</span></div>
+	                  </div>
                 </div>
               </details>
             </>
