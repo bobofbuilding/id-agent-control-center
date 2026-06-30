@@ -18,6 +18,7 @@ type TeamSource =
   | { kind: 'template'; name: string }
   | { kind: 'config'; name: string };
 type TeamAgentsGroup = { team: string; agents: Agent[] };
+type TeamSnapshot = { exists: boolean; agents: Agent[]; running: number; total: number; rosterKnown: boolean };
 type HrHierarchy = { primary: { team: string; agent: string } | null; coordinators: Record<string, string> };
 type OrgCfg = { enabled?: boolean; autoRebuild?: boolean };
 type TeamBlueprint = { id: string; team: string; label: string; description: string; spec: string };
@@ -206,6 +207,30 @@ async function freshHrGroups(): Promise<TeamAgentsGroup[]> {
 }
 function agentsForTeam(groups: TeamAgentsGroup[], team: string): Agent[] {
   return groups.find((g) => g.team === team)?.agents ?? [];
+}
+function teamSnapshotStamp(snap: TeamSnapshot): string {
+  return JSON.stringify({
+    exists: snap.exists,
+    rosterKnown: snap.rosterKnown,
+    total: snap.total,
+    agents: snap.agents.map((a) => ({
+      id: a.id,
+      name: a.name,
+      status: a.status ?? '',
+      runtime: a.runtime ?? '',
+      model: a.model ?? '',
+    })).sort((a, b) => a.name.localeCompare(b.name) || a.id.localeCompare(b.id)),
+  });
+}
+function teamSnapshotSummary(snap: TeamSnapshot): string {
+  const sample = snap.agents
+    .slice()
+    .sort((a, b) => a.name.localeCompare(b.name))
+    .slice(0, 8)
+    .map((a) => `${a.name}${a.status ? ` (${a.status})` : ''}`);
+  return sample.length
+    ? `${sample.join(', ')}${snap.agents.length > sample.length ? `, ...and ${snap.agents.length - sample.length} more` : ''}`
+    : 'none';
 }
 function findHrAgent(groups: TeamAgentsGroup[], team: string, ref: { id?: string; name: string }): Agent | undefined {
   const agents = agentsForTeam(groups, team);
@@ -816,22 +841,34 @@ export function Teams({ store, focus, onFocusHandled }: { store: FleetStore; foc
     setBusy(true);
     setMsg(`checking team ${name}…`);
     try {
-      const [teams, groups] = await Promise.all([
-        call<{ name: string }[]>('teams').catch(() => []),
-        freshHrGroups(),
-      ]);
-      if (name === 'default' || !teams.some((t) => t.name === name)) {
+      const snap = await currentTeamSnapshot(name);
+      if (name === 'default' || !snap.exists) {
         setMsg(`delete blocked: team "${name}" is no longer deletable. Refreshed; review and try again.`);
         store.refresh();
         return;
       }
-      const agents = agentsForTeam(groups, name);
-      if (agents.length) {
-        setMsg(`delete blocked: ${name} now has ${agents.length} agent${agents.length === 1 ? '' : 's'}. Stop or move them first.`);
+      if (!snap.rosterKnown) {
+        setMsg(`delete blocked: could not verify that ${name} is empty. Refresh team state before deleting.`);
+        store.refresh();
+        return;
+      }
+      if (snap.total > 0 || snap.agents.length) {
+        setMsg(`delete blocked: ${name} now has ${snap.total} agent${snap.total === 1 ? '' : 's'}. Stop or move them first.`);
         store.refresh();
         return;
       }
       if (!window.confirm(`Delete current empty team "${name}"?\n\nIt still has no agents. This can't be undone.`)) return;
+      const afterConfirm = await currentTeamSnapshot(name);
+      if (!afterConfirm.exists) {
+        setMsg(`delete blocked: team "${name}" disappeared after confirmation. Refreshed; review and try again.`);
+        store.refresh();
+        return;
+      }
+      if (!afterConfirm.rosterKnown || teamSnapshotStamp(afterConfirm) !== teamSnapshotStamp(snap)) {
+        setMsg(`delete blocked: ${name} roster changed after confirmation. Review refreshed state before deleting.`);
+        store.refresh();
+        return;
+      }
       setMsg(`deleting team ${name}…`);
       await call('team:delete', name);
       if (name === store.team) await store.setTeam('default');
