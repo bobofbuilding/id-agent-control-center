@@ -439,7 +439,7 @@ export function Loops({ store }: { store: FleetStore }) {
                 </td>
               </tr>
             ))}
-            {loops.length === 0 ? <tr><td colSpan={6} className="muted center pad">No scheduled loops yet. Build one above with <b>New loop</b>, tick <b>run on a cadence</b>, and <b>Schedule loop</b> — e.g. weekdays 09:00 → “review the SkillMesh queue and report blockers”.</td></tr> : null}
+            {loops.length === 0 ? <tr><td colSpan={6} className="muted center pad">No scheduled loops yet. Build one above with <b>New loop</b>, tick <b>run on a cadence</b>, and <b>Schedule loop</b> — e.g. weekdays 09:00 to “review the launch queue and report blockers”.</td></tr> : null}
           </tbody>
         </table>
         <p className="muted small" style={{ marginTop: 6 }}>

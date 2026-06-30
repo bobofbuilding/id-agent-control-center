@@ -346,7 +346,7 @@ const VALIDATION_RETURN_PATH = `RETURN PATH — substantial completed work shoul
 - If either validator bounces the work back, refine with the responsible teammate or team lead and repeat the validation pass. Do not dump unvalidated raw work straight to **default/lead** unless the operator explicitly asks for an unvalidated fast path.`;
 
 const FIRST_RUN_LEAD_TARGETS = ['engineering/engineering-lead', 'operations/ops-lead', 'research/research-lead', 'onchain/onchain-lead'];
-const OPTIONAL_LEAD_TARGETS = ['legal/general-counsel', 'skillmesh/skillmesh-ops-lead', 'security/security-router'];
+const OPTIONAL_LEAD_TARGETS = ['legal/general-counsel', 'security/security-router'];
 
 /** Ready-made "act as the team coordinator" directive with generic coder/researcher
  *  teammates — used as the Team Builder fallback when no explicit teammates exist. */

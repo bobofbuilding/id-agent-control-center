@@ -40,7 +40,7 @@ const NIGHTLY_OBJECTIVE =
 const SUGGEST_FOCUS_PROMPT =
   'Based on your recent work and the team\'s shared brain/memory, what is the SINGLE most valuable thing to ' +
   'focus a reflection "dream" on right now? Reply with ONE short focus phrase ONLY — no preamble, no quotes, ' +
-  'no markdown — e.g. "SkillMesh mainnet readiness blockers" or "where the org keeps duplicating work".';
+  'no markdown — e.g. "onchain readiness blockers" or "where the org keeps duplicating work".';
 
 export function Dream({ store }: { store: FleetStore }) {
   const syncVersion = useSyncVersion(['dreams', 'work', 'brain']);
@@ -173,7 +173,7 @@ export function Dream({ store }: { store: FleetStore }) {
             <select className="cell-select" value={agent} disabled={locked} onChange={(e) => setAgentSel(e.target.value)}>
               {names.map((n) => <option key={n} value={n}>{n}</option>)}
             </select>
-            <input style={{ flex: '1 1 260px' }} placeholder="optional focus — e.g. “the SkillMesh mainnet readiness”, or ✦ Suggest" value={focus} disabled={locked} onChange={(e) => setFocus(e.target.value)} />
+            <input style={{ flex: '1 1 260px' }} placeholder="optional focus — e.g. “onchain launch readiness”, or ✦ Suggest" value={focus} disabled={locked} onChange={(e) => setFocus(e.target.value)} />
             <button className="btn" disabled={locked || !agent} title="Let the agent propose a high-value focus from its recent work + the brain" onClick={() => void suggestFocus()}>{suggesting ? 'Suggesting…' : '✦ Suggest focus'}</button>
             <button className="btn primary" disabled={locked || !agent} onClick={() => void dreamNow()}>{dreaming ? 'Dreaming…' : '✦ Dream now'}</button>
             <button className="btn" disabled={locked || !agent} title="Run this dream automatically every night at 03:00 (manage under Loops → Scheduled objectives)" onClick={() => void scheduleNightly()}>Schedule nightly</button>

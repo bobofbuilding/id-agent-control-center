@@ -68,10 +68,10 @@ function remaining(validUntil: number): string {
 
 function identityValue(
   a: { idchain_domain?: string | null; ows_wallet?: string | null; ows_address?: string | null; metadata?: unknown },
-  key: 'idchain_domain' | 'ows_wallet' | 'ows_address' | 'skillmesh_address',
+  key: 'idchain_domain' | 'ows_wallet' | 'ows_address',
 ): string {
-  const meta = a.metadata as { idchain_domain?: unknown; ows_wallet?: unknown; ows_address?: unknown; skillmesh_address?: unknown } | undefined;
-  const direct = key === 'idchain_domain' ? a.idchain_domain : key === 'ows_wallet' ? a.ows_wallet : key === 'ows_address' ? a.ows_address : undefined;
+  const meta = a.metadata as { idchain_domain?: unknown; ows_wallet?: unknown; ows_address?: unknown } | undefined;
+  const direct = key === 'idchain_domain' ? a.idchain_domain : key === 'ows_wallet' ? a.ows_wallet : a.ows_address;
   const value = direct ?? meta?.[key];
   return typeof value === 'string' ? value.trim() : '';
 }
@@ -80,11 +80,28 @@ function isEthAddress(value: string): boolean {
   return /^0x[0-9a-fA-F]{40}$/.test(value.trim());
 }
 
+function providerWalletFromMetadata(metadata: unknown): string {
+  const meta = metadata && typeof metadata === 'object' ? metadata as Record<string, unknown> : {};
+  const providers = meta.providers && typeof meta.providers === 'object' ? meta.providers as Record<string, unknown> : {};
+  const skillmesh = providers.skillmesh && typeof providers.skillmesh === 'object' ? providers.skillmesh as Record<string, unknown> : {};
+  const candidates = [
+    meta.provider_wallet_address,
+    meta.providerWalletAddress,
+    skillmesh.address,
+    skillmesh.wallet_address,
+    skillmesh.walletAddress,
+    meta.skillmesh_address,
+  ];
+  return candidates
+    .map((value) => (typeof value === 'string' ? value.trim() : ''))
+    .find(isEthAddress) ?? '';
+}
+
 function controllerWallet(a: Agent | undefined): string {
   if (!a) return '';
   const candidates = [
     identityValue(a, 'ows_address'),
-    identityValue(a, 'skillmesh_address'),
+    providerWalletFromMetadata(a.metadata),
     identityValue(a, 'ows_wallet'),
   ];
   return candidates.find(isEthAddress) ?? '';

@@ -1,6 +1,6 @@
 # ID Agents Control Center — Product Spec
 
-_Updated 2026-06-30 · reflects app **v0.1.384**. This is a page-by-page specification of
+_Updated 2026-06-30 · reflects app **v0.1.385**. This is a page-by-page specification of
 the desktop app as it actually ships today, produced by reviewing every page._
 
 ---
@@ -376,18 +376,21 @@ selection in the active team.
 - **Brain dashboard popouts**: Fleet, Health, Skills, Learning, Agents, and Graph are treated as
   read-only observation surfaces. They lead with `/fleet-report`'s IDACC manager authority when live,
   fall back to Brain cache only with explicit cache/partial warnings, expose redacted optional-provider
-  evidence such as SkillMesh public identity and advertised-skill summaries, and avoid dashboard-side
+  evidence such as SkillMesh plugin identity and advertised-skill summaries, and avoid dashboard-side
   approval/replay POST controls.
   Brain Agents now mirrors the Identity & Keys controller-wallet precedence (`ows_address`, then
-  optional SkillMesh provider address, then address-shaped OWS wallet) and shows per-agent total ETH
+  optional provider wallet address, then address-shaped OWS wallet) and shows per-agent total ETH
   gas spend vs last-24h ETH gas from Brain timeline transaction/gas evidence.
   The Brain listener snapshots every manager team into team-qualified cache rows, retires
   no-longer-live rows as stale, and `/fleet-report` excludes stale rows when comparing live manager
   totals against Brain cache, so duplicate bare-name agents do not create false drift.
-  SkillMesh is treated as a bundled optional provider: neutral agents do not receive SkillMesh keys
-  or env vars unless the SkillMesh plugin/provider is attached or explicit opt-in env is set.
+  SkillMesh is treated as a bundled optional provider/plugin: neutral agents do not receive SkillMesh
+  keys or env vars unless the SkillMesh plugin/provider is attached or explicit opt-in env is set.
+  IDACC GUI examples, HR first-run lead presets, manager recommendation hints, and Brain table labels
+  no longer present SkillMesh as a built-in core team or identity pillar; generic provider-wallet
+  metadata is first-class while legacy SkillMesh metadata remains read-only compatible.
 - **Brain Graph**: `/graph/app/data` is a sanitized node-link snapshot. Entity data is reduced to
-  safe matching/display fields; live lifecycle, SkillMesh address, and skill counts come only from
+  safe matching/display fields; live lifecycle, provider/plugin address, and skill counts come only from
   the unambiguous `/fleet-report` overlay; raw metadata, private keys, creator keys, auth tokens,
   wallet secrets, and MCP env values are not exposed.
 - **Plugins**: compact active-package table (package, kind, reach, action). Instruction-only wrappers

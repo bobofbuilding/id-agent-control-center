@@ -134,7 +134,7 @@ const SKILL_TAG_RULES: Array<[RegExp, string[]]> = [
   [/\badmin\b|manage|control|provision/i, ['admin']],
   [/\btest\b|verify|\bqa\b|assert/i, ['testing']],
   [/security|\bauth\b|secret|permission|guard/i, ['security']],
-  [/market(place)?|skillmesh|listing/i, ['marketplace']],
+  [/market(place)?|listing/i, ['marketplace']],
   [/\bapi\b|integrat|connect|webhook/i, ['integration']],
   [/\bdata\b|database|\bsql\b|extract|\bcsv\b|\bjson\b|spreadsheet/i, ['data']],
   [/automat|schedul|\bcron\b|trigger/i, ['automation']],

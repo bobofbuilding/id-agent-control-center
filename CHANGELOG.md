@@ -8,6 +8,9 @@ Every change pushed or merged to `main` carries its version number in the commit
 subject (`vX.Y.Z: …`), stamped automatically by the `commit-msg` hook — see
 [CONTRIBUTING.md](CONTRIBUTING.md).
 
+## [0.1.385] — 2026-06-30
+- Separate SkillMesh as plugin-only optional provider
+
 ## [0.1.384] — 2026-06-30
 - Treat SkillMesh as optional bundled provider
 

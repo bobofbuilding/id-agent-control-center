@@ -45,6 +45,9 @@ export interface AgentMetadata {
     queryId?: string;
     observedAtMs?: number;
   };
+  provider_wallet_address?: string;
+  providerWalletAddress?: string;
+  providers?: Record<string, unknown>;
   skillmesh_address?: string;
   skillmesh_key_index?: number;
   skillmesh_key_path?: string;

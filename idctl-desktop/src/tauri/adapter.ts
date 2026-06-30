@@ -336,13 +336,30 @@ function ethAddress(value: unknown): string {
   return ETH_ADDRESS_RE.test(candidate) ? candidate.toLowerCase() : '';
 }
 
+function providerWalletFromMetadata(meta: Record<string, unknown> | undefined): string {
+  const providers = meta?.providers && typeof meta.providers === 'object'
+    ? meta.providers as Record<string, unknown>
+    : {};
+  const skillmesh = providers.skillmesh && typeof providers.skillmesh === 'object'
+    ? providers.skillmesh as Record<string, unknown>
+    : {};
+  return (
+    ethAddress(meta?.provider_wallet_address) ||
+    ethAddress(meta?.providerWalletAddress) ||
+    ethAddress(skillmesh.address) ||
+    ethAddress(skillmesh.wallet_address) ||
+    ethAddress(skillmesh.walletAddress) ||
+    ethAddress(meta?.skillmesh_address)
+  );
+}
+
 function controllerWalletFromAgent(agent: Agent | undefined): string {
   const meta = agent?.metadata as Record<string, unknown> | undefined;
   const direct = agent as (Agent & { ows_address?: string | null }) | undefined;
   return (
     ethAddress(direct?.ows_address) ||
     ethAddress(meta?.ows_address) ||
-    ethAddress(meta?.skillmesh_address) ||
+    providerWalletFromMetadata(meta) ||
     ethAddress(agent?.ows_wallet) ||
     ethAddress(meta?.ows_wallet)
   );

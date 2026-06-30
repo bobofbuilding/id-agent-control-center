@@ -917,7 +917,7 @@ export function Projects({ store }: { store: FleetStore }) {
         <h3>{editing === 'new' ? 'New project' : 'Edit project'}</h3>
         <div className="kv" style={{ gridTemplateColumns: '110px 1fr', gap: '8px 12px' }}>
           <span>name *</span>
-          <b><input style={{ width: 320 }} placeholder="e.g. SkillMesh mainnet" value={form.name} onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))} /></b>
+          <b><input style={{ width: 320 }} placeholder="e.g. onchain launch" value={form.name} onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))} /></b>
           <span>folder</span>
           <b style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}>
             <input style={{ flex: 1, minWidth: 220 }} className="mono" placeholder="/path/to/project — enables git tracking + README import" value={form.path} onChange={(e) => setForm((f) => ({ ...f, path: e.target.value }))} />
