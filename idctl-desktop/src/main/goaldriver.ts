@@ -116,6 +116,29 @@ function activeAutopilotGoals(): Goal[] {
     .filter((g): g is Goal => !!g && g.status === 'active' && g.autopilot === true);
 }
 
+function goalDriverStamp(goal: Goal): string {
+  return [
+    goal.id,
+    goal.team,
+    goal.status,
+    goal.autopilot ? '1' : '0',
+    goal.updatedAt,
+    goal.title || '',
+    goal.content || '',
+    goal.idea || '',
+  ].join('\u001f');
+}
+
+function goalListDriverStamp(goals: Goal[]): string {
+  return [...goals].map(goalDriverStamp).sort().join('\u001e');
+}
+
+function freshActiveGoalForDriver(goal: Goal): Goal | null {
+  const latest = getGoal(goal.id);
+  if (!latest || latest.status !== 'active' || latest.autopilot !== true) return null;
+  return goalDriverStamp(latest) === goalDriverStamp(goal) ? latest : null;
+}
+
 function saveGoalDriverMetadata(goalId: string, driver: NonNullable<Goal['driver']>): boolean {
   const latest = getGoal(goalId);
   if (!latest) return false;
@@ -219,6 +242,7 @@ async function driveGoal(baseClient: ManagerClient, goal: Goal, cfg: GoalDriverC
     }));
     const decomp = await decomposeWork(teamClient, goal.content || goal.idea || goal.title, lead, roster);
     if (!decomp.ok || !decomp.subtasks.length) return { spawned: 0, refs: [], note: decomp.error || 'no subtasks produced' };
+    if (!freshActiveGoalForDriver(goal)) return { spawned: 0, refs: [], note: 'goal changed or autopilot was disabled before task creation' };
 
     const subtasks = decomp.subtasks.slice(0, slots).map((st) => annotateSubtask(goal, st));
     const created = await createAndDispatchPlan(teamClient, goal.content || goal.title, subtasks, { dispatch: true });
@@ -240,6 +264,7 @@ async function driveGoal(baseClient: ManagerClient, goal: Goal, cfg: GoalDriverC
   }));
   const decomp = await decomposeWork(teamClient, goal.content || goal.idea || goal.title, lead, roster);
   if (!decomp.ok || !decomp.subtasks.length) return { spawned: 0, refs: [], note: decomp.error || 'no subtasks produced' };
+  if (!freshActiveGoalForDriver(goal)) return { spawned: 0, refs: [], note: 'goal changed or autopilot was disabled before team-lead task creation' };
 
   const subtasks = decomp.subtasks.slice(0, slots).map((st) => annotateSubtask(goal, st));
   const created = await createGoalLeadTasks(baseClient, goal.content || goal.title, subtasks, targets);
@@ -256,16 +281,29 @@ export async function runGoalDriverOnce(getClient: () => ManagerClient, rawCfg: 
   if (!cfg.enabled) return summary;
 
   const client = getClient();
-  const goals = activeAutopilotGoals();
+  let goals = activeAutopilotGoals();
   summary.consideredGoals = goals.length;
   summary.teamsSynced = await syncTeamGoalInstructions(client, goals, summary.errors);
+  const afterSyncGoals = activeAutopilotGoals();
+  if (goalListDriverStamp(afterSyncGoals) !== goalListDriverStamp(goals)) {
+    summary.errors.push('active Autopilot goals changed during team-instruction sync; resynced latest goals and skipped task spawn for this run');
+    summary.consideredGoals = afterSyncGoals.length;
+    summary.teamsSynced += await syncTeamGoalInstructions(client, afterSyncGoals, summary.errors);
+    return summary;
+  }
+  goals = afterSyncGoals;
 
   for (const goal of goals) {
     try {
-      const result = await driveGoal(client, goal, cfg);
+      const current = freshActiveGoalForDriver(goal);
+      if (!current) {
+        summary.errors.push(`${goal.id}: skipped because the goal changed or Autopilot was disabled before task spawn`);
+        continue;
+      }
+      const result = await driveGoal(client, current, cfg);
       summary.drivenGoals++;
       summary.tasksSpawned += result.spawned;
-      saveGoalDriverMetadata(goal.id, {
+      saveGoalDriverMetadata(current.id, {
         lastRunAt: Date.now(),
         taskRefs: result.refs,
         note: result.note,
