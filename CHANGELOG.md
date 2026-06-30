@@ -8,6 +8,9 @@ Every change pushed or merged to `main` carries its version number in the commit
 subject (`vX.Y.Z: …`), stamped automatically by the `commit-msg` hook — see
 [CONTRIBUTING.md](CONTRIBUTING.md).
 
+## [0.1.308] — 2026-06-30
+- Preloaded team validator templates
+
 ## [0.1.307] — 2026-06-30
 - Brain Fleet env contract docs
 
