@@ -450,13 +450,13 @@ const M: Record<string, (...a: any[]) => Promise<unknown>> = {
   // modules: skills + plugins catalog, install, MCP attach + rebuild
   librarySkills: () => client.librarySkills(),
   libraryPlugins: () => client.libraryPlugins(),
-  installSkill: (skill: string, agent: string) => client.installSkill(String(skill), String(agent)),
+  installSkill: (skill: string, agent: string, team?: string) => (team ? client.withTeam(String(team)) : client).installSkill(String(skill), String(agent)),
   createSkill: (input: CreateSkillInput) => client.createSkill(input),
   deleteSkill: (name: string) => client.deleteSkill(String(name)),
-  uninstallSkill: (skill: string, agent: string) => client.uninstallSkill(String(skill), String(agent)),
+  uninstallSkill: (skill: string, agent: string, team?: string) => (team ? client.withTeam(String(team)) : client).uninstallSkill(String(skill), String(agent)),
   usage: () => client.usage(),
-  setAgentMcp: (agentId: string, servers: McpServerSpec[]) => client.setAgentMcp(String(agentId), servers ?? []),
-  rebuildAgent: (agent: string) => client.remote(`/agent ${agent} rebuild`),
+  setAgentMcp: (agentId: string, servers: McpServerSpec[], team?: string) => (team ? client.withTeam(String(team)) : client).setAgentMcp(String(agentId), servers ?? []),
+  rebuildAgent: (agent: string, team?: string) => (team ? client.withTeam(String(team)) : client).remote(`/agent ${agent} rebuild`),
   'mcp:list': async () => lsGet<McpServerProfile[]>('idctl.mcpServers', []),
   'mcp:add': async (p: McpServerProfile) => {
     const list = lsGet<McpServerProfile[]>('idctl.mcpServers', []);
