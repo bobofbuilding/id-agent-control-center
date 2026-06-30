@@ -8,6 +8,7 @@ type HeadroomStatus = {
   cli: { found: boolean; version?: string; error?: string };
   proxy: { url: string; reachable: boolean; httpStatus?: number; error?: string };
 };
+type ProbeTarget = { id?: string; name: string; team: string; status?: string };
 
 const HEADROOM_ROUTE_LABEL: Record<HeadroomPilotSettings['mode'], string> = {
   off: 'Off',
@@ -122,6 +123,16 @@ function describePilotChanges(before: HeadroomPilotSettings, afterDraft: Headroo
 function pilotStamp(pilot: HeadroomPilotSettings): string {
   return JSON.stringify(normalizePilot(pilot));
 }
+function probeLive(status?: string): boolean {
+  const s = String(status || '').toLowerCase();
+  return !!s && !/stop|offline|dead|exit|error|crash|down|disabled|sleep/.test(s);
+}
+function probeTargetStamp(targets: ProbeTarget[]): string {
+  return targets
+    .map((t) => `${t.team}:${t.id ?? ''}:${t.name}:${t.status ?? ''}`)
+    .sort()
+    .join('|');
+}
 
 export function Health({ store, navigate }: { store: FleetStore; navigate?: (view: string) => void }) {
   const [probing, setProbing] = useState<string | null>(null);
@@ -181,6 +192,46 @@ export function Health({ store, navigate }: { store: FleetStore; navigate?: (vie
     } finally {
       setProbing(null);
       void loadUsage(); // refresh throughput after exercising agents
+    }
+  }
+  async function currentProbeTargets(): Promise<ProbeTarget[]> {
+    const groups = await call<Array<{ team: string; agents: ProbeTarget[] }>>('agents:allTeams').catch(() => null);
+    const targets = groups
+      ? groups.flatMap((g) => g.agents.map((a) => ({ id: a.id, name: a.name, status: a.status, team: g.team })))
+      : store.agents.map((a) => ({ id: a.id, name: a.name, status: a.status, team: store.team ?? 'default' }));
+    return targets.filter((a) => probeLive(a.status));
+  }
+  async function probeAllVisible() {
+    if (probing) return;
+    setProbing('all');
+    try {
+      const targets = await currentProbeTargets();
+      if (!targets.length) {
+        window.alert('No running agents are available to probe. Use Health > show stopped to review stopped agents.');
+        return;
+      }
+      const teams = [...new Set(targets.map((t) => t.team))].sort();
+      const sample = targets.slice(0, 12).map((t) => `- ${t.team}/${t.name} (${t.status ?? 'unknown'})`);
+      if (!window.confirm([
+        `Probe ${targets.length} running agent${targets.length === 1 ? '' : 's'} across ${teams.length} team${teams.length === 1 ? '' : 's'}?`,
+        '',
+        ...sample,
+        targets.length > sample.length ? `- ...and ${targets.length - sample.length} more` : '',
+        '',
+        'This exercises each current agent probe route and refreshes usage afterward. Stopped agents are skipped.',
+      ].filter(Boolean).join('\n'))) return;
+      const afterConfirm = await currentProbeTargets();
+      if (probeTargetStamp(afterConfirm) !== probeTargetStamp(targets)) {
+        window.alert('Probe all blocked: the running-agent set changed during confirmation. Health will refresh; review the current roster and try again.');
+        store.refresh();
+        return;
+      }
+      const results = await Promise.allSettled(afterConfirm.map((target) => call('probeOne', target.name, target.team)));
+      const failed = results.filter((r) => r.status === 'rejected').length;
+      if (failed) window.alert(`Probe completed with ${failed}/${afterConfirm.length} failed probe${failed === 1 ? '' : 's'}. Review the refreshed Health roster for details.`);
+    } finally {
+      setProbing(null);
+      void loadUsage();
     }
   }
   function updatePilotDraft(partial: Partial<HeadroomPilotSettings>) {
@@ -251,7 +302,7 @@ export function Health({ store, navigate }: { store: FleetStore; navigate?: (vie
     <div className="view">
       <header className="view-head">
         <h1>Health &amp; Probes</h1>
-        <button className="btn primary" disabled={!!probing} onClick={() => void probe('all')}>
+        <button className="btn primary" disabled={!!probing} onClick={() => void probeAllVisible()}>
           {probing === 'all' ? 'Probing…' : 'Probe all'}
         </button>
       </header>
