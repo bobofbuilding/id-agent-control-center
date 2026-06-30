@@ -625,10 +625,11 @@ export function Settings({ store, navigate }: { store: FleetStore; navigate?: (v
     setImgServer(s);
     if (s) { setImgUrl(s.url); setImgType(s.type); }
   }
-  async function saveImgServer() {
+  async function saveImgServer(next?: { url: string; type: 'auto1111' | 'openai' } | null) {
     setImgBusy(true); setImgMsg('');
     try {
-      const url = imgUrl.trim();
+      const url = next === null ? '' : (next?.url ?? imgUrl).trim();
+      const type = next === null ? imgType : next?.type ?? imgType;
       const current = await call<ImgServer | null>('image:getServer').catch(() => null);
       if (imageServerStamp(current) !== imageServerStamp(imgServer)) {
         setImgServer(current);
@@ -638,9 +639,11 @@ export function Settings({ store, navigate }: { store: FleetStore; navigate?: (v
         return;
       }
       if (!url && imgServer && !window.confirm('Clear the local image generator?\n\nImage creation will fall back to the cloud provider when available.')) return;
-      if (url && imgServer && imageServerStamp({ url, type: imgType }) !== imageServerStamp(imgServer) && !window.confirm(`Replace local image generator?\n\nBefore: ${imgServer.type} · ${imgServer.url}\nAfter:  ${imgType} · ${url}`)) return;
-      const saved = await call<ImgServer | null>('image:setServer', url ? { url, type: imgType } : null);
+      if (url && imgServer && imageServerStamp({ url, type }) !== imageServerStamp(imgServer) && !window.confirm(`Replace local image generator?\n\nBefore: ${imgServer.type} · ${imgServer.url}\nAfter:  ${type} · ${url}`)) return;
+      const saved = await call<ImgServer | null>('image:setServer', url ? { url, type } : null);
       setImgServer(saved);
+      if (saved) { setImgUrl(saved.url); setImgType(saved.type); }
+      else setImgUrl('');
       setImgMsg(url ? 'saved ✓ — image creation will use this server first (cloud is the fallback)' : 'cleared — image creation uses the cloud provider');
     } catch {
       setImgMsg('save failed');
@@ -1359,7 +1362,7 @@ export function Settings({ store, navigate }: { store: FleetStore; navigate?: (v
           </select>
           <button className="btn" disabled={imgBusy} onClick={() => void detectImg()}>Detect</button>
           <button className="btn primary" disabled={imgBusy} onClick={() => void saveImgServer()}>{imgBusy ? '…' : 'Save'}</button>
-          {imgServer ? <button className="btn" disabled={imgBusy} title="Clear — use the cloud provider" onClick={() => { setImgUrl(''); void saveImgServer(); }}>Clear</button> : null}
+          {imgServer ? <button className="btn" disabled={imgBusy} title="Clear — use the cloud provider" onClick={() => void saveImgServer(null)}>Clear</button> : null}
         </div>
         <div className="muted small" style={{ marginTop: 6 }}>
           {imgServer ? <>Active: <b className="accent-text">{imgServer.type === 'auto1111' ? 'Stable Diffusion' : 'image API'}</b> at <span className="mono">{imgServer.url}</span>. </> : <>No local image server — image creation uses the cloud provider. </>}
