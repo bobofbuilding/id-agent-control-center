@@ -920,17 +920,20 @@ export function Settings({ store, navigate }: { store: FleetStore; navigate?: (v
    *  detected running server or a configured provider). We no longer warn about stacks that
    *  merely share a default port — that's not a conflict unless you actually run both, and it
    *  was just noise. Run a "Scan running" to refresh what's live. */
-  function stackPortWarn(s: LocalStackEntry): { level: 'error'; msg: string } | null {
+  function stackPortWarn(s: LocalStackEntry): { level: 'warn' | 'error'; msg: string } | null {
     if (s.defaultPort == null) return null;
-    if (runningPorts.has(s.defaultPort) || providers.some((p) => providerPort(p) === s.defaultPort)) {
-      return { level: 'error', msg: `port ${s.defaultPort} is in use — install it on a different port` };
+    if (runningPorts.has(s.defaultPort)) {
+      return { level: 'error', msg: `live server on port ${s.defaultPort} — use a different port if installing another stack` };
+    }
+    if (providers.some((p) => providerPort(p) === s.defaultPort)) {
+      return { level: 'warn', msg: `backend configured on port ${s.defaultPort}; scan running servers before reusing it` };
     }
     return null;
   }
   function stackInstalled(s: LocalStackEntry): boolean {
     const apiBase = s.apiBase ? normUrl(s.apiBase) : null;
-    return providers.some((p) => (apiBase && normUrl(p.baseUrl) === apiBase) || (s.defaultPort != null && providerPort(p) === s.defaultPort))
-      || (discovered ?? []).some((d) => d.id === s.id || (apiBase && normUrl(d.baseUrl) === apiBase) || (s.defaultPort != null && d.port === s.defaultPort));
+    return providers.some((p) => apiBase && normUrl(p.baseUrl) === apiBase)
+      || (discovered ?? []).some((d) => d.id === s.id || (apiBase && normUrl(d.baseUrl) === apiBase));
   }
   useEffect(() => {
     void loadOllama();
