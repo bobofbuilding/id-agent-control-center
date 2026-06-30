@@ -425,6 +425,26 @@ const M: Record<string, (...a: any[]) => Promise<unknown>> = {
     cli: { found: false, error: 'Headroom status requires the Electron main process.' },
     proxy: { url: 'http://127.0.0.1:8787/mcp', reachable: false, error: 'not checked in this shell' },
   }),
+  'headroom:audit': async () => {
+    const status = {
+      cli: { found: false, error: 'Headroom status requires the Electron main process.' },
+      proxy: { url: 'http://127.0.0.1:8787/mcp', reachable: false, error: 'not checked in this shell' },
+    };
+    return {
+      coreReady: false,
+      healthSurface: 'hidden',
+      decision: 'not-ready',
+      status,
+      reasons: [
+        'Headroom CLI/proxy status is unavailable in this shell.',
+        'IDACC has no manager-side contract that proves compressed prompt recovery before an agent acts.',
+      ],
+      blockedInsertionPoints: ['Work, Chat, Plans, Learn, and validator prompts stay on direct routes.'],
+      requiredForCore: ['Electron/main-process Headroom detection plus manager retrieval-handle support.'],
+      safeToday: ['Keep Headroom out of the Health UI and use direct routing.'],
+      policy: headroomPilotState(),
+    };
+  },
   'headroom:pilot': async () => headroomPilotState(),
   'headroom:setPilot': async (partial: Partial<HeadroomPilotSettings>) => {
     const next = { ...headroomPilotState(), ...(partial ?? {}), updatedAt: Date.now() };

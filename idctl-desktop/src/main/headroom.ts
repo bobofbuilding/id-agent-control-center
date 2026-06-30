@@ -1,5 +1,6 @@
 import { execFile } from 'node:child_process';
 import { homedir } from 'node:os';
+import type { HeadroomPilotSettings } from '../../../idctl/src/settings/schema.ts';
 
 export interface HeadroomStatus {
   cli: {
@@ -13,6 +14,18 @@ export interface HeadroomStatus {
     httpStatus?: number;
     error?: string;
   };
+}
+
+export interface HeadroomCoreAudit {
+  coreReady: boolean;
+  healthSurface: 'hidden';
+  decision: 'not-ready' | 'ready-for-explicit-pilot';
+  status: HeadroomStatus;
+  reasons: string[];
+  blockedInsertionPoints: string[];
+  requiredForCore: string[];
+  safeToday: string[];
+  policy?: Pick<HeadroomPilotSettings, 'enabled' | 'mode' | 'minContextTokens' | 'passthroughContent' | 'validationGates' | 'updatedAt'>;
 }
 
 function cliPath(): string {
@@ -53,4 +66,51 @@ async function probeHeadroomProxy(url = 'http://127.0.0.1:8787/mcp'): Promise<He
 export async function headroomStatus(): Promise<HeadroomStatus> {
   const [cli, proxy] = await Promise.all([headroomVersion(), probeHeadroomProxy()]);
   return { cli, proxy };
+}
+
+export async function headroomCoreAudit(pilot?: HeadroomPilotSettings): Promise<HeadroomCoreAudit> {
+  const status = await headroomStatus();
+  const reasons: string[] = [];
+  if (!status.cli.found) reasons.push('Headroom CLI is not installed or not on the app PATH.');
+  if (!status.proxy.reachable) reasons.push('Headroom proxy/MCP endpoint is not reachable at the local default URL.');
+  if (!pilot?.enabled) reasons.push('Saved Headroom policy is not enabled; current routing remains direct.');
+  reasons.push('IDACC has no manager-side contract that proves a compressed prompt can recover the original source before an agent acts.');
+  reasons.push('Work prompts contain protected content classes such as source under active review, instructions, secrets/auth references, and validator evidence that must remain direct unless explicitly proven safe.');
+
+  const reversibleReady = status.cli.found && status.proxy.reachable && pilot?.enabled === true;
+  return {
+    coreReady: false,
+    healthSurface: 'hidden',
+    decision: reversibleReady ? 'ready-for-explicit-pilot' : 'not-ready',
+    status,
+    reasons,
+    blockedInsertionPoints: [
+      'Dashboard and Chat /ask prompts: user intent must remain exact, especially for active goals and project focus.',
+      'Work Plans automation: plan content and blocker scans must not lose dependency, evidence, or status details.',
+      'Work Tasks triage/re-dispatch: task descriptions are already clipped and need exact refs/status commands.',
+      'Work Learn routing: source excerpts are untrusted and already summarized/classified under injection guardrails.',
+      'Validator return path: completed-work evidence must cite originals, not lossy summaries.',
+    ],
+    requiredForCore: [
+      'Installable Headroom CLI or bundled local service with stable version detection.',
+      'Smoke-tested MCP/proxy tools that compress, retrieve, and verify original recovery before any Work prompt uses them.',
+      'Manager support for retrieval handles or a required MCP attachment so agents can fetch originals before acting.',
+      'Per-dispatch audit records showing original size, compressed size, recovery id, protected-content decision, and fallback route.',
+      'A quality gate that keeps protected content and low-context prompts on the direct route.',
+    ],
+    safeToday: [
+      'Keep token-throughput analytics visible on Health.',
+      'Keep Headroom out of the Health UI so it does not look like active token savings.',
+      'Continue using direct routing for Work, Chat, Plans, Learn, validation, and task lifecycle prompts.',
+      'Use the existing MCP/provider catalog only for explicit operator experiments, not automatic core routing.',
+    ],
+    policy: pilot ? {
+      enabled: pilot.enabled,
+      mode: pilot.mode,
+      minContextTokens: pilot.minContextTokens,
+      passthroughContent: pilot.passthroughContent,
+      validationGates: pilot.validationGates,
+      updatedAt: pilot.updatedAt,
+    } : undefined,
+  };
 }
