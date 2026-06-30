@@ -484,9 +484,25 @@ export function Identity({ store }: { store: FleetStore }) {
     const fresh = await ensureSelectedFresh(action === 'register' ? 'registering identity' : 'provisioning wallet');
     if (!fresh) return;
     const team = fresh.team ?? 'default';
+    const freshWallet = controllerWallet(fresh);
+    if (action === 'provision' && freshWallet) {
+      setError(`${team}/${fresh.name} already has controller wallet ${shortAddr(freshWallet)}. Refresh Identity and review the current row before provisioning a replacement.`);
+      store.refresh();
+      return;
+    }
+    if (action === 'register' && !controllerProofValidFor(fresh)) {
+      setError('Register identity requires a fresh signed controller-wallet challenge.');
+      return;
+    }
     if (!window.confirm(`${action === 'register' ? 'Register identity' : 'Provision wallet'} for ${team}/${fresh.name}?\n\n${action === 'register' ? 'This writes the public identity binding for the selected controller wallet.' : 'This creates or binds a controller wallet for the agent.'}`)) return;
     const afterConfirm = await ensureSelectedFresh(action === 'register' ? 'registering identity after review' : 'provisioning wallet after review');
     if (!afterConfirm) return;
+    const afterWallet = controllerWallet(afterConfirm);
+    if (action === 'provision' && afterWallet) {
+      setError(`${afterConfirm.team ?? 'default'}/${afterConfirm.name} gained controller wallet ${shortAddr(afterWallet)} after review. Refresh Identity and use the verified controller flow before making account changes.`);
+      store.refresh();
+      return;
+    }
     if (action === 'register' && !controllerProofValidFor(afterConfirm)) {
       setError('Controller proof expired or changed after confirmation. Sign a fresh challenge before registering identity.');
       return;
@@ -605,13 +621,21 @@ export function Identity({ store }: { store: FleetStore }) {
 
   async function issueSession() {
     const fresh = await ensureSelectedFresh('issuing session key');
-    if (!presets || !fresh || issueBlocked) {
+    if (!presets || !fresh) {
       setError(controllerVerified ? 'Choose a capped scope and finite TTL.' : 'Issue session key requires a signed controller-wallet challenge first.');
+      return;
+    }
+    const reviewedScopeIdx = scopeIdx;
+    const reviewedTtlIdx = ttlIdx;
+    const reviewedScope = presets.scopes[reviewedScopeIdx];
+    const reviewedTtl = presets.ttls[reviewedTtlIdx];
+    if (!controllerProofValidFor(fresh) || isUnsafeScope(reviewedScope) || isUnsafeTtl(reviewedTtl)) {
+      setError(controllerProofValidFor(fresh) ? 'Choose a capped scope and finite TTL.' : 'Issue session key requires a signed controller-wallet challenge first.');
       return;
     }
     const team = fresh.team ?? 'default';
     const reviewedAccount = await latestAccountFor(agentKey(fresh));
-    if (!window.confirm(`Issue session key for ${team}/${fresh.name}?\n\nScope: ${issueScope?.label ?? 'unknown'}\nTTL: ${issueTtl?.label ?? 'unknown'}\n\nThis creates a live spend-capped delegated key until it expires or is revoked.`)) return;
+    if (!window.confirm(`Issue session key for ${team}/${fresh.name}?\n\nScope: ${reviewedScope.label}\nTTL: ${reviewedTtl.label}\n\nThis creates a live spend-capped delegated key until it expires or is revoked.`)) return;
     const afterConfirm = await ensureSelectedFresh('issuing session key after review');
     if (!afterConfirm) return;
     if (!controllerProofValidFor(afterConfirm)) {
@@ -623,7 +647,7 @@ export function Identity({ store }: { store: FleetStore }) {
       setError('Account or session state changed after confirmation. Identity has refreshed the latest account state; review and retry.');
       return;
     }
-    await act('keys:issue', afterConfirm.name, scopeIdx, presets.ttls[ttlIdx].ms, afterConfirm.team ?? 'default');
+    await act('keys:issue', afterConfirm.name, reviewedScopeIdx, reviewedTtl.ms, afterConfirm.team ?? 'default');
   }
 
   async function revokeSession(s: SessionKey) {
