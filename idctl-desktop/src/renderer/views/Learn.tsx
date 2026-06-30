@@ -235,6 +235,7 @@ export function Learn({ store }: { store: FleetStore }) {
           taskRef: `learn:${selected.id}`,
           taskTitle: selected.title,
           team,
+          dedupeKey: `learn:${selected.id}:${rec.id}`,
         });
       } else if (rec.type === 'goal') {
         if (!window.confirm(`Create a draft goal from "${rec.title}"?`)) return;

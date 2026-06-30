@@ -1009,6 +1009,7 @@ function surfaceBlockingQuestions(material: LearnMaterial, recommendations: Lear
         taskTitle: material.title,
         team: rec.team || material.classification?.routedTeams?.[0] || 'default',
         createdAt: now(),
+        dedupeKey: `learn:${material.id}:${rec.id}`,
       });
       count++;
     } catch { /* question surfacing is best-effort */ }
