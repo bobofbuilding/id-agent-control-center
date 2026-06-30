@@ -119,6 +119,7 @@ export function Settings({ store, navigate }: { store: FleetStore; navigate?: (v
   const [upd, setUpd] = useState<{ autoUpgrade?: boolean; updateManifestUrl?: string; updateRepo?: string } | null>(null);
   const [updStatus, setUpdStatus] = useState<{ latest?: string; available?: boolean; staged?: boolean; checking?: boolean; error?: string; lastChecked?: number } | null>(null);
   const [managerCaps, setManagerCaps] = useState<ManagerCapabilities | undefined>(undefined);
+  const [managerReportCopied, setManagerReportCopied] = useState(false);
   // subscriptions (runtime OAuth: Claude / ChatGPT)
   type Sub = { provider: string; loggedIn: boolean; installed?: boolean; plan?: string; email?: string; method?: string; detail?: string };
   type SubKey = 'claude' | 'chatgpt' | 'cursor';
@@ -816,6 +817,24 @@ export function Settings({ store, navigate }: { store: FleetStore; navigate?: (v
         ? 'ready'
         : 'needs backend';
   const readinessTone = store.connection !== 'online' || managerExtensionTone === 'err' ? 'err' : textRuntimeReady && managerExtensionReady ? 'ok' : 'warn';
+  const managerCompatibilityReport = [
+    'IDACC manager compatibility report',
+    `manager: ${store.managerUrl || '(not configured)'}`,
+    `connection: ${store.connection}`,
+    `required CC API: ${CONTROL_CENTER_API_VERSION}`,
+    `reported CC API: ${managerCaps?.cc_api_version ?? 'none'}`,
+    `extension: ${managerCaps?.extension ?? 'none'}`,
+    `ready: ${managerExtensionReady ? 'yes' : 'no'}`,
+    `features: ${(managerCaps?.features ?? []).join(', ') || 'none'}`,
+    `missing features: ${missingManagerFeatures.join(', ') || 'none'}`,
+    `routes: ${CONTROL_CENTER_REQUIRED_ROUTES.length - missingManagerRoutes.length}/${CONTROL_CENTER_REQUIRED_ROUTES.length} required`,
+    `missing routes: ${missingManagerRoutes.map(controlCenterRouteKey).join(', ') || 'none'}`,
+  ].join('\n');
+  async function copyManagerCompatibilityReport() {
+    await copyText(managerCompatibilityReport);
+    setManagerReportCopied(true);
+    window.setTimeout(() => setManagerReportCopied(false), 1600);
+  }
 
   function providerPort(p: ProviderRow): number | null {
     try { const x = new URL(p.baseUrl).port; return x ? Number(x) : null; } catch { return null; }
@@ -993,6 +1012,9 @@ export function Settings({ store, navigate }: { store: FleetStore; navigate?: (v
           </button>
           <button className="btn small" onClick={() => void reloadManagerCapabilities()}>
             Re-check manager
+          </button>
+          <button className="btn small" disabled={managerCaps === undefined} onClick={() => void copyManagerCompatibilityReport()}>
+            {managerReportCopied ? 'Report copied' : 'Copy manager report'}
           </button>
         </div>
       </section>
