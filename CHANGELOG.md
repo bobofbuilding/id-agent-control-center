@@ -8,6 +8,9 @@ Every change pushed or merged to `main` carries its version number in the commit
 subject (`vX.Y.Z: …`), stamped automatically by the `commit-msg` hook — see
 [CONTRIBUTING.md](CONTRIBUTING.md).
 
+## [0.1.378] — 2026-06-30
+- Automated release of outstanding ID Agents Control Center code.
+
 ## [0.1.377] — 2026-06-30
 - Normalize Capabilities plugin catalog with guarded plugin-to-skill digestion
 
