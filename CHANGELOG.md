@@ -8,6 +8,9 @@ Every change pushed or merged to `main` carries its version number in the commit
 subject (`vX.Y.Z: …`), stamped automatically by the `commit-msg` hook — see
 [CONTRIBUTING.md](CONTRIBUTING.md).
 
+## [0.1.358] — 2026-06-30
+- Guard Brain Health approval writes
+
 ## [0.1.357] — 2026-06-30
 - Align Brain Fleet running totals
 
