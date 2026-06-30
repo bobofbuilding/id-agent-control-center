@@ -416,6 +416,18 @@ function listProvidersEnriched(): (ProviderProfile & { keySource: 'config' | 'en
   return loadSettings().providers.map((p) => ({ ...p, keySource: keySourceOf(p), needsKey: kindNeedsKey(p.kind) }));
 }
 
+function providerBridgeStamp(p: ProviderProfile): string {
+  return JSON.stringify({
+    name: p.name,
+    kind: p.kind,
+    baseUrl: p.baseUrl,
+    enabled: p.enabled !== false,
+    default: p.default === true,
+    keySource: keySourceOf(p),
+    needsKey: kindNeedsKey(p.kind),
+  });
+}
+
 function skillGraphId(name: string): number {
   const h = createHash('sha256').update(`idacc-skill:${name.trim().toLowerCase()}`).digest('hex');
   return 1_000_000_000_000 + (Number.parseInt(h.slice(0, 10), 16) % 900_000_000_000);
@@ -1129,11 +1141,16 @@ const METHODS: Record<string, (...a: any[]) => Promise<unknown>> = {
   },
   // Connect & sync: resolve the key (config → env), validate live, cache the
   // discovered model list onto the provider so models stay discoverable.
-  'providers:connect': async (name: string) => {
+  'providers:connect': async (name: string, expectedStamp?: string) => {
     const p = loadSettings().providers.find((x) => x.name === name);
     if (!p) throw new Error('provider not found');
+    const expected = typeof expectedStamp === 'string' ? expectedStamp : '';
+    if (expected && providerBridgeStamp(p) !== expected) throw new Error('provider changed before sync started');
     const key = resolveProviderKey(p);
     const outcome = await new ProviderClient(p, key).probe();
+    const latest = loadSettings().providers.find((x) => x.name === name);
+    if (!latest) throw new Error('provider removed before sync completed');
+    if (expected && providerBridgeStamp(latest) !== expected) throw new Error('provider changed before sync completed');
     recordProviderSync(String(name), {
       at: Date.now(),
       status: outcome.status,

@@ -282,7 +282,7 @@ export function Settings({ store, navigate }: { store: FleetStore; navigate?: (v
     try {
       const fresh = await ensureProviderFresh(n, 'Connect & sync');
       if (!fresh) return;
-      const r = await call<{ providers: ProviderRow[]; outcome: ProbeOutcome }>('providers:connect', n);
+      const r = await call<{ providers: ProviderRow[]; outcome: ProbeOutcome }>('providers:connect', n, providerStamp(fresh.current));
       setProviders(r.providers);
       setProbe((m) => ({ ...m, [n]: r.outcome }));
     } finally {
