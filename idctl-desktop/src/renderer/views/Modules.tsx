@@ -107,6 +107,7 @@ type BrainSkillSyncResult = {
   count: number;
   memory: boolean;
   summary?: BrainSkillStats | null;
+  index?: BrainSkillSummary;
   generatedAt?: string;
 };
 type SkillBrainDrift = { kind: 'created' | 'deleted' | 'retagged'; skill: string; at: number };
@@ -336,6 +337,10 @@ function brainSkillContractDetail(report: BrainSkillSummary): string {
   const tagCount = report.facets?.tags?.length ?? report.summary.tags ?? 0;
   const reuseCount = report.reuseGroups?.length ?? 0;
   return `Brain Skills catalog contract is current (${domainCount} domains, ${tagCount} tags, ${reuseCount} reuse groups).`;
+}
+
+function brainFacetLabel(facet: BrainSkillFacet): string {
+  return String(facet.domain ?? facet.tag ?? facet.name ?? '').trim();
 }
 
 function brainGraphContractCurrent(report: BrainGraphReport): boolean {
@@ -713,8 +718,15 @@ export function Modules({ store }: { store: FleetStore }) {
       return;
     }
     setBrainSyncing(true);
-    setNote('checking local skill catalog before Brain sync…');
+    setNote('checking Brain core health before sync…');
     try {
+      const latestCore = await call<BrainCoreHealthReport>('brain:coreHealth').catch(() => null);
+      setBrainCore(latestCore);
+      if (!latestCore || latestCore.ok !== true) {
+        setNote('Brain sync blocked: Brain core health is unavailable or not ok. Open Brain Skills/Health, restart Brain if needed, then retry.');
+        return;
+      }
+      setNote('checking local skill catalog before Brain sync…');
       const [latestSkills, latestTags, latestBrain] = await Promise.all([
         call<LibrarySkillEntry[]>('librarySkills').catch(() => skills),
         call<Record<string, string[]>>('skills:autoTags').catch(() => autoTags),
@@ -763,7 +775,16 @@ export function Modules({ store }: { store: FleetStore }) {
       }
       setNote('syncing skill catalog to Brain…');
       const r = await call<BrainSkillSyncResult>('skills:syncBrain', { catalogStamp: latestStamp });
-      setBrainSkills({ summary: r.summary ?? undefined, meta: { generatedAt: r.generatedAt } });
+      const syncedBrain = r.index ?? await call<BrainSkillSummary>('skills:brainSummary').catch(() => null);
+      if (syncedBrain?.summary) {
+        setBrainSkills(syncedBrain);
+      } else {
+        setBrainSkills({
+          ...afterBrain,
+          summary: r.summary ?? afterBrain?.summary,
+          meta: { ...(afterBrain?.meta ?? {}), generatedAt: r.generatedAt ?? afterBrain?.meta?.generatedAt },
+        });
+      }
       setBrainDrift(null);
       setNote(`synced ${r.count}/${r.total} skills to Brain${r.memory ? ' · shared memory ✓' : ''}`);
     } catch (e) {
@@ -930,6 +951,11 @@ export function Modules({ store }: { store: FleetStore }) {
     setBusy(true);
     setNote(`checking skill ${name}…`);
     try {
+      const installed = skillFleetUsage(name);
+      if (installed.length) {
+        setNote(`delete blocked: ${name} is still installed on ${installed.length} fleet agent${installed.length === 1 ? '' : 's'} (${describeTargets(installed.slice(0, 6))}${installed.length > 6 ? ', ...' : ''}). Uninstall it from all teams before deleting the library SKILL.md.`);
+        return;
+      }
       const latest = await call<LibrarySkillEntry[]>('librarySkills').catch(() => []);
       if (!latest.some((s) => s.name === name)) {
         setNote(`delete blocked: skill ${name} is no longer in the library.`);
@@ -981,6 +1007,24 @@ export function Modules({ store }: { store: FleetStore }) {
       );
     });
   }, [skills, skillQuery, tagFilter, autoTags]);
+  const skillTagStats = useMemo(() => {
+    const counts = new Map<string, number>();
+    let frontmatter = 0;
+    let autoOnly = 0;
+    for (const s of skills) {
+      const fm = s.tags ?? [];
+      const auto = autoTags[s.name] ?? [];
+      if (fm.length) frontmatter += 1;
+      else if (auto.length) autoOnly += 1;
+      for (const t of new Set([...fm, ...auto])) counts.set(t, (counts.get(t) ?? 0) + 1);
+    }
+    return {
+      frontmatter,
+      autoOnly,
+      untagged: Math.max(0, skills.length - frontmatter - autoOnly),
+      topTags: [...counts.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0])).slice(0, 6),
+    };
+  }, [skills, autoTags]);
 
   // ---- Skills: create a new skill (agentskills.io SKILL.md) ---------------
   const [showCreate, setShowCreate] = useState(false);
@@ -1023,6 +1067,11 @@ export function Modules({ store }: { store: FleetStore }) {
   // # selected agents that have at least one MCP server attached (→ show Rebuild).
   const anyAttached = targetAgents.some((a) => curMcp(a).length > 0);
   const targetLabel = targetCount === 0 ? 'no agents' : targetCount === 1 ? targetAgents[0].name : `${targetCount} agents`;
+  function skillFleetUsage(skill: string): TargetAgent[] {
+    return store.allAgents
+      .filter((a) => (((a.metadata as any)?.skills ?? []) as string[]).includes(skill))
+      .map((a) => ({ ...a, team: a.team ?? activeTeam }));
+  }
   const brainTotal = brainSkills?.summary?.totalSkills;
   const brainMissingLocal = typeof brainTotal === 'number' && brainTotal < skills.length;
   const brainExtraNodes = typeof brainTotal === 'number' && brainTotal > skills.length;
@@ -1075,6 +1124,13 @@ export function Modules({ store }: { store: FleetStore }) {
   const brainGraphStatus = brainGraphStatusLabel(brainGraph);
   const brainGraphTitle = brainGraphStatusTitle(brainGraph);
   const brainGraphDetail = brainGraphReviewDetail(brainGraph);
+  const brainSyncWriteBlocked = !brainCore || brainCore.ok !== true;
+  const brainSyncDisabled = brainSyncing || skills.length === 0 || brainSyncWriteBlocked;
+  const brainSyncTitle = brainSyncWriteBlocked
+    ? 'Brain core health is unavailable or not ok; open Brain Skills/Health before writing the skill catalog'
+    : 'Preview, fresh-read, then upsert the local skill catalog into Brain /skills/index';
+  const brainDomainFacets = (brainSkills?.facets?.domains ?? []).map(brainFacetLabel).filter(Boolean).slice(0, 4);
+  const brainTagFacets = (brainSkills?.facets?.tags ?? []).map(brainFacetLabel).filter(Boolean).slice(0, 4);
   const catalogDraft = buildCatalog();
   const customDraft = buildCustom();
   const catalogReplace = catalogDraft ? mcp.find((p) => p.name === catalogDraft.name) : undefined;
@@ -1327,7 +1383,7 @@ export function Modules({ store }: { store: FleetStore }) {
           <span className={`chip ${brainGraphNeedsReview ? 'brain-review' : 'tag'}`} title={brainGraphTitle}>
             {brainGraphStatus}
           </span>
-          <button className="btn small" disabled={brainSyncing || skills.length === 0} title="Preview, fresh-read, then upsert the local skill catalog into Brain /skills/index" onClick={() => void syncSkillsToBrain()}>
+          <button className="btn small" disabled={brainSyncDisabled} title={brainSyncTitle} onClick={() => void syncSkillsToBrain()}>
             {brainSyncing ? 'Syncing…' : 'Preview & sync'}
           </button>
           <BrainDashboardLauncher />
@@ -1346,7 +1402,7 @@ export function Modules({ store }: { store: FleetStore }) {
               <div className="muted small">{brainReviewDetail}</div>
             </div>
             {brainNeedsLocalSync ? (
-              <button className="btn small" disabled={brainSyncing || skills.length === 0} onClick={() => void syncSkillsToBrain()}>
+              <button className="btn small" disabled={brainSyncDisabled} title={brainSyncTitle} onClick={() => void syncSkillsToBrain()}>
                 {brainSyncing ? 'Syncing…' : 'Preview & sync'}
               </button>
             ) : null}
@@ -1393,6 +1449,38 @@ export function Modules({ store }: { store: FleetStore }) {
             <BrainDashboardLauncher compact />
           </div>
         ) : null}
+
+        <div className="skill-catalog-summary">
+          <div>
+            <b>{filteredSkills.length}/{skills.length}</b>
+            <span className="muted small"> shown</span>
+          </div>
+          <div>
+            <b>{skillTagStats.frontmatter}</b>
+            <span className="muted small"> tagged</span>
+          </div>
+          <div>
+            <b>{skillTagStats.autoOnly}</b>
+            <span className="muted small"> auto-tagged</span>
+          </div>
+          <div>
+            <b>{skillTagStats.untagged}</b>
+            <span className="muted small"> untagged</span>
+          </div>
+          <div>
+            <b>{brainSkills?.reuseGroups?.length ?? 0}</b>
+            <span className="muted small"> Brain reuse groups</span>
+          </div>
+          <div className="skill-catalog-facets">
+            {skillTagStats.topTags.map(([tag, count]) => (
+              <button key={tag} className={`chip tag${tagFilter.has(tag) ? ' on' : ''}`} title={`${count} local skill${count === 1 ? '' : 's'}`} onClick={() => toggleTag(tag)}>
+                {tag} {count}
+              </button>
+            ))}
+            {brainDomainFacets.map((domain) => <span key={`d-${domain}`} className="chip tag" title="Brain skill domain">Brain:{domain}</span>)}
+            {brainTagFacets.map((tag) => <span key={`t-${tag}`} className="chip tag" title="Brain skill tag">Brain:{tag}</span>)}
+          </div>
+        </div>
 
         {showCreate ? (
           <div className="create-skill">
@@ -1455,6 +1543,7 @@ export function Modules({ store }: { store: FleetStore }) {
         <div className="skill-catalog">
           {filteredSkills.map((s) => {
             const have = skillCount(s.name);
+            const fleetHave = skillFleetUsage(s.name).length;
             const all = targetCount > 0 && have === targetCount;
             return (
               <div className="skill-card" key={s.name}>
@@ -1462,7 +1551,10 @@ export function Modules({ store }: { store: FleetStore }) {
                   <span className="b">{s.name}</span>
                   {s.license ? <span className="muted small">· {s.license}</span> : null}
                   <span className="grow" />
-                  <span className={have > 0 ? 'ok-text small' : 'muted small'}>{have}/{targetCount}</span>
+                  <span className={have > 0 ? 'ok-text small' : 'muted small'} title={`${have}/${targetCount} selected targets; ${fleetHave} fleet agent${fleetHave === 1 ? '' : 's'} currently list this skill`}>
+                    {have}/{targetCount}
+                  </span>
+                  {fleetHave !== have ? <span className="chip tag" title="Current whole-fleet install count">Fleet {fleetHave}</span> : null}
                   <button className="btn" disabled={busy || targetCount === 0 || all} onClick={() => void installSkillAll(s.name)}>
                     {all ? 'Installed' : `Install → ${targetLabel}`}
                   </button>
@@ -1479,9 +1571,14 @@ export function Modules({ store }: { store: FleetStore }) {
                       <button className="btn" disabled={busy} onClick={() => setConfirmDel(null)}>Cancel</button>
                     </>
                   ) : (
-                    <button className="btn icon-danger" disabled={busy} title="Delete from library" onClick={() => setConfirmDel(s.name)}>✕</button>
+                    <button className="btn icon-danger" disabled={busy || fleetHave > 0} title={fleetHave > 0 ? 'Uninstall from all fleet agents before deleting the library SKILL.md' : 'Delete from library'} onClick={() => setConfirmDel(s.name)}>✕</button>
                   )}
                 </div>
+                {fleetHave > 0 ? (
+                  <div className="skill-usage-note">
+                    Installed on {fleetHave} fleet agent{fleetHave === 1 ? '' : 's'}; library delete unlocks after the skill is uninstalled everywhere.
+                  </div>
+                ) : null}
                 {s.description ? <p className="muted small skill-desc"><LinkedDescription text={s.description} /></p> : null}
                 {(() => {
                   const fm = new Set(s.tags ?? []);

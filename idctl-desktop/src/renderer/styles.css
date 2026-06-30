@@ -230,6 +230,9 @@ button.chip.incompat:hover { border-color: var(--line); }
 .create-skill { border: 1px solid var(--line); border-radius: 8px; padding: 12px; margin: 8px 0; background: var(--bg-2); }
 .create-skill textarea { background: var(--bg-3); border: 1px solid var(--line); border-radius: 6px; color: var(--text); padding: 6px 8px; font: inherit; resize: vertical; }
 .skill-brain-review { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin: 8px 0; padding: 9px 10px; border: 1px solid color-mix(in srgb, var(--warn) 48%, var(--line)); border-radius: 8px; background: color-mix(in srgb, var(--warn) 7%, var(--bg)); }
+.skill-catalog-summary { display: flex; align-items: center; gap: 10px 14px; flex-wrap: wrap; margin: 8px 0; padding: 9px 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--bg-2); }
+.skill-catalog-summary > div:not(.skill-catalog-facets) { display: inline-flex; align-items: baseline; gap: 4px; white-space: nowrap; }
+.skill-catalog-facets { display: inline-flex; align-items: center; gap: 5px; flex-wrap: wrap; min-width: 180px; }
 .brain-dashboard-tabs { display: inline-flex; align-items: center; gap: 4px; flex-wrap: wrap; }
 .brain-dashboard-tabs.compact { flex: 1 1 220px; }
 .brain-dashboard-tabs .btn { padding: 3px 8px; }
@@ -238,6 +241,7 @@ button.chip.incompat:hover { border-color: var(--line); }
 .skill-catalog { display: flex; flex-direction: column; gap: 8px; margin-top: 10px; }
 .skill-card { border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; background: var(--bg-2); }
 .skill-card-head { display: flex; align-items: center; gap: 8px; }
+.skill-usage-note { margin-top: 6px; color: var(--warn); font-size: 11px; }
 .skill-desc { margin: 6px 0 0; }
 .skill-tags { margin-top: 8px; }
 .btn.icon-danger { color: var(--muted); padding: 2px 8px; }

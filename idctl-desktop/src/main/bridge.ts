@@ -872,6 +872,7 @@ const METHODS: Record<string, (...a: any[]) => Promise<unknown>> = {
       count: Number(synced.count ?? nodes.length),
       memory,
       summary: index?.summary ?? null,
+      index,
       generatedAt: index?.meta?.generatedAt ?? new Date().toISOString(),
     };
   },

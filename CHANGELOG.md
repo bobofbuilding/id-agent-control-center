@@ -8,6 +8,9 @@ Every change pushed or merged to `main` carries its version number in the commit
 subject (`vX.Y.Z: …`), stamped automatically by the `commit-msg` hook — see
 [CONTRIBUTING.md](CONTRIBUTING.md).
 
+## [0.1.312] — 2026-06-30
+- Capabilities Skills Brain catalog guardrails
+
 ## [0.1.311] — 2026-06-30
 - Settings starter-first local stacks
 
