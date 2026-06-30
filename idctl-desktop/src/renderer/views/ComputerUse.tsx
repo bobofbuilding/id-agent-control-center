@@ -257,10 +257,19 @@ export function ComputerUse({ store }: { store: FleetStore }) {
       setMsg('That Computer Use request changed since it rendered. Review the current approval prompt before deciding.');
       return;
     }
+    const res = await call<{ ok: boolean }>('cu:confirm', action.id, allow).catch(() => ({ ok: false }));
+    if (!res.ok) {
+      const afterFail = await call<PendingAction[]>('cu:pending').catch(() => current);
+      const stillPending = afterFail.some((p) => p.id === action.id);
+      if (!stillPending) resolvedRef.current.add(action.id);
+      applyPending(afterFail);
+      setMsg(stillPending
+        ? 'Computer Use approval was not accepted by the broker. Refreshed pending approvals; review before deciding again.'
+        : 'That Computer Use request was already resolved or expired. Refreshed pending approvals.');
+      return;
+    }
     resolvedRef.current.add(action.id);
     setPending((ps) => ps.filter((p) => p.id !== action.id));
-    const res = await call<{ ok: boolean }>('cu:confirm', action.id, allow).catch(() => ({ ok: false }));
-    if (!res.ok) setMsg('That Computer Use request was already resolved or expired.');
   }
 
   useEffect(() => {
