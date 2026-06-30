@@ -545,7 +545,7 @@ textarea.composer-input { resize: none; line-height: 1.4; min-height: 38px; max-
 .settings-readiness { display: flex; flex-direction: column; gap: 10px; }
 .settings-readiness-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
 .settings-readiness-head h3 { margin: 0; }
-.readiness-grid { display: grid; grid-template-columns: repeat(4, minmax(150px, 1fr)); gap: 8px; }
+.readiness-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 8px; }
 .readiness-check { border: 1px solid var(--line); border-radius: 8px; background: var(--bg); padding: 9px 10px; min-width: 0; }
 .readiness-check.ok { border-color: color-mix(in srgb, var(--ok) 42%, var(--line)); }
 .readiness-check.warn { border-color: color-mix(in srgb, var(--warn) 48%, var(--line)); }

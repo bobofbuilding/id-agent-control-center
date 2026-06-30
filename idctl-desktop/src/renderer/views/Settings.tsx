@@ -22,6 +22,14 @@ const KINDS: ProviderKind[] = ['ollama', 'lmstudio', 'openai-compatible', 'anthr
 /** Provider profile enriched by the bridge with where its key resolves from. */
 type ProviderRow = ProviderProfile & { keySource?: 'config' | 'env' | 'none'; needsKey?: boolean };
 type EvmRpcRow = Omit<EvmRpcProfile, 'apiKey' | 'apiKeyEncrypted'> & { keySource: EvmRpcKeySource };
+type ManagerCapabilities = {
+  cc_api_version?: number;
+  extension?: string;
+  features?: string[];
+  routes?: { method: string; path: string; group: string }[];
+} | null;
+
+const REQUIRED_MANAGER_FEATURES = ['observability', 'agent-config', 'team-config', 'library', 'brain-context', 'stalled-sweep'];
 
 function timeAgo(ms: number): string {
   const s = Math.max(0, Math.round((Date.now() - ms) / 1000));
@@ -106,6 +114,7 @@ export function Settings({ store, navigate }: { store: FleetStore; navigate?: (v
   const [version, setVersion] = useState('');
   const [upd, setUpd] = useState<{ autoUpgrade?: boolean; updateManifestUrl?: string; updateRepo?: string } | null>(null);
   const [updStatus, setUpdStatus] = useState<{ latest?: string; available?: boolean; staged?: boolean; checking?: boolean; error?: string; lastChecked?: number } | null>(null);
+  const [managerCaps, setManagerCaps] = useState<ManagerCapabilities | undefined>(undefined);
   // subscriptions (runtime OAuth: Claude / ChatGPT)
   type Sub = { provider: string; loggedIn: boolean; installed?: boolean; plan?: string; email?: string; method?: string; detail?: string };
   type SubKey = 'claude' | 'chatgpt' | 'cursor';
@@ -117,6 +126,7 @@ export function Settings({ store, navigate }: { store: FleetStore; navigate?: (v
     setProviders(await call<ProviderRow[]>('providers:list').catch(() => []));
     setEvmRpcs(await call<EvmRpcRow[]>('evmRpc:list').catch(() => []));
     setVersion(await call<string>('app:version').catch(() => ''));
+    setManagerCaps(await call<ManagerCapabilities>('manager:capabilities').catch(() => null));
     const u = await call<typeof upd>('update:getSettings').catch(() => null);
     setUpd(u);
     setUpdStatus(await call<typeof updStatus>('update:status').catch(() => null));
@@ -124,6 +134,10 @@ export function Settings({ store, navigate }: { store: FleetStore; navigate?: (v
     // Settings (the cached status above can lag a release until the next check).
     void call<typeof updStatus>('update:check').then((s) => { if (s) setUpdStatus(s); }).catch(() => {});
     setSubs(await call<{ claude: Sub; chatgpt: Sub; cursor: Sub }>('subs:status').catch(() => null));
+  }
+  async function reloadManagerCapabilities() {
+    setManagerCaps(undefined);
+    setManagerCaps(await call<ManagerCapabilities>('manager:capabilities').catch(() => null));
   }
   async function recheckSubs() {
     setSubsBusy(true);
@@ -745,8 +759,47 @@ export function Settings({ store, navigate }: { store: FleetStore; navigate?: (v
   const providersNeedingKeys = enabledProviders.filter((p) => (p.needsKey ?? kindNeedsKey(p.kind)) && !providerKeyReady(p)).length;
   const syncCandidate = defaultProvider && !defaultRouteReady ? defaultProvider : enabledProviders.find((p) => providerKeyReady(p) && !providerRouteReady(p));
   const textRuntimeReady = store.connection === 'online' && (defaultRouteReady || routeReadyProviders.length > 0);
-  const readinessState = textRuntimeReady ? 'ready' : store.connection === 'online' ? 'needs backend' : 'manager offline';
-  const readinessTone = textRuntimeReady ? 'ok' : store.connection === 'online' ? 'warn' : 'err';
+  const managerFeatureSet = new Set(managerCaps?.features ?? []);
+  const missingManagerFeatures = REQUIRED_MANAGER_FEATURES.filter((feature) => !managerFeatureSet.has(feature));
+  const managerApiVersion = managerCaps?.cc_api_version ?? 0;
+  const managerExtensionReady = store.connection === 'online' && !!managerCaps && managerApiVersion >= 1 && missingManagerFeatures.length === 0;
+  const managerExtensionTone = store.connection !== 'online'
+    ? 'err'
+    : managerCaps === undefined
+      ? 'warn'
+      : !managerCaps
+        ? 'err'
+        : managerApiVersion < 1 || missingManagerFeatures.length
+          ? 'warn'
+          : 'ok';
+  const managerExtensionTitle = store.connection !== 'online'
+    ? 'offline'
+    : managerCaps === undefined
+      ? 'checking...'
+      : !managerCaps
+        ? 'stock/unknown'
+        : managerApiVersion < 1
+          ? `CC API v${managerApiVersion || '?'}`
+          : missingManagerFeatures.length
+            ? `${REQUIRED_MANAGER_FEATURES.length - missingManagerFeatures.length}/${REQUIRED_MANAGER_FEATURES.length} features`
+            : `CC API v${managerApiVersion}`;
+  const managerExtensionDetail = store.connection !== 'online'
+    ? 'connect manager first'
+    : managerCaps === undefined
+      ? 'reading /capabilities'
+      : !managerCaps
+        ? 'missing /capabilities; update id-agents manager'
+        : missingManagerFeatures.length
+          ? `missing ${missingManagerFeatures.slice(0, 3).join(', ')}${missingManagerFeatures.length > 3 ? '...' : ''}`
+          : `${managerCaps.routes?.length ?? 0} extension routes`;
+  const readinessState = store.connection !== 'online'
+    ? 'manager offline'
+    : !managerExtensionReady
+      ? 'manager update'
+      : textRuntimeReady
+        ? 'ready'
+        : 'needs backend';
+  const readinessTone = store.connection !== 'online' || managerExtensionTone === 'err' ? 'err' : textRuntimeReady && managerExtensionReady ? 'ok' : 'warn';
 
   function providerPort(p: ProviderRow): number | null {
     try { const x = new URL(p.baseUrl).port; return x ? Number(x) : null; } catch { return null; }
@@ -876,6 +929,11 @@ export function Settings({ store, navigate }: { store: FleetStore; navigate?: (v
             <b>{store.connection === 'online' ? 'online' : store.connection}</b>
             <small className="mono">{store.managerUrl || 'not connected'}</small>
           </div>
+          <div className={`readiness-check ${managerExtensionTone}`}>
+            <span>Manager extension</span>
+            <b>{managerExtensionTitle}</b>
+            <small title={missingManagerFeatures.length ? `Missing: ${missingManagerFeatures.join(', ')}` : managerCaps?.extension}>{managerExtensionDetail}</small>
+          </div>
           <div className={`readiness-check ${defaultRouteReady ? 'ok' : routeReadyProviders.length ? 'warn' : 'err'}`}>
             <span>Routing</span>
             <b>{defaultProvider ? defaultProvider.name : routeCandidate ? `auto: ${routeCandidate.name}` : 'no backend'}</b>
@@ -916,6 +974,9 @@ export function Settings({ store, navigate }: { store: FleetStore; navigate?: (v
           ) : null}
           <button className="btn small" disabled={discovering} onClick={() => void runDiscover()}>
             {discovering ? 'Scanning...' : 'Scan running'}
+          </button>
+          <button className="btn small" onClick={() => void reloadManagerCapabilities()}>
+            Re-check manager
           </button>
         </div>
       </section>

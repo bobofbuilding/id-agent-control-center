@@ -431,6 +431,7 @@ const M: Record<string, (...a: any[]) => Promise<unknown>> = {
     return buildRuntimeCatalog(list);
   },
   'runtime:cooldowns': async () => client.runtimeCooldowns(),
+  'manager:capabilities': () => client.capabilities(),
 
   // modules: skills + plugins catalog, install, MCP attach + rebuild
   librarySkills: () => client.librarySkills(),
