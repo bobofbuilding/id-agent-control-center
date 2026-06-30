@@ -51,7 +51,7 @@ import { buildRuntimeCatalog, RUNTIMES, providerKindToRuntimes, isLocalProvider 
 import { testMcpServer } from './mcpTest.ts';
 import { headroomStatus } from './headroom.ts';
 import { decomposeWork, createAndDispatchPlan, fanOutObjective, teamLeads, triageUnassigned, type SubTask } from './work.ts';
-import { normalizeGoalDriverConfig, runGoalDriverOnce, startGoalDriverLoop, type GoalDriverConfig } from './goaldriver.ts';
+import { normalizeGoalDriverConfig, runGoalDriverOnce, startGoalDriverLoop, syncActiveWorkGoalInstructions, type GoalDriverConfig } from './goaldriver.ts';
 import { buildOrgHierarchy, previewOrgSync, syncOrg, startOrgSyncLoop } from './orgSync.ts';
 import { readFileSync, statSync } from 'node:fs';
 import { join } from 'node:path';
@@ -765,6 +765,11 @@ const METHODS: Record<string, (...a: any[]) => Promise<unknown>> = {
     return goalDriverConfig();
   },
   'goalDriver:runOnce': async () => runGoalDriverOnce(() => client, goalDriverConfig()),
+  'goals:syncInstructions': async () => {
+    const goalSync = await syncActiveWorkGoalInstructions(client);
+    const org = await syncOrg(client, { autoRebuild: false });
+    return { goalSync, org };
+  },
   // Per-task token spend (keyed by task shortId) for the board cards.
   'tasks:usage': (team?: string) => (team ? client.withTeam(String(team)) : client).usageByTask(),
   // Control Center capability discovery (feature-detect CC-only manager routes).

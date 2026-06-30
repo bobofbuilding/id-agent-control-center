@@ -49,6 +49,14 @@ const BRAIN_DASHBOARD_TABS: Record<BrainDashboardTab, { title: string; path: str
   graph: { title: 'Brain Graph', path: '/dashboard/graph' },
 };
 
+async function syncGoalInstructionsAfterMutation(action: string): Promise<void> {
+  try {
+    await bridgeCall('goals:syncInstructions', []);
+  } catch (e) {
+    console.warn(`[goals] ${action}: saved locally, but instruction sync failed:`, e);
+  }
+}
+
 function normalizeBrainDashboardTab(value: unknown): BrainDashboardTab {
   const tab = String(value || 'fleet').toLowerCase();
   if (tab in BRAIN_DASHBOARD_TABS) return tab as BrainDashboardTab;
@@ -581,10 +589,16 @@ async function appCall(method: string, args: unknown[]): Promise<unknown> {
       return listGoals(args[0] as string | undefined);
     case 'goals:get':
       return getGoal(args[0] as string);
-    case 'goals:save':
-      return saveGoal(args[0] as Goal);
-    case 'goals:remove':
-      return removeGoal(args[0] as string);
+    case 'goals:save': {
+      const result = saveGoal(args[0] as Goal);
+      await syncGoalInstructionsAfterMutation('save');
+      return result;
+    }
+    case 'goals:remove': {
+      const result = removeGoal(args[0] as string);
+      await syncGoalInstructionsAfterMutation('remove');
+      return result;
+    }
     // Brain plans: read-only LIVE view of <projectsRoot>/brain/plans (README index + files).
     case 'brain:plans':
       return listBrainPlans(args[0] as string | undefined);

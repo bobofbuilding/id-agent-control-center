@@ -116,6 +116,12 @@ function activeAutopilotGoals(): Goal[] {
     .filter((g): g is Goal => !!g && g.status === 'active' && g.autopilot === true);
 }
 
+function activeWorkGoals(): Goal[] {
+  return listGoals()
+    .map((g) => getGoal(g.id))
+    .filter((g): g is Goal => !!g && g.status === 'active');
+}
+
 function goalDriverStamp(goal: Goal): string {
   return [
     goal.id,
@@ -155,6 +161,48 @@ function teamGoalInstructions(team: string, goals: Goal[]): string {
     `Keep this team's work aligned with these active operator goals:`,
     ...lines,
   ].join('\n');
+}
+
+function teamActiveWorkGoalInstructions(team: string, goals: Goal[]): string {
+  const lines = goals.map((g) => {
+    const owner = g.agent ? ` · agent: ${g.agent}` : '';
+    return `- ${g.title || g.id} (${g.id}${owner}): ${clip(g.content || g.idea || '', 220)}`;
+  });
+  return [
+    '## Active Work goals',
+    '',
+    lines.length
+      ? `Keep this team's work aligned with these active Work goals:`
+      : `No active Work goals are currently assigned to this team.`,
+    ...lines,
+  ].join('\n');
+}
+
+export async function syncActiveWorkGoalInstructions(client: ManagerClient): Promise<{ teamsSynced: number; activeGoals: number; errors: string[] }> {
+  const goals = activeWorkGoals();
+  const teams = new Set<string>();
+  for (const g of goals) if (g.team) teams.add(g.team);
+  for (const t of await client.teams().catch(() => [])) if (t.name) teams.add(t.name);
+  if (!teams.size) teams.add(client.team ?? 'default');
+
+  const errors: string[] = [];
+  let teamsSynced = 0;
+  for (const team of teams) {
+    try {
+      const teamGoals = goals.filter((g) => g.team === team);
+      const wrote = await brain.memory('team-instructions', {
+        key: `goals:active:${team}`,
+        content: teamActiveWorkGoalInstructions(team, teamGoals),
+        tags: ['team-instruction', 'goals', 'work'],
+        shared: true,
+        project: team,
+      });
+      if (wrote) teamsSynced++;
+    } catch (e) {
+      errors.push(`team ${team}: ${e instanceof Error ? e.message : String(e)}`);
+    }
+  }
+  return { teamsSynced, activeGoals: goals.length, errors };
 }
 
 async function syncTeamGoalInstructions(client: ManagerClient, goals: Goal[], errors: string[]): Promise<number> {
