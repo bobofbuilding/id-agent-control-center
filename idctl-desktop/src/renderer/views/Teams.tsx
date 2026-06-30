@@ -316,6 +316,9 @@ const VALIDATION_RETURN_PATH = `RETURN PATH — substantial completed work shoul
 - Validators judge the accomplishments against the active primary goal first, then secondary goals, then the original objective.
 - If either validator bounces the work back, refine with the responsible teammate or team lead and repeat the validation pass. Do not dump unvalidated raw work straight to **default/lead** unless the operator explicitly asks for an unvalidated fast path.`;
 
+const FIRST_RUN_LEAD_TARGETS = ['engineering/engineering-lead', 'operations/ops-lead', 'research/research-lead', 'onchain/onchain-lead'];
+const OPTIONAL_LEAD_TARGETS = ['legal/general-counsel', 'skillmesh/skillmesh-ops-lead', 'security/security-router'];
+
 /** Ready-made "act as the team coordinator" directive with generic coder/researcher
  *  teammates — used as the Team Builder fallback when no explicit teammates exist. */
 const COORDINATOR_PRESET = `## Team coordination (you are the lead)
@@ -343,7 +346,7 @@ Default-team **coder** and **researcher** are your validation pair — NOT execu
 For any NON-TRIVIAL request:
 
 1. **Compress** — restate the objective, success criteria, and hard constraints in 1-2 lines.
-2. **Route** — choose the corresponding team lead(s), such as engineering-lead, ops-lead, research-lead, onchain-lead, general-counsel, skillmesh-ops-lead, or security-router. Hand each lead a scoped objective with \`/ask <team>/<lead> "<objective>"\`.
+2. **Route** — choose an existing corresponding team lead. First-run starter leads are ${FIRST_RUN_LEAD_TARGETS.map((target) => `**${target}**`).join(', ')}. Optional leads such as ${OPTIONAL_LEAD_TARGETS.map((target) => `**${target}**`).join(', ')} are valid only after those teams exist and are current in HR Manager. Hand each lead a scoped objective with \`/ask <team>/<lead> "<objective>"\`.
 3. **Decompose at the edge** — each team lead owns breaking its objective into member-owned tasks, delegating independent work in parallel, collecting member summaries, and refining the result.
 4. **Validate on return** — when completed work comes back, send the completed-work packet to both default-team validators and wait for their findings before treating it as final.
 5. **Bounce or close** — if either validator rejects the work, return the concrete feedback to the responsible team lead for another refinement cycle. If both validate it, consolidate the findings for the operator.
