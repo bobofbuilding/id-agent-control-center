@@ -584,8 +584,19 @@ export function Settings({ store, navigate }: { store: FleetStore; navigate?: (v
       }
       if (!window.confirm(`Add ${list.length} live local inference backend${list.length === 1 ? '' : 's'}?\n\n${list.map((s) => `${s.name} · ${s.baseUrl}`).join('\n')}`)) return;
       const afterConfirm = await freshProviders();
+      const afterScan = await runDiscover();
+      const verified: Discovered[] = [];
+      for (const before of list) {
+        const current = findDiscoveredMatch(afterScan, before);
+        if (!current || current.status !== 'live' || discoveredStamp(current) !== discoveredStamp(before)) {
+          setProviders(afterConfirm);
+          window.alert('Discovered backends changed during confirmation. Refreshed; review the live server list and try again.');
+          return;
+        }
+        verified.push(current);
+      }
       const afterByUrl = new Set(afterConfirm.map((p) => normUrl(p.baseUrl)));
-      const stillNew = list.filter((s) => !afterByUrl.has(normUrl(s.baseUrl)));
+      const stillNew = verified.filter((s) => !afterByUrl.has(normUrl(s.baseUrl)));
       if (stillNew.length !== list.length) {
         setProviders(afterConfirm);
         await runDiscover();
@@ -681,6 +692,14 @@ export function Settings({ store, navigate }: { store: FleetStore; navigate?: (v
       }
       if (!url && imgServer && !window.confirm('Clear the local image generator?\n\nImage creation will fall back to the cloud provider when available.')) return;
       if (url && imgServer && imageServerStamp({ url, type }) !== imageServerStamp(imgServer) && !window.confirm(`Replace local image generator?\n\nBefore: ${imgServer.type} · ${imgServer.url}\nAfter:  ${type} · ${url}`)) return;
+      const afterReview = await call<ImgServer | null>('image:getServer').catch(() => null);
+      if (imageServerStamp(afterReview) !== imageServerStamp(imgServer)) {
+        setImgServer(afterReview);
+        if (afterReview) { setImgUrl(afterReview.url); setImgType(afterReview.type); }
+        else setImgUrl('');
+        setImgMsg('save blocked: image server changed during review; refreshed');
+        return;
+      }
       const saved = await call<ImgServer | null>('image:setServer', url ? { url, type } : null);
       setImgServer(saved);
       if (saved) { setImgUrl(saved.url); setImgType(saved.type); }
