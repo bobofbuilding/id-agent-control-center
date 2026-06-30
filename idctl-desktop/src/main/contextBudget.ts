@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { configDir, resolveConfigPath } from '../../../idctl/src/settings/paths.ts';
-import { estimateTokens, optimizeAskCommandCore, type ContextBudgetDecision, type ContextBudgetOptions } from '../shared/contextBudget.ts';
+import { auditPreview, estimateTokens, optimizeAskCommandCore, type ContextBudgetDecision, type ContextBudgetOptions } from '../shared/contextBudget.ts';
 
 export interface ContextBudgetRecord {
   id: string;
@@ -20,8 +20,11 @@ export interface ContextBudgetRecord {
   guardrails: string[];
   originalHash: string;
   sentHash: string;
-  originalCommand: string;
-  sentCommand: string;
+  originalPreview: string;
+  sentPreview: string;
+  redactions: string[];
+  previewTruncated: boolean;
+  rawPromptPersisted: false;
 }
 
 export interface ContextBudgetReport {
@@ -40,10 +43,18 @@ export interface ContextBudgetReport {
   policy: {
     route: 'deterministic-first';
     headroomEngine: 'not-required-for-core-budgeting';
-    retrieval: 'local-audit-records-only';
+    retrieval: 'hashes-and-redacted-previews-only';
   };
   qualityGuards: string[];
 }
+
+export type ContextBudgetDecisionView = Omit<ContextBudgetDecision, 'command' | 'originalCommand'> & {
+  originalPreview: string;
+  commandPreview: string;
+  redactions: string[];
+  previewTruncated: boolean;
+  rawPromptPersisted: false;
+};
 
 const MAX_RECENT = 80;
 const recent: ContextBudgetRecord[] = [];
@@ -56,6 +67,7 @@ const totals = {
   sentTokens: 0,
   savedTokens: 0,
 };
+let migratedStoredRecords = false;
 
 function budgetDir(): string {
   const dir = join(configDir(resolveConfigPath()), 'context-budget');
@@ -84,7 +96,77 @@ function writeRecord(record: ContextBudgetRecord): void {
   }
 }
 
+function migrateStoredRecordFiles(): void {
+  if (migratedStoredRecords) return;
+  migratedStoredRecords = true;
+  let files: string[] = [];
+  try {
+    const dir = budgetDir();
+    files = readdirSync(dir).filter((f) => /^cb_.*\.json$/.test(f));
+    for (const f of files) {
+      const file = join(dir, f);
+      const rawText = readFileSync(file, 'utf8');
+      if (!/\"(?:originalCommand|sentCommand)\"/.test(rawText)) continue;
+      const sanitized = sanitizeRecord(JSON.parse(rawText) as ContextBudgetRecord & { originalCommand?: string; sentCommand?: string });
+      const tmp = `${file}.${process.pid}.sanitize`;
+      writeFileSync(tmp, JSON.stringify(sanitized, null, 2) + '\n', { mode: 0o600 });
+      try { renameSync(tmp, file); } catch (err) { try { rmSync(tmp, { force: true }); } catch { /* ignore cleanup */ } throw err; }
+    }
+  } catch {
+    /* Migration is best-effort; hidden read routes still sanitize legacy records before returning them. */
+  }
+}
+
+function sanitizeRecord(raw: ContextBudgetRecord | (Partial<ContextBudgetRecord> & { originalCommand?: string; sentCommand?: string })): ContextBudgetRecord {
+  const legacy = raw as Partial<ContextBudgetRecord> & { originalCommand?: string; sentCommand?: string };
+  const originalText = typeof raw.originalPreview === 'string' ? raw.originalPreview : String(legacy.originalCommand ?? '');
+  const sentText = typeof raw.sentPreview === 'string' ? raw.sentPreview : String(legacy.sentCommand ?? '');
+  const original = auditPreview(originalText);
+  const sent = auditPreview(sentText);
+  const redactions = Array.from(new Set([...(raw.redactions ?? []), ...original.redactions, ...sent.redactions]));
+  return {
+    id: String(raw.id ?? recordId(hashText(originalText || sentText))),
+    createdAt: typeof raw.createdAt === 'number' ? raw.createdAt : Date.now(),
+    source: String(raw.source ?? 'unknown'),
+    team: raw.team,
+    target: raw.target,
+    route: raw.route === 'optimized-deterministic' ? 'optimized-deterministic' : 'direct',
+    originalTokens: Number(raw.originalTokens ?? estimateTokens(originalText)) || 0,
+    sentTokens: Number(raw.sentTokens ?? estimateTokens(sentText)) || 0,
+    savedTokens: Number(raw.savedTokens ?? 0) || 0,
+    savingsRatio: Number(raw.savingsRatio ?? 0) || 0,
+    transforms: Array.isArray(raw.transforms) ? raw.transforms.map(String) : [],
+    reasons: Array.isArray(raw.reasons) ? raw.reasons.map(String) : [],
+    guardrails: Array.isArray(raw.guardrails) ? raw.guardrails.map(String) : [],
+    originalHash: String(raw.originalHash ?? hashText(originalText)),
+    sentHash: String(raw.sentHash ?? hashText(sentText)),
+    originalPreview: original.preview,
+    sentPreview: sent.preview,
+    redactions,
+    previewTruncated: Boolean(raw.previewTruncated || original.truncated || sent.truncated),
+    rawPromptPersisted: false,
+  };
+}
+
+function decisionView(decision: ContextBudgetDecision): ContextBudgetDecisionView {
+  const original = auditPreview(decision.originalCommand);
+  const command = auditPreview(decision.command);
+  const redactions = Array.from(new Set([...original.redactions, ...command.redactions]));
+  const { command: _command, originalCommand: _originalCommand, ...rest } = decision;
+  void _command;
+  void _originalCommand;
+  return {
+    ...rest,
+    originalPreview: original.preview,
+    commandPreview: command.preview,
+    redactions,
+    previewTruncated: original.truncated || command.truncated,
+    rawPromptPersisted: false,
+  };
+}
+
 function remember(decision: ContextBudgetDecision): void {
+  migrateStoredRecordFiles();
   totals.inspected += 1;
   totals.originalTokens += decision.originalTokens;
   totals.sentTokens += decision.sentTokens;
@@ -96,6 +178,8 @@ function remember(decision: ContextBudgetDecision): void {
   if (!decision.changed) return;
   const originalHash = hashText(decision.originalCommand);
   const sentHash = hashText(decision.command);
+  const original = auditPreview(decision.originalCommand);
+  const sent = auditPreview(decision.command);
   const record: ContextBudgetRecord = {
     id: recordId(originalHash),
     createdAt: Date.now(),
@@ -112,8 +196,11 @@ function remember(decision: ContextBudgetDecision): void {
     guardrails: decision.guardrails,
     originalHash,
     sentHash,
-    originalCommand: decision.originalCommand,
-    sentCommand: decision.command,
+    originalPreview: original.preview,
+    sentPreview: sent.preview,
+    redactions: Array.from(new Set([...original.redactions, ...sent.redactions])),
+    previewTruncated: original.truncated || sent.truncated,
+    rawPromptPersisted: false,
   };
   recent.unshift(record);
   recent.splice(MAX_RECENT);
@@ -127,6 +214,7 @@ export function optimizeAskCommand(command: string, options: ContextBudgetOption
 }
 
 export function contextBudgetReport(): ContextBudgetReport {
+  migrateStoredRecordFiles();
   const savedTokens = totals.savedTokens;
   const originalTokens = totals.originalTokens;
   const sentTokens = totals.sentTokens;
@@ -146,37 +234,39 @@ export function contextBudgetReport(): ContextBudgetReport {
     policy: {
       route: 'deterministic-first',
       headroomEngine: 'not-required-for-core-budgeting',
-      retrieval: 'local-audit-records-only',
+      retrieval: 'hashes-and-redacted-previews-only',
     },
     qualityGuards: [
       'Only /ask payloads are eligible; manager lifecycle commands pass through unchanged.',
       'Secrets, auth material, agent instruction sidecars, active code patches, and wallet/key material always use the direct route.',
       'The hot path uses deterministic whitespace, exact-duplicate, and background-section compaction only; no AI summarizer rewrites prompts before dispatch.',
       'If savings are below the minimum gate, the exact original prompt is sent.',
-      'Optimized prompts are stored with hashes and the original command in a local 0600 audit record for recovery and sampling.',
+      'Optimized prompts are stored with hashes and redacted bounded previews only; raw prompts, secrets, auth material, and wallet/key material are not persisted in audit records.',
     ],
   };
 }
 
 export function readContextBudgetRecord(id: string): ContextBudgetRecord | null {
+  migrateStoredRecordFiles();
   const safe = String(id || '').replace(/[^a-zA-Z0-9_-]/g, '').slice(0, 80);
   if (!safe) return null;
   const file = join(budgetDir(), `${safe}.json`);
   if (!existsSync(file)) return null;
   try {
-    return JSON.parse(readFileSync(file, 'utf8')) as ContextBudgetRecord;
+    return sanitizeRecord(JSON.parse(readFileSync(file, 'utf8')) as ContextBudgetRecord);
   } catch {
     return null;
   }
 }
 
 export function loadRecentContextBudgetRecords(limit = 20): ContextBudgetRecord[] {
+  migrateStoredRecordFiles();
   try {
     return readdirSync(budgetDir())
       .filter((f) => /^cb_.*\.json$/.test(f))
       .map((f) => {
         const path = join(budgetDir(), f);
-        try { return JSON.parse(readFileSync(path, 'utf8')) as ContextBudgetRecord; } catch { return null; }
+        try { return sanitizeRecord(JSON.parse(readFileSync(path, 'utf8')) as ContextBudgetRecord); } catch { return null; }
       })
       .filter((r): r is ContextBudgetRecord => !!r)
       .sort((a, b) => b.createdAt - a.createdAt)
@@ -186,10 +276,10 @@ export function loadRecentContextBudgetRecords(limit = 20): ContextBudgetRecord[
   }
 }
 
-export function contextBudgetDryRun(command: string, options: ContextBudgetOptions = {}): ContextBudgetDecision {
+export function contextBudgetDryRun(command: string, options: ContextBudgetOptions = {}): ContextBudgetDecisionView {
   const decision = optimizeAskCommandCore(command, { ...options, source: options.source ?? 'dry-run' });
-  return {
+  return decisionView({
     ...decision,
     originalTokens: decision.originalTokens || estimateTokens(command),
-  };
+  });
 }

@@ -35,10 +35,24 @@ const DEFAULT_LOSSY_MIN_PROMPT_TOKENS = 6000;
 const MIN_SAVED_TOKENS = 180;
 
 const PROTECTED_PATTERNS: Array<[string, RegExp]> = [
-  ['secret/auth material', /\b(api[_-]?key|access[_-]?token|authorization\s*:|bearer\s+[a-z0-9._-]{16,}|password\s*[=:]|private[_ -]?key|-----BEGIN\s+(?:RSA|OPENSSH|EC|PRIVATE))/i],
-  ['system/developer/agent instruction source', /\b(system prompt|developer message|\.id-instructions\.md|agent instruction\s*-\s*coordination|coordination\s*&\s*behavior|instruction sidecar)\b/i],
+  ['secret/auth material', /\b(api[_-]?key|access[_-]?token|refresh[_-]?token|client[_-]?secret|authorization\s*:|bearer\s+[a-z0-9._-]{16,}|password\s*[=:]|passwd\s*[=:]|private[_ -]?key|secret[_-]?key|-----BEGIN\s+(?:RSA|OPENSSH|EC|PRIVATE)|sk-[a-z0-9_-]{16,}|gh[pousr]_[a-z0-9_]{16,}|github_pat_[a-z0-9_]{20,}|xox[baprs]-[a-z0-9-]{20,}|AKIA[0-9A-Z]{16}|AIza[0-9A-Za-z_-]{30,}|eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,})/i],
+  ['system/developer/agent instruction source', /(?:\b(system prompt|developer message|agent instruction\s*-\s*coordination|coordination\s*&\s*behavior|instruction sidecar)\b|\.id-instructions\.md)/i],
   ['source code or patch under active review', /(^|\n)(diff --git|@@\s|```(?:[a-z0-9_-]+)?\s*(?:import|export|function|class|const|let|var|def |package |use |fn |pragma |interface)|\+\+\+\s+b\/|---\s+a\/)/i],
-  ['wallet/key material', /\b(seed phrase|mnemonic|session key|private wallet|controller signature)\b/i],
+  ['wallet/key material', /\b(seed phrase|mnemonic|recovery phrase|session key|private wallet|controller signature|wallet private key|signing key)\b/i],
+];
+
+const REDACTION_PATTERNS: Array<[string, RegExp]> = [
+  ['private-key-block', /-----BEGIN\s+(?:RSA|OPENSSH|EC|PRIVATE)[\s\S]*?-----END\s+(?:RSA|OPENSSH|EC|PRIVATE)[^-]*-----/gi],
+  ['authorization-header', /authorization\s*:\s*bearer\s+[a-z0-9._-]+/gi],
+  ['bearer-token', /\bbearer\s+[a-z0-9._-]{16,}/gi],
+  ['openai-like-key', /\bsk-[a-z0-9_-]{16,}\b/gi],
+  ['github-token', /\b(?:gh[pousr]_[a-z0-9_]{16,}|github_pat_[a-z0-9_]{20,})\b/gi],
+  ['slack-token', /\bxox[baprs]-[a-z0-9-]{20,}\b/gi],
+  ['aws-access-key', /\bAKIA[0-9A-Z]{16}\b/g],
+  ['google-api-key', /\bAIza[0-9A-Za-z_-]{30,}\b/g],
+  ['jwt', /\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\b/g],
+  ['seed-phrase-line', /^.*\b(seed phrase|mnemonic|recovery phrase)\b.*$/gim],
+  ['secret-assignment', /\b(api[_-]?key|access[_-]?token|refresh[_-]?token|client[_-]?secret|password|passwd|private[_ -]?key|secret[_-]?key|session key|signing key)\b\s*[:=]\s*[^\s"'`]+/gi],
 ];
 
 const IMPORTANT_LINE_RE = /\b(goal|objective|task|status|blocker|decision|question|requirement|acceptance|ref|source|path|error|warning|done|partial|pending|paused|team|agent|owner|validator|evidence|instruction|guardrail)\b/i;
@@ -53,6 +67,29 @@ export function estimateTokens(text: string): number {
 
 export function quoteSlashArg(s: string): string {
   return `"${String(s ?? '').replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`;
+}
+
+export function redactSensitiveText(text: string): { text: string; redactions: string[] } {
+  let out = String(text ?? '');
+  const redactions: string[] = [];
+  for (const [label, re] of REDACTION_PATTERNS) {
+    const before = out;
+    out = out.replace(re, `[REDACTED:${label}]`);
+    if (out !== before && !redactions.includes(label)) redactions.push(label);
+  }
+  return { text: out, redactions };
+}
+
+export function auditPreview(text: string, maxChars = 1200): { preview: string; redactions: string[]; truncated: boolean } {
+  const redacted = redactSensitiveText(text);
+  const compact = redacted.text.replace(/[ \t]+$/gm, '').replace(/\n{4,}/g, '\n\n\n').trim();
+  const truncated = compact.length > maxChars;
+  const head = truncated ? compact.slice(0, Math.max(0, maxChars - 80)).trimEnd() : compact;
+  return {
+    preview: truncated ? `${head}\n[...redacted audit preview truncated; raw prompt is not persisted...]` : head,
+    redactions: redacted.redactions,
+    truncated,
+  };
 }
 
 function parseQuotedArg(raw: string): string {
@@ -153,7 +190,7 @@ function compactBackgroundBlock(lines: string[], heading: string): { lines: stri
   const compacted = [
     first.trimEnd(),
     '',
-    `[IDACC context budget: compacted the middle of ${heading || 'this background context'} to reduce LLM input tokens. Status, goal, requirement, blocker, path, ref, and error lines detected in the omitted span are preserved below. The full original is kept in the local context-budget audit store.]`,
+    `[IDACC context budget: compacted the middle of ${heading || 'this background context'} to reduce LLM input tokens. Status, goal, requirement, blocker, path, ref, and error lines detected in the omitted span are preserved below. The local audit stores hashes and redacted previews only; raw prompts are not persisted.]`,
     ...important.map((line) => `- ${line.slice(0, 260)}`),
     '',
     last.trimStart(),

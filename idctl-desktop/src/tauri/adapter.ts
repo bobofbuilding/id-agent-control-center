@@ -17,7 +17,7 @@ import { buildRuntimeCatalog } from '../../../idctl/src/settings/runtimeCatalog.
 import type { McpServerSpec, CreateSkillInput } from '../../../idctl/src/api/client.ts';
 import { secp256k1 } from '@noble/curves/secp256k1.js';
 import { keccak_256 } from '@noble/hashes/sha3.js';
-import { optimizeAskCommandCore, type ContextBudgetDecision } from '../shared/contextBudget.ts';
+import { auditPreview, optimizeAskCommandCore, type ContextBudgetDecision } from '../shared/contextBudget.ts';
 
 const MGR_DEFAULT = 'http://127.0.0.1:4100';
 const WIKI_URL = 'docs/CONTROL_CENTER_WIKI.json';
@@ -412,6 +412,22 @@ const contextBudgetStats = {
   recent: [] as ContextBudgetDecision[],
 };
 
+function contextDecisionView(decision: ContextBudgetDecision) {
+  const original = auditPreview(decision.originalCommand);
+  const command = auditPreview(decision.command);
+  const { command: _command, originalCommand: _originalCommand, ...rest } = decision;
+  void _command;
+  void _originalCommand;
+  return {
+    ...rest,
+    originalPreview: original.preview,
+    commandPreview: command.preview,
+    redactions: Array.from(new Set([...original.redactions, ...command.redactions])),
+    previewTruncated: original.truncated || command.truncated,
+    rawPromptPersisted: false,
+  };
+}
+
 function budgetTauriCommand(command: string, source: string, selectedTeam?: string): string {
   const decision = optimizeAskCommandCore(command, { source, team: selectedTeam ?? team });
   contextBudgetStats.inspected += 1;
@@ -438,18 +454,19 @@ function contextBudgetReport() {
     sentTokens: contextBudgetStats.sentTokens,
     savedTokens: contextBudgetStats.savedTokens,
     savingsRatio: contextBudgetStats.originalTokens > 0 ? contextBudgetStats.savedTokens / contextBudgetStats.originalTokens : 0,
-    recent: contextBudgetStats.recent,
+    recent: contextBudgetStats.recent.map(contextDecisionView),
     storageDir: '(unavailable in Tauri webview shell)',
     policy: {
       route: 'deterministic-first',
       headroomEngine: 'not-required-for-core-budgeting',
-      retrieval: 'in-memory-only',
+      retrieval: 'in-memory-redacted-previews-only',
     },
     qualityGuards: [
       'Only /ask payloads are eligible; manager lifecycle commands pass through unchanged.',
       'Secrets, auth material, agent instruction sidecars, active code patches, and wallet/key material always use the direct route.',
       'The hot path uses deterministic compaction only; no AI summarizer rewrites prompts before dispatch.',
       'If savings are below the minimum gate, the exact original prompt is sent.',
+      'Hidden reports and dry-runs return redacted previews only; raw prompts are not persisted.',
     ],
   };
 }
@@ -509,10 +526,10 @@ const M: Record<string, (...a: any[]) => Promise<unknown>> = {
     return headroomPilotState();
   },
   'context:budgetReport': async () => contextBudgetReport(),
-  'context:budgetRecent': async () => contextBudgetStats.recent,
+  'context:budgetRecent': async () => contextBudgetStats.recent.map(contextDecisionView),
   'context:budgetRecord': async () => null,
   'context:budgetDryRun': async (command: string, source?: string, selectedTeam?: string) =>
-    optimizeAskCommandCore(String(command), { source: source ? String(source) : 'tauri:dry-run', team: selectedTeam ? String(selectedTeam) : team }),
+    contextDecisionView(optimizeAskCommandCore(String(command), { source: source ? String(source) : 'tauri:dry-run', team: selectedTeam ? String(selectedTeam) : team })),
   checkins: () => client.checkins(),
   schedules: () => client.schedules(),
   addHeartbeat: (agent: string, seconds: number, message: string, delivery?: 'internal' | 'talk') => client.addHeartbeat(String(agent), Number(seconds), String(message), delivery),
