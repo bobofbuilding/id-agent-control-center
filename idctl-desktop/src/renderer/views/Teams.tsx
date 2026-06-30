@@ -883,6 +883,11 @@ export function Teams({ store, focus, onFocusHandled }: { store: FleetStore; foc
       store.refresh();
       return null;
     }
+    if (!isRunnableAgent(fresh)) {
+      setMsg(`${action} blocked: ${team}/${agent} is not running (${fresh.status || 'unknown'}). Start or repair it in Manage before routing work to it.`);
+      store.refresh();
+      return null;
+    }
     return fresh;
   }
   /** Set (or change) a team's coordinator — the lead the rest of the team reports to. */
@@ -1273,12 +1278,14 @@ export function Teams({ store, focus, onFocusHandled }: { store: FleetStore; foc
               .map((row) => {
                 const ags = graphGroups.find((g) => g.team === row.team)?.agents ?? [];
                 const lead = hier.coordinators[row.team] || (hier.primary?.team === row.team ? hier.primary.agent : '');
+                const leadAgent = lead ? ags.find((a) => a.name === lead) : undefined;
+                const staleLead = Boolean(lead && (!leadAgent || !isRunnableAgent(leadAgent)));
                 const m = modeOf(row.delegates);
                 const cls = m === 'none' ? 'status-error' : m === 'all' || m === 'permissive' ? 'ok-text' : '';
                 return (
                   <tr key={row.team} className={row.team === activeTeam ? 'sel' : ''}>
                     <td className="b">{hier.primary?.team === row.team ? '⭑ ' : ''}{row.team === activeTeam ? '● ' : ''}{row.team}</td>
-                    <td className="muted small">{lead || '—'}</td>
+                    <td className={`small ${staleLead ? 'warn-text' : 'muted'}`} title={staleLead ? `${row.team}/${lead} is not a running current agent` : undefined}>{lead || '—'}{staleLead ? ' · not running' : ''}</td>
                     <td className={`small ${cls}`}>{describeRelay(row.delegates)}</td>
                     <td className="muted small">{ags.length}</td>
                     <td>
@@ -1450,16 +1457,18 @@ export function Teams({ store, focus, onFocusHandled }: { store: FleetStore; foc
             const ags = graphGroups.find((g) => g.team === t.name)?.agents ?? [];
             const coord = hier.coordinators[t.name] || (hier.primary?.team === t.name ? hier.primary.agent : '');
             const isPrimary = !!hier.primary && hier.primary.team === t.name;
-            const coordChoices = t.name === PRIMARY_TEAM ? ags.filter((a) => isDefaultLead(t.name, a.name)) : ags;
+            const runningAgents = ags.filter(isRunnableAgent);
+            const coordChoices = t.name === PRIMARY_TEAM ? runningAgents.filter((a) => isDefaultLead(t.name, a.name)) : runningAgents;
+            const staleCoord = Boolean(coord && !coordChoices.some((a) => a.name === coord));
             const primaryIsLockedLead = isPrimary && isDefaultLead(t.name, hier.primary?.agent ?? '');
             const defaultLeadName = coordChoices[0]?.name ?? DEFAULT_LEAD;
             const canMakePrimary = t.name === PRIMARY_TEAM && coordChoices.length > 0;
             return (
               <Fragment key={t.id}>
-                <span className="b">{isPrimary ? '⭑ ' : ''}{t.name} <span className="muted small">· {ags.length}</span></span>
+                <span className="b">{isPrimary ? '⭑ ' : ''}{t.name} <span className="muted small">· {ags.length}</span>{staleCoord ? <span className="warn-text small" title={`${t.name}/${coord} is not a running current coordinator`}> · coordinator not running</span> : null}</span>
                 <select className="cell-select" disabled={busy || coordChoices.length === 0} value={coordChoices.some((a) => a.name === coord) ? coord : ''}
                   onChange={(e) => void setTeamCoordinator(t.name, e.target.value)}>
-                  <option value="">{coordChoices.length ? (t.name === PRIMARY_TEAM ? 'default/lead only' : 'no coordinator — choose…') : 'no agents'}</option>
+                  <option value="">{coordChoices.length ? (staleCoord ? `${coord} unavailable — choose running…` : t.name === PRIMARY_TEAM ? 'default/lead only' : 'no coordinator — choose…') : staleCoord ? `${coord} unavailable — start in Manage` : 'no running agents'}</option>
                   {coordChoices.map((a) => <option key={a.id} value={a.name}>{a.name}</option>)}
                 </select>
                 {primaryIsLockedLead ? (
