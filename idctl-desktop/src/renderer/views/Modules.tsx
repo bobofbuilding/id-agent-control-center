@@ -33,10 +33,12 @@ type BrainSkillSummary = {
   reuseGroups?: { kind?: string; key?: string; label?: string; count?: number }[];
   proposalSummary?: Record<string, unknown>;
   profile?: string;
-  meta?: { route?: string; profile?: string; generatedAt?: string };
+  meta?: { route?: string; profile?: string; generatedAt?: string; cacheControl?: string | null; noStore?: boolean };
 } | null;
 type BrainFleetReport = {
   generatedAt?: string;
+  cacheControl?: string | null;
+  noStore?: boolean;
   fleet?: {
     source?: string;
     total?: number;
@@ -53,6 +55,8 @@ type BrainFleetReport = {
 } | null;
 type BrainCoreHealthReport = {
   generatedAt?: string;
+  cacheControl?: string | null;
+  noStore?: boolean;
   ok?: boolean;
   nodes?: number;
   edges?: number;
@@ -68,6 +72,8 @@ type BrainCoreHealthReport = {
 type BrainAgentsReport = {
   generatedAt?: string;
   route?: string;
+  cacheControl?: string | null;
+  noStore?: boolean;
   total?: number;
   running?: number;
   source?: string;
@@ -88,6 +94,8 @@ type BrainAgentsReport = {
 } | null;
 type BrainGraphReport = {
   generatedAt?: string;
+  cacheControl?: string | null;
+  noStore?: boolean;
   graph?: {
     nodeCount?: number;
     linkCount?: number;
@@ -342,6 +350,7 @@ function brainSkillContractGaps(report: BrainSkillSummary): string[] {
   if (!Array.isArray(report.facets?.tags)) gaps.push('tag facets');
   if (!Array.isArray(report.reuseGroups)) gaps.push('reuse groups');
   if (!report.proposalSummary) gaps.push('proposal summary');
+  if (report.meta?.noStore !== true) gaps.push('no-store cache header');
   return gaps;
 }
 

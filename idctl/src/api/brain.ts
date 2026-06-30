@@ -113,10 +113,12 @@ export interface BrainSkillIndex {
   proposalSummary?: Record<string, unknown>;
   proposalGaps?: unknown[];
   profile?: string;
-  meta?: { route?: string; profile?: string; generatedAt?: string };
+  meta?: { route?: string; profile?: string; generatedAt?: string; cacheControl?: string | null; noStore?: boolean };
 }
 export interface BrainFleetReport {
   generatedAt?: string;
+  cacheControl?: string | null;
+  noStore?: boolean;
   fleet?: {
     source?: string;
     total?: number;
@@ -148,6 +150,8 @@ export interface BrainFleetAgent {
 }
 export interface BrainGraphReport {
   generatedAt?: string;
+  cacheControl?: string | null;
+  noStore?: boolean;
   graph?: {
     nodeCount?: number;
     linkCount?: number;
@@ -163,6 +167,8 @@ export interface BrainGraphReport {
 }
 export interface BrainCoreHealthReport {
   generatedAt?: string;
+  cacheControl?: string | null;
+  noStore?: boolean;
   ok?: boolean;
   nodes?: number;
   edges?: number;
@@ -216,6 +222,8 @@ export interface BrainController {
 export interface BrainControllerReport {
   generatedAt?: string;
   route?: string;
+  cacheControl?: string | null;
+  noStore?: boolean;
   total?: number;
   activeLinks?: number;
   controllers?: BrainController[];
@@ -224,6 +232,8 @@ export interface BrainControllerReport {
 export interface BrainAgentsReport {
   generatedAt?: string;
   route?: string;
+  cacheControl?: string | null;
+  noStore?: boolean;
   total?: number;
   running?: number;
   source?: string;
@@ -261,6 +271,12 @@ export interface BrainClientOptions {
   timeoutMs?: number;
 }
 
+type BrainResponse<T> = {
+  body: T | null;
+  cacheControl: string | null;
+  noStore: boolean;
+};
+
 export class BrainClient {
   readonly url: string;
   private readonly token: string;
@@ -281,8 +297,8 @@ export class BrainClient {
     };
   }
 
-  /** Best-effort request. Returns the parsed body on 2xx, else null. Never throws. */
-  private async req<T = unknown>(method: string, path: string, body?: unknown): Promise<T | null> {
+  /** Best-effort request with response-header metadata. Never throws. */
+  private async reqWithMeta<T = unknown>(method: string, path: string, body?: unknown): Promise<BrainResponse<T>> {
     try {
       const r = await fetch(`${this.url}${path}`, {
         method,
@@ -290,13 +306,26 @@ export class BrainClient {
         body: body === undefined ? undefined : JSON.stringify(body),
         signal: AbortSignal.timeout(this.timeoutMs),
       });
-      if (!r.ok) return null;
+      const cacheControl = r.headers.get('cache-control');
+      const noStore = cacheControl?.toLowerCase().split(',').map((part) => part.trim()).includes('no-store') ?? false;
+      if (!r.ok) return { body: null, cacheControl, noStore };
       const text = await r.text();
-      if (!text) return null as T | null;
-      try { return JSON.parse(text) as T; } catch { return null; }
+      if (!text) return { body: null, cacheControl, noStore };
+      try { return { body: JSON.parse(text) as T, cacheControl, noStore }; } catch { return { body: null, cacheControl, noStore }; }
     } catch {
-      return null;
+      return { body: null, cacheControl: null, noStore: false };
     }
+  }
+
+  /** Best-effort request. Returns the parsed body on 2xx, else null. Never throws. */
+  private async req<T = unknown>(method: string, path: string, body?: unknown): Promise<T | null> {
+    return (await this.reqWithMeta<T>(method, path, body)).body;
+  }
+
+  private noStoreWarnings(route: string, response: BrainResponse<unknown>): string[] {
+    if (!response.body || response.noStore) return [];
+    const received = response.cacheControl ? ` (received ${response.cacheControl})` : '';
+    return [`Brain ${route} response is missing Cache-Control: no-store${received}; restart/redeploy Brain before trusting dashboard freshness.`];
   }
 
   /** Record an event on the brain's timeline (the universal audit channel). */
@@ -364,11 +393,12 @@ export class BrainClient {
 
   /** Read the brain's skill index summary for catalog freshness/status UI. */
   async skillIndex(): Promise<BrainSkillIndex | null> {
-    const r = await this.req<{
+    const response = await this.reqWithMeta<{
       data?: BrainSkillIndex;
       meta?: BrainSkillIndex['meta'];
       profile?: string;
     }>('GET', '/skills/index?limit=1&sort=popular');
+    const r = response.body;
     if (!r?.data) return null;
     const profile = r.data.profile ?? r.meta?.profile ?? r.profile;
     return {
@@ -378,21 +408,36 @@ export class BrainClient {
         ...(r.data.meta ?? {}),
         ...(r.meta ?? {}),
         ...(profile ? { profile } : {}),
+        cacheControl: response.cacheControl,
+        noStore: response.noStore,
       },
     };
   }
 
   /** Read live fleet authority/status contract used by Brain dashboard Fleet/Health/Agents. */
   async fleetReport(): Promise<BrainFleetReport | null> {
-    return this.req<BrainFleetReport>('GET', '/fleet-report');
+    const response = await this.reqWithMeta<BrainFleetReport>('GET', '/fleet-report');
+    const r = response.body;
+    if (!r) return null;
+    const warnings = this.noStoreWarnings('/fleet-report', response);
+    return {
+      ...r,
+      cacheControl: response.cacheControl,
+      noStore: response.noStore,
+      ...(r.fleet
+        ? { fleet: { ...r.fleet, warnings: [...(r.fleet.warnings ?? []), ...warnings] } }
+        : {}),
+    };
   }
 
   /** Read the Brain Agents dashboard authority contract without opening dashboard HTML. */
   async agentsReport(): Promise<BrainAgentsReport | null> {
-    const [fleetBody, controllerBody] = await Promise.all([
-      this.req<BrainFleetReport>('GET', '/fleet-report'),
-      this.req<{ ok?: boolean; controllers?: BrainController[] }>('GET', '/controllers?limit=200'),
+    const [fleetResponse, controllerResponse] = await Promise.all([
+      this.reqWithMeta<BrainFleetReport>('GET', '/fleet-report'),
+      this.reqWithMeta<{ ok?: boolean; controllers?: BrainController[] }>('GET', '/controllers?limit=200'),
     ]);
+    const fleetBody = fleetResponse.body;
+    const controllerBody = controllerResponse.body;
     const fleet = fleetBody?.fleet;
     if (!fleet) return null;
     const agents = Array.isArray(fleet.agents) ? fleet.agents : [];
@@ -442,6 +487,8 @@ export class BrainClient {
     const slaFetchLimit = 50;
     const warnings = [
       ...(fleet.warnings ?? []),
+      ...this.noStoreWarnings('/fleet-report', fleetResponse),
+      ...this.noStoreWarnings('/controllers', controllerResponse),
       ...(authority !== 'live' || fleet.authoritative !== true ? [fleet.statusAuthorityLabel ?? 'Brain Agents fleet source is not live-authoritative.'] : []),
       ...(duplicateNames.length ? [`Same-name Brain agents require scoped telemetry/controller links: ${duplicateNames.join(', ')}.`] : []),
       ...(ambiguousBareControllerLinks ? [`${ambiguousBareControllerLinks} Brain agent rows have ambiguous bare controller links.`] : []),
@@ -452,6 +499,8 @@ export class BrainClient {
     return {
       generatedAt: new Date().toISOString(),
       route: '/dashboard/agents',
+      cacheControl: fleetResponse.cacheControl,
+      noStore: fleetResponse.noStore,
       total: fleet.total ?? agents.length,
       running: fleet.running,
       source: fleet.source,
@@ -492,10 +541,12 @@ export class BrainClient {
       };
     };
     const base = '/graph/app/data?kind=all&q=skill&limit=8&edge_limit=12';
-    const [expanded, direct] = await Promise.all([
-      this.req<GraphData>('GET', base),
-      this.req<GraphData>('GET', `${base}&neighbors=0`),
+    const [expandedResponse, directResponse] = await Promise.all([
+      this.reqWithMeta<GraphData>('GET', base),
+      this.reqWithMeta<GraphData>('GET', `${base}&neighbors=0`),
     ]);
+    const expanded = expandedResponse.body;
+    const direct = directResponse.body;
     if (!expanded && !direct) return null;
     const expandedMeta = expanded?.meta ?? expanded?.data?.meta ?? {};
     const directMeta = direct?.meta ?? direct?.data?.meta ?? {};
@@ -510,8 +561,14 @@ export class BrainClient {
     if (!expandedMeta.sourceAuthority || !expandedMeta.sourceAuthorityLabel) {
       warnings.push('Brain Graph source-authority labels are missing; restart/redeploy Brain before trusting Graph agent/entity status copy.');
     }
+    if ((expanded && !expandedResponse.noStore) || (direct && !directResponse.noStore)) {
+      const received = expandedResponse.cacheControl ?? directResponse.cacheControl;
+      warnings.push(`Brain /graph/app/data response is missing Cache-Control: no-store${received ? ` (received ${received})` : ''}; restart/redeploy Brain before trusting dashboard freshness.`);
+    }
     return {
       generatedAt: new Date().toISOString(),
+      cacheControl: expandedResponse.cacheControl,
+      noStore: expandedResponse.noStore,
       graph: {
         nodeCount: Number(expandedMeta.nodeCount ?? expandedNodes.length),
         linkCount: Number(expandedMeta.linkCount ?? expandedLinks.length),
@@ -529,7 +586,8 @@ export class BrainClient {
 
   /** Read the safe Brain /health route, avoiding /brain/health report writes and learning reconciliation. */
   async coreHealth(): Promise<BrainCoreHealthReport | null> {
-    const r = await this.req<BrainCoreHealthReport>('GET', '/health');
+    const response = await this.reqWithMeta<BrainCoreHealthReport>('GET', '/health');
+    const r = response.body;
     if (!r) return null;
     const warnings: string[] = [];
     if (r.ok !== true) warnings.push('Brain /health did not report ok=true.');
@@ -540,16 +598,20 @@ export class BrainClient {
     if (r.sqliteVec?.degraded || r.sqliteVec?.available === false) {
       warnings.push('Brain sqlite-vec native vector capability is degraded; fallback retrieval may be in use.');
     }
+    warnings.push(...this.noStoreWarnings('/health', response));
     return {
       ...r,
       generatedAt: new Date().toISOString(),
+      cacheControl: response.cacheControl,
+      noStore: response.noStore,
       warnings,
     };
   }
 
   /** Read Brain accountable-controller links for Identity/Agents status review. */
   async controllerReport(): Promise<BrainControllerReport | null> {
-    const r = await this.req<{ ok?: boolean; controllers?: BrainController[] }>('GET', '/controllers?limit=200');
+    const response = await this.reqWithMeta<{ ok?: boolean; controllers?: BrainController[] }>('GET', '/controllers?limit=200');
+    const r = response.body;
     if (!r || !Array.isArray(r.controllers)) return null;
     const activeLinks = r.controllers.reduce((count, controller) => {
       const links = controller.agent_links ?? controller.agentLinks ?? [];
@@ -558,10 +620,12 @@ export class BrainClient {
     return {
       generatedAt: new Date().toISOString(),
       route: '/controllers',
+      cacheControl: response.cacheControl,
+      noStore: response.noStore,
       total: r.controllers.length,
       activeLinks,
       controllers: r.controllers,
-      warnings: [],
+      warnings: this.noStoreWarnings('/controllers', response),
     };
   }
 
