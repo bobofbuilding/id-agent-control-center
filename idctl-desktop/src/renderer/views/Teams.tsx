@@ -133,9 +133,6 @@ function isRunnableAgent(a: Agent): boolean {
 }
 
 type HrAgentCandidate = Agent & { team?: string };
-function hrAgentKey(a: HrAgentCandidate, fallbackTeam = 'default'): string {
-  return `${a.team ?? fallbackTeam}/${a.name}`;
-}
 function sortedKey(values: string[]): string {
   return [...new Set(values.map(String).filter(Boolean))].sort().join('|');
 }
@@ -388,7 +385,6 @@ export function Teams({ store, focus, onFocusHandled }: { store: FleetStore; foc
 
   // HR pillars as tabs + the live structure graph.
   const [tab, setTab] = useState<'structure' | 'build' | 'manage' | 'route'>('structure');
-  const [managePane, setManagePane] = useState<'teams' | 'instructions'>('teams');
   const [routePane, setRoutePane] = useState<'overview' | 'relay' | 'hierarchy'>('overview');
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
   const [graphGroups, setGraphGroups] = useState<{ team: string; agents: Agent[] }[]>([]);
@@ -439,81 +435,6 @@ export function Teams({ store, focus, onFocusHandled }: { store: FleetStore; foc
   const [relayMsg, setRelayMsg] = useState<string>(''); // inline feedback next to Save
   const otherTeams = store.teams.map((t) => t.name).filter((n) => n !== activeTeam);
 
-  // Per-agent instructions (system-prompt addendum) — e.g. make the lead coordinate.
-  const coordName = resolveCoordinator(store.agents, store.coordinator) ?? store.agents[0]?.name ?? '';
-  const [instrAgent, setInstrAgent] = useState('');
-  const [instrText, setInstrText] = useState('');
-  const [instrSaved, setInstrSaved] = useState('');
-  const [instrBusy, setInstrBusy] = useState(false);
-  const [instrMsg, setInstrMsg] = useState('');
-  const instrChoices: HrAgentCandidate[] = store.allAgents.length ? store.allAgents : store.agents.map((a) => ({ ...a, team: activeTeam }));
-  const defaultInstrKey = coordName ? `${activeTeam}/${coordName}` : (instrChoices[0] ? hrAgentKey(instrChoices[0], activeTeam) : '');
-  const instrTargetKey = instrAgent && instrChoices.some((a) => hrAgentKey(a, activeTeam) === instrAgent) ? instrAgent : defaultInstrKey;
-  const instrTargetChoice = instrChoices.find((a) => hrAgentKey(a, activeTeam) === instrTargetKey);
-  const instrTarget = instrTargetChoice?.name ?? '';
-  const instrTargetTeam = instrTargetChoice?.team ?? activeTeam;
-  async function loadInstr(agent: string, team?: string) {
-    if (!agent) { setInstrText(''); setInstrSaved(''); return; }
-    const t = await call<string>('agent:getInstructions', agent, team).catch(() => '');
-    setInstrText(t); setInstrSaved(t);
-  }
-  useEffect(() => { void loadInstr(instrTarget, instrTargetTeam); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [instrTarget, instrTargetTeam, store.team]);
-  async function saveInstr(team?: string) {
-    if (!instrTarget) return;
-    const targetTeam = team ?? instrTargetTeam;
-    const rendered = instrTargetChoice;
-    if (!rendered) return;
-    setInstrBusy(true); setInstrMsg('checking current agent…');
-    try {
-      const fresh = await ensureRenderedAgentFresh('Save instructions', {
-        id: rendered.id,
-        name: rendered.name,
-        team: targetTeam,
-        stamp: hrAgentStamp(rendered, targetTeam),
-      });
-      if (!fresh) { setInstrMsg('blocked — roster changed; review refreshed state'); return; }
-      const current = await call<string>('agent:getInstructions', fresh.name, targetTeam).catch(() => '');
-      if (current !== instrSaved) {
-        setInstrText(current);
-        setInstrSaved(current);
-        setInstrMsg('blocked — instructions changed elsewhere; review refreshed text');
-        return;
-      }
-      if (!window.confirm(`Save instructions and rebuild ${targetTeam}/${fresh.name}?\n\nThis writes the agent's current system-prompt addendum and rebuilds the current agent so it starts following it.`)) return;
-      setInstrMsg('saving…');
-      // `team` scopes the write to the selected agent's team (Structure panel), so a
-      // pending active-team switch can't redirect it; omitted ⇒ the active team.
-      const r = await call<{ ok: boolean; needsRebuild?: boolean }>('agent:setInstructions', fresh.name, instrText, targetTeam);
-      setInstrSaved(instrText);
-      setInstrMsg(r.needsRebuild ? `saved ✓ — rebuilding ${fresh.name}…` : 'saved ✓');
-      // Rebuild so the new instructions land in the agent's system prompt now.
-      await call('rebuildAgent', fresh.name, targetTeam).catch(() => {});
-      setInstrMsg(instrText.trim() ? `saved ✓ — ${targetTeam}/${fresh.name} rebuilt; it now follows these instructions` : `cleared ✓ — ${targetTeam}/${fresh.name} rebuilt`);
-    } catch (e) {
-      setInstrMsg(`save failed: ${e instanceof Error ? e.message : String(e)}`);
-    } finally { setInstrBusy(false); }
-  }
-
-  /** AI-assist: turn the current text (a rough brief, or empty) into a polished
-   *  operating directive for the targeted agent. Review, then Save & rebuild. */
-  async function aiDraftInstr() {
-    if (!instrTarget) return;
-    const brief = instrText.trim();
-    setInstrBusy(true); setInstrMsg('asking HR manager to draft…');
-    try {
-      const meta =
-        'Write a concise operating directive (a system-prompt addendum, 2-6 sentences, ' +
-        'imperative voice, NO preamble, NO markdown headers, NO code fences) for an AI agent named "' + instrTarget + '"' +
-        (brief ? ' whose goal is: ' + brief : ' — infer a sensible role from its name') +
-        '. Output ONLY the directive text.';
-      const txt = await askHrManagerToDraft(store, meta, hrOwner);
-      setInstrText(txt.trim());
-      setInstrMsg('drafted ✓ — review, then Save & rebuild');
-    } catch (e) {
-      setInstrMsg(`HR manager draft failed: ${e instanceof Error ? e.message : String(e)}`);
-    } finally { setInstrBusy(false); }
-  }
-
   /** A node (or team title) was clicked in the structure graph: just select it. We do NOT
    *  switch the active team — the side editor loads/saves the selected agent by name+team
    *  directly, so browsing the structure never hijacks your active-team context. */
@@ -552,8 +473,7 @@ export function Teams({ store, focus, onFocusHandled }: { store: FleetStore; foc
   }
 
   // ── Structure-tab agent editor — isolated from the active team. Loads/saves the SELECTED
-  //    agent's goals by name+team directly (no active-team switch). Separate from the Manage
-  //    tab's shared instruction editor (which stays active-team scoped). ──
+  //    agent's goals by name+team directly (no active-team switch). ──
   const [sgInstr, setSgInstr] = useState('');
   const [sgSaved, setSgSaved] = useState('');
   const [sgBusy, setSgBusy] = useState(false);
@@ -1219,7 +1139,7 @@ export function Teams({ store, focus, onFocusHandled }: { store: FleetStore; foc
                 <span className="row-actions" style={{ gap: 6 }}>
                   <button className="btn small primary" onClick={() => setTab('build')}>✦ Build / add agents</button>
                   <button className="btn small" title="Edit this team's relay (switches to it — a team-wide setting)" onClick={() => void openRelayForTeam(selectedTeamName)}>⇄ Relay</button>
-                  <button className="btn small" title="Start / stop this team in the Manage tab" onClick={() => { setManagePane('teams'); setTab('manage'); }}>⏻ Start / stop</button>
+                  <button className="btn small" title="Start / stop this team in the Manage tab" onClick={() => setTab('manage')}>⏻ Start / stop</button>
                 </span>
               </div>
               <p className="muted small" style={{ marginTop: 8 }}>Click an agent in the graph to edit its goals &amp; instructions (no team switch). Turn this team on/off in the <b>Manage</b> tab. The team’s goals live on its lead (the ⭑ coordinator).</p>
@@ -1231,19 +1151,13 @@ export function Teams({ store, focus, onFocusHandled }: { store: FleetStore; foc
       ) : null}
 
       {tab === 'manage' ? (
-        <div className="tabs" style={{ marginTop: -4 }}>
-          {([['teams', 'Team ops'], ['instructions', 'Instructions']] as const).map(([k, lbl]) => (
-            <button key={k} className={`tab${managePane === k ? ' active' : ''}`} onClick={() => setManagePane(k)}>{lbl}</button>
-          ))}
-        </div>
-      ) : null}
-
-      {tab === 'manage' && managePane === 'teams' ? (
       <section className="card">
         <div className="row-actions" style={{ alignItems: 'baseline', marginBottom: 4 }}>
           <h3 style={{ margin: 0 }}>Team operations</h3>
-          <span className="muted small">· start, stop, probe, or rebuild one team at a time. Instruction editing is in the Instructions mode.</span>
+          <span className="muted small">· lifecycle only. Edit selected-agent instructions in Structure; compose hierarchy goals in Route.</span>
           <span className="grow" />
+          <button className="btn small" disabled={busy} title="Open the live structure graph to select an agent and edit its instruction addendum" onClick={() => setTab('structure')}>Structure</button>
+          <button className="btn small" disabled={busy} title="Open hierarchy and org sync" onClick={() => { setTab('route'); setRoutePane('hierarchy'); }}>Route</button>
           {teamOpBusy ? <span className="muted small">working…</span> : teamOpMsg ? <span className={`small ${/fail/.test(teamOpMsg) ? 'status-error' : 'ok-text'}`}>{teamOpMsg}</span> : null}
         </div>
         <table className="grid">
@@ -1459,38 +1373,6 @@ export function Teams({ store, focus, onFocusHandled }: { store: FleetStore; foc
             );
           })
         )}
-      </section>
-      ) : null}
-
-      {tab === 'manage' && managePane === 'instructions' ? (
-      <section className="card">
-        <h3>Agent instructions — coordination &amp; behavior</h3>
-        <p className="muted small" style={{ marginTop: -4 }}>
-          A persistent directive added to an agent’s system prompt — e.g. tell your <b>lead</b> to
-          <b> compress</b> each request, <b>break it up</b>, <b>delegate</b> the pieces to its teammates
-          (or another team’s lead), and <b>summarize results step by step</b> instead of doing everything
-          itself. Use <b>✦ AI draft</b> to generate one. Survives rebuilds; takes effect after the rebuild this triggers.
-        </p>
-        <div className="row-actions" style={{ gap: 8, alignItems: 'center', marginBottom: 6 }}>
-          <span className="muted small">agent</span>
-          <select className="cell-select" value={instrTargetKey} disabled={instrBusy} onChange={(e) => setInstrAgent(e.target.value)}>
-            {instrChoices.map((a) => (
-              <option key={hrAgentKey(a, activeTeam)} value={hrAgentKey(a, activeTeam)}>{a.name} · {a.team ?? activeTeam}</option>
-            ))}
-          </select>
-          <button className="btn small" disabled={instrBusy || !hrOwner} title={hrOwner ? `Ask ${hrOwner.team ?? activeTeam}/${hrOwner.name} to draft` : 'No active HR manager agent found'} onClick={() => void aiDraftInstr()}>✦ AI draft</button>
-          {instrText.trim() ? <button className="btn small" disabled={instrBusy} onClick={() => setInstrText('')}>Clear</button> : null}
-          <span className="grow" />
-          {instrMsg ? <span className={`small ${/failed/.test(instrMsg) ? 'status-error' : 'ok-text'}`}>{instrMsg}</span> : null}
-          <button className="btn primary small" disabled={instrBusy || instrText === instrSaved} onClick={() => void saveInstr()}>{instrBusy ? '…' : 'Save & rebuild'}</button>
-        </div>
-        <textarea
-          style={{ width: '100%', minHeight: 120, fontFamily: 'var(--mono, ui-monospace, monospace)', fontSize: 12 }}
-          placeholder={`Custom instructions for ${instrTarget || 'this agent'} — or click “✦ AI draft”. Leave empty for none.`}
-          value={instrText}
-          disabled={instrBusy}
-          onChange={(e) => setInstrText(e.target.value)}
-        />
       </section>
       ) : null}
 
