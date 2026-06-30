@@ -26,6 +26,7 @@ interface AgentConfigDraft {
   baseline: AgentConfigState;
   next: AgentConfigState;
 }
+const DEFAULT_BACKBONE_AGENTS = new Set(['lead', 'coder', 'researcher']);
 const SOURCE_LABEL: Record<RuntimeFreshness['source'], string> = {
   'codex-cache': 'codex CLI cache', provider: 'live provider sync', curated: 'curated fallback', none: 'no models',
 };
@@ -235,6 +236,7 @@ export function AgentTable({ store, onProbe, probeBusy, navigate }: { store: Fle
   // ★ marks the team's coordinator (lead); routing changes live in HR Manager.
   const teamFor = (a: TeamAgent) => a.team ?? store.team ?? 'default';
   const isLead = (a: TeamAgent) => (coords[teamFor(a)] ?? (teamFor(a) === store.team ? store.coordinator : undefined)) === a.name;
+  const isDefaultBackboneAgent = (a: TeamAgent) => teamFor(a) === 'default' && DEFAULT_BACKBONE_AGENTS.has(a.name);
   const draftKeyFor = (a: TeamAgent) => `${teamFor(a)}:${a.id}`;
   function agentStamp(a: TeamAgent): string {
     return JSON.stringify({
@@ -472,6 +474,10 @@ export function AgentTable({ store, onProbe, probeBusy, navigate }: { store: Fle
     const fresh = await ensureAgentFresh(a, act.toLowerCase());
     if (!fresh) return;
     if (act === 'Delete') {
+      if (isDefaultBackboneAgent(fresh)) {
+        window.alert(`${teamFor(fresh)}/${fresh.name} is part of the locked default leadership backbone and cannot be deleted from Health.\n\nUse HR Manager Route/Structure to review the backbone before making organizational changes.`);
+        return;
+      }
       if (confirmAgentChange(
         fresh,
         'Delete agent',
@@ -589,7 +595,7 @@ export function AgentTable({ store, onProbe, probeBusy, navigate }: { store: Fle
             <option>Rebuild</option>
             <option>Reset session</option>
             <option>Probe</option>
-            <option>Delete</option>
+            {!isDefaultBackboneAgent(a) ? <option>Delete</option> : null}
           </select>
         </td>
         {onProbe ? (
