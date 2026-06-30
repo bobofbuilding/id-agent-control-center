@@ -8,6 +8,9 @@ Every change pushed or merged to `main` carries its version number in the commit
 subject (`vX.Y.Z: …`), stamped automatically by the `commit-msg` hook — see
 [CONTRIBUTING.md](CONTRIBUTING.md).
 
+## [0.1.373] — 2026-06-30
+- Add historical context replay and backend contract audit
+
 ## [0.1.372] — 2026-06-30
 - Add persistent context budget savings measurement
 

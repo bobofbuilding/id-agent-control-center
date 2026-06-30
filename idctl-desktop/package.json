@@ -1,7 +1,7 @@
 {
   "name": "idagents-control-center",
   "productName": "ID Agents Control Center",
-  "version": "0.1.372",
+  "version": "0.1.373",
   "description": "Desktop control center for id-agents — live fleet dashboard, manager chat, teams, keys.",
   "private": true,
   "main": "out/main/main.cjs",
@@ -13,6 +13,7 @@
     "dmg": "npm run build && electron-builder",
     "typecheck": "tsc --noEmit",
     "test:context-budget": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --experimental-strip-types scripts/context-budget-smoke.mjs",
+    "test:context-history": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --experimental-strip-types scripts/context-budget-history.mjs",
     "tauri": "tauri",
     "tauri:dev": "tauri dev",
     "tauri:build": "node scripts/build-tauri.mjs && tauri build"

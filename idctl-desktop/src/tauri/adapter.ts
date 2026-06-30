@@ -493,6 +493,41 @@ function contextBudgetReport() {
   };
 }
 
+function emptyContextBudgetHistoryReplay() {
+  const totals = {
+    inspected: 0,
+    optimized: 0,
+    direct: 0,
+    protectedDirect: 0,
+    originalTokens: 0,
+    sentTokens: 0,
+    savedTokens: 0,
+    savingsRatio: 0,
+    bySource: {},
+    byTeam: {},
+    byRoute: {},
+    byTransform: {},
+    byProtectedContent: {},
+  };
+  return {
+    corpus: 'local-chat-history',
+    dryRunOnly: true,
+    rawPromptPersisted: false,
+    managerContacted: false,
+    storage: 'none',
+    scannedSessions: 0,
+    scannedMessages: 0,
+    eligibleMessages: 0,
+    skippedMessages: 0,
+    limits: { limitSessions: 0, maxMessages: 0, sampleLimit: 0 },
+    totals,
+    samples: [],
+    guardrails: [
+      'Historical replay requires Electron main-process file access; this shell returns an empty no-prompt report.',
+    ],
+  };
+}
+
 const M: Record<string, (...a: any[]) => Promise<unknown>> = {
   info: async () => ({ managerUrl, team, coordinator: lsGet<Record<string, string>>('idctl.coordinators', {})[team] ?? null }),
   health: () => client.health(),
@@ -541,6 +576,40 @@ const M: Record<string, (...a: any[]) => Promise<unknown>> = {
       policy: headroomPilotState(),
     };
   },
+  'headroom:backendContract': async () => {
+    const replay = emptyContextBudgetHistoryReplay();
+    return {
+      coreReady: false,
+      validationReady: false,
+      decision: 'validate-idacc-plugin-path-first',
+      managerChangeLevel: 'none-now-minimal-later',
+      recommendedPath: 'idacc-owned-plugin-candidate',
+      status: {
+        cli: { found: false, error: 'Headroom status requires the Electron main process.' },
+        proxy: { url: 'http://127.0.0.1:8787/mcp', reachable: false, error: 'not checked in this shell' },
+      },
+      historyReplay: {
+        corpus: replay.corpus,
+        dryRunOnly: replay.dryRunOnly,
+        rawPromptPersisted: replay.rawPromptPersisted,
+        managerContacted: replay.managerContacted,
+        scannedSessions: replay.scannedSessions,
+        eligibleMessages: replay.eligibleMessages,
+        totals: replay.totals,
+        guardrails: replay.guardrails,
+      },
+      phases: ['Use the Electron build for local chat-history replay and plugin validation.'],
+      pluginCandidate: {
+        name: 'idacc-context-retrieval',
+        installSurface: 'Capabilities or Settings reviewed install',
+        managerRequirement: 'existing id-agents plugin attachment and rebuild flow',
+        purpose: 'Expose a narrow local retrieval tool for context handles without forking the base manager hot path.',
+      },
+      requiredContract: ['Manager /capabilities must advertise context-retrieval before handle routing.'],
+      validationGates: ['Electron replay and plugin smoke tests must pass before activation.'],
+      blockers: ['Tauri shell cannot validate local plugin file access.'],
+    };
+  },
   'headroom:pilot': async () => headroomPilotState(),
   'headroom:setPilot': async (partial: Partial<HeadroomPilotSettings>) => {
     const next = { ...headroomPilotState(), ...(partial ?? {}), updatedAt: Date.now() };
@@ -552,6 +621,7 @@ const M: Record<string, (...a: any[]) => Promise<unknown>> = {
   'context:budgetRecord': async () => null,
   'context:budgetDryRun': async (command: string, source?: string, selectedTeam?: string) =>
     contextDecisionView(optimizeAskCommandCore(String(command), { source: source ? String(source) : 'tauri:dry-run', team: selectedTeam ? String(selectedTeam) : team })),
+  'context:budgetReplayChats': async () => emptyContextBudgetHistoryReplay(),
   checkins: () => client.checkins(),
   schedules: () => client.schedules(),
   addHeartbeat: (agent: string, seconds: number, message: string, delivery?: 'internal' | 'talk') => client.addHeartbeat(String(agent), Number(seconds), String(message), delivery),

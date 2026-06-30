@@ -2,6 +2,7 @@ import { execFile } from 'node:child_process';
 import { homedir } from 'node:os';
 import type { HeadroomPilotSettings } from '../../../idctl/src/settings/schema.ts';
 import { contextBudgetReport, type ContextBudgetReport } from './contextBudget.ts';
+import { replayContextBudgetFromChatHistory, type ContextBudgetHistoryReplayReport } from './contextReplay.ts';
 
 export interface HeadroomStatus {
   cli: {
@@ -28,6 +29,26 @@ export interface HeadroomCoreAudit {
   safeToday: string[];
   contextBudget?: Pick<ContextBudgetReport, 'coreEnabled' | 'frontendSurface' | 'inspected' | 'optimized' | 'direct' | 'protectedDirect' | 'savedTokens' | 'savingsRatio' | 'persisted' | 'policy' | 'qualityGuards'>;
   policy?: Pick<HeadroomPilotSettings, 'enabled' | 'mode' | 'minContextTokens' | 'passthroughContent' | 'validationGates' | 'updatedAt'>;
+}
+
+export interface HeadroomBackendContractAudit {
+  coreReady: false;
+  validationReady: true;
+  decision: 'validate-idacc-plugin-path-first';
+  managerChangeLevel: 'none-now-minimal-later';
+  recommendedPath: 'idacc-owned-plugin-candidate';
+  status: HeadroomStatus;
+  historyReplay: Pick<ContextBudgetHistoryReplayReport, 'corpus' | 'dryRunOnly' | 'rawPromptPersisted' | 'managerContacted' | 'scannedSessions' | 'eligibleMessages' | 'totals' | 'guardrails'>;
+  phases: string[];
+  pluginCandidate: {
+    name: string;
+    installSurface: 'Capabilities or Settings reviewed install';
+    managerRequirement: 'existing id-agents plugin attachment and rebuild flow';
+    purpose: string;
+  };
+  requiredContract: string[];
+  validationGates: string[];
+  blockers: string[];
 }
 
 function cliPath(): string {
@@ -129,5 +150,62 @@ export async function headroomCoreAudit(pilot?: HeadroomPilotSettings): Promise<
       validationGates: pilot.validationGates,
       updatedAt: pilot.updatedAt,
     } : undefined,
+  };
+}
+
+export async function headroomBackendContractAudit(): Promise<HeadroomBackendContractAudit> {
+  const [status, historyReplay] = await Promise.all([
+    headroomStatus(),
+    Promise.resolve(replayContextBudgetFromChatHistory({ limitSessions: 50, maxMessages: 500, sampleLimit: 0 })),
+  ]);
+  return {
+    coreReady: false,
+    validationReady: true,
+    decision: 'validate-idacc-plugin-path-first',
+    managerChangeLevel: 'none-now-minimal-later',
+    recommendedPath: 'idacc-owned-plugin-candidate',
+    status,
+    historyReplay: {
+      corpus: historyReplay.corpus,
+      dryRunOnly: historyReplay.dryRunOnly,
+      rawPromptPersisted: historyReplay.rawPromptPersisted,
+      managerContacted: historyReplay.managerContacted,
+      scannedSessions: historyReplay.scannedSessions,
+      eligibleMessages: historyReplay.eligibleMessages,
+      totals: historyReplay.totals,
+      guardrails: historyReplay.guardrails,
+    },
+    phases: [
+      'Phase 0: keep deterministic context budgeting as the hidden core path; no manager changes.',
+      'Phase 1: replay local chat history as an aggregate dry-run corpus; no manager contact and no raw prompt output.',
+      'Phase 2: prototype an optional IDACC context-retrieval plugin through the existing id-agents plugin attachment flow.',
+      'Phase 3: require manager /capabilities to advertise a retrieval contract before IDACC sends retrieval handles.',
+      'Phase 4: enable an explicit pilot only after retrieval, hash verification, expiry, direct fallback, and quality review pass.',
+    ],
+    pluginCandidate: {
+      name: 'idacc-context-retrieval',
+      installSurface: 'Capabilities or Settings reviewed install',
+      managerRequirement: 'existing id-agents plugin attachment and rebuild flow',
+      purpose: 'Expose a narrow local retrieval tool for context handles without forking the base manager hot path.',
+    },
+    requiredContract: [
+      'Capability advertisement: manager /capabilities must report context-retrieval support and a contract version.',
+      'Handle shape: compressed prompts must carry a retrieval id, source hash, expiry, protected-content class, and direct fallback summary.',
+      'Resolve-before-act: an agent must be able to resolve and hash-check the original context before relying on omitted material.',
+      'Protected fallback: secrets, auth material, wallet/key material, instruction sidecars, active patches, and validator evidence remain direct.',
+      'Auditability: every routed prompt records token estimates, transform class, retrieval capability state, and fallback route without raw prompt persistence.',
+    ],
+    validationGates: [
+      'Historical replay demonstrates useful savings on real saved chats without surfacing raw text.',
+      'Context-budget smoke tests continue to prove protected direct fallback and redacted reports.',
+      'Plugin smoke tests prove compress, resolve, hash-match, expiry, and missing-plugin direct fallback.',
+      'Manager capability checks prove the retrieval contract is installed before any handle route is eligible.',
+      'Quality review compares original objective, compressed payload, resolved context, and final response for material drift.',
+    ],
+    blockers: [
+      'No retrieval handles should be sent to the manager until the optional plugin and /capabilities contract exist.',
+      'Headroom CLI/proxy presence alone is not enough; retrieval and direct fallback must be verified at dispatch time.',
+      'The downloaded IDACC app must remain useful with a stock or older id-agents manager, so unsupported managers keep direct deterministic routing.',
+    ],
   };
 }

@@ -9,6 +9,8 @@ import {
   redactSensitiveText,
 } from '../src/shared/contextBudget.ts';
 import { contextBudgetDryRun, contextBudgetReport, optimizeAskCommand } from '../src/main/contextBudget.ts';
+import { replayContextBudgetFromChatHistory } from '../src/main/contextReplay.ts';
+import { saveChat } from '../src/main/chatstore.ts';
 
 function largeBackgroundCommand() {
   const body = Array.from({ length: 1200 }, (_, i) =>
@@ -116,6 +118,47 @@ try {
   assert.ok(!statsText.includes('aaaaaaaaaaaaaaaa'), 'persistent stats must not contain token-like values');
 } finally {
   rmSync(statsRoot, { recursive: true, force: true });
+  delete process.env.IDCTL_CONFIG;
+}
+
+const historyRoot = mkdtempSync(join(tmpdir(), 'idacc-context-history-'));
+try {
+  process.env.IDCTL_CONFIG = join(historyRoot, 'config.json');
+  const replayLarge = Array.from({ length: 1200 }, (_, i) =>
+    i % 11 === 0
+      ? `status line ${i}: replay task ref #${String(i).padStart(4, '0')} remains tied to the active goal`
+      : `replay background material sentence ${i} with enough repeated explanatory context to consume tokens safely during the historical replay test.`,
+  ).join('\n');
+  saveChat({
+    id: 'hist_replay_session',
+    title: 'Historical replay fixture',
+    team: 'default',
+    target: 'lead',
+    createdAt: Date.now(),
+    updatedAt: Date.now(),
+    messages: [
+      { id: 1, role: 'system', who: '', text: 'fixture greeting' },
+      { id: 2, role: 'you', who: 'you', text: `Objective: replay should measure without dispatch.\n\nraw content:\n${replayLarge}` },
+      { id: 3, role: 'agent', who: 'lead', text: 'fixture response' },
+      { id: 4, role: 'you', who: 'you', text: `Authorization: Bearer ${'d'.repeat(32)}\n${'context '.repeat(3000)}` },
+    ],
+  });
+  const replay = replayContextBudgetFromChatHistory({ limitSessions: 5, maxMessages: 20, sampleLimit: 10 });
+  assert.equal(replay.dryRunOnly, true);
+  assert.equal(replay.rawPromptPersisted, false);
+  assert.equal(replay.managerContacted, false);
+  assert.equal(replay.scannedSessions, 1);
+  assert.equal(replay.eligibleMessages, 2);
+  assert.equal(replay.totals.optimized, 1);
+  assert.equal(replay.totals.protectedDirect, 1);
+  assert.equal(replay.totals.byProtectedContent['secret/auth material'], 1);
+  assert.ok(replay.totals.savedTokens > 1000, `expected replay savings, got ${replay.totals.savedTokens}`);
+  const replayText = JSON.stringify(replay);
+  assert.ok(!replayText.includes('replay background material sentence 600'), 'replay report must not include raw historical prompt text');
+  assert.ok(!replayText.includes('Authorization: Bearer'), 'replay report must not include bearer header text');
+  assert.ok(!replayText.includes('dddddddddddddddd'), 'replay report must not include token-like values');
+} finally {
+  rmSync(historyRoot, { recursive: true, force: true });
   delete process.env.IDCTL_CONFIG;
 }
 

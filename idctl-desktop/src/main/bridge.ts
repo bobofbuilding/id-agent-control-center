@@ -49,8 +49,9 @@ import { discoverLocalServers, type DiscoveredServer } from '../../../idctl/src/
 import { kindNeedsKey, type HeadroomPilotSettings, type ProviderProfile, type McpServerProfile, type ProjectEntry } from '../../../idctl/src/settings/schema.ts';
 import { buildRuntimeCatalog, RUNTIMES, providerKindToRuntimes, isLocalProvider } from '../../../idctl/src/settings/runtimeCatalog.ts';
 import { testMcpServer } from './mcpTest.ts';
-import { headroomCoreAudit, headroomStatus } from './headroom.ts';
+import { headroomBackendContractAudit, headroomCoreAudit, headroomStatus } from './headroom.ts';
 import { contextBudgetDryRun, contextBudgetReport, loadRecentContextBudgetRecords, optimizeAskCommand, readContextBudgetRecord } from './contextBudget.ts';
+import { replayContextBudgetFromChatHistory, type ContextBudgetHistoryReplayOptions } from './contextReplay.ts';
 import { decomposeWork, createAndDispatchPlan, fanOutObjective, teamLeads, triageUnassigned, type SubTask } from './work.ts';
 import { normalizeGoalDriverConfig, runGoalDriverOnce, startGoalDriverLoop, syncActiveWorkGoalInstructions, type GoalDriverConfig } from './goaldriver.ts';
 import { buildOrgHierarchy, previewOrgSync, syncOrg, startOrgSyncLoop } from './orgSync.ts';
@@ -788,6 +789,7 @@ const METHODS: Record<string, (...a: any[]) => Promise<unknown>> = {
   probeOne: (name: string, team?: string) => (team ? client.withTeam(String(team)) : client).probeOne(String(name)),
   'headroom:status': () => headroomStatus(),
   'headroom:audit': async () => headroomCoreAudit(loadSettings().headroomPilot),
+  'headroom:backendContract': async () => headroomBackendContractAudit(),
   'headroom:pilot': async () => loadSettings().headroomPilot,
   'headroom:setPilot': async (partial: Partial<HeadroomPilotSettings>) => setHeadroomPilot(partial).headroomPilot,
   'context:budgetReport': async () => contextBudgetReport(),
@@ -795,6 +797,8 @@ const METHODS: Record<string, (...a: any[]) => Promise<unknown>> = {
   'context:budgetRecord': async (id: string) => readContextBudgetRecord(String(id)),
   'context:budgetDryRun': async (command: string, source?: string, team?: string) =>
     contextBudgetDryRun(String(command), { source: source ? String(source) : 'bridge:dry-run', team: team ? String(team) : client.team }),
+  'context:budgetReplayChats': async (options?: ContextBudgetHistoryReplayOptions) =>
+    replayContextBudgetFromChatHistory(options ?? {}),
 
   // scheduling
   checkins: () => client.checkins(),
