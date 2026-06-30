@@ -3,6 +3,7 @@ import { homedir } from 'node:os';
 import type { HeadroomPilotSettings } from '../../../idctl/src/settings/schema.ts';
 import { contextBudgetReport, type ContextBudgetReport } from './contextBudget.ts';
 import { replayContextBudgetFromChatHistory, type ContextBudgetHistoryReplayReport } from './contextReplay.ts';
+import type { HeadroomPluginPathAudit } from './headroomPlugin.ts';
 
 export interface HeadroomStatus {
   cli: {
@@ -46,6 +47,7 @@ export interface HeadroomBackendContractAudit {
     managerRequirement: 'existing id-agents plugin attachment and rebuild flow';
     purpose: string;
   };
+  pluginPath?: Pick<HeadroomPluginPathAudit, 'coreReady' | 'pilotReady' | 'verdict' | 'candidate' | 'manager' | 'headroom' | 'runtimeCoverage' | 'guardrails' | 'blockers'>;
   requiredContract: string[];
   validationGates: string[];
   blockers: string[];
@@ -153,7 +155,7 @@ export async function headroomCoreAudit(pilot?: HeadroomPilotSettings): Promise<
   };
 }
 
-export async function headroomBackendContractAudit(): Promise<HeadroomBackendContractAudit> {
+export async function headroomBackendContractAudit(pluginPath?: HeadroomPluginPathAudit): Promise<HeadroomBackendContractAudit> {
   const [status, historyReplay] = await Promise.all([
     headroomStatus(),
     Promise.resolve(replayContextBudgetFromChatHistory({ limitSessions: 50, maxMessages: 500, sampleLimit: 0 })),
@@ -178,9 +180,10 @@ export async function headroomBackendContractAudit(): Promise<HeadroomBackendCon
     phases: [
       'Phase 0: keep deterministic context budgeting as the hidden core path; no manager changes.',
       'Phase 1: replay local chat history as an aggregate dry-run corpus; no manager contact and no raw prompt output.',
-      'Phase 2: prototype an optional IDACC context-retrieval plugin through the existing id-agents plugin attachment flow.',
-      'Phase 3: require manager /capabilities to advertise a retrieval contract before IDACC sends retrieval handles.',
-      'Phase 4: enable an explicit pilot only after retrieval, hash verification, expiry, direct fallback, and quality review pass.',
+      'Phase 2: validate the bundled IDACC context-retrieval plugin candidate through the existing id-agents plugin attachment flow.',
+      'Phase 3: keep plugin-only routing pilot-scoped because plugins load only on Claude-family runtimes; use MCP or manager retrieval contracts for runtime-neutral core routing.',
+      'Phase 4: require manager /capabilities to advertise a retrieval contract before IDACC sends retrieval handles.',
+      'Phase 5: enable an explicit pilot only after retrieval, hash verification, expiry, direct fallback, and quality review pass.',
     ],
     pluginCandidate: {
       name: 'idacc-context-retrieval',
@@ -188,6 +191,17 @@ export async function headroomBackendContractAudit(): Promise<HeadroomBackendCon
       managerRequirement: 'existing id-agents plugin attachment and rebuild flow',
       purpose: 'Expose a narrow local retrieval tool for context handles without forking the base manager hot path.',
     },
+    pluginPath: pluginPath ? {
+      coreReady: pluginPath.coreReady,
+      pilotReady: pluginPath.pilotReady,
+      verdict: pluginPath.verdict,
+      candidate: pluginPath.candidate,
+      manager: pluginPath.manager,
+      headroom: pluginPath.headroom,
+      runtimeCoverage: pluginPath.runtimeCoverage,
+      guardrails: pluginPath.guardrails,
+      blockers: pluginPath.blockers,
+    } : undefined,
     requiredContract: [
       'Capability advertisement: manager /capabilities must report context-retrieval support and a contract version.',
       'Handle shape: compressed prompts must carry a retrieval id, source hash, expiry, protected-content class, and direct fallback summary.',
@@ -205,6 +219,7 @@ export async function headroomBackendContractAudit(): Promise<HeadroomBackendCon
     blockers: [
       'No retrieval handles should be sent to the manager until the optional plugin and /capabilities contract exist.',
       'Headroom CLI/proxy presence alone is not enough; retrieval and direct fallback must be verified at dispatch time.',
+      'Plugin-only routing is not a core path because it excludes non-Claude runtimes; Codex, Ollama, and future orchestration paths need MCP/manager contract fallback.',
       'The downloaded IDACC app must remain useful with a stock or older id-agents manager, so unsupported managers keep direct deterministic routing.',
     ],
   };

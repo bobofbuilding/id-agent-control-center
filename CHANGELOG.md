@@ -8,6 +8,9 @@ Every change pushed or merged to `main` carries its version number in the commit
 subject (`vX.Y.Z: …`), stamped automatically by the `commit-msg` hook — see
 [CONTRIBUTING.md](CONTRIBUTING.md).
 
+## [0.1.374] — 2026-06-30
+- Validate Headroom retrieval plugin path
+
 ## [0.1.373] — 2026-06-30
 - Add historical context replay and backend contract audit
 

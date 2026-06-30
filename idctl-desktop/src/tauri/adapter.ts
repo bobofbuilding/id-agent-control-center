@@ -528,6 +528,51 @@ function emptyContextBudgetHistoryReplay() {
   };
 }
 
+function headroomPluginPathFallback() {
+  return {
+    coreReady: false,
+    pilotReady: false,
+    verdict: 'valid-pilot-path-runtime-neutral-contract-required',
+    candidate: {
+      name: 'idacc-context-retrieval',
+      bundled: false,
+      bundledPath: null,
+      manifestOk: false,
+      skillOk: false,
+      toolOk: false,
+      smokeOk: false,
+      smokeError: 'Plugin candidate validation requires Electron packaged resources.',
+    },
+    manager: {
+      capabilitiesRoute: false,
+      retrievalFeatureAdvertised: false,
+      pluginListed: false,
+      pluginSourcePath: null,
+    },
+    headroom: {
+      mcpCatalogEntry: true,
+      cliFound: false,
+      proxyReachable: false,
+    },
+    runtimeCoverage: {
+      allRuntimes: ['claude-agent-sdk', 'claude-code-cli', 'claude-code-local', 'codex', 'cursor-cli', 'ollama'],
+      pluginRuntimes: ['claude-agent-sdk', 'claude-code-cli', 'claude-code-local'],
+      mcpRuntimes: ['claude-agent-sdk', 'claude-code-cli', 'claude-code-local', 'codex', 'ollama'],
+      directFallbackRuntimes: ['claude-agent-sdk', 'claude-code-cli', 'claude-code-local', 'codex', 'cursor-cli', 'ollama'],
+      pluginOnlyWouldExclude: ['codex', 'cursor-cli', 'ollama'],
+    },
+    modeMatrix: [
+      { mode: 'direct-deterministic', coreEligible: true, pilotEligible: true, reason: 'Universal fallback.' },
+      { mode: 'idacc-context-retrieval-plugin', coreEligible: false, pilotEligible: false, reason: 'Electron packaged resources are required for validation.' },
+    ],
+    guardrails: [
+      'Plugin-only routing is not core-eligible because it would exclude non-Claude runtimes.',
+      'Direct deterministic routing remains the universal fallback for stock managers and unsupported runtimes.',
+    ],
+    blockers: ['Use the Electron build to validate packaged plugin resources and Headroom CLI/proxy status.'],
+  };
+}
+
 const M: Record<string, (...a: any[]) => Promise<unknown>> = {
   info: async () => ({ managerUrl, team, coordinator: lsGet<Record<string, string>>('idctl.coordinators', {})[team] ?? null }),
   health: () => client.health(),
@@ -576,8 +621,10 @@ const M: Record<string, (...a: any[]) => Promise<unknown>> = {
       policy: headroomPilotState(),
     };
   },
+  'headroom:pluginPath': async () => headroomPluginPathFallback(),
   'headroom:backendContract': async () => {
     const replay = emptyContextBudgetHistoryReplay();
+    const pluginPath = headroomPluginPathFallback();
     return {
       coreReady: false,
       validationReady: false,
@@ -598,6 +645,7 @@ const M: Record<string, (...a: any[]) => Promise<unknown>> = {
         totals: replay.totals,
         guardrails: replay.guardrails,
       },
+      pluginPath,
       phases: ['Use the Electron build for local chat-history replay and plugin validation.'],
       pluginCandidate: {
         name: 'idacc-context-retrieval',

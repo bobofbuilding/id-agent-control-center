@@ -1,0 +1,17 @@
+{
+  "name": "idacc-context-retrieval",
+  "version": "0.1.0",
+  "description": "IDACC retrieval-handle resolver for future Headroom-backed context compression pilots.",
+  "type": "local",
+  "entrypoint": "SKILL.md",
+  "scripts": [
+    {
+      "name": "contract",
+      "command": "node tools/contract.mjs capabilities"
+    },
+    {
+      "name": "resolve",
+      "command": "node tools/contract.mjs resolve"
+    }
+  ]
+}
