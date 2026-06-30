@@ -753,6 +753,7 @@ export function Modules({ store }: { store: FleetStore }) {
   const [catId, setCatId] = useState<string>(MCP_CATALOG[0]?.id ?? '');
   const [catName, setCatName] = useState<string>(MCP_CATALOG[0]?.id ?? '');
   const [catInputs, setCatInputs] = useState<Record<string, string>>({});
+  const [showAddMcp, setShowAddMcp] = useState(false);
   const [showCustom, setShowCustom] = useState(false);
   // custom form
   const [transport, setTransport] = useState<McpTransport>('stdio');
@@ -1371,6 +1372,22 @@ export function Modules({ store }: { store: FleetStore }) {
   const brainGraphStatus = brainGraphStatusLabel(brainGraph);
   const brainGraphTitle = brainGraphStatusTitle(brainGraph);
   const brainGraphDetail = brainGraphReviewDetail(brainGraph);
+  const brainCheckItems = [
+    { label: brainStatusLabel, title: brainStatusTitle, review: brainCatalogNeedsReview },
+    { label: brainCoreStatus, title: brainCoreTitle, review: brainCoreNeedsOperatorReview },
+    { label: brainFleetStatus, title: brainFleetTitle, review: brainFleetNeedsReview },
+    { label: brainAgentsStatus, title: brainAgentsTitle, review: brainAgentsNeedOperatorReview },
+    { label: brainGraphStatus, title: brainGraphTitle, review: brainGraphNeedsReview },
+  ];
+  const brainReviewCount = brainCheckItems.filter((item) => item.review).length;
+  const brainCombinedStatusLabel = brainReviewCount
+    ? `Brain review ${brainReviewCount}`
+    : brainSkills?.summary || brainCore || brainFleet || brainAgents || brainGraph
+      ? 'Brain OK'
+      : 'Brain --';
+  const brainCombinedStatusTitle = brainCheckItems
+    .map((item) => `${item.label}\n${item.title}`)
+    .join('\n\n');
   const brainDashboardReviewTabs: BrainDashboardReviewMap = {
     fleet: brainFleetNeedsReview ? brainFleetDetail : undefined,
     health: brainCoreNeedsOperatorReview ? brainCoreDetail : undefined,
@@ -1393,6 +1410,7 @@ export function Modules({ store }: { store: FleetStore }) {
   const customDraft = buildCustom();
   const catalogReplace = catalogDraft ? mcp.find((p) => p.name === catalogDraft.name) : undefined;
   const customReplace = customDraft ? mcp.find((p) => p.name === customDraft.name) : undefined;
+  const mcpAttachedTotal = mcp.reduce((sum, profile) => sum + mcpCount(profile.name), 0);
 
   return (
     <div className="view modules">
@@ -1471,18 +1489,24 @@ export function Modules({ store }: { store: FleetStore }) {
 
       {tab === 'mcp' ? (
       <section className="card grow">
-        <h3>MCP servers — new tools via external servers</h3>
+        <div className="row-actions" style={{ alignItems: 'baseline', flexWrap: 'wrap' }}>
+          <h3 className="grow">MCP</h3>
+          <span className="chip tag" title="Registered MCP server profiles">Servers {mcp.length}</span>
+          <span className="chip tag" title="Total attachments across the selected targets">Attached {mcpAttachedTotal}</span>
+          <button className="btn small" onClick={() => setShowAddMcp((show) => !show)}>
+            {showAddMcp ? 'Close add' : '+ Add server'}
+          </button>
+        </div>
         <p className="muted small" style={{ marginTop: -4 }}>
-          External tool servers your agent connects to — they give it brand-new <b>tools</b> (filesystem, web search, databases, GitHub…). Pick one, <b>Test</b> it (launches it and lists its tools), then <b>Attach</b> to <b>{targetLabel}</b> and Rebuild. Attach/Detach apply to every selected agent as neutral capability metadata; runtimes with native MCP/tool-calling can execute immediately, while others keep the attachment for manager adapters, runtime changes, or direct fallback.
+          Tool servers for <b>{targetLabel}</b>. Attach or detach, then rebuild affected agents.
         </p>
         <table className="grid">
           <thead>
             <tr>
-              <th>name</th>
-              <th>endpoint</th>
+              <th>server</th>
               <th>attached</th>
-              <th>test</th>
-              <th></th>
+              <th>status</th>
+              <th>action</th>
             </tr>
           </thead>
           <tbody>
@@ -1491,8 +1515,10 @@ export function Modules({ store }: { store: FleetStore }) {
               const have = mcpCount(p.name);
               return (
                 <tr key={p.name}>
-                  <td className="b">{p.name} <span className="muted small">{p.transport}</span></td>
-                  <td className="mono small">{p.transport === 'stdio' ? [p.command, ...(p.args ?? [])].join(' ') : p.url}</td>
+                  <td>
+                    <div className="b">{p.name} <span className="muted small">{p.transport}</span></div>
+                    <div className="mono small">{p.transport === 'stdio' ? [p.command, ...(p.args ?? [])].join(' ') : p.url}</div>
+                  </td>
                   <td className={have > 0 ? 'ok-text small' : 'muted small'}>{have}/{targetCount}</td>
                   <td className="small"><TestCell r={tr} /></td>
                   <td className="row-actions">
@@ -1506,7 +1532,7 @@ export function Modules({ store }: { store: FleetStore }) {
             })}
             {mcp.length === 0 ? (
               <tr>
-                <td colSpan={5} className="muted center pad">No MCP servers registered yet — add one below.</td>
+                <td colSpan={4} className="muted center pad">No MCP servers registered.</td>
               </tr>
             ) : null}
           </tbody>
@@ -1519,7 +1545,9 @@ export function Modules({ store }: { store: FleetStore }) {
           </div>
         ) : null}
 
-        <h3 style={{ marginTop: 18 }}>Add a server</h3>
+        {showAddMcp || mcp.length === 0 ? (
+        <>
+        <h3 style={{ marginTop: 18 }}>Add server</h3>
         <div className="kv" style={{ gridTemplateColumns: '120px 1fr', gap: '8px 12px' }}>
           <span>from catalog</span>
           <b>
@@ -1617,30 +1645,20 @@ export function Modules({ store }: { store: FleetStore }) {
             ) : null}
           </>
         ) : null}
+        </>
+        ) : null}
       </section>
       ) : null}
 
       {tab === 'skills' ? (
       <section className="card grow">
         <div className="row-actions" style={{ alignItems: 'baseline', flexWrap: 'wrap' }}>
-          <h3 className="grow">Skill catalog — know-how for the agent</h3>
+          <h3 className="grow">Skills</h3>
           <span className="chip tag" title="Local SKILL.md folders found in the manager library">
             Local {skills.length}
           </span>
-          <span className={`chip ${brainCatalogNeedsReview ? 'brain-review' : brainSkills?.summary ? 'tag' : ''}`} title={brainStatusTitle}>
-            {brainStatusLabel}
-          </span>
-          <span className={`chip ${brainCoreNeedsOperatorReview ? 'brain-review' : 'tag'}`} title={brainCoreTitle}>
-            {brainCoreStatus}
-          </span>
-          <span className={`chip ${brainFleetNeedsReview ? 'brain-review' : 'tag'}`} title={brainFleetTitle}>
-            {brainFleetStatus}
-          </span>
-          <span className={`chip ${brainAgentsNeedOperatorReview ? 'brain-review' : 'tag'}`} title={brainAgentsTitle}>
-            {brainAgentsStatus}
-          </span>
-          <span className={`chip ${brainGraphNeedsReview ? 'brain-review' : 'tag'}`} title={brainGraphTitle}>
-            {brainGraphStatus}
+          <span className={`chip ${brainReviewCount ? 'brain-review' : brainSkills?.summary || brainCore || brainFleet || brainAgents || brainGraph ? 'tag' : ''}`} title={brainCombinedStatusTitle}>
+            {brainCombinedStatusLabel}
           </span>
           <button className="btn small" disabled={brainSyncDisabled} title={brainSyncTitle} onClick={() => void syncSkillsToBrain()}>
             {brainSyncing ? 'Syncing…' : 'Preview & sync'}
@@ -1651,7 +1669,7 @@ export function Modules({ store }: { store: FleetStore }) {
           </button>
         </div>
         <p className="muted small" style={{ marginTop: -4 }}>
-          Markdown instructions (the <a className="ext-link" href="https://agentskills.io" target="_blank" rel="noreferrer">agentskills.io</a> <span className="mono">SKILL.md</span> standard) that teach an agent <i>how</i> to do things with the tools it already has. Browse, filter by tag, then install on <b>{targetLabel}</b> — the assignment is runtime-neutral, and deployment falls through the manager's runtime-aware skill, workspace, or prompt-side adapter.
+          SKILL.md instructions for <b>{targetLabel}</b>. Install to targets, then sync Brain when the catalog changes.
         </p>
 
         {brainCatalogNeedsReview ? (
@@ -1932,7 +1950,6 @@ export function Modules({ store }: { store: FleetStore }) {
                       </span>
                     )}
                   </td>
-                  <td className="muted"><LinkedDescription text={p.description} /></td>
                 </tr>
               );
             })}

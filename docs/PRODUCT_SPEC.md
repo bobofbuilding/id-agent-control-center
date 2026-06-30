@@ -364,12 +364,14 @@ selection in the active team.
 - **Shared header**: team dropdown + an **"apply to" agent chip row** (default = all in scope; click
   to make an explicit set; all/none). Runtime support is advisory, so local/API/subscription
   runtimes can receive neutral MCP/skill/plugin metadata while execution adapters remain explicit.
-- **MCP servers**: registry table (endpoint, attached `have/target`, **Test**), per-row **Attach /
-  Detach / Test / ✕**, **Rebuild <targets>** (attach/detach take effect on rebuild); **Add from
-  catalog** (guided, validated inputs, secret masking) + **Add custom (advanced)** (stdio/http/sse).
+- **MCP servers**: compact server table (server/endpoint, attached `have/target`, status, actions),
+  per-row **Attach / Detach / Test / ✕**, **Rebuild <targets>**, and a hidden **Add server** panel
+  for catalog/custom MCP profiles. `mcp:list` and `mcp:test` stay read-only; only add/remove emit
+  cross-page sync.
 - **Skills**: catalog cards (license, install `have/target`, tags incl. **auto-categorized**),
   **Install / Uninstall** per selection, two-step **delete**, search + tag filter, batch
-  **auto-categorize** (+ ↻ re-categorize), **Create skill** (validated `SKILL.md`).
+  **auto-categorize** (+ ↻ re-categorize), **Create skill**, one combined Brain status chip, and
+  explicit **Preview & sync** for Brain catalog writes.
 - **Plugins**: compact active-package table (package, kind, reach, action). Instruction-only wrappers
   can be **Digest** after a fresh-read guard, then disappear from Plugins and live in Skills; a small
   **In Skills** count shows what moved. Tool-bearing/hybrid packages stay here until reviewed adapters exist.
