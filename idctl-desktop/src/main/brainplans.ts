@@ -100,7 +100,7 @@ function normStatusLabel(s: string): string | null {
   const t = (s || '').toLowerCase();
   if (/done|✅/.test(t)) return '✅ DONE';
   if (/partial|🔄|progress/.test(t)) return '🔄 PARTIAL';
-  if (/hold|🛑/.test(t)) return '🛑 ON HOLD';
+  if (/hold|pause|paused|blocked|🛑/.test(t)) return '🛑 ON HOLD';
   if (/pending|⏳|todo|not started/.test(t)) return '⏳ PENDING';
   return null;
 }

@@ -26,6 +26,8 @@ type BrainPlansResp = { dir: string | null; plans: BrainPlan[] };
 type BrainPlanField = 'title' | 'status' | 'mtime';
 type DraftPlanField = 'title' | 'status' | 'version' | 'updatedAt' | 'content' | 'tags';
 type SortMode = 'recent' | 'title' | 'status';
+type BrainStatusKey = 'pending' | 'partial' | 'hold' | 'done';
+type BrainStatusWrite = 'PENDING' | 'PARTIAL' | 'PAUSED' | 'DONE';
 
 // Auto-decompose IPC shapes (mirror main/work.ts) for "compile into tasks".
 type SubTask = { title: string; description: string; agent: string; dependsOn: number[] };
@@ -37,17 +39,28 @@ type FanoutResult = { team: string; lead?: string; status: 'dispatched' | 'no-ac
 
 const STATUSES: PlanStatus[] = ['draft', 'active', 'done', 'archived'];
 const STATUS_CLASS: Record<PlanStatus, string> = { draft: 'st-paused', active: 'st-active', done: 'st-done', archived: 'st-blocked' };
-const BRAIN_BUCKETS: { key: string; label: string }[] = [
-  { key: 'done', label: 'Done' }, { key: 'partial', label: 'Partial' },
-  { key: 'pending', label: 'Pending' }, { key: 'hold', label: 'On hold' },
+const BRAIN_BUCKETS: { key: BrainStatusKey; label: string }[] = [
+  { key: 'pending', label: 'Pending' },
+  { key: 'partial', label: 'Partial' },
+  { key: 'hold', label: 'Paused' },
+  { key: 'done', label: 'Done' },
 ];
-const BRAIN_KEY_CLASS: Record<string, string> = { done: 'st-done', partial: 'st-active', pending: 'st-paused', hold: 'st-blocked' };
-function brainStatusKey(s?: string): string {
+const BRAIN_KEY_CLASS: Record<BrainStatusKey, string> = { done: 'st-done', partial: 'st-active', pending: 'st-paused', hold: 'st-blocked' };
+const BRAIN_STATUS_ACTIONS: { write: BrainStatusWrite; key: BrainStatusKey; label: string; confirm: string }[] = [
+  { write: 'PENDING', key: 'pending', label: 'Set pending', confirm: 'queue it for a future work pass' },
+  { write: 'PARTIAL', key: 'partial', label: 'Mark partial', confirm: 'show that work is underway or partly complete' },
+  { write: 'PAUSED', key: 'hold', label: 'Pause', confirm: 'pause it until a blocker or dependency clears' },
+  { write: 'DONE', key: 'done', label: 'Mark done', confirm: 'archive it as complete' },
+];
+function brainStatusKey(s?: string): BrainStatusKey {
   const t = (s || '').toLowerCase();
   if (/done|✅/.test(t)) return 'done';
   if (/partial|🔄|progress/.test(t)) return 'partial';
-  if (/hold|🛑|block/.test(t)) return 'hold';
+  if (/hold|pause|paused|🛑|block/.test(t)) return 'hold';
   return 'pending';
+}
+function brainStatusLabel(key: BrainStatusKey): string {
+  return BRAIN_BUCKETS.find((b) => b.key === key)?.label ?? key;
 }
 
 function qArg(s: string): string { return `"${s.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`; }
@@ -73,7 +86,7 @@ const UPDATE_PROMPT = (content: string, instr: string) =>
 const SUGGEST_PROMPT = (content: string) =>
   `Review this implementation plan and list 3-6 concrete, high-value improvements as short imperative instructions, ONE per line, no preamble or numbering (e.g. "Add a rollback step to phase 3"). Plan:\n\n${content}`;
 const AUDIT_PROMPT = (title: string, content: string) =>
-  'Audit the TRUE current status of this implementation plan. Verify against the ACTUAL codebase and your knowledge — use your tools to check what is really implemented; do NOT just trust the plan\'s own claims. Reply with JSON ONLY (no prose, no fences): {"status":"DONE|PARTIAL|PENDING","summary":"<1-3 sentences: what is actually done and what remains>"}.\n\nPLAN: ' + title + '\n\n' + content;
+  'Audit the TRUE current status of this implementation plan. Verify against the ACTUAL codebase and your knowledge — use your tools to check what is really implemented; do NOT just trust the plan\'s own claims. Reply with JSON ONLY (no prose, no fences): {"status":"DONE|PARTIAL|PENDING|PAUSED","summary":"<1-3 sentences: what is actually done and what remains>"}.\n\nUse PAUSED only when the plan cannot safely progress without a blocker, operator decision, or external dependency. PLAN: ' + title + '\n\n' + content;
 const BLOCKERS_PROMPT = (title: string, content: string) =>
   'Review this plan and surface anything that needs the USER — a hard blocker, a decision (a genuine fork), a confirmation before touching shared/live infra, or a piece of MANUAL work only the user can do. Verify against the actual codebase where relevant. Return JSON ONLY (no prose, no code fences): ' +
   '[{"question":"<what you need from the user — 1-2 sentences with the key context so they can decide fast>","options":["<best option A>","<best option B>", ...]}]. ' +
@@ -206,13 +219,50 @@ export function Plans({ store }: { store: FleetStore }) {
     return current;
   }
 
+  async function currentBrainPlan(file: string): Promise<BrainPlan | null> {
+    return (await call<BrainPlansResp>('brain:plans').catch(() => ({ dir: null, plans: [] }))).plans.find((x) => x.file === file) ?? null;
+  }
+
+  async function writeBrainStatus(current: BrainPlan, status: BrainStatusWrite, action: string): Promise<StatusWrite> {
+    const res = await call<StatusWrite>('brain:setPlanStatus', current.file, status, null, { status: current.status, mtime: current.mtime })
+      .catch((): StatusWrite => ({ ok: false, error: 'write failed' }));
+    if (res.stale) {
+      await reloadBrain();
+      throw new Error(res.error ?? `${action} blocked: plan changed while writing status`);
+    }
+    await reloadBrain();
+    return res;
+  }
+
+  async function applyBrainStatus(p: BrainPlan, status: BrainStatusWrite) {
+    const action = BRAIN_STATUS_ACTIONS.find((x) => x.write === status);
+    const fresh = await ensureBrainPlanFresh(p, action?.label ?? `Set ${p.title} status`);
+    if (!fresh) return;
+    const currentKey = brainStatusKey(fresh.status);
+    if (action && currentKey === action.key) { setMsg(`"${fresh.title}" is already ${brainStatusLabel(action.key).toLowerCase()}`); return; }
+    if (!window.confirm(`${action?.label ?? 'Update status'} for "${fresh.title}"?\n\nThis writes the live brain plan status to ${brainStatusLabel(action?.key ?? brainStatusKey(status))} and will ${action?.confirm ?? 'update the plan lifecycle state'}.`)) return;
+    setBusyFile(fresh.file); setMsg(`${action?.label ?? 'Updating status'} for "${fresh.title}"...`);
+    try {
+      const res = await writeBrainStatus(fresh, status, action?.label ?? 'Update status');
+      if (aliveRef.current) setMsg(res.ok ? `"${fresh.title}" ${res.from} -> ${res.to}` : `failed: ${res.error ?? 'n/a'}`);
+    } catch (e) {
+      if (aliveRef.current) setMsg(e instanceof Error ? e.message : String(e));
+    } finally {
+      if (aliveRef.current) setBusyFile(null);
+    }
+  }
+
+  type AuditResult = { text: string; key?: BrainStatusKey; summary: string };
+  type BlockerResult = { text: string; added: number };
+  type DispatchResult = { text: string; dispatched: boolean };
+
   // ── Unified "Work" pipeline: AUDIT → FIND BLOCKERS → COMPILE & DISPATCH ──────────
   // One button. The plan is first audited (real status refreshed), then scanned for
-  // blockers, then compiled into tasks and dispatched to EVERY active team/agent
-  // automatically — no team picking; items get delegated + assigned as needed.
-  async function auditCore(p: BrainPlan): Promise<string> {
+  // blockers. Blockers pause the plan and surface Inbox questions; clear plans are
+  // delegated and then marked PARTIAL so pending/partial/paused/done stay meaningful.
+  async function auditCore(p: BrainPlan): Promise<AuditResult> {
     const who = genAgent;
-    if (!who) return 'no agent to audit';
+    if (!who) return { text: 'no agent to audit', summary: '' };
     const baseline = await ensureBrainPlanFresh(p, `Audit ${p.title}`);
     if (!baseline) throw new Error('plan changed; refreshed');
     const got = await call<{ file: string; content: string } | null>('brain:plan', baseline.file).catch(() => null);
@@ -221,18 +271,20 @@ export function Plans({ store }: { store: FleetStore }) {
     const obj = a >= 0 && b > a ? (() => { try { return JSON.parse(reply.slice(a, b + 1)); } catch { return null; } })() : null;
     const status = String(obj?.status ?? '').trim();
     const summary = String(obj?.summary ?? '').trim() || reply.slice(0, 300);
-    if (!status) { if (aliveRef.current) setAudit((m) => ({ ...m, [baseline.file]: { summary } })); return 'no clear status'; }
+    if (!status) {
+      if (aliveRef.current) setAudit((m) => ({ ...m, [baseline.file]: { summary } }));
+      return { text: 'no clear status', summary };
+    }
     const fresh = await ensureBrainPlanFresh(baseline, `Audit ${baseline.title}`);
     if (!fresh) throw new Error('plan changed while audit was running; refreshed');
-    const res = await call<StatusWrite>('brain:setPlanStatus', fresh.file, status, null, { status: fresh.status, mtime: fresh.mtime }).catch((): StatusWrite => ({ ok: false, error: 'write failed' }));
-    if (res.stale) { await reloadBrain(); throw new Error(res.error ?? 'plan changed while writing status; refreshed'); }
+    const res = await writeBrainStatus(fresh, status as BrainStatusWrite, `Audit ${fresh.title}`);
     if (aliveRef.current) setAudit((m) => ({ ...m, [fresh.file]: { from: res.from, to: res.to, summary } }));
-    await reloadBrain();
-    return res.ok ? `${res.from} → ${res.to}` : 'audit (write failed)';
+    const key = res.to ? brainStatusKey(res.to) : brainStatusKey(status);
+    return { text: res.ok ? `${res.from} -> ${res.to}` : 'audit (write failed)', key, summary };
   }
-  async function blockersCore(p: BrainPlan): Promise<string> {
+  async function blockersCore(p: BrainPlan): Promise<BlockerResult> {
     const who = genAgent;
-    if (!who) return 'no agent';
+    if (!who) return { text: 'no agent', added: 0 };
     const baseline = await ensureBrainPlanFresh(p, `Scan blockers for ${p.title}`, ['title', 'mtime']);
     if (!baseline) throw new Error('plan changed; refreshed');
     const got = await call<{ file: string; content: string } | null>('brain:plan', baseline.file).catch(() => null);
@@ -248,11 +300,11 @@ export function Plans({ store }: { store: FleetStore }) {
       const question = String(it?.question ?? '').trim();
       if (!question) continue;
       const options = (Array.isArray(it?.options) ? it.options : []).map((o: unknown) => String(o)).filter(Boolean);
-      await call('questions:add', { question, options: options.length ? options : ['Acknowledge'], agent: who, taskRef: fresh.title, taskTitle: fresh.title, team: store.team ?? 'default' }).catch(() => {});
+      await call('questions:add', { question, options: options.length ? options : ['Acknowledge'], agent: who, taskRef: `plan:${fresh.file}`, taskTitle: fresh.title, team: store.team ?? 'default' }).catch(() => {});
       added++;
     }
     if (aliveRef.current) setBlockers((m) => ({ ...m, [fresh.file]: added ? `${added} decision${added === 1 ? '' : 's'} → Inbox` : 'nothing needs you' }));
-    return added ? `${added} → Inbox` : 'no blockers';
+    return { text: added ? `${added} -> Inbox` : 'no blockers', added };
   }
   // Compile the plan + dispatch to ALL active teams/agents — no selection. The primary
   // (owning) team gets trackable task cards (auto-assigned + worked); every OTHER active
@@ -264,7 +316,7 @@ export function Plans({ store }: { store: FleetStore }) {
   // clusters across every active team weighted by capacity (running agents). Independent
   // clusters run in parallel on different teams; each team balances its slice across its
   // own agents. Result: one plan, split across the whole active fleet — never duplicated.
-  async function dispatchCore(p: BrainPlan): Promise<string> {
+  async function dispatchCore(p: BrainPlan): Promise<DispatchResult> {
     const baseline = await ensureBrainPlanFresh(p, `Dispatch ${p.title}`, ['title', 'mtime']);
     if (!baseline) throw new Error('plan changed; refreshed');
     const got = await call<{ file: string; content: string } | null>('brain:plan', baseline.file).catch(() => null);
@@ -284,15 +336,15 @@ export function Plans({ store }: { store: FleetStore }) {
       // waiting up to 15 min for its full reply).
       const leadTarget = leadTeam && leadTeam !== (store.team ?? 'default') ? `${leadTeam}/${lead}` : lead;
       await call('dispatch:start', `/ask ${leadTarget} ${qArg(prompt)}`).catch(() => {});
-      return `handed to ${leadTarget} to decompose + delegate (working in background)`;
+      return { text: `handed to ${leadTarget} to decompose + delegate (working in background)`, dispatched: true };
     }
     // ---- fallback: mechanical decompose + partition + dispatch (no primary lead online) ----
     const obj = `Implement this plan, end to end:\n\n# ${baseline.title}\n\n${got?.content ?? ''}`;
     const who = genAgent;
-    if (!who) return 'no agent to compile';
+    if (!who) return { text: 'no agent to compile', dispatched: false };
     // 1) Decompose ONCE → sub-tasks (+ dependency edges).
     const dec = await call<DecomposeResult>('work:decompose', obj, who).catch((): DecomposeResult => ({ ok: false, subtasks: [], raw: '', error: 'decompose failed' }));
-    if (!dec.ok || !dec.subtasks.length) return dec.error || 'could not split into tasks';
+    if (!dec.ok || !dec.subtasks.length) return { text: dec.error || 'could not split into tasks', dispatched: false };
     const fresh = await ensureBrainPlanFresh(baseline, `Dispatch ${baseline.title}`, ['title', 'mtime']);
     if (!fresh) throw new Error('plan changed while decomposition was running; refreshed');
     const subs = dec.subtasks;
@@ -300,7 +352,7 @@ export function Plans({ store }: { store: FleetStore }) {
     // 2) Active teams with a running lead + their capacity (running-agent count).
     const allTeams = store.teams.map((t) => t.name).filter(Boolean);
     const leads = (await call<TeamLead[]>('work:teamLeads', allTeams).catch(() => [] as TeamLead[])).filter((l) => l.activeCount > 0 && l.lead);
-    if (!leads.length) return 'no active teams to dispatch to';
+    if (!leads.length) return { text: 'no active teams to dispatch to', dispatched: false };
     // 3) Dependency clusters (union-find on the dep edges).
     const parent = Array.from({ length: N }, (_, i) => i);
     const find = (x: number): number => (parent[x] === x ? x : (parent[x] = find(parent[x])));
@@ -334,53 +386,48 @@ export function Plans({ store }: { store: FleetStore }) {
       const ok = res.created.filter((c) => c.ok).length;
       if (ok) parts.push(`${l.team}: ${ok}`);
     }
-    return parts.length ? `split ${N} tasks → ${parts.join(' · ')}` : 'nothing dispatched';
+    return { text: parts.length ? `split ${N} tasks -> ${parts.join(' · ')}` : 'nothing dispatched', dispatched: parts.length > 0 };
   }
   // One button → all three phases, single live toast.
   async function runWork(p: BrainPlan) {
     if (busyFile) return;
     const fresh = await ensureBrainPlanFresh(p, `Work ${p.title}`);
     if (!fresh) return;
-    if (!window.confirm(`Work plan "${fresh.title}" now?\n\nThis audits and may rewrite the plan status, creates blocker questions, and delegates remaining work to agents or teams.`)) return;
+    if (!window.confirm(`Work plan "${fresh.title}" now?\n\nThis audits the true status, pauses on blockers with Inbox questions, or delegates remaining work and marks it partial.`)) return;
     setBusyFile(fresh.file);
     const t = toast({ kind: 'progress', text: `Working “${fresh.title}” — auditing status…` });
     try {
       const a = await auditCore(fresh);
-      t.update({ kind: 'progress', text: `Working “${fresh.title}” — scanning for blockers… (${a})` });
+      if (a.key === 'done') {
+        t.update({ kind: 'success', text: `“${fresh.title}” is done · ${a.summary || a.text}` });
+        if (aliveRef.current) setMsg(`audited done · ${a.summary || a.text}`);
+        return;
+      }
+      t.update({ kind: 'progress', text: `Working “${fresh.title}” — scanning for blockers… (${a.text})` });
       const b = await blockersCore(fresh);
+      if (b.added > 0) {
+        const latest = await currentBrainPlan(fresh.file);
+        if (latest && brainStatusKey(latest.status) !== 'done') {
+          await writeBrainStatus(latest, 'PAUSED', `Pause ${latest.title}`);
+        }
+        t.update({ kind: 'success', text: `“${fresh.title}” paused · ${b.text}; answer in Inbox before automation continues.` });
+        if (aliveRef.current) setMsg(`paused · ${b.text}`);
+        return;
+      }
       t.update({ kind: 'progress', text: `Working “${fresh.title}” — handing to the lead to decompose & delegate…` });
       const d = await dispatchCore(fresh);
-      t.update({ kind: 'success', text: `“${fresh.title}” ✓ audited (${a}) · ${b} · ${d}` });
-      if (aliveRef.current) setMsg(`audited (${a}) · ${b} · ${d}`);
+      if (d.dispatched) {
+        const latest = await currentBrainPlan(fresh.file);
+        if (latest && brainStatusKey(latest.status) !== 'done') {
+          await writeBrainStatus(latest, 'PARTIAL', `Mark ${latest.title} partial after delegation`);
+        }
+      }
+      t.update({ kind: d.dispatched ? 'success' : 'error', text: `“${fresh.title}” ${d.dispatched ? 'delegated' : 'not delegated'} · audited (${a.text}) · ${b.text} · ${d.text}` });
+      if (aliveRef.current) setMsg(`audited (${a.text}) · ${b.text} · ${d.text}${d.dispatched ? ' · status -> Partial' : ''}`);
     } catch (err) {
       const m = err instanceof Error ? err.message : String(err);
       t.update({ kind: 'error', text: `“${fresh.title}” work failed: ${m}` });
       if (aliveRef.current) setMsg(`work failed: ${m}`);
-    } finally { if (aliveRef.current) setBusyFile(null); }
-  }
-
-  async function setBrainPending(p: BrainPlan) {
-    const fresh = await ensureBrainPlanFresh(p, `Set ${p.title} pending`);
-    if (!fresh) return;
-    if (!window.confirm(`Set "${fresh.title}" back to PENDING?\n\nThis writes the live brain plan status and can make it eligible for future work loops.`)) return;
-    setBusyFile(fresh.file); setMsg(`marking “${fresh.title}” pending…`);
-    try {
-      const res = await call<StatusWrite>('brain:setPlanStatus', fresh.file, 'PENDING', null, { status: fresh.status, mtime: fresh.mtime }).catch((): StatusWrite => ({ ok: false, error: 'write failed' }));
-      if (aliveRef.current) setMsg(res.ok ? `“${fresh.title}” → ⏳ PENDING ✓` : `failed: ${res.error ?? 'n/a'}`);
-      await reloadBrain();
-    } finally { if (aliveRef.current) setBusyFile(null); }
-  }
-  // Mark a brain plan DONE directly (writes the status back to the plan file + index). Done
-  // plans auto-move to the "Archived · Done" group below.
-  async function setBrainDone(p: BrainPlan) {
-    const fresh = await ensureBrainPlanFresh(p, `Mark ${p.title} done`);
-    if (!fresh) return;
-    if (!window.confirm(`Mark "${fresh.title}" DONE?\n\nThis writes the live brain plan status and moves it into the done/archive group.`)) return;
-    setBusyFile(fresh.file); setMsg(`marking “${fresh.title}” done…`);
-    try {
-      const res = await call<StatusWrite>('brain:setPlanStatus', fresh.file, 'DONE', null, { status: fresh.status, mtime: fresh.mtime }).catch((): StatusWrite => ({ ok: false, error: 'write failed' }));
-      if (aliveRef.current) setMsg(res.ok ? `“${fresh.title}” → ✅ DONE ✓` : `failed: ${res.error ?? 'n/a'}`);
-      await reloadBrain();
     } finally { if (aliveRef.current) setBusyFile(null); }
   }
 
@@ -549,6 +596,19 @@ export function Plans({ store }: { store: FleetStore }) {
   const draftActive = organizedDrafts.filter((p) => p.status !== 'archived');
   const draftArchived = organizedDrafts.filter((p) => p.status === 'archived');
   const archivedCount = brainArchived.length + draftArchived.length;
+  const brainCounts = BRAIN_BUCKETS.reduce((acc, bucket) => {
+    acc[bucket.key] = organizedBrain.filter((p) => brainStatusKey(p.status) === bucket.key).length;
+    return acc;
+  }, {} as Record<BrainStatusKey, number>);
+  const nextWorkPlan =
+    brainActive.find((p) => brainStatusKey(p.status) === 'pending')
+    ?? brainActive.find((p) => brainStatusKey(p.status) === 'partial')
+    ?? brainActive.find((p) => brainStatusKey(p.status) === 'hold')
+    ?? null;
+  async function runNextPlan() {
+    if (!nextWorkPlan) { setMsg('no pending, partial, or paused plans match the current filters'); return; }
+    await runWork(nextWorkPlan);
+  }
 
   const statusChips = (ids: string[], active: Set<string>, onToggle: (id: string) => void, labelOf: (id: string) => string, classOf: (id: string) => string) => (
     <span className="chips">
@@ -563,10 +623,12 @@ export function Plans({ store }: { store: FleetStore }) {
   const brainCard = (p: BrainPlan) => {
     const isOpen = brainOpen === p.file;
     const acting = busyFile === p.file;
+    const key = brainStatusKey(p.status);
+    const workLabel = key === 'hold' ? 'Resume & work' : key === 'partial' ? 'Continue work' : 'Work';
     return (
       <div className={`skill-card${isOpen ? ' editing' : ''}`} key={p.file}>
         <div className="skill-card-head" style={{ cursor: 'pointer' }} onClick={() => void openBrain(p.file)}>
-          {p.status ? <span className={`st-badge ${BRAIN_KEY_CLASS[brainStatusKey(p.status)]}`} title={p.status}>{BRAIN_BUCKETS.find((b) => b.key === brainStatusKey(p.status))?.label ?? p.status}</span> : null}
+          <span className={`st-badge ${BRAIN_KEY_CLASS[key]}`} title={p.status || brainStatusLabel(key)}>{brainStatusLabel(key)}</span>
           {p.num ? <span className="mono small muted">{p.num}</span> : null}
           <span className="b">{p.title}</span>
           {p.effort ? <span className="muted small">· {p.effort}</span> : null}
@@ -577,11 +639,17 @@ export function Plans({ store }: { store: FleetStore }) {
         </div>
         <div className="row-actions" style={{ gap: 6, padding: '0 8px 6px', flexWrap: 'wrap' }} onClick={(e) => e.stopPropagation()}>
           <button className="btn small primary" disabled={busyFile !== null}
-            title="Work this plan end-to-end, automatically: ① audit its real status → ② scan for blockers → ③ compile into tasks and dispatch to EVERY active team & agent (no team picking — work is delegated and assigned as needed)."
-            onClick={() => void runWork(p)}>{acting ? '⏳ Working…' : '▶ Work'}</button>
+            title="Audit this plan, pause on blockers with Inbox questions, or delegate remaining work and mark it partial."
+            onClick={() => void runWork(p)}>{acting ? 'Working...' : workLabel}</button>
           <span className="grow" />
-          {brainStatusKey(p.status) !== 'done' ? <button className="btn small" disabled={busyFile !== null} title="Mark this plan ✅ DONE (it moves to Archived · Done)" onClick={() => void setBrainDone(p)}>✓ Mark done</button> : null}
-          {brainStatusKey(p.status) !== 'pending' ? <button className="btn small" disabled={busyFile !== null} title="Reset this plan's status to ⏳ PENDING" onClick={() => void setBrainPending(p)}>⏳ Set pending</button> : null}
+          <select className="cell-select small" value="" disabled={busyFile !== null} title="Write a guarded live brain-plan status" onChange={(e) => {
+            const status = e.target.value as BrainStatusWrite;
+            e.currentTarget.value = '';
+            if (status) void applyBrainStatus(p, status);
+          }}>
+            <option value="">Set status...</option>
+            {BRAIN_STATUS_ACTIONS.filter((a) => a.key !== key).map((a) => <option key={a.write} value={a.write}>{a.label}</option>)}
+          </select>
         </div>
         {audit[p.file] ? (
           <div className="muted small" style={{ padding: '0 8px 6px' }}>
@@ -704,6 +772,7 @@ export function Plans({ store }: { store: FleetStore }) {
           <label className="muted small" style={{ display: 'inline-flex', alignItems: 'center', gap: 6, cursor: 'pointer' }}>
             <input type="checkbox" checked={showArchived} onChange={(e) => setShowArchived(e.target.checked)} /> show archived{archivedCount ? ` (${archivedCount})` : ''}
           </label>
+          <span className="muted small">pending {brainCounts.pending} · partial {brainCounts.partial} · paused {brainCounts.hold} · done {brainCounts.done}</span>
           <span className="grow" />
           {msg ? <span className={`small ${/failed|timed out|expired|cancelled|could not/.test(msg) ? 'status-error' : 'muted'}`}>{msg}</span> : null}
           {busy ? <button className="btn" onClick={cancel}>Cancel</button> : null}
@@ -712,7 +781,7 @@ export function Plans({ store }: { store: FleetStore }) {
         <div className="row-actions" style={{ gap: 10, flexWrap: 'wrap', alignItems: 'center', marginTop: 8 }}>
           <button className="btn small" disabled={!(brainStatus.size || draftStatus.size || tagFilter.size)} onClick={() => { setBrainStatus(new Set()); setDraftStatus(new Set()); setTagFilter(new Set()); }}>clear filters</button>
           <span className="muted small">plans:</span>
-          {statusChips(BRAIN_BUCKETS.map((b) => b.key), brainStatus, (id) => toggle(setBrainStatus, id), (k) => BRAIN_BUCKETS.find((b) => b.key === k)?.label ?? k, (k) => BRAIN_KEY_CLASS[k])}
+          {statusChips(BRAIN_BUCKETS.map((b) => b.key), brainStatus, (id) => toggle(setBrainStatus, id), (k) => BRAIN_BUCKETS.find((b) => b.key === k)?.label ?? k, (k) => BRAIN_KEY_CLASS[k as BrainStatusKey])}
           <span className="muted small" style={{ marginLeft: 6 }}>drafts:</span>
           {statusChips(STATUSES, draftStatus, (id) => toggle(setDraftStatus, id), (s) => s, (s) => STATUS_CLASS[s as PlanStatus])}
           {allDraftTags.length ? (
@@ -753,6 +822,9 @@ export function Plans({ store }: { store: FleetStore }) {
           <h3 style={{ margin: 0 }}>Plans</h3>
           <span className="muted small">· {brainActive.length} active{brainArchived.length ? ` · ${brainArchived.length} done` : ''} · ⟳ live</span>
           <span className="grow" />
+          <button className="btn small primary" disabled={busyFile !== null || !nextWorkPlan} title={nextWorkPlan ? `Work next matching plan: ${nextWorkPlan.title}` : 'No pending, partial, or paused plan matches the current filters'} onClick={() => void runNextPlan()}>
+            {busyFile ? 'Working...' : nextWorkPlan ? 'Work next' : 'No work queued'}
+          </button>
           {brain.dir
             ? <span className="muted small mono" title={brain.dir}>{brain.dir.replace(/^.*\/projects\//, '…/')}</span>
             : <span className="warn-text small">brain plans dir not found</span>}

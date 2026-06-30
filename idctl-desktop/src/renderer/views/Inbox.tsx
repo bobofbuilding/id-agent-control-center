@@ -74,7 +74,9 @@ function QuestionRow({ q, onDone }: { q: BlockerQuestion; onDone: () => void }) 
   const [showComment, setShowComment] = useState(false);
   const subject = q.taskTitle ?? q.taskRef ?? '';
   const isLearnQuestion = q.taskRef?.startsWith('learn:') ?? false;
-  const from = q.agent || (isLearnQuestion ? 'review gate' : 'agent');
+  const isPlanQuestion = q.taskRef?.startsWith('plan:') ?? false;
+  const isSyntheticQuestion = isLearnQuestion || isPlanQuestion;
+  const from = q.agent || (isSyntheticQuestion ? 'review gate' : 'agent');
 
   // Deliver a response to the blocked agent (best-effort, async) and clear the item.
   // A response moves the task into the board's "Under Review" lane (the block is being
@@ -83,7 +85,7 @@ function QuestionRow({ q, onDone }: { q: BlockerQuestion; onDone: () => void }) 
     setBusy(true); setErr('');
     try {
       if (q.agent && !isLearnQuestion && answer) void call('dispatch', `/ask ${q.agent} ${qArg(answer)}`).catch(() => {});
-      if (q.taskRef && !isLearnQuestion) void call('tasks:setReview', q.taskRef, 'under-review').catch(() => {});
+      if (q.taskRef && !isSyntheticQuestion) void call('tasks:setReview', q.taskRef, 'under-review').catch(() => {});
       await call('questions:remove', q.id);
       onDone();
     } catch (e) { setErr(e instanceof Error ? e.message : String(e)); setBusy(false); }
@@ -94,7 +96,7 @@ function QuestionRow({ q, onDone }: { q: BlockerQuestion; onDone: () => void }) 
   async function skip() {
     setBusy(true); setErr('');
     try {
-      if (q.taskRef && !isLearnQuestion) void call('tasks:setReview', q.taskRef, '').catch(() => {}); // dismissing clears the adjustment state
+      if (q.taskRef && !isSyntheticQuestion) void call('tasks:setReview', q.taskRef, '').catch(() => {}); // dismissing clears the adjustment state
       await call('questions:remove', q.id); onDone();
     } catch (e) { setErr(e instanceof Error ? e.message : String(e)); setBusy(false); }
   }
