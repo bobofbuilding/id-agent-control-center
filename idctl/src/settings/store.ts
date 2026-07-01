@@ -175,6 +175,9 @@ export function resolveProviderKey(p: ProviderProfile): string | undefined {
   if (providerHint.includes('nvidia') || providerHint.includes('integrate.api.nvidia.com')) {
     return process.env.NVIDIA_API_KEY || process.env.NVAPI_KEY || process.env.NVIDIA_NIM_API_KEY || undefined;
   }
+  if (providerHint.includes('perplexity') || providerHint.includes('api.perplexity.ai')) {
+    return process.env.PERPLEXITY_API_KEY || process.env.PPLX_API_KEY || undefined;
+  }
   if (p.kind === 'anthropic' && process.env.ANTHROPIC_API_KEY) return process.env.ANTHROPIC_API_KEY;
   if (p.kind === 'openai' && process.env.OPENAI_API_KEY) return process.env.OPENAI_API_KEY;
   return undefined;

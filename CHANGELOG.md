@@ -8,6 +8,9 @@ Every change pushed or merged to `main` carries its version number in the commit
 subject (`vX.Y.Z: …`), stamped automatically by the `commit-msg` hook — see
 [CONTRIBUTING.md](CONTRIBUTING.md).
 
+## [0.1.423] — 2026-07-01
+- Add Perplexity account API setup lane
+
 ## [0.1.422] — 2026-07-01
 - Focus backend setup on API and auto-add local stacks
 

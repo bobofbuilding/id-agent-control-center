@@ -486,7 +486,9 @@ Manager; this is the plumbing.)
   CLIs,
   and keep managed account launches inside the Settings row even when the vendor CLI owns the final
   TUI/device-flow prompt. Sign out is shown only for installed/linked providers with a reviewed
-  logout command; metered API providers stay under Inference backends.
+  logout command. Perplexity appears as an account-backed API shortcut that opens its API settings
+  and selects the Perplexity Inference backend preset; the browser chat session is not treated as a
+  routable CLI runtime.
   Agent Harness pickers only offer runtimes that Settings can currently prove through sign-in,
   install, route-ready API backend, or synced local-backend evidence; existing assigned runtimes
   remain visible as the current value for review. Agent Model pickers are keyed to the currently
@@ -508,7 +510,8 @@ Manager; this is the plumbing.)
 - **Inference backends**: provider table (★ default, enable, key badge, status, model list,
   **Connect & sync**, ✕), API/cloud-focused **Add a backend** catalog or custom API endpoint,
   provider-specific key requirements, NVIDIA API Catalog preset models, and cloud keys auto-detected
-  from env. Local server setup belongs to Local LLM stacks above.
+  from env, including `PERPLEXITY_API_KEY` for Perplexity. Local server setup belongs to Local LLM
+  stacks above.
 
 **Data & actions:** `app:hardware`, `manager:capabilities`, `app:version`, `update:status/check/
 getSettings/setSettings`, `subs:status/signin/signout/install`, `manager:localConcurrency/

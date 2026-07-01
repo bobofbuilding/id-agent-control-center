@@ -65,7 +65,7 @@ export const PROVIDER_CATALOG: ProviderCatalogEntry[] = [
     ],
     notes: 'OpenAI-compatible NVAPI endpoint from build.nvidia.com.',
   },
-  { id: 'perplexity', name: 'Perplexity', kind: 'openai-compatible', baseUrl: 'https://api.perplexity.ai', needsKey: true, models: ['sonar', 'sonar-pro', 'sonar-reasoning', 'sonar-reasoning-pro', 'sonar-deep-research'], notes: 'Search-grounded; no /models list, so models are preset.' },
+  { id: 'perplexity', name: 'Perplexity', kind: 'openai-compatible', baseUrl: 'https://api.perplexity.ai', needsKey: true, models: ['sonar', 'sonar-pro', 'sonar-reasoning', 'sonar-reasoning-pro', 'sonar-deep-research'], notes: 'Search-grounded; use a Perplexity API key from account API settings or PERPLEXITY_API_KEY. Browser chat subscription is account evidence, not a routable CLI runtime.' },
 ];
 
 export function findProvider(id: string): ProviderCatalogEntry | undefined {

@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { findProvider, providerNeedsKey } from './providerCatalog.ts';
+import { resolveProviderKey } from './store.ts';
 
 const nvidia = findProvider('nvidia');
 assert.ok(nvidia, 'NVIDIA provider catalog entry should exist');
@@ -29,5 +30,15 @@ assert.equal(
   false,
   'custom local OpenAI-compatible providers should remain keyless by default',
 );
+
+const oldPerplexityKey = process.env.PERPLEXITY_API_KEY;
+process.env.PERPLEXITY_API_KEY = 'pplx-test-key';
+assert.equal(
+  resolveProviderKey({ name: 'perplexity', kind: 'openai-compatible', baseUrl: 'https://api.perplexity.ai', enabled: true }),
+  'pplx-test-key',
+  'Perplexity should resolve the official PERPLEXITY_API_KEY env var',
+);
+if (oldPerplexityKey == null) delete process.env.PERPLEXITY_API_KEY;
+else process.env.PERPLEXITY_API_KEY = oldPerplexityKey;
 
 console.log('[providerCatalog.test] OK');
