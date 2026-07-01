@@ -11,6 +11,7 @@ import type { Agent } from '../../../../idctl/src/api/types.ts';
  */
 
 type PermissionState = 'granted' | 'denied' | 'restricted' | 'not-determined' | 'unknown';
+type PermissionTone = 'ok' | 'warn' | 'bad';
 interface Perms {
   screenRecording: PermissionState;
   accessibility: boolean;
@@ -68,13 +69,20 @@ function permissionText(status: PermissionState | undefined): string {
     case 'denied': return 'Denied';
     case 'restricted': return 'Restricted by macOS policy';
     case 'not-determined': return 'Not granted yet';
-    case 'unknown': return 'Unknown';
+    case 'unknown': return 'Needs verification';
     default: return 'Checking...';
   }
 }
 
+function permissionTone(status: PermissionState | undefined): PermissionTone {
+  if (!status) return 'warn';
+  if (status === 'granted') return 'ok';
+  if (status === 'unknown') return 'warn';
+  return 'bad';
+}
+
 function PermissionRow({
-  ok,
+  tone,
   title,
   subtitle,
   detail,
@@ -83,7 +91,7 @@ function PermissionRow({
   children,
   onRefresh,
 }: {
-  ok: boolean;
+  tone: PermissionTone;
   title: string;
   subtitle: string;
   detail: string;
@@ -92,8 +100,9 @@ function PermissionRow({
   children?: ReactNode;
   onRefresh: () => void;
 }) {
+  const ok = tone === 'ok';
   return (
-    <div className={`cu-perm ${ok ? 'ok' : 'bad'}`}>
+    <div className={`cu-perm ${tone}`}>
       <span className="cu-perm-dot" />
       <div className="cu-perm-body">
         <b>{title}</b> <span className="muted small">- {subtitle}</span>
@@ -151,6 +160,18 @@ export function ComputerUse({ store }: { store: FleetStore }) {
   const recentlyActed = auditLog.length > 0 && Date.now() - auditLog[auditLog.length - 1].ts < 3500;
   const tccUnreadable = perms?.platform === 'darwin' && perms?.tcc?.readable === false
     && (perms.inputMonitoring === 'unknown' || perms.automation.status === 'unknown');
+  const imNeedsManualReview = perms?.platform === 'darwin' && perms?.inputMonitoring === 'unknown';
+  const automationNeedsManualReview = perms?.platform === 'darwin' && perms?.automation?.status === 'unknown';
+  const inputMonitoringDetail = imGranted
+    ? 'Granted'
+    : imNeedsManualReview
+      ? 'Needs verification - macOS does not expose a reliable readback here. If IDACC is enabled in Privacy & Security > Input Monitoring, this is okay.'
+      : permissionText(perms?.inputMonitoring);
+  const automationDetail = automationGranted
+    ? `Granted${perms?.automation.targets.length ? ` for ${perms.automation.targets.join(', ')}` : ''}`
+    : automationNeedsManualReview
+      ? 'Needs verification - Automation is granted per target app and may stay unknown until IDACC first controls that app.'
+      : permissionText(perms?.automation?.status);
   const attachedStamp = (list: AttachedAgent[]) => sortedKey((list ?? []).map((a) => `${a.id}:${authorityOf(a)}`));
   const describeAttached = (list: AttachedAgent[]) => list.length
     ? list.map((a) => `${a.team ?? activeTeam}/${a.name}`).join(', ')
@@ -586,7 +607,7 @@ export function ComputerUse({ store }: { store: FleetStore }) {
           <section className="card">
             <h3>Permissions</h3>
             <PermissionRow
-              ok={srGranted}
+              tone={srGranted ? 'ok' : permissionTone(perms?.screenRecording)}
               title="Screen Recording"
               subtitle="to capture the screen"
               detail={srGranted ? 'Granted' : `${permissionText(perms?.screenRecording)} (${perms?.screenRecording ?? 'checking'})`}
@@ -595,7 +616,7 @@ export function ComputerUse({ store }: { store: FleetStore }) {
               onRefresh={() => void refresh()}
             />
             <PermissionRow
-              ok={axGranted}
+              tone={axGranted ? 'ok' : perms ? 'bad' : 'warn'}
               title="Accessibility"
               subtitle="required for mouse + keyboard"
               detail={axGranted ? 'Granted' : 'Not granted - the agent can see the screen but cannot click or type until you grant this.'}
@@ -606,24 +627,24 @@ export function ComputerUse({ store }: { store: FleetStore }) {
               {status && !status.driverOk ? <div className="cu-msg small">⚠ native input module unavailable in this build</div> : null}
             </PermissionRow>
             <PermissionRow
-              ok={imGranted}
+              tone={permissionTone(perms?.inputMonitoring)}
               title="Input Monitoring"
               subtitle="tracks keyboard-input authority prompts"
-              detail={imGranted ? 'Granted' : permissionText(perms?.inputMonitoring)}
+              detail={inputMonitoringDetail}
               pane="input-monitoring"
               onRefresh={() => void refresh()}
             />
             <PermissionRow
-              ok={automationGranted}
+              tone={permissionTone(perms?.automation?.status)}
               title="Automation"
               subtitle="lets IDACC control allowed apps when needed"
-              detail={automationGranted ? `Granted${perms?.automation.targets.length ? ` for ${perms.automation.targets.join(', ')}` : ''}` : permissionText(perms?.automation?.status)}
+              detail={automationDetail}
               pane="automation"
               onRefresh={() => void refresh()}
             />
             {tccUnreadable ? (
               <div className="cu-msg small">
-                macOS blocked permission inspection for Input Monitoring/Automation. Open Settings to verify ID Agents Control Center directly.
+                macOS blocked direct inspection for Input Monitoring/Automation. Verify ID Agents Control Center in System Settings; Re-check may remain in review until macOS records a readable grant.
               </div>
             ) : null}
           </section>

@@ -442,6 +442,10 @@ first load.
 **Purpose:** Let a "blessed" Claude/codex agent see your Mac's screen and drive mouse+keyboard,
 watched live in-app, routed through an in-app **broker** that only acts while **ARMED**. Disarmed by
 default; gated on macOS Screen Recording + Accessibility; per-action approval, pause, and panic stop.
+Screen Recording and Accessibility stay strict hard gates. Input Monitoring and Automation are
+best-effort macOS TCC readbacks: when macOS blocks inspection or Automation has not recorded a
+target app yet, the permissions card shows an amber manual-verification state instead of a red
+denial.
 
 **What you can do:** **Arm/Disarm** (Arm blesses the currently-attached agents); **Pause/Resume**;
 **PANIC** (■, never blocked, global hotkey ⌘⌥⇧P); watch the **live view** of the primary display;

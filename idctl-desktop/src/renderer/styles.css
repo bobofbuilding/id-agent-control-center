@@ -785,6 +785,7 @@ select:focus, input:focus { border-color: var(--accent); }
 .cu-perm:first-of-type { border-top: none; }
 .cu-perm-dot { width: 10px; height: 10px; border-radius: 50%; margin-top: 5px; flex: 0 0 auto; background: var(--muted); }
 .cu-perm.ok .cu-perm-dot { background: #2a9d45; }
+.cu-perm.warn .cu-perm-dot { background: #d8a21b; }
 .cu-perm.bad .cu-perm-dot { background: #d2432f; }
 .cu-perm-body { flex: 1; }
 .cu-perm-actions { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
