@@ -1520,7 +1520,7 @@ export function Settings({ store, navigate }: { store: FleetStore; navigate?: (v
           const canInstall = s?.installed === false && s.installSupported;
           const canLaunch = s?.installed !== false && s?.loginSupported;
           const showPrimary = canInstall || canLaunch;
-          const showSignOut = !!((s?.loggedIn || s?.statusSupported === false) && s.logoutSupported);
+          const showSignOut = !!(s?.installed === true && (s?.loggedIn || s?.statusSupported === false) && s.logoutSupported);
           return (
             <div className="kv" key={key} style={{ marginBottom: 8 }}>
               <span>{label}</span>
