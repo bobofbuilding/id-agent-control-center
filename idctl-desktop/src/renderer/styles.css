@@ -105,6 +105,11 @@ input, textarea { -webkit-user-select: text; user-select: text; }
 /* Dashboard: top row fills the window height; activity stretches with it. */
 .dash-top { flex: 1 1 auto; min-height: 0; }
 .dash-top > .card { min-height: 0; display: flex; flex-direction: column; }
+.readonly-target {
+  display: inline-flex; align-items: center; max-width: 260px; min-height: 26px;
+  padding: 3px 10px; border: 1px solid var(--line); border-radius: 7px;
+  color: var(--text); background: var(--bg-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
 /* Agents table sizes to its content (all columns show — no horizontal scroll on
    open) and neither grows nor shrinks; the Activity feed absorbs all the
    horizontal stretch when the window widens. */

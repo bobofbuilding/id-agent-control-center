@@ -1,6 +1,6 @@
 # ID Agents Control Center — Product Spec
 
-_Updated 2026-07-01 · reflects app **v0.1.389**. This is a page-by-page specification of
+_Updated 2026-07-01 · reflects app **v0.1.390**. This is a page-by-page specification of
 the desktop app as it actually ships today, produced by reviewing every page._
 
 ---
@@ -69,7 +69,8 @@ shows every team's agents grouped by team (each group headed `team · N/M runnin
 active team when one is selected in the status bar. Per-agent actions route to that agent's own team.
 
 **What you can do**
-- Header summary: agent count, "all teams" (or the active team), and an inline busy message.
+- Header summary: read-only `talk to` target showing the routed team lead; routing edits belong in
+  HR Manager Route, not Dashboard.
 - **Probe runtimes** (header) — re-query each runtime's provider to refresh model lists.
 - **Agent grid**, grouped by team in All-teams mode (lead pinned first within each group): name,
   status (colored dot), runtime, model, port, actions.

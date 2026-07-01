@@ -302,7 +302,7 @@ export function Dashboard({ store }: { store: FleetStore }) {
     () => store.teams.map((t) => t.name).filter((n) => store.allAgents.some((a) => a.team === n && isAgentLive(a.status))),
     [store.teams, store.allAgents],
   );
-  // The chat targets a CHOSEN team's lead — independent of the global active team.
+  // The chat targets the current routed team's lead as a read-only dashboard view.
   // Default to the active team (if running) else the first team with running agents.
   const [chatTeam, setChatTeam] = useState<string>('');
   useEffect(() => {
@@ -425,15 +425,12 @@ export function Dashboard({ store }: { store: FleetStore }) {
     <div className="view" style={{ display: 'flex', flexDirection: 'column', minHeight: 0 }}>
       <header className="view-head" style={{ display: 'flex', alignItems: 'baseline', gap: 12 }}>
         <h1>Dashboard</h1>
-        <label className="muted small" style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+        <div className="muted small" style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
           talk to
-          <select value={chatTeam} onChange={(e) => setChatTeam(e.target.value)} style={{ maxWidth: 260 }}>
-            {(activeTeams.length ? activeTeams : [chatTeam].filter(Boolean)).map((t) => {
-              const tl = leadForTeam(t);
-              return <option key={t} value={t}>{t}{t === store.team ? ' (active)' : ''} · {tl}</option>;
-            })}
-          </select>
-        </label>
+          <span className="readonly-target" title="Dashboard chat follows the current routed team lead. Change routing in HR Manager.">
+            {chatTeam || store.team || 'default'}{chatTeam === store.team ? ' (active)' : ''} · {lead}
+          </span>
+        </div>
       </header>
 
       <CoordinationTree store={store} events={events} activeTeams={activeTeams} />
