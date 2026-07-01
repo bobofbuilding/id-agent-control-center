@@ -8,6 +8,9 @@ Every change pushed or merged to `main` carries its version number in the commit
 subject (`vX.Y.Z: …`), stamped automatically by the `commit-msg` hook — see
 [CONTRIBUTING.md](CONTRIBUTING.md).
 
+## [0.1.403] — 2026-07-01
+- Hide local stack uninstall without install evidence
+
 ## [0.1.402] — 2026-07-01
 - Clarify managed subscription sign-in scope
 

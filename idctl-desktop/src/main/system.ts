@@ -17,6 +17,13 @@ import { promisify } from 'node:util';
 const execFileP = promisify(execFile);
 const GB = 1024 ** 3;
 
+/** GUI apps inherit a minimal PATH; include common package-manager locations. */
+function cliEnv(): NodeJS.ProcessEnv {
+  const home = homedir();
+  const dirs = ['/opt/homebrew/bin', `${home}/.local/bin`, '/usr/local/bin', '/usr/bin', '/bin', ...(process.env.PATH ? process.env.PATH.split(':') : [])];
+  return { ...process.env, PATH: Array.from(new Set(dirs)).join(':') };
+}
+
 export interface HardwareInfo {
   platform: string;
   arch: string;
@@ -32,6 +39,15 @@ export interface HardwareInfo {
   /** Free / total space on the volume holding the home dir; null if unavailable. */
   freeDiskGB: number | null;
   totalDiskGB: number | null;
+}
+
+export interface LocalStackInstallStatus {
+  id: string;
+  installed: boolean;
+  /** Evidence source that matches the uninstall command IDACC can review. */
+  source?: string;
+  detail?: string;
+  checkedAt: number;
 }
 
 // The system_profiler probe is slowish (~1s) but its result is static — cache it
@@ -77,6 +93,74 @@ export async function getHardware(): Promise<HardwareInfo> {
     freeDiskGB,
     totalDiskGB,
   };
+}
+
+async function commandOk(bin: string, args: string[], timeout = 2500): Promise<boolean> {
+  try {
+    await execFileP(bin, args, { env: cliEnv(), timeout });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function brewFormulaInstalled(name: string): Promise<boolean> {
+  return commandOk('brew', ['list', '--formula', name]);
+}
+
+async function brewCaskInstalled(name: string): Promise<boolean> {
+  return commandOk('brew', ['list', '--cask', name]);
+}
+
+async function pipPackageInstalled(name: string): Promise<boolean> {
+  return commandOk('python3', ['-m', 'pip', 'show', name]) ||
+    commandOk('pip3', ['show', name]) ||
+    commandOk('pip', ['show', name]);
+}
+
+async function dockerContainerExists(name: string): Promise<boolean> {
+  return commandOk('docker', ['container', 'inspect', name]);
+}
+
+/**
+ * Read-only install evidence for Local LLM stack actions. This intentionally
+ * checks the same package/container family as the uninstall command; a configured
+ * backend or open port is not enough proof that IDACC can uninstall the package.
+ */
+export async function localStackInstallStatus(ids: string[]): Promise<Record<string, LocalStackInstallStatus>> {
+  const checkedAt = Date.now();
+  const out: Record<string, LocalStackInstallStatus> = {};
+  for (const id of ids.map(String)) {
+    let installed = false;
+    let source: string | undefined;
+    if (id === 'ollama') {
+      installed = await brewFormulaInstalled('ollama');
+      source = installed ? 'homebrew formula' : undefined;
+    } else if (id === 'lm-studio') {
+      installed = await brewCaskInstalled('lm-studio');
+      source = installed ? 'homebrew cask' : undefined;
+    } else if (id === 'jan') {
+      installed = await brewCaskInstalled('jan');
+      source = installed ? 'homebrew cask' : undefined;
+    } else if (id === 'llama-cpp') {
+      installed = await brewFormulaInstalled('llama.cpp');
+      source = installed ? 'homebrew formula' : undefined;
+    } else if (id === 'vllm') {
+      installed = await pipPackageInstalled('vllm');
+      source = installed ? 'pip package' : undefined;
+    } else if (id === 'localai') {
+      installed = await dockerContainerExists('local-ai');
+      source = installed ? 'docker container' : undefined;
+    }
+    out[id] = {
+      id,
+      installed,
+      source,
+      detail: installed ? `Detected ${source}; uninstall action matches this install path.` : 'No matching package/container install evidence found.',
+      checkedAt,
+    };
+  }
+  return out;
 }
 
 /**

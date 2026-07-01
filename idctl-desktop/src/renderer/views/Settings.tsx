@@ -32,6 +32,7 @@ type HardwareInfo = { platform: string; arch: string; appleSilicon: boolean; cpu
 
 /** A discovered local server enriched by the bridge with whether it's already configured. */
 type Discovered = DiscoveredServer & { alreadyAdded: boolean };
+type LocalStackInstallStatus = { id: string; installed: boolean; source?: string; detail?: string; checkedAt: number };
 
 const KINDS: ProviderKind[] = ['ollama', 'lmstudio', 'openai-compatible', 'anthropic', 'openai'];
 
@@ -120,6 +121,8 @@ export function Settings({ store, navigate }: { store: FleetStore; navigate?: (v
   const [discovering, setDiscovering] = useState(false);
   const [discovered, setDiscovered] = useState<Discovered[] | null>(null);
   const [discoveredAt, setDiscoveredAt] = useState<number | null>(null);
+  const [stackInstallStatus, setStackInstallStatus] = useState<Record<string, LocalStackInstallStatus>>({});
+  const [stackInstallChecking, setStackInstallChecking] = useState(false);
   function resetProviderAddReview() {
     setReplaceProviderArmed(false);
     setProviderMsg('');
@@ -159,6 +162,7 @@ export function Settings({ store, navigate }: { store: FleetStore; navigate?: (v
     // Settings (the cached status above can lag a release until the next check).
     void call<typeof updStatus>('update:check').then((s) => { if (s) setUpdStatus(s); }).catch(() => {});
     setSubs(await call<{ claude: Sub; chatgpt: Sub; cursor: Sub }>('subs:status').catch(() => null));
+    void checkStackInstalls();
   }
   async function reloadManagerCapabilities() {
     setManagerCaps(undefined);
@@ -506,10 +510,23 @@ export function Settings({ store, navigate }: { store: FleetStore; navigate?: (v
   }
 
   // Local LLM discovery: scan localhost for running servers, then one-click add.
+  async function checkStackInstalls(): Promise<Record<string, LocalStackInstallStatus>> {
+    setStackInstallChecking(true);
+    try {
+      const status = await call<Record<string, LocalStackInstallStatus>>('stack:installStatus', TOP_LOCAL_STACKS.map((s) => s.id)).catch((): Record<string, LocalStackInstallStatus> => ({}));
+      setStackInstallStatus(status);
+      return status;
+    } finally {
+      setStackInstallChecking(false);
+    }
+  }
   async function runDiscover(): Promise<Discovered[]> {
     setDiscovering(true);
     try {
-      const found = await call<Discovered[]>('providers:discover').catch(() => []);
+      const [found] = await Promise.all([
+        call<Discovered[]>('providers:discover').catch(() => []),
+        checkStackInstalls(),
+      ]);
       setDiscovered(found);
       setDiscoveredAt(Date.now());
       return found;
@@ -1100,7 +1117,14 @@ export function Settings({ store, navigate }: { store: FleetStore; navigate?: (v
     ].join('\n'))) return;
     setStackConfirm(`i:${s.id}`);
   }
-  function reviewStackUninstall(s: LocalStackEntry, running: boolean, configuredProviders: ProviderRow[]) {
+  async function reviewStackUninstall(s: LocalStackEntry, running: boolean, configuredProviders: ProviderRow[]) {
+    const status = await call<Record<string, LocalStackInstallStatus>>('stack:installStatus', [s.id]).catch((): Record<string, LocalStackInstallStatus> => ({}));
+    setStackInstallStatus((prev) => ({ ...prev, ...status }));
+    if (!status[s.id]?.installed) {
+      setStackConfirm(null);
+      setStackMsg(`No matching ${s.name} package/container install found; uninstall stays hidden.`);
+      return;
+    }
     const warnings = [
       running ? `A server is currently detected on port ${s.defaultPort}; stop it before uninstalling.` : '',
       configuredProviders.length ? `A matching inference backend is configured (${configuredProviders.map((p) => p.name).join(', ')}); remove or disable it before relying on routing again.` : '',
@@ -1599,6 +1623,7 @@ export function Settings({ store, navigate }: { store: FleetStore; navigate?: (v
               scan: {timeAgo(discoveredAt)}{discoveryStale ? ' · refresh before add/routing decisions' : ''}
             </span>
           ) : null}
+          {stackInstallChecking ? <span className="muted small">checking installs…</span> : null}
           {stackMsg ? <span className="muted small">{stackMsg}</span> : null}
         </div>
         <div className="stack-list">
@@ -1607,6 +1632,8 @@ export function Settings({ store, navigate }: { store: FleetStore; navigate?: (v
             const pw = stackPortWarn(s);
             const ic = stackInstallCmd(s);
             const uc = stackUninstallCmd(s);
+            const installStatus = stackInstallStatus[s.id];
+            const stackInstalled = installStatus?.installed === true;
             const configuredProviders = stackConfiguredProviders(s);
             const configured = configuredProviders.length > 0;
             const confirmInstall = stackConfirm === `i:${s.id}`;
@@ -1620,6 +1647,7 @@ export function Settings({ store, navigate }: { store: FleetStore; navigate?: (v
                   <span className="muted small">{s.openaiCompatible ? 'OpenAI-compatible' : s.apiKind}</span>
                   {stackEaseLabel(s) ? <span className="chip tag" title={s.installNote}>{stackEaseLabel(s)}</span> : null}
                   {s.appleSilicon ? <span className="chip tag" title="Apple-Silicon native">Apple Silicon</span> : null}
+                  {stackInstalled ? <span className="chip tag" title={installStatus?.detail ?? 'Detected installed package/container'}>installed</span> : null}
                   {running ? (
                     <span className={`small ${discoveryStale ? 'warn-text' : 'ok-text'}`} title={`Detected by scan ${discoveredAt ? timeAgo(discoveredAt) : 'recently'}`}>
                       {discoveryStale ? 'last scan running' : '● running'}
@@ -1633,13 +1661,13 @@ export function Settings({ store, navigate }: { store: FleetStore; navigate?: (v
                 <p className="muted small stack-blurb">{s.blurb}</p>
                 {s.installNote ? <p className="muted small stack-blurb">{s.installNote}</p> : null}
                 <div className="stack-install">
-                  {confirmInstall && ic ? (
+                  {confirmInstall && ic && !stackInstalled ? (
                     <>
                       <code className="mono">{ic}</code>
                       <button className={`btn small${stackPrimaryAction(s) ? ' primary' : ''}`} title="Runs in your Terminal — visible and abortable" onClick={() => void runStackCmd(ic, 'install')}>Run install</button>
                       <button className="btn small" onClick={() => setStackConfirm(null)}>Cancel</button>
                     </>
-                  ) : confirmUninstall && uc ? (
+                  ) : confirmUninstall && uc && stackInstalled ? (
                     <>
                       <code className="mono">{uc}</code>
                       <button className="btn small" title="Runs in your Terminal — visible and abortable" onClick={() => void runStackCmd(uc, 'uninstall')}>Run uninstall</button>
@@ -1647,16 +1675,16 @@ export function Settings({ store, navigate }: { store: FleetStore; navigate?: (v
                     </>
                   ) : (
                     <>
-                      {ic ? (
+                      {!stackInstalled && ic ? (
                         <button className={`btn small${stackPrimaryAction(s) ? ' primary' : ''}`} title={ic} onClick={() => reviewStackInstall(s)}>{stackInstallLabel(s)}</button>
-                      ) : (
+                      ) : !stackInstalled ? (
                         <a className="btn small" href={s.homepage} target="_blank" rel="noreferrer" title="No CLI install — opens the download page">Get ↗</a>
-                      )}
+                      ) : null}
                       {configuredProviders.length === 1 ? (
                         <button className="btn small" title={`Remove inference backend ${configuredProviders[0].name}; does not uninstall the app/server`} onClick={() => void removeProviderProfile(configuredProviders[0].name)}>Remove backend</button>
                       ) : null}
-                      {uc ? (
-                        <button className="btn small" title={s.uninstallNote ?? uc} onClick={() => reviewStackUninstall(s, running, configuredProviders)}>Uninstall</button>
+                      {uc && stackInstalled ? (
+                        <button className="btn small" title={s.uninstallNote ?? uc} onClick={() => void reviewStackUninstall(s, running, configuredProviders)}>Uninstall</button>
                       ) : null}
                     </>
                   )}

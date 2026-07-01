@@ -11,7 +11,7 @@ import { recordControlAction } from './controlLog.ts';
 import { startUpdater, stopUpdater, checkForUpdate, getStatus, applyStagedAndRelaunch } from './updater.ts';
 import { subsStatus, subsSignin, subsSignout, subsInstall, type SubProvider } from './subscriptions.ts';
 import { ollamaTags, ollamaPull, ollamaRemove } from './ollama.ts';
-import { getHardware, runInTerminal } from './system.ts';
+import { getHardware, localStackInstallStatus, runInTerminal } from './system.ts';
 import { pickProjectFolder, openProjectFolder, projectReadme, projectGit, projectGitRun, githubMeta, cloneGithub, projectDiff, createGithubRepo, linkGithubRepo, forkGithub, commitProject, detectProjectsRoot, scanProjectsRoot } from './projects.ts';
 import { pickChatFiles, saveChatFiles, savePastedFile } from './chatfiles.ts';
 import { listChats, listInflightChats, getChat, saveChat, renameChat, removeChat, genTitle, genReason, unreadChatCount, markChatRead, patchChat, type ChatSession, type ChatPatch } from './chatstore.ts';
@@ -517,6 +517,8 @@ async function appCall(method: string, args: unknown[]): Promise<unknown> {
       return ollamaRemove(args[0] as string);
     case 'app:hardware':
       return getHardware();
+    case 'stack:installStatus':
+      return localStackInstallStatus(Array.isArray(args[0]) ? args[0] as string[] : []);
     case 'brain:openDashboard':
       return openBrainDashboard(args[0]);
     case 'brain:openGraph':
