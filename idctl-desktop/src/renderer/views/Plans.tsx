@@ -596,6 +596,7 @@ export function Plans({ store }: { store: FleetStore }) {
   const draftActive = organizedDrafts.filter((p) => p.status !== 'archived');
   const draftArchived = organizedDrafts.filter((p) => p.status === 'archived');
   const archivedCount = brainArchived.length + draftArchived.length;
+  const hasFilters = Boolean(brainStatus.size || draftStatus.size || tagFilter.size);
   const brainCounts = BRAIN_BUCKETS.reduce((acc, bucket) => {
     acc[bucket.key] = organizedBrain.filter((p) => brainStatusKey(p.status) === bucket.key).length;
     return acc;
@@ -626,38 +627,40 @@ export function Plans({ store }: { store: FleetStore }) {
     const key = brainStatusKey(p.status);
     const workLabel = key === 'hold' ? 'Resume & work' : key === 'partial' ? 'Continue work' : 'Work';
     return (
-      <div className={`skill-card${isOpen ? ' editing' : ''}`} key={p.file}>
-        <div className="skill-card-head" style={{ cursor: 'pointer' }} onClick={() => void openBrain(p.file)}>
-          <span className={`st-badge ${BRAIN_KEY_CLASS[key]}`} title={p.status || brainStatusLabel(key)}>{brainStatusLabel(key)}</span>
-          {p.num ? <span className="mono small muted">{p.num}</span> : null}
-          <span className="b">{p.title}</span>
-          {p.effort ? <span className="muted small">· {p.effort}</span> : null}
-          <span className="grow" />
-          {p.notes ? <span className="muted small" style={{ maxWidth: 220, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={p.notes}>{p.notes}</span> : null}
-          {p.mtime ? <span className="muted small" title={`file last modified ${abs(p.mtime)}`}>updated {ago(p.mtime)}</span> : null}
-          <span className="muted">{isOpen ? '▾' : '▸'}</span>
-        </div>
-        <div className="row-actions" style={{ gap: 6, padding: '0 8px 6px', flexWrap: 'wrap' }} onClick={(e) => e.stopPropagation()}>
+      <div className={`skill-card plan-row${isOpen ? ' editing' : ''}`} key={p.file}>
+        <div className="plan-row-head" onClick={() => void openBrain(p.file)}>
+          <div className="plan-row-titleline">
+            <span className={`st-badge ${BRAIN_KEY_CLASS[key]}`} title={p.status || brainStatusLabel(key)}>{brainStatusLabel(key)}</span>
+            {p.num ? <span className="mono small muted">{p.num}</span> : null}
+            <span className="b plan-row-title">{p.title}</span>
+            {p.effort ? <span className="muted small plan-row-effort">· {p.effort}</span> : null}
+          </div>
+          <div className="plan-row-note">
+            {p.notes ? <span className="muted small plan-note" title={p.notes}>{p.notes}</span> : null}
+            {p.mtime ? <span className="muted small" title={`file last modified ${abs(p.mtime)}`}>updated {ago(p.mtime)}</span> : null}
+          </div>
+          <div className="plan-row-actions" onClick={(e) => e.stopPropagation()}>
           <button className="btn small primary" disabled={busyFile !== null}
             title="Audit this plan, pause on blockers with Inbox questions, or delegate remaining work and mark it partial."
             onClick={() => void runWork(p)}>{acting ? 'Working...' : workLabel}</button>
-          <span className="grow" />
           <select className="cell-select small" value="" disabled={busyFile !== null} title="Write a guarded live brain-plan status" onChange={(e) => {
             const status = e.target.value as BrainStatusWrite;
             e.currentTarget.value = '';
             if (status) void applyBrainStatus(p, status);
           }}>
-            <option value="">Set status...</option>
+            <option value="">Status...</option>
             {BRAIN_STATUS_ACTIONS.filter((a) => a.key !== key).map((a) => <option key={a.write} value={a.write}>{a.label}</option>)}
           </select>
+          </div>
+          <span className="muted plan-row-expander">{isOpen ? '▾' : '▸'}</span>
         </div>
         {audit[p.file] ? (
-          <div className="muted small" style={{ padding: '0 8px 6px' }}>
+          <div className="muted small plan-row-feedback">
             {audit[p.file].to ? <span className="ok-text">{audit[p.file].from} → {audit[p.file].to} · </span> : null}{audit[p.file].summary}
           </div>
         ) : null}
         {blockers[p.file] ? (
-          <div className="small muted" style={{ padding: '0 8px 8px' }} title="Decisions that need you are in the Inbox — respond with an option, a comment, or take it on yourself.">
+          <div className="small muted plan-row-feedback" title="Decisions that need you are in the Inbox — respond with an option, a comment, or take it on yourself.">
             ⚠ {blockers[p.file]}
           </div>
         ) : null}
@@ -669,19 +672,22 @@ export function Plans({ store }: { store: FleetStore }) {
   const draftCard = (p: PlanSummary) => {
     const isOpen = detail?.id === p.id;
     return (
-      <div className={`skill-card${isOpen ? ' editing' : ''}`} key={p.id}>
-        <div className="skill-card-head" style={{ cursor: 'pointer' }} onClick={() => void open(p.id)}>
-          <span className={`st-badge ${STATUS_CLASS[p.status]}`}>{p.status}</span>
-          <span className="b">{p.title}</span>
-          <span className="muted small">· v{p.version}{p.agent ? ` · ${p.agent}` : ''}</span>
-          {(p.tags ?? []).length ? <span className="muted small">· {(p.tags ?? []).join(', ')}</span> : null}
-          <span className="grow" />
-          <span className="muted small" title={`created ${abs(p.createdAt)}\nupdated ${abs(p.updatedAt)}`}>
-            {p.createdAt && p.updatedAt && Math.abs(p.updatedAt - p.createdAt) > 60000
-              ? `created ${ago(p.createdAt)} · updated ${ago(p.updatedAt)}`
-              : `created ${ago(p.createdAt || p.updatedAt)}`}
-          </span>
-          <span className="muted">{isOpen ? '▾' : '▸'}</span>
+      <div className={`skill-card plan-row plan-draft-row${isOpen ? ' editing' : ''}`} key={p.id}>
+        <div className="plan-row-head" onClick={() => void open(p.id)}>
+          <div className="plan-row-titleline">
+            <span className={`st-badge ${STATUS_CLASS[p.status]}`}>{p.status}</span>
+            <span className="b plan-row-title">{p.title}</span>
+            <span className="muted small">· v{p.version}{p.agent ? ` · ${p.agent}` : ''}</span>
+          </div>
+          <div className="plan-row-note">
+            {(p.tags ?? []).length ? <span className="muted small plan-note" title={(p.tags ?? []).join(', ')}>{(p.tags ?? []).join(', ')}</span> : null}
+            <span className="muted small" title={`created ${abs(p.createdAt)}\nupdated ${abs(p.updatedAt)}`}>
+              {p.createdAt && p.updatedAt && Math.abs(p.updatedAt - p.createdAt) > 60000
+                ? `created ${ago(p.createdAt)} · updated ${ago(p.updatedAt)}`
+                : `created ${ago(p.createdAt || p.updatedAt)}`}
+            </span>
+          </div>
+          <span className="muted plan-row-expander">{isOpen ? '▾' : '▸'}</span>
         </div>
         {isOpen && detail ? (
           <div className="plan-detail">
@@ -757,36 +763,38 @@ export function Plans({ store }: { store: FleetStore }) {
   return (
     <>
       {/* Unified organizer */}
-      <section className="card" style={{ marginBottom: 10 }}>
-        <div className="row-actions" style={{ gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
-          <input className="catalog-search" placeholder="search plans…" value={q} onChange={(e) => setQ(e.target.value)} />
-          <span className="muted small">sort</span>
+      <section className="card plans-toolbar" style={{ marginBottom: 10 }}>
+        <div className="plans-toolbar-main">
+          <input className="catalog-search plans-search" placeholder="search plans…" value={q} onChange={(e) => setQ(e.target.value)} />
+          <span className="muted small plans-filter-label">sort</span>
           <select className="cell-select small" value={sort} onChange={(e) => setSort(e.target.value as SortMode)}>
             <option value="recent">most recent</option>
             <option value="title">title (A–Z)</option>
             <option value="status">status</option>
           </select>
-          <label className="muted small" style={{ display: 'inline-flex', alignItems: 'center', gap: 6, cursor: 'pointer' }}>
-            <input type="checkbox" checked={groupBy} onChange={(e) => setGroupBy(e.target.checked)} /> group by status
+          <label className="muted small plans-inline-control">
+            <input type="checkbox" checked={groupBy} onChange={(e) => setGroupBy(e.target.checked)} /> group
           </label>
-          <label className="muted small" style={{ display: 'inline-flex', alignItems: 'center', gap: 6, cursor: 'pointer' }}>
-            <input type="checkbox" checked={showArchived} onChange={(e) => setShowArchived(e.target.checked)} /> show archived{archivedCount ? ` (${archivedCount})` : ''}
+          <label className="muted small plans-inline-control">
+            <input type="checkbox" checked={showArchived} onChange={(e) => setShowArchived(e.target.checked)} /> archived{archivedCount ? ` (${archivedCount})` : ''}
           </label>
-          <span className="muted small">pending {brainCounts.pending} · partial {brainCounts.partial} · paused {brainCounts.hold} · done {brainCounts.done}</span>
+          <span className="muted small plans-count-pill">pending {brainCounts.pending} · partial {brainCounts.partial} · paused {brainCounts.hold} · done {brainCounts.done}</span>
           <span className="grow" />
-          {msg ? <span className={`small ${/failed|timed out|expired|cancelled|could not/.test(msg) ? 'status-error' : 'muted'}`}>{msg}</span> : null}
-          {busy ? <button className="btn" onClick={cancel}>Cancel</button> : null}
-          <button className="btn primary" disabled={busy} onClick={() => setShowNew((v) => !v)}>{showNew ? '− Cancel' : '+ Request a plan'}</button>
+          <div className="plans-toolbar-actions">
+            {msg ? <span className={`small ${/failed|timed out|expired|cancelled|could not/.test(msg) ? 'status-error' : 'muted'}`}>{msg}</span> : null}
+            {busy ? <button className="btn" onClick={cancel}>Cancel</button> : null}
+            <button className="btn primary" disabled={busy} onClick={() => setShowNew((v) => !v)}>{showNew ? '− Cancel' : '+ Request plan'}</button>
+          </div>
         </div>
-        <div className="row-actions" style={{ gap: 10, flexWrap: 'wrap', alignItems: 'center', marginTop: 8 }}>
-          <button className="btn small" disabled={!(brainStatus.size || draftStatus.size || tagFilter.size)} onClick={() => { setBrainStatus(new Set()); setDraftStatus(new Set()); setTagFilter(new Set()); }}>clear filters</button>
-          <span className="muted small">plans:</span>
+        <div className="plans-filter-row">
+          {hasFilters ? <button className="btn small" onClick={() => { setBrainStatus(new Set()); setDraftStatus(new Set()); setTagFilter(new Set()); }}>clear filters</button> : null}
+          <span className="muted small plans-filter-label">plans</span>
           {statusChips(BRAIN_BUCKETS.map((b) => b.key), brainStatus, (id) => toggle(setBrainStatus, id), (k) => BRAIN_BUCKETS.find((b) => b.key === k)?.label ?? k, (k) => BRAIN_KEY_CLASS[k as BrainStatusKey])}
-          <span className="muted small" style={{ marginLeft: 6 }}>drafts:</span>
+          <span className="muted small plans-filter-label">drafts</span>
           {statusChips(STATUSES, draftStatus, (id) => toggle(setDraftStatus, id), (s) => s, (s) => STATUS_CLASS[s as PlanStatus])}
           {allDraftTags.length ? (
             <>
-              <span className="muted small" style={{ marginLeft: 6 }}>tags:</span>
+              <span className="muted small plans-filter-label">tags</span>
               <span className="chips">
                 {allDraftTags.map((t) => (
                   <button key={t} className={`chip${tagFilter.has(t) ? ' on' : ''}`} onClick={() => toggle(setTagFilter, t)}>{tagFilter.has(t) ? '✓ ' : ''}{t}</button>
@@ -818,16 +826,17 @@ export function Plans({ store }: { store: FleetStore }) {
       ) : null}
 
       <section className="card">
-        <div className="row-actions" style={{ alignItems: 'center', marginBottom: 6 }}>
-          <h3 style={{ margin: 0 }}>Plans</h3>
-          <span className="muted small">· {brainActive.length} active{brainArchived.length ? ` · ${brainArchived.length} done` : ''} · ⟳ live</span>
-          <span className="grow" />
+        <div className="plans-section-head">
+          <div className="plans-section-title">
+            <h3 style={{ margin: 0 }}>Plans</h3>
+            <span className="muted small">· {brainActive.length} active{brainArchived.length ? ` · ${brainArchived.length} done` : ''} · ⟳ live</span>
+            {brain.dir
+              ? <span className="muted small mono plan-path" title={brain.dir}>{brain.dir.replace(/^.*\/projects\//, '…/')}</span>
+              : <span className="warn-text small">brain plans dir not found</span>}
+          </div>
           <button className="btn small primary" disabled={busyFile !== null || !nextWorkPlan} title={nextWorkPlan ? `Work next matching plan: ${nextWorkPlan.title}` : 'No pending, partial, or paused plan matches the current filters'} onClick={() => void runNextPlan()}>
             {busyFile ? 'Working...' : nextWorkPlan ? 'Work next' : 'No work queued'}
           </button>
-          {brain.dir
-            ? <span className="muted small mono" title={brain.dir}>{brain.dir.replace(/^.*\/projects\//, '…/')}</span>
-            : <span className="warn-text small">brain plans dir not found</span>}
         </div>
         {brain.plans.length === 0 ? (
           <p className="muted small">{brain.dir ? 'No plans in the brain index yet.' : 'Could not locate the brain plans directory (projects root not detected — set it in Projects).'}</p>
@@ -847,11 +856,12 @@ export function Plans({ store }: { store: FleetStore }) {
       </section>
 
       <section className="card">
-        <div className="row-actions" style={{ alignItems: 'center', marginBottom: 6 }}>
-          <h3 style={{ margin: 0 }}>Your drafts</h3>
-          <span className="muted small">· {draftActive.length} active{draftArchived.length ? ` · ${draftArchived.length} filed` : ''}</span>
-          <span className="grow" />
-          <span className="muted small">draft → active → done → <b>↑ Promote</b> → live plan (⏳ pending)</span>
+        <div className="plans-section-head">
+          <div className="plans-section-title">
+            <h3 style={{ margin: 0 }}>Your drafts</h3>
+            <span className="muted small">· {draftActive.length} active{draftArchived.length ? ` · ${draftArchived.length} filed` : ''}</span>
+            <span className="muted small">draft → active → done → promote → live pending</span>
+          </div>
         </div>
         {plans.length === 0 ? (
           <p className="muted center pad">No plans yet. <b>+ Request a plan</b> and an agent will draft one — then update it anytime and it keeps a changelog.</p>

@@ -642,12 +642,12 @@
         {
           "id": "plans",
           "label": "Plans",
-          "purpose": "Brain plans plus local draft plans, with clearer Pending/Partial/Paused/Done lifecycle controls, one-click Work-next automation, AI creation/revision, team-scoped primary-lead delegation, and validator return-path flows.",
+          "purpose": "Brain plans plus local draft plans, with a compact organizer, scan-friendly plan rows, clearer Pending/Partial/Paused/Done lifecycle controls, one-click Work-next automation, AI creation/revision, team-scoped primary-lead delegation, and validator return-path flows.",
           "tiles": [
-            "Organizer/search/sort/filter with lifecycle counts",
-            "Brain plan cards with Work/Continue/Resume and guarded status menu",
+            "Compact organizer/search/sort/filter with lifecycle counts",
+            "Brain plan rows with Work/Continue/Resume and guarded status menu",
             "Work next automation",
-            "Draft plan cards",
+            "Compact draft plan rows",
             "Plan detail and version history"
           ],
           "routesInto": [
@@ -4330,6 +4330,11 @@
         "Dashboard: the talk-to team/lead header control is now a read-only target view instead of a dropdown/select affordance.",
         "Dashboard guardrail: embedded Chat still locks to the hierarchy-resolved routed coordinator, while routing changes stay owned by HR Manager Route > Hierarchy & sync.",
         "Docs: product spec and wiki now describe the Dashboard target as display-only status rather than a team selector."
+      ],
+      "implementedOneHundredSeventiethPass": [
+        "Work Plans UI: the organizer now separates search/sort/group/archive controls from filter chips, hides clear-filters until a filter is active, and keeps lifecycle counts in a quieter pill.",
+        "Work Plans rows: live Brain plans now keep status/id/title on the left, note/timestamp in the middle, and Work/Continue/Resume plus guarded Status actions in a consistent right-side cluster.",
+        "Work Plans drafts: draft rows now use the same compact scan rhythm, with tags and timestamps in metadata instead of crowding the title line."
       ]
     },
     {
@@ -4393,5 +4398,5 @@
       "body": "# Wiki\n\nWiki is both the human documentation page and the editable schematic for the Control Center UI. Each article explains the operator purpose of a page; the structured sections below preserve tabs, tiles, fields, controls, displays, routes, and source files for implementation detail.\n\n## Use it for\n\n- Search pages, controls, routes, source files, and notes from inside the desktop app.\n- Confirm how a UI surface is intended to behave before editing code or filing follow-up work.\n- Keep app navigation metadata and human documentation in one reviewed JSON artifact.\n\n## Editing rule\n\nThe desktop app hot-reload polls CONTROL_CENTER_WIKI.json through the main-process wiki bridge. Sidebar labels, icons, order, and visibility still come from pages[].nav for implemented routes, so documentation edits must preserve that metadata and keep every page.body non-empty."
     }
   ],
-  "appVersion": "0.1.390"
+  "appVersion": "0.1.391"
 }

@@ -251,6 +251,36 @@ button.chip.incompat:hover { border-color: var(--line); }
 .skill-catalog { display: flex; flex-direction: column; gap: 8px; margin-top: 10px; }
 .skill-card { border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; background: var(--bg-2); }
 .skill-card-head { display: flex; align-items: center; gap: 8px; }
+.plans-toolbar { display: flex; flex-direction: column; gap: 8px; }
+.plans-toolbar-main,
+.plans-filter-row,
+.plans-section-head,
+.plans-section-title,
+.plans-toolbar-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.plans-search { flex: 0 1 240px; }
+.plans-inline-control { display: inline-flex; align-items: center; gap: 6px; cursor: pointer; white-space: nowrap; }
+.plans-filter-label { text-transform: uppercase; letter-spacing: .03em; }
+.plans-count-pill { border: 1px solid var(--line); border-radius: 999px; background: var(--bg-2); padding: 3px 8px; white-space: nowrap; }
+.plans-filter-row { gap: 7px; padding-top: 7px; border-top: 1px solid var(--line); }
+.plans-section-head { justify-content: space-between; margin-bottom: 6px; }
+.plans-section-title { min-width: 0; }
+.plan-path { max-width: min(420px, 48vw); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.skill-card.plan-row { padding: 0; overflow: hidden; }
+.plan-row-head { display: grid; grid-template-columns: minmax(260px, 1.25fr) minmax(180px, .9fr) auto 16px; gap: 10px; align-items: center; min-height: 48px; padding: 10px 12px; cursor: pointer; }
+.plan-draft-row .plan-row-head { grid-template-columns: minmax(260px, 1.25fr) minmax(180px, .9fr) 16px; }
+.plan-row-head:hover { background: color-mix(in srgb, var(--bg-3) 72%, transparent); }
+.plan-row-titleline,
+.plan-row-note,
+.plan-row-actions { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.plan-row-title { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.plan-row-effort { flex: 0 0 auto; }
+.plan-row-note { justify-content: flex-end; }
+.plan-note { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.plan-row-actions { justify-content: flex-end; }
+.plan-row-actions .btn { white-space: nowrap; }
+.plan-row-actions .cell-select { width: 108px; max-width: 108px; }
+.plan-row-expander { text-align: right; }
+.plan-row-feedback { padding: 0 12px 8px; }
 .skill-usage-note { margin-top: 6px; color: var(--warn); font-size: 11px; }
 .skill-desc { margin: 6px 0 0; }
 .skill-tags { margin-top: 8px; }
@@ -433,6 +463,8 @@ button.chip.incompat:hover { border-color: var(--line); }
 .spin { color: var(--warn); }
 .skill-card.editing { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent) inset; }
 .plan-detail { margin-top: 8px; border-top: 1px solid var(--line); padding-top: 8px; }
+.plan-row .plan-detail { margin: 0; padding: 10px 12px 12px; }
+.plan-row > .plan-content { margin: 0 12px 12px; }
 .plan-content { background: var(--bg-3); border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; white-space: pre-wrap; word-break: break-word; font-size: 12.5px; line-height: 1.55; max-height: 460px; overflow: auto; margin: 0; font-family: var(--font-sans, inherit); }
 .plan-log { border-top: 1px dashed var(--line); margin-top: 8px; padding-top: 4px; }
 .roster-group { margin-top: 12px; }
@@ -765,3 +797,14 @@ select:focus, input:focus { border-color: var(--accent); }
 .drawer-head { display: flex; align-items: center; gap: 8px; padding: 14px 16px; border-bottom: 1px solid var(--line); }
 .drawer-head h3 { margin: 0; flex: 1; font-size: 14px; }
 .drawer-body { padding: 14px 16px; overflow-y: auto; min-height: 0; }
+
+@media (max-width: 900px) {
+  .plans-search { flex: 1 1 100%; width: 100%; }
+  .plans-section-head { align-items: flex-start; }
+  .plan-path { max-width: 100%; }
+  .plan-row-head,
+  .plan-draft-row .plan-row-head { grid-template-columns: 1fr; align-items: flex-start; }
+  .plan-row-note,
+  .plan-row-actions { justify-content: flex-start; flex-wrap: wrap; }
+  .plan-row-expander { display: none; }
+}

@@ -1,6 +1,6 @@
 # ID Agents Control Center — Product Spec
 
-_Updated 2026-07-01 · reflects app **v0.1.390**. This is a page-by-page specification of
+_Updated 2026-07-01 · reflects app **v0.1.391**. This is a page-by-page specification of
 the desktop app as it actually ships today, produced by reviewing every page._
 
 ---
@@ -166,19 +166,20 @@ A tabbed workspace: **Plans · Tasks · Schedule · Loops · Dream** (default: P
 maintains on disk) and **Your drafts** (local AI-generated plans you can version & revise).
 
 **What you can do**
-- **Organizer bar**: search, sort, group, show-archived toggle, status chips (brain: done/partial/
-  pending/hold; drafts: draft/active/done/archived), and tag chips (incl. draft tags). **Request a
-  plan** (top) → an agent drafts Markdown → saved as a draft.
-- **Drafts**: open/rename/status, browse & **restore past versions**, **revise with AI** (each
-  revision = a new version + changelog note); marking a draft "done" **auto-archives** it.
-- **Brain plan actions** (per card): **✦ Audit status** (verify real status vs the codebase and
-  write it back to the brain README), **⚠ Find blockers** (agent reports what's blocking it),
-  **⤳ Compile & dispatch** (see below), **⏳ Set pending**.
-- **⤳ Compile & dispatch** (unified, v0.1.114+): one picker assigns the plan to one or more teams —
-  the **active team** (with a chosen lane; its cards land on the board you're viewing; **Doing** has
-  the lead auto-sort by dependency, assign, and dispatch to completion) **and/or** any **other
-  teams** (handed to each team's **active lead** to run independently). Teams with no running agent
-  are greyed out. One **Go** runs them all in parallel; a toast reports the result.
+- **Compact organizer bar**: search, sort, group, archived toggle, lifecycle counts, status chips
+  (brain: done/partial/pending/hold; drafts: draft/active/done/archived), and tag chips (incl.
+  draft tags). **Request plan** (top) → an agent drafts Markdown → saved as a draft.
+- **Drafts**: compact scan rows plus open/rename/status, browse & **restore past versions**,
+  **revise with AI** (each revision = a new version + changelog note); marking a draft "done"
+  **auto-archives** it.
+- **Brain plan actions** (per row): **Work / Continue / Resume** runs the guarded plan work path
+  that audits status, surfaces blockers to Inbox when needed, and delegates remaining work; the
+  **Status** menu writes guarded Pending/Partial/Paused/Done lifecycle changes back to the brain
+  README.
+- **Lead delegation**: after audit and blocker scan, clear plans are handed to the primary lead to
+  decompose, prune already-done work, and delegate scoped objectives to the right team leads; if no
+  primary lead is online, the fallback decomposes once, partitions dependency clusters across active
+  team leads, creates work cards, and dispatches them.
 
 **Data & actions:** `brain:plans/plan/setPlanStatus`, `plans:*` (draft store), `work:decompose`,
 `work:createPlan` (lane + dispatch), `work:teamLeads`, `work:fanout`, `dispatch`.
