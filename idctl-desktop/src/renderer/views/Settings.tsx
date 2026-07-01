@@ -1314,9 +1314,8 @@ export function Settings({ store, navigate }: { store: FleetStore; navigate?: (v
     if (s?.installed && s.linked && account) {
       return (
         <span title={s.detail || s.accountSource}>
-          <span className="ok-text">● linked</span>
-          <span className="muted"> · {account}</span>
-          <span className="muted"> · managed in IDACC</span>
+          <span className="ok-text">● account linked · {account}</span>
+          <span className="muted"> · status not live</span>
         </span>
       );
     }
@@ -1539,7 +1538,7 @@ export function Settings({ store, navigate }: { store: FleetStore; navigate?: (v
       <section className="card">
         <h3>Managed subscription sign-ins</h3>
         <p className="muted small" style={{ marginTop: -4 }}>
-          Local CLI sign-ins and subscription-backed runtimes are launched and tracked from IDACC. Some CLIs expose status/logout; others keep account state inside their own TUI after IDACC starts the flow. Metered API providers still live under <b>Inference backends</b>.
+          Local CLI sign-ins and subscription-backed runtimes are launched and tracked from IDACC. Signed in means the CLI confirms live status; account linked means IDACC found safe local account evidence for a CLI that does not expose live status. Metered API providers still live under <b>Inference backends</b>.
         </p>
         {visibleManagedSubRows.map(({ key, label, runtime }) => {
           const s = subs?.[key];
