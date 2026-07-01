@@ -8,6 +8,9 @@ Every change pushed or merged to `main` carries its version number in the commit
 subject (`vX.Y.Z: …`), stamped automatically by the `commit-msg` hook — see
 [CONTRIBUTING.md](CONTRIBUTING.md).
 
+## [0.1.400] — 2026-07-01
+- Harden local stack port conflict review
+
 ## [0.1.399] — 2026-07-01
 - Automate local stack install and uninstall review
 

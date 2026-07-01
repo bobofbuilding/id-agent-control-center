@@ -941,7 +941,13 @@ export function Settings({ store, navigate }: { store: FleetStore; navigate?: (v
   }
 
   function providerPort(p: ProviderRow): number | null {
-    try { const x = new URL(p.baseUrl).port; return x ? Number(x) : null; } catch { return null; }
+    try {
+      const u = new URL(p.baseUrl);
+      if (u.port) return Number(u.port);
+      if (u.protocol === 'http:') return 80;
+      if (u.protocol === 'https:') return 443;
+      return null;
+    } catch { return null; }
   }
   function providerStatus(p: ProviderRow): string | undefined {
     return probe[p.name]?.status ?? p.lastSync?.status;
@@ -1018,6 +1024,55 @@ export function Settings({ store, navigate }: { store: FleetStore; navigate?: (v
     const apiBase = s.apiBase ? normUrl(s.apiBase) : null;
     return providers.filter((p) => apiBase && normUrl(p.baseUrl) === apiBase);
   }
+  function stackClaimedPorts(s: LocalStackEntry): number[] {
+    const ports = new Set<number>();
+    const addPort = (value: string | number | undefined | null) => {
+      const n = typeof value === 'number' ? value : Number(value);
+      if (Number.isInteger(n) && n > 0 && n < 65536) ports.add(n);
+    };
+    addPort(s.defaultPort);
+    if (s.apiBase) {
+      try {
+        const u = new URL(s.apiBase);
+        addPort(u.port || (u.protocol === 'http:' ? 80 : u.protocol === 'https:' ? 443 : null));
+      } catch { /* ignore catalog display hints that are not parseable URLs */ }
+    }
+    const install = stackCommand(s.install);
+    for (const match of install.matchAll(/\s-p\s+(?:(?:\d{1,3}\.){3}\d{1,3}:)?(\d+):\d+/g)) addPort(match[1]);
+    for (const match of install.matchAll(/(?:--port|--tcp)\s+(\d+)/g)) addPort(match[1]);
+    return [...ports].sort((a, b) => a - b);
+  }
+  function stackPortLabel(s: LocalStackEntry): string | null {
+    const ports = stackClaimedPorts(s);
+    if (!ports.length) return null;
+    return ports.length === 1 ? `:${ports[0]}` : `ports ${ports.join('/')}`;
+  }
+  function stackPortConflicts(s: LocalStackEntry): { live: number[]; configured: { port: number; names: string[] }[] } {
+    const ports = stackClaimedPorts(s);
+    const live = ports.filter((p) => runningPorts.has(p));
+    const configured = ports
+      .map((port) => ({
+        port,
+        names: providers.filter((p) => providerPort(p) === port).map((p) => p.name),
+      }))
+      .filter((hit) => hit.names.length > 0);
+    return { live, configured };
+  }
+  function reviewStackInstall(s: LocalStackEntry) {
+    const conflicts = stackPortConflicts(s);
+    const warnings = [
+      conflicts.live.length ? `Live server detected on port ${conflicts.live.join(', ')}; stop it or edit the Terminal command to use another port.` : '',
+      ...conflicts.configured.map((hit) => `Configured inference backend on port ${hit.port}: ${hit.names.join(', ')}.`),
+    ].filter(Boolean);
+    if (warnings.length && !window.confirm([
+      `Review install for ${s.name}?`,
+      '',
+      ...warnings.map((w) => `- ${w}`),
+      '',
+      'The command will open visibly in Terminal and can be edited or cancelled there.',
+    ].join('\n'))) return;
+    setStackConfirm(`i:${s.id}`);
+  }
   function reviewStackUninstall(s: LocalStackEntry, running: boolean, configuredProviders: ProviderRow[]) {
     const warnings = [
       running ? `A server is currently detected on port ${s.defaultPort}; stop it before uninstalling.` : '',
@@ -1043,17 +1098,17 @@ export function Settings({ store, navigate }: { store: FleetStore; navigate?: (v
       setStackMsg(`Terminal automation was blocked — ${action} command copied to clipboard`);
     }
   }
-  /** Real port conflict only: this stack's default port is ACTUALLY in use right now (a
-   *  detected running server or a configured provider). We no longer warn about stacks that
-   *  merely share a default port — that's not a conflict unless you actually run both, and it
-   *  was just noise. Run a "Scan running" to refresh what's live. */
+  /** Real port conflict only: one of this stack's claimed ports is ACTUALLY in use right now
+   *  by a detected running server or a configured provider. We no longer warn about stacks
+   *  that merely share a possible port unless the port is live/configured; run "Scan running"
+   *  to refresh what's live. */
   function stackPortWarn(s: LocalStackEntry): { level: 'warn' | 'error'; msg: string } | null {
-    if (s.defaultPort == null) return null;
-    if (runningPorts.has(s.defaultPort)) {
-      return { level: 'error', msg: `live server on port ${s.defaultPort} — use a different port if installing another stack` };
+    const conflicts = stackPortConflicts(s);
+    if (conflicts.live.length) {
+      return { level: 'error', msg: `live server on port ${conflicts.live.join(', ')} — use a different port if installing another stack` };
     }
-    if (providers.some((p) => providerPort(p) === s.defaultPort)) {
-      return { level: 'warn', msg: `backend configured on port ${s.defaultPort}; scan running servers before reusing it` };
+    if (conflicts.configured.length) {
+      return { level: 'warn', msg: `backend configured on port ${conflicts.configured.map((hit) => hit.port).join(', ')}; scan running servers before reusing it` };
     }
     return null;
   }
@@ -1529,11 +1584,12 @@ export function Settings({ store, navigate }: { store: FleetStore; navigate?: (v
             const configured = configuredProviders.length > 0;
             const confirmInstall = stackConfirm === `i:${s.id}`;
             const confirmUninstall = stackConfirm === `u:${s.id}`;
+            const portLabel = stackPortLabel(s);
             return (
               <div className="stack-row" key={s.id}>
                 <div className="stack-head">
                   <span className="b">{s.name}</span>
-                  {s.defaultPort ? <span className="muted small mono">:{s.defaultPort}</span> : null}
+                  {portLabel ? <span className="muted small mono">{portLabel}</span> : null}
                   <span className="muted small">{s.openaiCompatible ? 'OpenAI-compatible' : s.apiKind}</span>
                   {stackEaseLabel(s) ? <span className="chip tag" title={s.installNote}>{stackEaseLabel(s)}</span> : null}
                   {s.appleSilicon ? <span className="chip tag" title="Apple-Silicon native">Apple Silicon</span> : null}
@@ -1565,7 +1621,7 @@ export function Settings({ store, navigate }: { store: FleetStore; navigate?: (v
                   ) : (
                     <>
                       {ic ? (
-                        <button className={`btn small${stackPrimaryAction(s) ? ' primary' : ''}`} title={ic} onClick={() => setStackConfirm(`i:${s.id}`)}>{stackInstallLabel(s)}</button>
+                        <button className={`btn small${stackPrimaryAction(s) ? ' primary' : ''}`} title={ic} onClick={() => reviewStackInstall(s)}>{stackInstallLabel(s)}</button>
                       ) : (
                         <a className="btn small" href={s.homepage} target="_blank" rel="noreferrer" title="No CLI install — opens the download page">Get ↗</a>
                       )}
