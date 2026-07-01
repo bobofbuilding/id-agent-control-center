@@ -1,6 +1,6 @@
 # ID Agents Control Center — Product Spec
 
-_Updated 2026-06-30 · reflects app **v0.1.386**. This is a page-by-page specification of
+_Updated 2026-07-01 · reflects app **v0.1.387**. This is a page-by-page specification of
 the desktop app as it actually ships today, produced by reviewing every page._
 
 ---
@@ -347,6 +347,9 @@ questions through `legal/general-counsel`.
   selected-agent panel (reassign team, routing, rebuild, goals/instructions editor with preset +
   ✦ AI draft + save & rebuild), selected-team panel (build/add, relay, **Start/Stop/Probe/Rebuild
   all**), teams table (switch/manage/delete empty non-default), lead-hierarchy coordinators.
+  Structure now treats `/teams` as team-existence authority: all-agent roster groups can populate
+  member rows only for teams still present in the current team list, and successful team deletes are
+  tombstoned locally so Route/Structure/Manage stop showing the deleted team before the next poll.
 - **Build**: launcher to add agents to the active team.
 - **Manage**: standalone agent-instructions editor (preset / ✦ AI draft / save & rebuild).
 - **Route**: cross-team **relay** policy (Any / All `*` / Selected / Blocked) with dirty indicator +
