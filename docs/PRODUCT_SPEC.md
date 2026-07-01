@@ -166,12 +166,12 @@ A tabbed workspace: **Plans · Tasks · Schedule · Loops · Dream** (default: P
 maintains on disk) and **Your drafts** (local AI-generated plans you can version & revise).
 
 **What you can do**
-- **Compact organizer bar**: search, sort, group, archived toggle, lifecycle counts, status chips
-  (brain: done/partial/pending/hold; drafts: draft/active/done/archived), and tag chips (incl.
-  draft tags). **Request plan** (top) → an agent drafts Markdown → saved as a draft.
+- **Compact organizer bar**: search, sort, lifecycle counts, a **Completed** reveal, and an optional
+  **Filters** tray for grouping, plan status chips (pending/partial/paused/done), draft status chips,
+  and draft tags. **Request plan** (top) → an agent drafts Markdown → saved as a draft.
 - **Drafts**: compact scan rows plus open/rename/status, browse & **restore past versions**,
-  **revise with AI** (each revision = a new version + changelog note); marking a draft "done"
-  **auto-archives** it.
+  **revise with AI** (each revision = a new version + changelog note); promoting a draft writes the
+  live Brain plan and removes the draft copy so the plan does not appear twice.
 - **Brain plan actions** (per row): **Work / Continue / Resume** runs the guarded plan work path
   that audits status, surfaces blockers to Inbox when needed, and delegates remaining work; the
   **Status** menu writes guarded Pending/Partial/Paused/Done lifecycle changes back to the brain

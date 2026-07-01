@@ -3,8 +3,8 @@ import { call, resolveCoordinator, useSyncVersion, type FleetStore } from '../st
 import { useToast } from '../components/toast.tsx';
 
 /**
- * Plans tab (under Work). Two sets, one shared organizer (search / sort / group /
- * status + tag filters / archive) at the top:
+ * Plans tab (under Work). Two sets, one shared organizer (search / sort /
+ * optional filters / completed visibility) at the top:
  *  - Brain plans — the LIVE plan set the brain maintains on disk. Read-only content,
  *    but per-plan actions can AUDIT the real status (and write it back), find BLOCKERS,
  *    COMPILE the plan into tasks, or set it PENDING.
@@ -50,7 +50,7 @@ const BRAIN_STATUS_ACTIONS: { write: BrainStatusWrite; key: BrainStatusKey; labe
   { write: 'PENDING', key: 'pending', label: 'Set pending', confirm: 'queue it for a future work pass' },
   { write: 'PARTIAL', key: 'partial', label: 'Mark partial', confirm: 'show that work is underway or partly complete' },
   { write: 'PAUSED', key: 'hold', label: 'Pause', confirm: 'pause it until a blocker or dependency clears' },
-  { write: 'DONE', key: 'done', label: 'Mark done', confirm: 'archive it as complete' },
+  { write: 'DONE', key: 'done', label: 'Mark done', confirm: 'move it into completed plans' },
 ];
 function brainStatusKey(s?: string): BrainStatusKey {
   const t = (s || '').toLowerCase();
@@ -67,6 +67,7 @@ function qArg(s: string): string { return `"${s.replace(/\\/g, '\\\\').replace(/
 function clip(s: string, n: number): string { const t = s.replace(/\s+/g, ' ').trim(); return t.length > n ? t.slice(0, n) + '…' : t; }
 function newId(): string { return `plan_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 7)}`; }
 function splitTags(s: string): string[] { return [...new Set(s.split(/[,\n]/).map((t) => t.trim()).filter(Boolean))]; }
+function isPromotedDraft(p: { tags?: string[] }): boolean { return (p.tags ?? []).some((t) => /^→ plan /.test(t)); }
 function ago(ts: number): string {
   if (!ts) return '—';
   const s = Math.max(0, Math.round((Date.now() - ts) / 1000));
@@ -125,14 +126,24 @@ export function Plans({ store }: { store: FleetStore }) {
   const [q, setQ] = useState('');
   const [sort, setSort] = useState<SortMode>('recent');
   const [groupBy, setGroupBy] = useState(false);
-  const [showArchived, setShowArchived] = useState(false);
+  const [showFilters, setShowFilters] = useState(false);
+  const [showCompleted, setShowCompleted] = useState(false);
   const [draftStatus, setDraftStatus] = useState<Set<string>>(new Set());
   const [tagFilter, setTagFilter] = useState<Set<string>>(new Set());
   const [brainStatus, setBrainStatus] = useState<Set<string>>(new Set());
   const toggle = (set: (u: (prev: Set<string>) => Set<string>) => void, v: string) =>
     set((prev) => { const n = new Set(prev); if (n.has(v)) n.delete(v); else n.add(v); return n; });
 
-  async function reload() { setPlans(await call<PlanSummary[]>('plans:list', team).catch(() => [])); }
+  async function reload() {
+    let list = await call<PlanSummary[]>('plans:list', team).catch(() => []);
+    const promoted = list.filter(isPromotedDraft);
+    if (promoted.length) {
+      await Promise.all(promoted.map((p) => call('plans:remove', p.id).catch(() => {})));
+      list = await call<PlanSummary[]>('plans:list', team).catch(() => []);
+      if (detail && promoted.some((p) => p.id === detail.id)) setDetail(null);
+    }
+    setPlans(list);
+  }
   useEffect(() => { void reload(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [team, store.lastUpdated, draftSyncVersion]);
 
   // ---- brain plans (live, read-only content) ----
@@ -514,7 +525,7 @@ export function Plans({ store }: { store: FleetStore }) {
     }
   }
 
-  /** Field edit (title/status/tags). "done" no longer auto-archives — a done draft stays
+  /** Field edit (title/status/tags). "done" no longer auto-files — a done draft stays
    *  visible so you can finalize it and Promote it into the live brain plans (→ ⏳ pending). */
   async function patchPlan(p: Partial<Plan>) {
     if (!detail) return;
@@ -527,27 +538,22 @@ export function Plans({ store }: { store: FleetStore }) {
   }
 
   // Promote a finalized draft into the brain's LIVING plan set: writes a new plan file at
-  // ⏳ PENDING (so it enters pending → partial → done), then files the draft (archived) with a
-  // note linking the new plan. This is the draft → "active plan (pending)" handoff.
+  // ⏳ PENDING (so it enters pending → partial → done), then removes the source draft so
+  // there is one visible plan record instead of a stale duplicate.
   async function promoteDraft() {
     if (!detail) return;
     const current = await ensureDraftPlanFresh(detail, `Promote plan ${detail.title}`, ['title', 'status', 'version', 'updatedAt', 'content', 'tags']);
     if (!current) return;
-    if (!window.confirm(`Promote "${current.title}" to a live brain plan?\n\nThis writes a new brain plan at PENDING and marks the draft as promoted.`)) return;
+    if (!window.confirm(`Promote "${current.title}" to a live brain plan?\n\nThis writes a new brain plan at PENDING and removes the draft copy so it does not appear twice.`)) return;
     setBusy(true); setMsg(`promoting “${clip(current.title, 40)}” to a live plan…`);
     try {
       const res = await call<{ ok: boolean; file?: string; num?: string; committed?: boolean; error?: string }>('brain:createPlan', current.title, current.content);
       if (!res?.ok) { if (aliveRef.current) setMsg(`promote failed: ${res?.error ?? 'could not write the brain plan'}`); return; }
-      // Keep the draft VISIBLE as a finalized, promoted record (status done) + tag it with the
-      // brain plan number so it links to its live counterpart (and can't be re-promoted into a dupe).
-      const tag = `→ plan ${res.num}`;
-      const latest = (await call<Plan | null>('plans:get', current.id).catch(() => null)) ?? current;
-      const filed: Plan = { ...latest, status: 'done', tags: [...new Set([...(latest.tags ?? []), tag])], updatedAt: Date.now() };
-      await call('plans:save', filed).catch(() => {});
-      setDetail(filed);
+      await call('plans:remove', current.id).catch(() => {});
+      setDetail(null);
       await reloadBrain();
       await reload();
-      if (aliveRef.current) setMsg(`promoted → live plan ${res.num} (⏳ pending)${res.committed ? ' · committed' : ' · written'} — it's now in Plans above`);
+      if (aliveRef.current) setMsg(`promoted → live plan ${res.num} (Pending)${res.committed ? ' · committed' : ' · written'} — draft removed`);
     } catch (e) {
       if (aliveRef.current) setMsg(`promote failed: ${e instanceof Error ? e.message : String(e)}`);
     } finally { if (aliveRef.current) setBusy(false); }
@@ -589,14 +595,16 @@ export function Plans({ store }: { store: FleetStore }) {
     return list;
   }, [plans, q, draftStatus, tagFilter, sort]);
 
-  // active vs archived. Brain DONE plans archive; for drafts only the explicit "archived"
-  // status hides — a "done" draft stays VISIBLE so it can be finalized + promoted to a live plan.
+  // Focus the default view on actionable work. Completed Brain plans and filed drafts are
+  // still one click away, and also appear automatically when their status filter is active.
   const brainActive = organizedBrain.filter((p) => brainStatusKey(p.status) !== 'done');
-  const brainArchived = organizedBrain.filter((p) => brainStatusKey(p.status) === 'done');
+  const brainCompleted = organizedBrain.filter((p) => brainStatusKey(p.status) === 'done');
   const draftActive = organizedDrafts.filter((p) => p.status !== 'archived');
-  const draftArchived = organizedDrafts.filter((p) => p.status === 'archived');
-  const archivedCount = brainArchived.length + draftArchived.length;
+  const draftFiled = organizedDrafts.filter((p) => p.status === 'archived');
+  const completedCount = brainCompleted.length + draftFiled.length;
   const hasFilters = Boolean(brainStatus.size || draftStatus.size || tagFilter.size);
+  const filterCount = brainStatus.size + draftStatus.size + tagFilter.size;
+  const includeCompleted = showCompleted || brainStatus.has('done') || draftStatus.has('archived');
   const brainCounts = BRAIN_BUCKETS.reduce((acc, bucket) => {
     acc[bucket.key] = organizedBrain.filter((p) => brainStatusKey(p.status) === bucket.key).length;
     return acc;
@@ -772,12 +780,12 @@ export function Plans({ store }: { store: FleetStore }) {
             <option value="title">title (A–Z)</option>
             <option value="status">status</option>
           </select>
-          <label className="muted small plans-inline-control">
-            <input type="checkbox" checked={groupBy} onChange={(e) => setGroupBy(e.target.checked)} /> group
-          </label>
-          <label className="muted small plans-inline-control">
-            <input type="checkbox" checked={showArchived} onChange={(e) => setShowArchived(e.target.checked)} /> archived{archivedCount ? ` (${archivedCount})` : ''}
-          </label>
+          <button className={`btn small${showFilters || hasFilters ? ' primary' : ''}`} onClick={() => setShowFilters((v) => !v)}>
+            Filters{filterCount ? ` (${filterCount})` : ''}
+          </button>
+          <button className={`btn small${includeCompleted ? ' primary' : ''}`} onClick={() => setShowCompleted((v) => !v)}>
+            Completed{completedCount ? ` (${completedCount})` : ''}
+          </button>
           <span className="muted small plans-count-pill">pending {brainCounts.pending} · partial {brainCounts.partial} · paused {brainCounts.hold} · done {brainCounts.done}</span>
           <span className="grow" />
           <div className="plans-toolbar-actions">
@@ -786,23 +794,28 @@ export function Plans({ store }: { store: FleetStore }) {
             <button className="btn primary" disabled={busy} onClick={() => setShowNew((v) => !v)}>{showNew ? '− Cancel' : '+ Request plan'}</button>
           </div>
         </div>
-        <div className="plans-filter-row">
-          {hasFilters ? <button className="btn small" onClick={() => { setBrainStatus(new Set()); setDraftStatus(new Set()); setTagFilter(new Set()); }}>clear filters</button> : null}
-          <span className="muted small plans-filter-label">plans</span>
-          {statusChips(BRAIN_BUCKETS.map((b) => b.key), brainStatus, (id) => toggle(setBrainStatus, id), (k) => BRAIN_BUCKETS.find((b) => b.key === k)?.label ?? k, (k) => BRAIN_KEY_CLASS[k as BrainStatusKey])}
-          <span className="muted small plans-filter-label">drafts</span>
-          {statusChips(STATUSES, draftStatus, (id) => toggle(setDraftStatus, id), (s) => s, (s) => STATUS_CLASS[s as PlanStatus])}
-          {allDraftTags.length ? (
-            <>
-              <span className="muted small plans-filter-label">tags</span>
-              <span className="chips">
-                {allDraftTags.map((t) => (
-                  <button key={t} className={`chip${tagFilter.has(t) ? ' on' : ''}`} onClick={() => toggle(setTagFilter, t)}>{tagFilter.has(t) ? '✓ ' : ''}{t}</button>
-                ))}
-              </span>
-            </>
-          ) : null}
-        </div>
+        {showFilters || hasFilters ? (
+          <div className="plans-filter-row">
+            <label className="muted small plans-inline-control">
+              <input type="checkbox" checked={groupBy} onChange={(e) => setGroupBy(e.target.checked)} /> group by status
+            </label>
+            {hasFilters ? <button className="btn small" onClick={() => { setBrainStatus(new Set()); setDraftStatus(new Set()); setTagFilter(new Set()); }}>clear filters</button> : null}
+            <span className="muted small plans-filter-label">plans</span>
+            {statusChips(BRAIN_BUCKETS.map((b) => b.key), brainStatus, (id) => toggle(setBrainStatus, id), (k) => BRAIN_BUCKETS.find((b) => b.key === k)?.label ?? k, (k) => BRAIN_KEY_CLASS[k as BrainStatusKey])}
+            <span className="muted small plans-filter-label">drafts</span>
+            {statusChips(STATUSES, draftStatus, (id) => toggle(setDraftStatus, id), (s) => s, (s) => STATUS_CLASS[s as PlanStatus])}
+            {allDraftTags.length ? (
+              <>
+                <span className="muted small plans-filter-label">tags</span>
+                <span className="chips">
+                  {allDraftTags.map((t) => (
+                    <button key={t} className={`chip${tagFilter.has(t) ? ' on' : ''}`} onClick={() => toggle(setTagFilter, t)}>{tagFilter.has(t) ? '✓ ' : ''}{t}</button>
+                  ))}
+                </span>
+              </>
+            ) : null}
+          </div>
+        ) : null}
       </section>
 
       {showNew ? (
@@ -829,7 +842,7 @@ export function Plans({ store }: { store: FleetStore }) {
         <div className="plans-section-head">
           <div className="plans-section-title">
             <h3 style={{ margin: 0 }}>Plans</h3>
-            <span className="muted small">· {brainActive.length} active{brainArchived.length ? ` · ${brainArchived.length} done` : ''} · ⟳ live</span>
+            <span className="muted small">· {brainActive.length} active{brainCompleted.length ? ` · ${brainCompleted.length} completed` : ''} · ⟳ live</span>
             {brain.dir
               ? <span className="muted small mono plan-path" title={brain.dir}>{brain.dir.replace(/^.*\/projects\//, '…/')}</span>
               : <span className="warn-text small">brain plans dir not found</span>}
@@ -840,15 +853,15 @@ export function Plans({ store }: { store: FleetStore }) {
         </div>
         {brain.plans.length === 0 ? (
           <p className="muted small">{brain.dir ? 'No plans in the brain index yet.' : 'Could not locate the brain plans directory (projects root not detected — set it in Projects).'}</p>
-        ) : brainActive.length === 0 && !showArchived ? (
-          <p className="muted center pad">No active brain plans match the filter.{brainArchived.length ? ' (Done plans are archived — toggle “show archived”.)' : ''}</p>
+        ) : brainActive.length === 0 && !includeCompleted ? (
+          <p className="muted center pad">No active plans match the filter.{brainCompleted.length ? ' Use Completed to show finished plans.' : ''}</p>
         ) : (
           <>
             {renderList(brainActive, brainCard as (x: never) => JSX.Element, ((p: BrainPlan) => brainStatusKey(p.status)) as (x: never) => string, BRAIN_BUCKETS.filter((b) => b.key !== 'done'))}
-            {showArchived && brainArchived.length ? (
+            {includeCompleted && brainCompleted.length ? (
               <div>
-                <div className="muted small b" style={{ margin: '10px 0 4px' }}>Archived · Done ({brainArchived.length})</div>
-                <div className="skill-catalog">{brainArchived.map(brainCard)}</div>
+                <div className="muted small b" style={{ margin: '10px 0 4px' }}>Completed ({brainCompleted.length})</div>
+                <div className="skill-catalog">{brainCompleted.map(brainCard)}</div>
               </div>
             ) : null}
           </>
@@ -859,21 +872,21 @@ export function Plans({ store }: { store: FleetStore }) {
         <div className="plans-section-head">
           <div className="plans-section-title">
             <h3 style={{ margin: 0 }}>Your drafts</h3>
-            <span className="muted small">· {draftActive.length} active{draftArchived.length ? ` · ${draftArchived.length} filed` : ''}</span>
-            <span className="muted small">draft → active → done → promote → live pending</span>
+            <span className="muted small">· {draftActive.length} active{draftFiled.length ? ` · ${draftFiled.length} filed` : ''}</span>
+            <span className="muted small">draft → active → done → promote removes draft</span>
           </div>
         </div>
         {plans.length === 0 ? (
           <p className="muted center pad">No plans yet. <b>+ Request a plan</b> and an agent will draft one — then update it anytime and it keeps a changelog.</p>
-        ) : draftActive.length === 0 && !showArchived ? (
-          <p className="muted center pad">No active drafts match the filter.{draftArchived.length ? ' (Toggle “show archived”.)' : ''}</p>
+        ) : draftActive.length === 0 && !includeCompleted ? (
+          <p className="muted center pad">No active drafts match the filter.{draftFiled.length ? ' Use Completed to show filed drafts.' : ''}</p>
         ) : (
           <>
             {renderList(draftActive, draftCard as (x: never) => JSX.Element, ((p: PlanSummary) => p.status) as (x: never) => string, STATUSES.map((s) => ({ key: s, label: s })))}
-            {showArchived && draftArchived.length ? (
+            {includeCompleted && draftFiled.length ? (
               <div>
-                <div className="muted small b" style={{ margin: '10px 0 4px' }}>Archived ({draftArchived.length})</div>
-                <div className="skill-catalog">{draftArchived.map(draftCard)}</div>
+                <div className="muted small b" style={{ margin: '10px 0 4px' }}>Filed drafts ({draftFiled.length})</div>
+                <div className="skill-catalog">{draftFiled.map(draftCard)}</div>
               </div>
             ) : null}
           </>
