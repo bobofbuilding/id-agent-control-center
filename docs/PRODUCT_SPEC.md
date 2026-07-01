@@ -293,8 +293,10 @@ and errors.
 invoices; stale last-turn samples remain visible but no longer drive the live gauge. The model-lanes
 panel uses aligned runtime/type/models/source/checked columns plus the same Settings availability gate
 as the per-agent Harness dropdown: unavailable curated fallback harnesses are hidden unless already
-assigned, while configured API/provider lanes stay read-only until a manager provider-runtime adapter
-exists. The per-agent Model dropdown follows the effective staged Harness catalog: changing Harness
+assigned, while configured API/provider lanes stay visible but read-only until a manager
+provider-runtime adapter exists. The Harness dropdown shows API/cloud lanes in a disabled model-lane
+group so Settings-backed providers such as NVIDIA or OpenRouter are discoverable without becoming
+writeable runtime ids. The per-agent Model dropdown follows the effective staged Harness catalog: changing Harness
 resets the staged model to a valid option for that harness, and stale saved cross-harness model values
 show as drift instead of selectable options.
 "Running" is a status-string regex (non-matching healthy statuses show red).
@@ -492,7 +494,9 @@ Manager; this is the plumbing.)
   routable CLI runtime.
   Agent Harness pickers only offer runtimes that Settings can currently prove through sign-in,
   install, route-ready API backend, or synced local-backend evidence; existing assigned runtimes
-  remain visible as the current value for review. Agent Model pickers are keyed to the currently
+  remain visible as the current value for review. API/cloud provider lanes remain visible in Health
+  as disabled model-lane entries until the manager supports direct provider-runtime assignment.
+  Agent Model pickers are keyed to the currently
   staged harness model catalog, so switching to Kiro, Codex, Claude Code, or a local harness cannot
   carry a stale model from the previous harness forward as a valid choice. Gemini CLI
   `oauth-personal` evidence is not part of managed sign-in availability because consumer Gemini Code

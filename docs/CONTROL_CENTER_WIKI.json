@@ -4534,6 +4534,12 @@
         "The card uses Scan local, shorter API-style labels, a wider aligned grid, and separate local preference/fallback status lines.",
         "A localhost scan miss now renders as a single amber informational result instead of duplicating a red no-local-server warning.",
         "Image generator failure text and product/wiki docs now use neutral API-backend wording."
+      ],
+      "implementedTwoHundredSecondPass": [
+        "Health AgentTable now shows configured API/cloud provider lanes such as OpenRouter and NVIDIA inside the Harness picker as a disabled read-only group.",
+        "Selectable Harness options remain limited to Settings-proven manager runtime ids, so provider lane ids cannot be written to /agents/:id/runtime before the manager exposes a provider-runtime adapter.",
+        "Runtime catalog tests now assert that API providers are visible as read-only model lanes without becoming assignable manager harnesses.",
+        "Product spec and wiki now document the Health harness picker provider-lane visibility guardrail."
       ]
     },
     {
@@ -4597,5 +4603,5 @@
       "body": "# Wiki\n\nWiki is both the human documentation page and the editable schematic for the Control Center UI. Each article explains the operator purpose of a page; the structured sections below preserve tabs, tiles, fields, controls, displays, routes, and source files for implementation detail.\n\n## Use it for\n\n- Search pages, controls, routes, source files, and notes from inside the desktop app.\n- Confirm how a UI surface is intended to behave before editing code or filing follow-up work.\n- Keep app navigation metadata and human documentation in one reviewed JSON artifact.\n\n## Editing rule\n\nThe desktop app hot-reload polls CONTROL_CENTER_WIKI.json through the main-process wiki bridge. Sidebar labels, icons, order, and visibility still come from pages[].nav for implemented routes, so documentation edits must preserve that metadata and keep every page.body non-empty."
     }
   ],
-  "appVersion": "0.1.425"
+  "appVersion": "0.1.426"
 }

@@ -59,6 +59,10 @@ function agoMs(ms: number | null): string {
 function runtimeLabel(r: string): string {
   return runtimeDisplayLabel(r);
 }
+function modelLaneOptionLabel(f: RuntimeFreshness): string {
+  const count = f.count === 1 ? '1 model' : `${f.count} models`;
+  return `${f.label ?? runtimeLabel(f.runtime)} - ${count}`;
+}
 function modelFamily(model: string): 'claude' | 'openai' | 'ollama' | 'other' {
   const m = model.toLowerCase();
   if (/claude|opus|sonnet|haiku/.test(m)) return 'claude';
@@ -261,6 +265,9 @@ export function AgentTable({ store, onProbe, probeBusy, navigate }: { store: Fle
     if (kind !== 'harness') return true;
     return f.selectable !== false || currentRuntimeSet.has(f.runtime);
   });
+  const apiModelLaneOpts = visibleFreshness
+    .filter((f) => f.kind === 'api')
+    .sort((a, b) => (a.label ?? a.runtime).localeCompare(b.label ?? b.runtime));
 
   useEffect(() => {
     call<Record<string, string[]>>('runtime:models').then(setCatalog).catch(() => setCatalog({}));
@@ -577,7 +584,10 @@ export function AgentTable({ store, onProbe, probeBusy, navigate }: { store: Fle
       ? runtimeModels
       : Array.from(new Set([displayModelRaw].filter(Boolean))) as string[];
     const isLocal = (a.type ?? '') === 'claude' || RUNTIMES.includes(currentRuntime ?? '');
-    const runtimeOpts = Array.from(new Set([currentRuntime, ...offerableRuntimes(providers, currentRuntime, Object.values(managedRuntimes))].filter(Boolean))) as string[];
+    const currentProviderLane = currentRuntime?.startsWith('provider:') ? currentRuntime : undefined;
+    const currentHarness = currentProviderLane ? undefined : currentRuntime;
+    const runtimeOpts = Array.from(new Set([currentHarness, ...offerableRuntimes(providers, currentHarness, Object.values(managedRuntimes))].filter(Boolean))) as string[];
+    const readonlyApiLaneOpts = apiModelLaneOpts.filter((f) => f.runtime !== currentProviderLane && !runtimeOpts.includes(f.runtime));
     const mismatch = modelDrift
       ? `${runtimeLabel(displayRuntime ?? '')} model list does not include "${displayModelRaw}". Choose one of this harness's current model options.`
       : runtimeModelMismatch(displayRuntime, displayModel);
@@ -595,8 +605,18 @@ export function AgentTable({ store, onProbe, probeBusy, navigate }: { store: Fle
         <td onClick={(e) => e.stopPropagation()}>
           {isLocal ? (
             <select className="cell-select" value={displayRuntime ?? ''} onChange={(e) => stageRuntime(a, e.target.value)}
-              title="Settings-available execution harness. API/local provider model lanes are shown in Model lanes; direct provider assignment needs manager runtime support.">
-              {runtimeOpts.map((r) => <option key={r} value={r}>{runtimeLabel(r)}</option>)}
+              title="Settings-available execution harnesses are selectable. API/cloud provider model lanes are visible below as read-only until the manager supports direct provider-runtime assignment.">
+              <optgroup label="Assignable harnesses">
+                {currentProviderLane ? <option value={currentProviderLane}>{runtimeLabel(currentProviderLane)} (current model lane)</option> : null}
+                {runtimeOpts.map((r) => <option key={r} value={r}>{runtimeLabel(r)}</option>)}
+              </optgroup>
+              {readonlyApiLaneOpts.length ? (
+                <optgroup label="API / Cloud model lanes (read only)">
+                  {readonlyApiLaneOpts.map((f) => (
+                    <option key={f.runtime} value={`readonly:${f.runtime}`} disabled>{modelLaneOptionLabel(f)}</option>
+                  ))}
+                </optgroup>
+              ) : null}
             </select>
           ) : (
             <span className="muted" title="remote agents have no switchable runtime">{short(currentRuntime ?? a.type)}</span>
@@ -720,7 +740,7 @@ export function AgentTable({ store, onProbe, probeBusy, navigate }: { store: Fle
         ) : null}
         <table className="grid">
           <thead>
-            <tr><th>Agent</th><th>Status</th><th title="Settings-available manager execution harness. Configured API/local provider model lanes appear under Model lanes until the manager exposes direct provider-runtime assignment.">Harness</th><th>Model</th><th title="Reasoning effort — lower spends fewer subscription tokens (codex & Claude CLI only)">Effort</th><th title="Output speed — Claude Code runtimes only">Speed</th><th>Port</th><th>Actions</th>{onProbe ? <th>Probe</th> : null}</tr>
+            <tr><th>Agent</th><th>Status</th><th title="Settings-available manager execution harness. Configured API/cloud provider model lanes are visible in the picker as read-only entries until the manager exposes direct provider-runtime assignment.">Harness</th><th>Model</th><th title="Reasoning effort — lower spends fewer subscription tokens (codex & Claude CLI only)">Effort</th><th title="Output speed — Claude Code runtimes only">Speed</th><th>Port</th><th>Actions</th>{onProbe ? <th>Probe</th> : null}</tr>
           </thead>
           <tbody>
             {groups.flatMap((g) => {
