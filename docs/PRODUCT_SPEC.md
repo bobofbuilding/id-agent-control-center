@@ -467,8 +467,10 @@ Manager; this is the plumbing.)
 - **Connection**: manager URL, active team, read-only coordinator status, and an HR Manager Route
   handoff for hierarchy/routing changes.
 - **Self-update**: version, status, **auto-upgrade** toggle, **Check now**.
-- **Subscriptions (Claude · ChatGPT · Cursor)**: runtime OAuth (no API key) — sign in / switch /
-  sign out / install CLI / re-check; powers the `claude-*`, `codex`, `cursor-cli` runtimes.
+- **Managed subscription sign-ins**: CLI OAuth/device/browser flows (no API key) for `claude-*`,
+  `codex`, `cursor-cli`, `grok`, `gemini`, `copilot`, `kiro-cli`, and legacy `q`. Rows distinguish
+  status-inspectable CLIs from TUI-owned account state; metered API providers stay under Inference
+  backends.
 - **Local models (Ollama)**: parallel-inference cap (1–16), installed chips, **Download** by id
   (streamed progress), a searchable **catalog** with capability filters and hardware fit-warnings.
 - **Local image generator**: URL + API style (Automatic1111 / OpenAI-images), **Detect**, Save/Clear
@@ -494,10 +496,11 @@ running/queued figures are a snapshot; clipboard fallbacks fail silently.
 ## 14. Cross-cutting concepts
 
 - **Active-team scoping**: everything is scoped to `store.team`; switch via the status-bar selector.
-- **Runtimes**: `claude-*` / `codex` / `cursor-cli` use logged-in CLI subscriptions; `ollama` /
-  local servers and metered API providers are configured in Settings → Inference. MCP works where a
-  runtime/tool harness supports it; skills and portable plugin packages are assigned as neutral
-  metadata with Skill/MCP/native/direct-fallback adapters deciding execution.
+- **Runtimes**: `claude-*`, `codex`, `cursor-cli`, `grok`, `gemini`, `copilot`, `kiro-cli`, and
+  legacy `q` are managed CLI runtime lanes; `ollama` / local servers and metered API providers are
+  configured in Settings → Inference. MCP works where a runtime/tool harness supports it; skills and
+  portable plugin packages are assigned as neutral metadata with Skill/MCP/native/direct-fallback
+  adapters deciding execution.
 - **Active-agent routing**: assignment, decomposition, triage, and fan-out target only **running**
   agents; stopped agents are skipped and reported.
 - **Cross-team fan-out**: an objective can be handed to several teams' active leads at once

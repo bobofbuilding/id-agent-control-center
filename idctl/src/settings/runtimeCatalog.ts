@@ -5,6 +5,7 @@
  *   claude-* runtimes         ← anthropic provider (GET /v1/models with a key)
  *   codex runtime             ← openai provider
  *   cursor-cli runtime        ← (no public model API) curated only
+ *   grok/gemini/copilot/kiro/q ← managed CLI runtimes; CLI-owned auth/models
  *
  * When a backing provider is configured and has a synced model list, we use it
  * (that IS "probing the runtime"). Otherwise we fall back to a curated list of
@@ -13,8 +14,20 @@
 
 import type { ProviderKind, ProviderProfile } from './schema.ts';
 
-/** Switchable agent runtimes (matches HarnessType minus the remote runtime). */
-export const RUNTIMES = ['claude-agent-sdk', 'claude-code-cli', 'claude-code-local', 'codex', 'cursor-cli', 'ollama'];
+/** Switchable/visible managed agent runtimes (remote runtime excluded). */
+export const RUNTIMES = [
+  'claude-agent-sdk',
+  'claude-code-cli',
+  'claude-code-local',
+  'codex',
+  'cursor-cli',
+  'grok',
+  'gemini',
+  'copilot',
+  'kiro-cli',
+  'q',
+  'ollama',
+];
 
 export type RuntimeModelLaneKind = 'subscription' | 'local' | 'api';
 export type RuntimeModelLaneSource = 'provider' | 'none';
@@ -40,6 +53,11 @@ const RUNTIME_LABELS: Record<string, string> = {
   'claude-code-local': 'Claude local',
   codex: 'Codex',
   'cursor-cli': 'Cursor',
+  grok: 'Grok Build',
+  gemini: 'Gemini CLI',
+  copilot: 'GitHub Copilot',
+  'kiro-cli': 'Kiro',
+  q: 'Amazon Q',
   ollama: 'Ollama / local',
 };
 
@@ -73,8 +91,11 @@ export type RuntimeCapability = 'mcp' | 'plugins' | 'portablePlugins' | 'skills'
  * codex received `-c mcp_servers.*` config injection (2026-06), and ollama now
  * ships the agentic tool-calling loop (id-agents OllamaHarness.runWithTools +
  * McpToolHub) so local models with tool support can call MCP tools. A non-tool
- * ollama model degrades gracefully to plain text. cursor-cli and the remote
- * runtime still don't consume our McpServerSpec.
+ * ollama model degrades gracefully to plain text. Grok Build, Gemini CLI,
+ * GitHub Copilot CLI, Kiro CLI, and the legacy Amazon Q CLI are listed as
+ * managed CLI runtimes with MCP-capable vendor surfaces, but manager execution
+ * still depends on a matching harness/adapter. cursor-cli and the remote runtime
+ * still don't consume our McpServerSpec.
  *
  * skills — the manager deploys SKILL.md files to a runtime-aware dir for every
  * LOCAL runtime (`.claude/skills`, `.agents/skills` for codex/ollama,
@@ -88,10 +109,10 @@ export type RuntimeCapability = 'mcp' | 'plugins' | 'portablePlugins' | 'skills'
  * adapters still gate independently through MCP or native plugin support.
  */
 const RUNTIME_CAPABILITIES: Record<RuntimeCapability, string[]> = {
-  mcp: ['claude-agent-sdk', 'claude-code-cli', 'claude-code-local', 'codex', 'ollama'],
-  skills: ['claude-agent-sdk', 'claude-code-cli', 'claude-code-local', 'codex', 'cursor-cli', 'ollama'],
+  mcp: ['claude-agent-sdk', 'claude-code-cli', 'claude-code-local', 'codex', 'grok', 'gemini', 'copilot', 'kiro-cli', 'q', 'ollama'],
+  skills: ['claude-agent-sdk', 'claude-code-cli', 'claude-code-local', 'codex', 'cursor-cli', 'grok', 'gemini', 'copilot', 'kiro-cli', 'q', 'ollama'],
   plugins: ['claude-agent-sdk', 'claude-code-cli', 'claude-code-local'],
-  portablePlugins: ['claude-agent-sdk', 'claude-code-cli', 'claude-code-local', 'codex', 'cursor-cli', 'ollama'],
+  portablePlugins: ['claude-agent-sdk', 'claude-code-cli', 'claude-code-local', 'codex', 'cursor-cli', 'grok', 'gemini', 'copilot', 'kiro-cli', 'q', 'ollama'],
 };
 
 /** Short, user-facing reason a runtime can't use a capability (for tooltips). */
@@ -134,9 +155,9 @@ export function anthropicApiReady(providers: ProviderForRuntime[]): boolean {
 }
 
 /**
- * Manager-supported execution harnesses to offer in runtime pickers. Provider
- * availability is surfaced separately through neutral model lanes so the picker
- * stays open while writes still go only to manager-supported harness ids.
+ * Managed runtime ids to offer in runtime pickers. Provider availability is
+ * surfaced separately through neutral model lanes so the picker stays open while
+ * each runtime remains responsible for its own manager harness/adapter support.
  */
 export function offerableRuntimes(_providers: ProviderForRuntime[], keep?: string): string[] {
   return Array.from(new Set([...(keep ? [keep] : []), ...RUNTIMES].filter(Boolean)));
@@ -197,6 +218,12 @@ export const RUNTIME_CURATED: Record<string, string[]> = {
   // Fallback only — the bridge merges the live list from ~/.codex/models_cache.json.
   codex: ['gpt-5.5', 'gpt-5.4', 'gpt-5.4-mini', 'gpt-5.3-codex-spark', 'gpt-5.3-codex'],
   'cursor-cli': ['sonnet-4', 'composer-2'],
+  // These managed CLIs own model/account selection; keep fallback catalogs minimal.
+  grok: ['default'],
+  gemini: ['default'],
+  copilot: ['default'],
+  'kiro-cli': ['default'],
+  q: ['default'],
   ollama: [],
 };
 

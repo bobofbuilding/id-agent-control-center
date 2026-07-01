@@ -10,19 +10,19 @@
     "adapters": {
       "skill": {
         "entrypoint": "SKILL.md",
-        "runtimes": ["claude-agent-sdk", "claude-code-cli", "claude-code-local", "codex", "cursor-cli", "ollama"]
+        "runtimes": ["claude-agent-sdk", "claude-code-cli", "claude-code-local", "codex", "cursor-cli", "grok", "gemini", "copilot", "kiro-cli", "q", "ollama"]
       },
       "mcp": {
         "command": "node",
         "args": ["tools/contract.mjs", "mcp"],
-        "runtimes": ["claude-agent-sdk", "claude-code-cli", "claude-code-local", "codex", "ollama"]
+        "runtimes": ["claude-agent-sdk", "claude-code-cli", "claude-code-local", "codex", "grok", "gemini", "copilot", "kiro-cli", "q", "ollama"]
       },
       "nativePlugin": {
         "entrypoint": "SKILL.md",
         "runtimes": ["claude-agent-sdk", "claude-code-cli", "claude-code-local"]
       },
       "directFallback": {
-        "runtimes": ["claude-agent-sdk", "claude-code-cli", "claude-code-local", "codex", "cursor-cli", "ollama"],
+        "runtimes": ["claude-agent-sdk", "claude-code-cli", "claude-code-local", "codex", "cursor-cli", "grok", "gemini", "copilot", "kiro-cli", "q", "ollama"],
         "mode": "send-original-context"
       }
     },

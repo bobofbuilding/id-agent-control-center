@@ -1,14 +1,7 @@
 /**
- * Managed subscription auth for the CLI runtimes IDACC can operate today. These
- * use the CLIs' OAuth login, NOT metered API keys — so an agent on the matching
- * runtime runs on the user's subscription with no key stored in IDACC.
- *
- *   claude auth status | login | logout   → Claude (claude.ai) subscription
- *   codex  login status | login | logout  → ChatGPT subscription
- *   cursor-agent status | login | logout  → Cursor subscription
- *
- * status is read-only; signin spawns the CLI which opens the browser for the
- * user to authenticate (we never handle credentials ourselves).
+ * Managed subscription auth for CLI runtimes IDACC can inspect or launch.
+ * These use each CLI's own browser/device OAuth flow, not metered API keys, so
+ * IDACC never stores or displays provider credentials.
  */
 
 import { execFile, spawn } from 'node:child_process';
@@ -17,85 +10,196 @@ import { homedir } from 'node:os';
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { shell } from 'electron';
+import { runInTerminal } from './system.ts';
 
 const execFileP = promisify(execFile);
 
-/** Candidate CLI dirs (GUI apps inherit a minimal PATH). */
-function cliDirs(): string[] {
-  const home = homedir();
-  return ['/opt/homebrew/bin', `${home}/.local/bin`, '/usr/local/bin', '/usr/bin', '/bin', ...(process.env.PATH ? process.env.PATH.split(':') : [])];
-}
-/** GUI apps inherit a minimal PATH — add the usual CLI locations so claude/codex resolve. */
-function cliEnv(): NodeJS.ProcessEnv {
-  return { ...process.env, PATH: cliDirs().join(':') };
-}
-/** Is a CLI binary installed (resolvable on the augmented PATH)? */
-function cliInstalled(bin: string): boolean {
-  return cliDirs().some((d) => existsSync(`${d}/${bin}`));
-}
-/** Install hint shown when a subscription CLI isn't present. */
-const INSTALL_HINT: Record<string, string> = {
-  cursor: 'cursor-agent not installed — install the Cursor CLI: curl https://cursor.com/install -fsS | bash',
-  claude: 'claude CLI not installed',
-  chatgpt: 'codex CLI not installed',
-};
+export type SubProvider = 'claude' | 'chatgpt' | 'cursor' | 'grok' | 'gemini' | 'copilot' | 'kiro-cli' | 'q';
 
-/** The official one-line installer per provider's CLI (run in the user's Terminal). */
-const INSTALL_CMD: Partial<Record<SubProvider, string>> = {
-  cursor: 'curl https://cursor.com/install -fsS | bash',
-};
+type LoginMode = 'spawn' | 'terminal';
+type CommandSpec = [string, string[]];
 
-/**
- * Kick off a CLI install. Opens the user's Terminal and runs the vendor's
- * official installer there — visible and abortable, the user's own shell — and
- * returns the command either way so the UI can fall back to clipboard if macOS
- * blocks Terminal automation.
- */
-export async function subsInstall(provider: SubProvider): Promise<{ ok: boolean; ran: boolean; command?: string; error?: string }> {
-  const cmd = INSTALL_CMD[provider];
-  if (!cmd) return { ok: false, ran: false, error: 'no installer available for this provider' };
-  try {
-    const osa = `tell application "Terminal"\n  activate\n  do script "${cmd.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"\nend tell`;
-    await execFileP('osascript', ['-e', osa], { timeout: 8000 });
-    return { ok: true, ran: true, command: cmd };
-  } catch (e) {
-    // Automation likely blocked — let the renderer copy the command instead.
-    return { ok: false, ran: false, command: cmd, error: e instanceof Error ? e.message : String(e) };
-  }
+interface SubProviderMeta {
+  provider: SubProvider;
+  runtime: string;
+  label: string;
+  bin: string;
+  login?: CommandSpec;
+  loginMode?: LoginMode;
+  logout?: CommandSpec;
+  install?: string;
+  installHint: string;
+  statusNote?: string;
 }
-
-export type SubProvider = 'claude' | 'chatgpt' | 'cursor';
 
 export interface SubStatus {
   provider: SubProvider;
+  runtime: string;
+  label: string;
   loggedIn: boolean;
   /** Whether the provider's CLI is installed at all. */
   installed?: boolean;
+  /** Whether IDACC can check sign-in state without opening the interactive CLI. */
+  statusSupported?: boolean;
+  /** Whether IDACC can launch a sign-in/account-selection flow. */
+  loginSupported?: boolean;
+  /** Whether IDACC can sign out through a documented non-secret command. */
+  logoutSupported?: boolean;
+  /** Whether IDACC has a reviewed visible install command for this CLI. */
+  installSupported?: boolean;
   plan?: string;
   email?: string;
   method?: string;
   detail?: string;
 }
 
-/** login / logout CLI invocations per subscription provider. */
-const LOGIN_CMD: Record<SubProvider, [string, string[]]> = {
-  claude: ['claude', ['auth', 'login']],
-  chatgpt: ['codex', ['login']],
-  cursor: ['cursor-agent', ['login']],
-};
-const LOGOUT_CMD: Record<SubProvider, [string, string[]]> = {
-  claude: ['claude', ['auth', 'logout']],
-  chatgpt: ['codex', ['logout']],
-  cursor: ['cursor-agent', ['logout']],
+const SUB_PROVIDERS: SubProvider[] = ['claude', 'chatgpt', 'cursor', 'grok', 'gemini', 'copilot', 'kiro-cli', 'q'];
+
+const SUB_META: Record<SubProvider, SubProviderMeta> = {
+  claude: {
+    provider: 'claude',
+    runtime: 'claude-code-cli',
+    label: 'Claude (Anthropic)',
+    bin: 'claude',
+    login: ['claude', ['auth', 'login']],
+    logout: ['claude', ['auth', 'logout']],
+    installHint: 'claude CLI not installed',
+  },
+  chatgpt: {
+    provider: 'chatgpt',
+    runtime: 'codex',
+    label: 'OpenAI (ChatGPT)',
+    bin: 'codex',
+    login: ['codex', ['login']],
+    logout: ['codex', ['logout']],
+    installHint: 'codex CLI not installed',
+  },
+  cursor: {
+    provider: 'cursor',
+    runtime: 'cursor-cli',
+    label: 'Cursor',
+    bin: 'cursor-agent',
+    login: ['cursor-agent', ['login']],
+    logout: ['cursor-agent', ['logout']],
+    install: 'curl https://cursor.com/install -fsS | bash',
+    installHint: 'cursor-agent not installed',
+  },
+  grok: {
+    provider: 'grok',
+    runtime: 'grok',
+    label: 'xAI Grok Build',
+    bin: 'grok',
+    login: ['grok', []],
+    loginMode: 'terminal',
+    install: 'curl -fsSL https://x.ai/cli/install.sh | bash',
+    installHint: 'grok CLI not installed',
+    statusNote: 'Grok opens browser auth on first launch; IDACC only checks whether the CLI exists.',
+  },
+  gemini: {
+    provider: 'gemini',
+    runtime: 'gemini',
+    label: 'Google Gemini CLI',
+    bin: 'gemini',
+    login: ['gemini', []],
+    loginMode: 'terminal',
+    install: 'npm install -g @google/gemini-cli',
+    installHint: 'gemini CLI not installed',
+    statusNote: 'Gemini account selection lives inside the CLI /auth flow; IDACC only checks whether the CLI exists.',
+  },
+  copilot: {
+    provider: 'copilot',
+    runtime: 'copilot',
+    label: 'GitHub Copilot CLI',
+    bin: 'copilot',
+    login: ['copilot', []],
+    loginMode: 'terminal',
+    install: 'npm install -g @github/copilot',
+    installHint: 'copilot CLI not installed',
+    statusNote: 'Copilot sign-in lives inside the CLI /login flow; sign-out is performed inside Copilot with /logout.',
+  },
+  'kiro-cli': {
+    provider: 'kiro-cli',
+    runtime: 'kiro-cli',
+    label: 'Kiro CLI',
+    bin: 'kiro-cli',
+    login: ['kiro-cli', ['login']],
+    loginMode: 'terminal',
+    logout: ['kiro-cli', ['logout']],
+    install: 'curl -fsSL https://cli.kiro.dev/install | bash',
+    installHint: 'kiro-cli not installed',
+  },
+  q: {
+    provider: 'q',
+    runtime: 'q',
+    label: 'Amazon Q CLI (legacy)',
+    bin: 'q',
+    login: ['q', ['login']],
+    loginMode: 'terminal',
+    logout: ['q', ['logout']],
+    installHint: 'q CLI not installed; current Amazon Q CLI docs point users to Kiro CLI.',
+    statusNote: 'Legacy Amazon Q CLI is treated as available when present; Kiro CLI is the current managed path.',
+  },
 };
 
+/** Candidate CLI dirs (GUI apps inherit a minimal PATH). */
+function cliDirs(): string[] {
+  const home = homedir();
+  return Array.from(new Set(['/opt/homebrew/bin', `${home}/.local/bin`, '/usr/local/bin', '/usr/bin', '/bin', ...(process.env.PATH ? process.env.PATH.split(':') : [])]));
+}
+
+/** GUI apps inherit a minimal PATH; add the usual CLI locations. */
+function cliEnv(): NodeJS.ProcessEnv {
+  return { ...process.env, PATH: cliDirs().join(':') };
+}
+
+/** Is a CLI binary installed (resolvable on the augmented PATH)? */
+function cliInstalled(bin: string): boolean {
+  return cliDirs().some((d) => existsSync(`${d}/${bin}`));
+}
+
+function shellQuote(arg: string): string {
+  if (/^[A-Za-z0-9_./:=@%+-]+$/.test(arg)) return arg;
+  return `'${arg.replace(/'/g, `'\\''`)}'`;
+}
+
+function commandLine([bin, args]: CommandSpec): string {
+  return [bin, ...args].map(shellQuote).join(' ');
+}
+
+function truncateDetail(s: string): string {
+  return s.replace(/\s+/g, ' ').trim().slice(0, 240);
+}
+
+function baseStatus(provider: SubProvider, patch: Partial<SubStatus>): SubStatus {
+  const meta = SUB_META[provider];
+  return {
+    provider,
+    runtime: meta.runtime,
+    label: meta.label,
+    loggedIn: false,
+    installed: cliInstalled(meta.bin),
+    statusSupported: false,
+    loginSupported: Boolean(meta.login),
+    logoutSupported: Boolean(meta.logout),
+    installSupported: Boolean(meta.install),
+    detail: meta.statusNote,
+    ...patch,
+  };
+}
+
+function notInstalled(provider: SubProvider): SubStatus {
+  const meta = SUB_META[provider];
+  return baseStatus(provider, { installed: false, detail: meta.installHint });
+}
+
 async function claudeStatus(): Promise<SubStatus> {
+  if (!cliInstalled(SUB_META.claude.bin)) return notInstalled('claude');
   try {
     const { stdout } = await execFileP('claude', ['auth', 'status'], { env: cliEnv(), timeout: 8000 });
     const j = JSON.parse(stdout) as { loggedIn?: boolean; authMethod?: string; subscriptionType?: string; email?: string };
-    return { provider: 'claude', loggedIn: !!j.loggedIn, plan: j.subscriptionType, email: j.email, method: j.authMethod };
+    return baseStatus('claude', { loggedIn: !!j.loggedIn, installed: true, statusSupported: true, plan: j.subscriptionType, email: j.email, method: j.authMethod });
   } catch (e: unknown) {
-    return { provider: 'claude', loggedIn: false, detail: e instanceof Error ? e.message : String(e) };
+    return baseStatus('claude', { installed: true, statusSupported: true, detail: e instanceof Error ? truncateDetail(e.message) : truncateDetail(String(e)) });
   }
 }
 
@@ -118,8 +222,6 @@ function prettyChatgptPlan(t: string): string {
  * status` only prints "Logged in using ChatGPT" — the email and plan live in the
  * OAuth id_token (a JWT) inside ~/.codex/auth.json. We decode ONLY the JWT's
  * identity claims (email + plan); the access/refresh tokens are never read out.
- * Never throws — returns {} if the file/token is absent or malformed (e.g. an
- * API-key login, which carries no id_token).
  */
 function codexAccount(): { email?: string; plan?: string } {
   try {
@@ -128,7 +230,6 @@ function codexAccount(): { email?: string; plan?: string } {
     const auth = JSON.parse(readFileSync(file, 'utf8')) as { tokens?: { id_token?: string } };
     const idToken = auth.tokens?.id_token;
     if (!idToken || idToken.split('.').length !== 3) return {};
-    // JWT payload is the middle base64url segment; decode just its claims.
     const payload = JSON.parse(Buffer.from(idToken.split('.')[1], 'base64url').toString('utf8')) as Record<string, unknown>;
     const email = typeof payload.email === 'string' ? payload.email : undefined;
     const authClaim = payload['https://api.openai.com/auth'] as { chatgpt_plan_type?: string } | undefined;
@@ -141,50 +242,100 @@ function codexAccount(): { email?: string; plan?: string } {
 }
 
 async function codexStatus(): Promise<SubStatus> {
+  if (!cliInstalled(SUB_META.chatgpt.bin)) return notInstalled('chatgpt');
   try {
     const { stdout, stderr } = await execFileP('codex', ['login', 'status'], { env: cliEnv(), timeout: 8000 });
     const out = `${stdout}${stderr}`.trim();
     const loggedIn = /logged in/i.test(out);
-    // Only surface identity when actually signed in (don't read stale tokens otherwise).
     const acct = loggedIn ? codexAccount() : {};
-    return { provider: 'chatgpt', loggedIn, plan: acct.plan, email: acct.email, detail: out };
+    return baseStatus('chatgpt', { loggedIn, installed: true, statusSupported: true, plan: acct.plan, email: acct.email, detail: truncateDetail(out) });
   } catch (e: unknown) {
-    const err = e as { stdout?: string; message?: string };
-    return { provider: 'chatgpt', loggedIn: false, detail: (err.stdout || err.message || '').trim() };
+    const err = e as { stdout?: string; stderr?: string; message?: string };
+    return baseStatus('chatgpt', { installed: true, statusSupported: true, detail: truncateDetail(err.stdout || err.stderr || err.message || '') });
   }
 }
 
 /** Cursor subscription via `cursor-agent status` (Pro/Business OAuth). */
 async function cursorStatus(): Promise<SubStatus> {
-  if (!cliInstalled('cursor-agent')) {
-    return { provider: 'cursor', loggedIn: false, installed: false, detail: INSTALL_HINT.cursor };
-  }
+  if (!cliInstalled(SUB_META.cursor.bin)) return notInstalled('cursor');
   try {
     const { stdout, stderr } = await execFileP('cursor-agent', ['status'], { env: cliEnv(), timeout: 8000 });
     const out = `${stdout}${stderr}`.trim();
     const loggedIn = /logged in|authenticated|signed in/i.test(out) && !/not logged in|not authenticated|signed out/i.test(out);
     const email = out.match(/[\w.+-]+@[\w.-]+\.\w+/)?.[0];
-    return { provider: 'cursor', loggedIn, installed: true, email, detail: out.slice(0, 200) };
+    return baseStatus('cursor', { loggedIn, installed: true, statusSupported: true, email, detail: truncateDetail(out) });
   } catch (e: unknown) {
-    const err = e as { stdout?: string; message?: string };
-    return { provider: 'cursor', loggedIn: false, installed: true, detail: (err.stdout || err.message || '').trim() };
+    const err = e as { stdout?: string; stderr?: string; message?: string };
+    return baseStatus('cursor', { installed: true, statusSupported: true, detail: truncateDetail(err.stdout || err.stderr || err.message || '') });
   }
 }
 
-export async function subsStatus(): Promise<{ claude: SubStatus; chatgpt: SubStatus; cursor: SubStatus }> {
-  const [claude, chatgpt, cursor] = await Promise.all([claudeStatus(), codexStatus(), cursorStatus()]);
-  return { claude, chatgpt, cursor };
+async function whoamiStatus(provider: 'kiro-cli' | 'q', command: CommandSpec): Promise<SubStatus> {
+  const meta = SUB_META[provider];
+  if (!cliInstalled(meta.bin)) return notInstalled(provider);
+  try {
+    const { stdout, stderr } = await execFileP(command[0], command[1], { env: cliEnv(), timeout: 8000 });
+    const out = `${stdout}${stderr}`.trim();
+    const loggedIn = Boolean(out) && !/not logged in|not authenticated|signed out|no credentials|login required/i.test(out);
+    const email = out.match(/[\w.+-]+@[\w.-]+\.\w+/)?.[0];
+    return baseStatus(provider, { loggedIn, installed: true, statusSupported: true, email, detail: truncateDetail(out) });
+  } catch (e: unknown) {
+    const err = e as { stdout?: string; stderr?: string; message?: string };
+    return baseStatus(provider, { installed: true, statusSupported: true, detail: truncateDetail(err.stdout || err.stderr || err.message || meta.statusNote || '') });
+  }
+}
+
+async function cliPresenceStatus(provider: 'grok' | 'gemini' | 'copilot'): Promise<SubStatus> {
+  const meta = SUB_META[provider];
+  if (!cliInstalled(meta.bin)) return notInstalled(provider);
+  return baseStatus(provider, { installed: true, statusSupported: false, detail: meta.statusNote });
+}
+
+async function providerStatus(provider: SubProvider): Promise<SubStatus> {
+  switch (provider) {
+    case 'claude': return claudeStatus();
+    case 'chatgpt': return codexStatus();
+    case 'cursor': return cursorStatus();
+    case 'kiro-cli': return whoamiStatus('kiro-cli', ['kiro-cli', ['whoami']]);
+    case 'q': return whoamiStatus('q', ['q', ['whoami']]);
+    case 'grok':
+    case 'gemini':
+    case 'copilot':
+      return cliPresenceStatus(provider);
+  }
+}
+
+export async function subsStatus(): Promise<Record<SubProvider, SubStatus>> {
+  const rows = await Promise.all(SUB_PROVIDERS.map(async (provider) => [provider, await providerStatus(provider)] as const));
+  return Object.fromEntries(rows) as Record<SubProvider, SubStatus>;
 }
 
 /**
- * Launch the CLI OAuth login. The CLI opens the browser (we also open any URL
- * it prints, as a fallback). Resolves once the flow is underway — the user
- * completes sign-in in the browser, then re-checks status.
+ * Kick off a visible CLI install. Opens the user's Terminal and runs the vendor's
+ * official installer there — visible and abortable — and returns the command either
+ * way so the UI can fall back to clipboard if macOS blocks Terminal automation.
  */
-export function subsSignin(provider: SubProvider): Promise<{ started: boolean; url?: string; error?: string }> {
-  const [bin, args] = LOGIN_CMD[provider] ?? LOGIN_CMD.claude;
+export async function subsInstall(provider: SubProvider): Promise<{ ok: boolean; ran: boolean; command?: string; error?: string }> {
+  const meta = SUB_META[provider];
+  if (!meta?.install) return { ok: false, ran: false, error: 'no installer available for this provider' };
+  const r = await runInTerminal(meta.install);
+  return { ok: r.ok, ran: r.ran, command: r.command, error: r.error };
+}
+
+/**
+ * Launch the CLI OAuth/login flow. For fully non-interactive status/login CLIs we
+ * spawn and open printed URLs; for TUI-first CLIs we open a real Terminal.
+ */
+export function subsSignin(provider: SubProvider): Promise<{ started: boolean; url?: string; command?: string; error?: string }> {
+  const meta = SUB_META[provider];
+  if (!meta?.login) return Promise.resolve({ started: false, error: 'no sign-in command available for this provider' });
+  const [bin, args] = meta.login;
   if (!cliInstalled(bin)) {
-    return Promise.resolve({ started: false, error: INSTALL_HINT[provider] ?? `${bin} is not installed` });
+    return Promise.resolve({ started: false, error: meta.installHint ?? `${bin} is not installed` });
+  }
+  if (meta.loginMode === 'terminal') {
+    const cmd = commandLine(meta.login);
+    return runInTerminal(cmd).then((r) => ({ started: r.ran, command: r.command, error: r.ran ? undefined : r.error }));
   }
   return new Promise((resolve) => {
     let child;
@@ -223,7 +374,9 @@ export function subsSignin(provider: SubProvider): Promise<{ started: boolean; u
 }
 
 export async function subsSignout(provider: SubProvider): Promise<{ ok: boolean; error?: string }> {
-  const [bin, args] = LOGOUT_CMD[provider] ?? LOGOUT_CMD.claude;
+  const meta = SUB_META[provider];
+  if (!meta?.logout) return { ok: false, error: 'no sign-out command available for this provider' };
+  const [bin, args] = meta.logout;
   try {
     await execFileP(bin, args, { env: cliEnv(), timeout: 15000 });
     return { ok: true };

@@ -144,9 +144,33 @@ export function Settings({ store, navigate }: { store: FleetStore; navigate?: (v
   const [managerCaps, setManagerCaps] = useState<ManagerCapabilities | undefined>(undefined);
   const [managerReportCopied, setManagerReportCopied] = useState(false);
   // managed subscription OAuth runtimes
-  type Sub = { provider: string; loggedIn: boolean; installed?: boolean; plan?: string; email?: string; method?: string; detail?: string };
-  type SubKey = 'claude' | 'chatgpt' | 'cursor';
-  const [subs, setSubs] = useState<{ claude: Sub; chatgpt: Sub; cursor: Sub } | null>(null);
+  type Sub = {
+    provider: string;
+    runtime: string;
+    label: string;
+    loggedIn: boolean;
+    installed?: boolean;
+    statusSupported?: boolean;
+    loginSupported?: boolean;
+    logoutSupported?: boolean;
+    installSupported?: boolean;
+    plan?: string;
+    email?: string;
+    method?: string;
+    detail?: string;
+  };
+  type SubKey = 'claude' | 'chatgpt' | 'cursor' | 'grok' | 'gemini' | 'copilot' | 'kiro-cli' | 'q';
+  const managedSubRows: { key: SubKey; label: string; runtime: string }[] = [
+    { key: 'claude', label: 'Claude (Anthropic)', runtime: 'claude-code-cli' },
+    { key: 'chatgpt', label: 'OpenAI (ChatGPT)', runtime: 'codex' },
+    { key: 'cursor', label: 'Cursor', runtime: 'cursor-cli' },
+    { key: 'grok', label: 'xAI Grok Build', runtime: 'grok' },
+    { key: 'gemini', label: 'Google Gemini CLI', runtime: 'gemini' },
+    { key: 'copilot', label: 'GitHub Copilot CLI', runtime: 'copilot' },
+    { key: 'kiro-cli', label: 'Kiro CLI', runtime: 'kiro-cli' },
+    { key: 'q', label: 'Amazon Q CLI (legacy)', runtime: 'q' },
+  ];
+  const [subs, setSubs] = useState<Record<SubKey, Sub> | null>(null);
   const [subsBusy, setSubsBusy] = useState(false);
   const [subBusy, setSubBusy] = useState<string | null>(null);
 
@@ -161,7 +185,7 @@ export function Settings({ store, navigate }: { store: FleetStore; navigate?: (v
     // Kick a FRESH check so the card reflects the true latest when you open
     // Settings (the cached status above can lag a release until the next check).
     void call<typeof updStatus>('update:check').then((s) => { if (s) setUpdStatus(s); }).catch(() => {});
-    setSubs(await call<{ claude: Sub; chatgpt: Sub; cursor: Sub }>('subs:status').catch(() => null));
+    setSubs(await call<Record<SubKey, Sub>>('subs:status').catch(() => null));
     void checkStackInstalls();
   }
   async function reloadManagerCapabilities() {
@@ -170,14 +194,21 @@ export function Settings({ store, navigate }: { store: FleetStore; navigate?: (v
   }
   async function recheckSubs() {
     setSubsBusy(true);
-    try { setSubs(await call<{ claude: Sub; chatgpt: Sub; cursor: Sub }>('subs:status').catch(() => null)); }
+    try { setSubs(await call<Record<SubKey, Sub>>('subs:status').catch(() => null)); }
     finally { setSubsBusy(false); }
   }
   async function signinSub(provider: SubKey) {
     setSubBusy(provider);
     try {
-      const r = await call<{ started: boolean; url?: string; error?: string }>('subs:signin', provider);
-      if (r.error) window.alert(`sign-in failed: ${r.error}`);
+      const r = await call<{ started: boolean; url?: string; command?: string; error?: string }>('subs:signin', provider);
+      if (r.error) {
+        if (r.command) {
+          try { await navigator.clipboard.writeText(r.command); } catch { /* clipboard best-effort */ }
+          window.alert(`Couldn't open Terminal automatically — the command is copied to your clipboard. Paste it into a terminal:\n\n${r.command}`);
+        } else {
+          window.alert(`sign-in failed: ${r.error}`);
+        }
+      }
       // The OAuth flow runs in your browser; re-check status shortly after.
       setTimeout(() => void recheckSubs(), 4000);
     } finally {
@@ -189,7 +220,8 @@ export function Settings({ store, navigate }: { store: FleetStore; navigate?: (v
     try {
       const r = await call<{ ok: boolean; ran: boolean; command?: string; error?: string }>('subs:install', provider);
       if (r.ran) {
-        window.alert('Opened Terminal to install the Cursor CLI. Let it finish, then click “Re-check”.');
+        const label = managedSubRows.find((row) => row.key === provider)?.label ?? provider;
+        window.alert(`Opened Terminal to install ${label}. Let it finish, then click “Re-check”.`);
         setTimeout(() => void recheckSubs(), 8000);
       } else if (r.command) {
         try { await navigator.clipboard.writeText(r.command); } catch { /* clipboard best-effort */ }
@@ -202,7 +234,8 @@ export function Settings({ store, navigate }: { store: FleetStore; navigate?: (v
     }
   }
   async function signoutSub(provider: SubKey) {
-    if (!window.confirm(`Sign out of ${provider === 'claude' ? 'Claude' : provider === 'cursor' ? 'Cursor' : 'ChatGPT'}? Agents on that runtime will lose subscription access until you sign back in.`)) return;
+    const label = managedSubRows.find((row) => row.key === provider)?.label ?? provider;
+    if (!window.confirm(`Sign out of ${label}? Agents on that runtime will lose subscription access until you sign back in.`)) return;
     setSubBusy(provider);
     try {
       await call('subs:signout', provider);
@@ -1178,6 +1211,33 @@ export function Settings({ store, navigate }: { store: FleetStore; navigate?: (v
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  function subStatusNode(s: Sub | undefined) {
+    if (s?.loggedIn) {
+      return (
+        <span className="ok-text">
+          ● signed in
+          {s.plan ? ` · ${s.plan}` : ''}
+          {s.email ? ` · ${s.email}` : ''}
+          {!s.email && s.detail ? ` · ${s.detail}` : ''}
+        </span>
+      );
+    }
+    if (s?.installed === false) return <span className="warn-text" title={s.detail}>○ CLI not installed</span>;
+    if (s?.installed && s.statusSupported === false) return <span className="muted" title={s.detail}>○ available · status in CLI</span>;
+    return <span className="muted" title={s?.detail}>○ not signed in</span>;
+  }
+  function subPrimaryLabel(s: Sub | undefined): string {
+    if (s?.installed === false) return s.installSupported ? 'Install…' : 'Install unavailable';
+    if (s?.loggedIn && s.loginSupported) return 'Switch account';
+    if (s?.statusSupported === false && s?.loginSupported) return 'Open CLI';
+    return s?.loginSupported ? 'Sign in' : 'Managed in CLI';
+  }
+  function subPrimaryDisabled(key: SubKey, s: Sub | undefined): boolean {
+    if (subBusy === key) return true;
+    if (s?.installed === false) return !s.installSupported;
+    return !s?.loginSupported;
+  }
+
   return (
     <div className="view">
       <header className="view-head">
@@ -1374,43 +1434,41 @@ export function Settings({ store, navigate }: { store: FleetStore; navigate?: (v
       <section className="card">
         <h3>Managed subscription sign-ins</h3>
         <p className="muted small" style={{ marginTop: -4 }}>
-          CLI OAuth that IDACC can inspect and launch today: <span className="mono">claude-*</span>, <span className="mono">codex</span>, and <span className="mono">cursor-cli</span>. Other paid/API provider accounts are configured under <b>Inference backends</b>.
+          Local CLI sign-ins and subscription-backed runtimes. Some CLIs expose status/logout; others keep account state inside their own TUI. Metered API providers still live under <b>Inference backends</b>.
         </p>
-        {([
-          ['claude', 'Claude (Anthropic)', subs?.claude],
-          ['chatgpt', 'OpenAI (ChatGPT)', subs?.chatgpt],
-          ['cursor', 'Cursor', subs?.cursor],
-        ] as [SubKey, string, Sub | undefined][]).map(([key, label, s]) => (
-          <div className="kv" key={key} style={{ marginBottom: 8 }}>
-            <span>{label}</span>
-            <b>
-              {s?.loggedIn ? (
-                <span className="ok-text">
-                  ● signed in
-                  {s.plan ? ` · ${s.plan}` : ''}
-                  {s.email ? ` · ${s.email}` : ''}
-                  {!s.email && s.detail ? ` · ${s.detail}` : ''}
+        {managedSubRows.map(({ key, label, runtime }) => {
+          const s = subs?.[key];
+          const canInstall = s?.installed === false && s.installSupported;
+          const canLaunch = s?.installed !== false && s?.loginSupported;
+          return (
+            <div className="kv" key={key} style={{ marginBottom: 8 }}>
+              <span>{label}</span>
+              <b>
+                {subStatusNode(s)}
+                <span className="muted small" style={{ marginLeft: 8 }} title="Managed runtime id">
+                  <span className="mono">{s?.runtime ?? runtime}</span>
                 </span>
-              ) : s?.installed === false ? (
-                <span className="warn-text" title={s.detail}>○ CLI not installed</span>
-              ) : (
-                <span className="muted">○ not signed in</span>
-              )}
-              <span className="row-actions" style={{ display: 'inline-flex', marginLeft: 12 }}>
-                <button className="btn" disabled={subBusy === key} onClick={() => void (s?.installed === false ? installSub(key) : signinSub(key))} title={s?.installed === false ? s.detail : undefined}>
-                  {s?.loggedIn ? 'Switch account' : s?.installed === false ? 'Install…' : 'Sign in'}
-                </button>
-                {s?.loggedIn ? (
-                  <button className="btn" disabled={subBusy === key} onClick={() => void signoutSub(key)}>
-                    Sign out
+                <span className="row-actions" style={{ display: 'inline-flex', marginLeft: 12 }}>
+                  <button
+                    className="btn"
+                    disabled={subPrimaryDisabled(key, s)}
+                    onClick={() => void (canInstall ? installSub(key) : canLaunch ? signinSub(key) : undefined)}
+                    title={s?.detail}
+                  >
+                    {subPrimaryLabel(s)}
                   </button>
-                ) : null}
-              </span>
-            </b>
-          </div>
-        ))}
+                  {s?.loggedIn && s.logoutSupported ? (
+                    <button className="btn" disabled={subBusy === key} onClick={() => void signoutSub(key)}>
+                      Sign out
+                    </button>
+                  ) : null}
+                </span>
+              </b>
+            </div>
+          );
+        })}
         <div className="row-actions" style={{ marginTop: 6 }}>
-          <span className="muted small grow">This is not the full provider universe; it only shows subscription CLIs with managed sign-in/status support.</span>
+          <span className="muted small grow">Perplexity, xAI API, OpenRouter, NVIDIA, Groq, and similar metered accounts stay in Inference backends. The <span className="mono">q</span> row is legacy; prefer <span className="mono">kiro-cli</span> for current Amazon Q/Kiro CLI installs.</span>
           <button className="btn" disabled={subsBusy} onClick={() => void recheckSubs()}>{subsBusy ? 'Checking…' : 'Re-check'}</button>
         </div>
       </section>
