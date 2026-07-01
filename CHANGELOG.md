@@ -8,6 +8,9 @@ Every change pushed or merged to `main` carries its version number in the commit
 subject (`vX.Y.Z: …`), stamped automatically by the `commit-msg` hook — see
 [CONTRIBUTING.md](CONTRIBUTING.md).
 
+## [0.1.431] — 2026-07-01
+- Document local stack install CTAs
+
 ## [0.1.430] — 2026-07-01
 - Automated release of outstanding ID Agents Control Center code.
 
