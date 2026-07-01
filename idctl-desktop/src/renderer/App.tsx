@@ -117,7 +117,6 @@ export function App() {
   useEffect(() => {
     call<string>('app:version').then(setVersion).catch(() => {});
     call<UpdateStatus>('update:status').then(setUpdate).catch(() => {});
-    call<UpdateStatus>('update:check').then(setUpdate).catch(() => {}); // kick a check on launch
     const idagents = (window as { idagents?: { onUpdateStatus?: (cb: (s: unknown) => void) => () => void } }).idagents;
     const off = idagents?.onUpdateStatus?.((s) => setUpdate(s as UpdateStatus));
     return () => off?.();

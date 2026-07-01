@@ -7,7 +7,7 @@
  *      GitHub release from updateRepo.
  *   2. If the manifest version > the running version, download/stage the zip
  *      into userData/staged-update/ and notify the renderer (banner).
- *   3. On "Restart & update" (or, if autoUpgrade, on next quit) a detached
+ *   3. On "Restart & update" (or, if autoUpgrade, on next app launch) a detached
  *      helper waits for this process to exit, swaps the new .app over the
  *      installed bundle, and relaunches it.
  *
@@ -169,15 +169,17 @@ async function stage(manifest: UpdateManifest): Promise<string> {
   return dest;
 }
 
-/** Remove spent download zips from the staging dir, keeping only `keep` (the
- *  pending one). Without this, every staged version's ~100MB zip piled up forever. */
-function pruneStaged(keep: string): void {
+/** Remove spent download zips from the staging dir, keeping only `keep` when a
+ *  pending staged update still exists. Without this, every staged version's
+ *  ~100MB zip can pile up forever. */
+function pruneStaged(keep?: string): void {
   try {
     const dir = stagedDir();
     for (const f of readdirSync(dir)) {
       if (!/^update-.*\.zip$/.test(f)) continue;
       const full = join(dir, f);
-      if (full !== keep) rmSync(full, { force: true });
+      if (keep && full === keep) continue;
+      rmSync(full, { force: true });
     }
   } catch { /* best-effort */ }
 }
@@ -190,6 +192,19 @@ function readStaged(): { version: string; zip: string; notes: string } | null {
   } catch {
     /* ignore */
   }
+  return null;
+}
+
+/** Keep a valid pending update zip and remove everything else, including stale
+ * staged metadata for versions older than or equal to the running app. */
+function cleanupStagedState(): { version: string; zip: string; notes: string } | null {
+  const staged = readStaged();
+  if (staged) {
+    pruneStaged(staged.zip);
+    return staged;
+  }
+  try { rmSync(stagedMetaPath(), { force: true }); } catch { /* ignore */ }
+  pruneStaged();
   return null;
 }
 
@@ -220,7 +235,8 @@ export async function checkForUpdate(): Promise<UpdateStatus> {
       // already-staged build (the sidebar chip handles that quietly).
       if (freshlyStaged) notifyStaged(latest.version, latest.notes);
     } else {
-      status = { ...status, checking: false, available: false, staged: !!readStaged(), latest: latest?.version, lastChecked };
+      const staged = cleanupStagedState();
+      status = { ...status, checking: false, available: !!staged, staged: !!staged, latest: staged?.version ?? latest?.version, notes: staged?.notes ?? status.notes, lastChecked };
     }
   } catch (err) {
     status = { ...status, checking: false, error: err instanceof Error ? err.message : String(err), lastChecked: Date.now() };
@@ -252,11 +268,12 @@ APP_PID="$1"; BUNDLE="$2"; ZIP="$3"
 for i in $(seq 1 240); do kill -0 "$APP_PID" 2>/dev/null || break; sleep 0.25; done
 sleep 0.5
 TMP="$(mktemp -d)"
+APPLIED=0
 if /usr/bin/ditto -x -k "$ZIP" "$TMP"; then
   NEW="$(/usr/bin/find "$TMP" -maxdepth 2 -name '*.app' | head -1)"
   if [ -n "$NEW" ]; then
     /bin/rm -rf "$BUNDLE"
-    /usr/bin/ditto "$NEW" "$BUNDLE" && echo "[apply] bundle swapped"
+    /usr/bin/ditto "$NEW" "$BUNDLE" && APPLIED=1 && echo "[apply] bundle swapped"
   else
     echo "[apply] ERROR: no .app inside the update zip"
   fi
@@ -267,6 +284,10 @@ fi
 # A freshly-downloaded, unsigned .app carries com.apple.quarantine, which makes
 # 'open' silently refuse to relaunch it — strip it before reopening.
 /usr/bin/xattr -dr com.apple.quarantine "$BUNDLE" 2>/dev/null || true
+if [ "$APPLIED" = "1" ]; then
+  /bin/rm -f "$ZIP"
+  echo "[apply] consumed zip removed"
+fi
 ${reopen}
 echo "[apply] relaunch issued"
 `;
@@ -288,10 +309,18 @@ export function startUpdater(win: BrowserWindow): void {
   // If a newer build was already downloaded in a prior session, surface the
   // "Restart & update" chip immediately on launch — don't wait for (or depend
   // on) the next online re-check, which could fail offline and hide it.
-  const staged = readStaged();
+  const staged = cleanupStagedState();
   status = { ...status, current: app.getVersion(), staged: !!staged, available: !!staged, latest: staged?.version ?? status.latest, notes: staged?.notes ?? status.notes };
   // Headless screenshot runs: skip background checks.
   if (process.env.IDCTL_SHOT) return;
+  if (staged && settings()?.autoUpgrade !== false) {
+    emit();
+    setTimeout(() => {
+      const current = readStaged();
+      if (current?.version === staged.version) applyStagedAndRelaunch();
+    }, 1200);
+    return;
+  }
   const hours = settings()?.checkIntervalHours ?? 4;
   // Initial check shortly after launch (let the window settle).
   setTimeout(() => void checkForUpdate(), 2500);

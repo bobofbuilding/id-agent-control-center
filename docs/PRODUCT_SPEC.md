@@ -466,7 +466,9 @@ Manager; this is the plumbing.)
   warnings.
 - **Connection**: manager URL, active team, read-only coordinator status, and an HR Manager Route
   handoff for hierarchy/routing changes.
-- **Self-update**: version, status, **auto-upgrade** toggle, **Check now**.
+- **Self-update**: version, status, **auto-upgrade** toggle, **Check now**. Background checks
+  stage newer builds, auto-upgrade applies a previously staged build on the next app launch, and
+  stale/consumed staged zips are pruned from app storage.
 - **Managed subscription sign-ins**: CLI OAuth/device/browser flows (no API key) for `claude-*`,
   `codex`, `cursor-cli`, `grok`, `gemini`, `copilot`, `kiro-cli`, and legacy `q`. Rows distinguish
   status-inspectable CLIs from TUI-owned account state, auto-detect installed binaries after a
@@ -489,9 +491,8 @@ getSettings/setSettings`, `subs:status/signin/signout/install`, `manager:localCo
 setLocalConcurrency`, `ollama:tags/pull/remove`, `image:getServer/setServer/detectServer`,
 `app:runInTerminal`, `providers:list/add/remove/setDefault/toggle/connect/discover`.
 
-**Polish:** no in-view "Restart & apply now" button despite a "downloaded — restart to apply" status;
-signin success is assumed after a 4s recheck (slow OAuth leaves the card stale); concurrency
-running/queued figures are a snapshot; clipboard fallbacks fail silently.
+**Polish:** signin success is assumed after a 4s recheck (slow OAuth leaves the card stale);
+concurrency running/queued figures are a snapshot; clipboard fallbacks fail silently.
 
 ---
 
