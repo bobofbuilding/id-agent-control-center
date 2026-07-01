@@ -675,28 +675,37 @@ export function AgentTable({ store, onProbe, probeBusy, navigate }: { store: Fle
           <button className="btn" disabled={!!busy} onClick={() => void probeRuntimes()} title="Probe each runtime's backing inference provider for its newest available models (also auto-refreshes every 6h)">Probe runtimes</button>
         </div>
         {showModels ? (
-          <div className="card" style={{ background: 'var(--bg-2)', margin: '0 0 8px', padding: '6px 10px' }}>
+          <div className="card model-lanes-panel">
             <div className="muted small" style={{ marginBottom: 4 }}>
               Assignable harnesses &amp; provider model lanes — auto-refreshed on boot + every 6h, or hit <b>Probe runtimes</b> now.
             </div>
-            {visibleFreshness.map((f) => {
-              const kind = f.kind ?? 'harness';
-              const currentOnly = kind === 'harness' && f.selectable === false;
-              return (
-                <div key={f.runtime} className="row-actions" style={{ gap: 8, alignItems: 'baseline', padding: '2px 0' }}>
-                  <b style={{ minWidth: 170 }}>{f.label ?? runtimeLabel(f.runtime)}</b>
-                  <span className={`chip${currentOnly ? ' brain-review' : ''}`} title={currentOnly ? (f.detail ?? 'Current assignment only; not available for new selection from Settings.') : kind === 'harness' ? 'Settings-available manager execution harness' : f.detail} style={{ minWidth: 86, textAlign: 'center' }}>
-                    {currentOnly ? 'current only' : KIND_LABEL[kind]}
-                  </span>
-                  <span className="muted small" style={{ minWidth: 64 }}>{f.count} model{f.count === 1 ? '' : 's'}</span>
-                  <span className={`small ${currentOnly || f.source === 'curated' || f.source === 'none' ? 'warn-text' : 'ok-text'}`} style={{ minWidth: 140 }}
-                    title={f.detail ?? (f.source === 'curated' ? 'No live model API for this runtime — using a curated fallback list (subscription runtimes have no /models endpoint).' : SOURCE_LABEL[f.source])}>
-                    {currentOnly ? 'not available in Settings' : `${SOURCE_LABEL[f.source]}${f.provider ? ` · ${f.provider}` : ''}`}
-                  </span>
-                  <span className="muted small">{f.lastCheckedMs ? `checked ${agoMs(f.lastCheckedMs)}` : ''}</span>
-                </div>
-              );
-            })}
+            {visibleFreshness.length ? (
+              <div className="model-lanes-grid">
+                <div className="model-lanes-head">runtime</div>
+                <div className="model-lanes-head">type</div>
+                <div className="model-lanes-head">models</div>
+                <div className="model-lanes-head">source</div>
+                <div className="model-lanes-head">checked</div>
+                {visibleFreshness.map((f) => {
+                  const kind = f.kind ?? 'harness';
+                  const currentOnly = kind === 'harness' && f.selectable === false;
+                  return (
+                    <div key={f.runtime} className="model-lanes-row">
+                      <b className="model-lane-name" title={f.label ?? runtimeLabel(f.runtime)}>{f.label ?? runtimeLabel(f.runtime)}</b>
+                      <span className={`chip model-lane-kind${currentOnly ? ' brain-review' : ''}`} title={currentOnly ? (f.detail ?? 'Current assignment only; not available for new selection from Settings.') : kind === 'harness' ? 'Settings-available manager execution harness' : f.detail}>
+                        {currentOnly ? 'current only' : KIND_LABEL[kind]}
+                      </span>
+                      <span className="muted small model-lane-count">{f.count} model{f.count === 1 ? '' : 's'}</span>
+                      <span className={`small model-lane-source ${currentOnly || f.source === 'curated' || f.source === 'none' ? 'warn-text' : 'ok-text'}`}
+                        title={f.detail ?? (f.source === 'curated' ? 'No live model API for this runtime — using a curated fallback list (subscription runtimes have no /models endpoint).' : SOURCE_LABEL[f.source])}>
+                        {currentOnly ? 'not available in Settings' : `${SOURCE_LABEL[f.source]}${f.provider ? ` · ${f.provider}` : ''}`}
+                      </span>
+                      <span className="muted small model-lane-checked">{f.lastCheckedMs ? `checked ${agoMs(f.lastCheckedMs)}` : '—'}</span>
+                    </div>
+                  );
+                })}
+              </div>
+            ) : null}
             {freshness.length === 0 ? <div className="muted small">Loading model freshness…</div> : visibleFreshness.length === 0 ? <div className="muted small">No Settings-available harnesses or provider model lanes yet.</div> : null}
           </div>
         ) : null}

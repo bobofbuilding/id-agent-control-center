@@ -602,6 +602,50 @@ textarea.composer-input { resize: none; line-height: 1.4; min-height: 38px; max-
 /* Action cells / rows */
 .row-actions { display: flex; gap: 6px; justify-content: flex-end; }
 .grid td.row-actions { text-align: right; }
+.model-lanes-panel {
+  background: var(--bg-2);
+  margin: 0 0 8px;
+  padding: 8px 10px;
+}
+.model-lanes-grid {
+  display: grid;
+  grid-template-columns: minmax(150px, 1.1fr) 96px 78px minmax(210px, 1.4fr) 98px;
+  gap: 3px 10px;
+  align-items: center;
+}
+.model-lanes-head {
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: .04em;
+  text-transform: uppercase;
+  padding: 2px 0 3px;
+  border-bottom: 1px solid var(--line);
+}
+.model-lanes-row { display: contents; }
+.model-lane-name,
+.model-lane-source,
+.model-lane-checked {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.model-lane-name {
+  font-size: 13px;
+}
+.model-lane-kind {
+  justify-self: stretch;
+  text-align: center;
+  white-space: nowrap;
+}
+.model-lane-count,
+.model-lane-checked {
+  text-align: right;
+}
+.model-lane-source {
+  font-variant-numeric: tabular-nums;
+}
 .issue-row, .add-provider { display: flex; gap: 8px; margin-top: 12px; flex-wrap: wrap; align-items: center; }
 .add-provider input { flex: 1; min-width: 120px; }
 .provider-catalog-note { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-top: 8px; padding: 7px 9px; border: 1px solid var(--line); border-radius: 8px; background: var(--bg-2); }
@@ -816,4 +860,14 @@ select:focus, input:focus { border-color: var(--accent); }
   .plan-row-note,
   .plan-row-actions { justify-content: flex-start; flex-wrap: wrap; }
   .plan-row-expander { display: none; }
+}
+
+@media (max-width: 760px) {
+  .model-lanes-grid {
+    grid-template-columns: minmax(130px, 1fr) 84px 68px minmax(130px, 1fr);
+  }
+  .model-lanes-head:nth-child(5),
+  .model-lane-checked {
+    display: none;
+  }
 }

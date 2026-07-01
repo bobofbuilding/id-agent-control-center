@@ -291,11 +291,12 @@ and errors.
 
 **Polish:** token numbers are manager-reported harness telemetry for trends, not provider billing
 invoices; stale last-turn samples remain visible but no longer drive the live gauge. The model-lanes
-panel uses the same Settings availability gate as the per-agent Harness dropdown: unavailable curated
-fallback harnesses are hidden unless already assigned, while configured API/provider lanes stay
-read-only until a manager provider-runtime adapter exists. The per-agent Model dropdown follows the
-effective staged Harness catalog: changing Harness resets the staged model to a valid option for that
-harness, and stale saved cross-harness model values show as drift instead of selectable options.
+panel uses aligned runtime/type/models/source/checked columns plus the same Settings availability gate
+as the per-agent Harness dropdown: unavailable curated fallback harnesses are hidden unless already
+assigned, while configured API/provider lanes stay read-only until a manager provider-runtime adapter
+exists. The per-agent Model dropdown follows the effective staged Harness catalog: changing Harness
+resets the staged model to a valid option for that harness, and stale saved cross-harness model values
+show as drift instead of selectable options.
 "Running" is a status-string regex (non-matching healthy statuses show red).
 
 ---
