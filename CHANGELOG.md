@@ -8,6 +8,9 @@ Every change pushed or merged to `main` carries its version number in the commit
 subject (`vX.Y.Z: …`), stamped automatically by the `commit-msg` hook — see
 [CONTRIBUTING.md](CONTRIBUTING.md).
 
+## [0.1.444] — 2026-07-01
+- Add HR validator roster and rename Route to Manage
+
 ## [0.1.443] — 2026-07-01
 - Add HR validator roster and rename Route to Manage
 
