@@ -205,6 +205,15 @@ function truncateDetail(s: string): string {
   return s.replace(/\s+/g, ' ').trim().slice(0, 240);
 }
 
+function readJsonObject(file: string): Record<string, unknown> | null {
+  try {
+    const raw = JSON.parse(readFileSync(file, 'utf8')) as unknown;
+    return raw && typeof raw === 'object' && !Array.isArray(raw) ? raw as Record<string, unknown> : null;
+  } catch {
+    return null;
+  }
+}
+
 function baseStatus(provider: SubProvider, patch: Partial<SubStatus>): SubStatus {
   const meta = SUB_META[provider];
   const evidence = installEvidence(meta);
@@ -334,7 +343,62 @@ async function whoamiStatus(provider: 'kiro-cli' | 'q', command: CommandSpec): P
   }
 }
 
-async function cliPresenceStatus(provider: 'grok' | 'gemini' | 'copilot'): Promise<SubStatus> {
+function geminiLocalAuthEvidence(): { loggedIn: boolean; detail: string; method?: string } {
+  const dir = join(homedir(), '.gemini');
+  const settings = readJsonObject(join(dir, 'settings.json'));
+  const security = settings?.security && typeof settings.security === 'object' ? settings.security as Record<string, unknown> : null;
+  const auth = security?.auth && typeof security.auth === 'object' ? security.auth as Record<string, unknown> : null;
+  const selectedType = typeof auth?.selectedType === 'string' ? auth.selectedType : '';
+  const oauth = readJsonObject(join(dir, 'oauth_creds.json'));
+  const expiry = typeof oauth?.expiry_date === 'number' ? oauth.expiry_date : 0;
+  const hasOauthCache = Boolean(oauth?.access_token && oauth?.refresh_token);
+  const oauthFresh = hasOauthCache && (!expiry || expiry > Date.now());
+  const hasApiEnv = Boolean(process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY);
+  const vertexEnv = Boolean(process.env.GOOGLE_CLOUD_PROJECT || process.env.GOOGLE_APPLICATION_CREDENTIALS);
+  if (selectedType === 'gemini-api-key' || selectedType === 'api-key') {
+    return hasApiEnv
+      ? { loggedIn: true, method: selectedType, detail: 'Gemini CLI is configured for API-key auth through the local environment.' }
+      : { loggedIn: false, method: selectedType, detail: 'Gemini CLI is set to API-key auth, but IDACC does not see GEMINI_API_KEY or GOOGLE_API_KEY in this app environment.' };
+  }
+  if (selectedType === 'vertex-ai' || selectedType === 'vertex') {
+    return vertexEnv
+      ? { loggedIn: true, method: selectedType, detail: 'Gemini CLI is configured for Vertex AI through local Google Cloud environment evidence.' }
+      : { loggedIn: false, method: selectedType, detail: 'Gemini CLI is set to Vertex AI, but IDACC does not see GOOGLE_CLOUD_PROJECT or GOOGLE_APPLICATION_CREDENTIALS in this app environment.' };
+  }
+  if (selectedType === 'oauth-personal') {
+    return {
+      loggedIn: false,
+      method: selectedType,
+      detail: oauthFresh
+        ? 'Gemini OAuth cache exists, but oauth-personal may fail for individual Gemini Code Assist accounts; switch Gemini CLI to API key/Vertex or configure Google Gemini under Inference backends before assigning agents.'
+        : 'Gemini CLI is set to oauth-personal, but no fresh OAuth cache was found. Use Manage account or configure Google Gemini under Inference backends.',
+    };
+  }
+  if (hasApiEnv) return { loggedIn: true, method: 'env-api-key', detail: 'Gemini API key is present in the local environment.' };
+  if (vertexEnv) return { loggedIn: true, method: 'env-vertex', detail: 'Google Cloud Vertex environment evidence is present.' };
+  return {
+    loggedIn: false,
+    method: selectedType || undefined,
+    detail: hasOauthCache
+      ? 'Gemini OAuth cache exists, but no supported Gemini CLI auth mode is selected. Use Manage account to choose API key/Vertex, or add Google Gemini under Inference backends.'
+      : 'Gemini CLI is installed but no usable local auth evidence was found. Use Manage account or configure Google Gemini under Inference backends.',
+  };
+}
+
+async function geminiStatus(): Promise<SubStatus> {
+  const meta = SUB_META.gemini;
+  if (!cliPath(meta.bin)) return notInstalled('gemini');
+  const evidence = geminiLocalAuthEvidence();
+  return baseStatus('gemini', {
+    installed: true,
+    loggedIn: evidence.loggedIn,
+    statusSupported: true,
+    method: evidence.method,
+    detail: evidence.detail,
+  });
+}
+
+async function cliPresenceStatus(provider: 'grok' | 'copilot'): Promise<SubStatus> {
   const meta = SUB_META[provider];
   if (!cliPath(meta.bin)) return notInstalled(provider);
   return baseStatus(provider, { installed: true, statusSupported: false, detail: meta.statusNote });
@@ -348,9 +412,10 @@ async function providerStatus(provider: SubProvider): Promise<SubStatus> {
     case 'kiro-cli': return whoamiStatus('kiro-cli', ['kiro-cli', ['whoami']]);
     case 'q': return whoamiStatus('q', ['q', ['whoami']]);
     case 'grok':
-    case 'gemini':
     case 'copilot':
       return cliPresenceStatus(provider);
+    case 'gemini':
+      return geminiStatus();
   }
 }
 

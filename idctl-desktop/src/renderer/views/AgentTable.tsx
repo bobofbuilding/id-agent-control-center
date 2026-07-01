@@ -242,6 +242,13 @@ export function AgentTable({ store, onProbe, probeBusy, navigate }: { store: Fle
   const selectedCooldown = sel ? cooldownFor(sel, coolingRows) : null;
   const selectedRateLimit = sel ? runtimeRateLimitOf(sel) : null;
   const selectedFailover = sel ? runtimeFailoverOf(sel) : null;
+  const currentRuntimeSet = new Set(shown.map((a) => runtimeOf(a)).filter(Boolean) as string[]);
+  const visibleFreshness = freshness.filter((f) => {
+    if (!f.count && f.source === 'none') return false;
+    const kind = f.kind ?? 'harness';
+    if (kind !== 'harness') return true;
+    return f.selectable !== false || currentRuntimeSet.has(f.runtime);
+  });
 
   useEffect(() => {
     call<Record<string, string[]>>('runtime:models').then(setCatalog).catch(() => setCatalog({}));
@@ -571,7 +578,7 @@ export function AgentTable({ store, onProbe, probeBusy, navigate }: { store: Fle
         <td onClick={(e) => e.stopPropagation()}>
           {isLocal ? (
             <select className="cell-select" value={displayRuntime ?? ''} onChange={(e) => stageRuntime(a, e.target.value)}
-              title="Execution harness. API/local provider model lanes are shown in Model lanes; direct provider assignment needs manager runtime support.">
+              title="Settings-available execution harness. API/local provider model lanes are shown in Model lanes; direct provider assignment needs manager runtime support.">
               {runtimeOpts.map((r) => <option key={r} value={r}>{runtimeLabel(r)}</option>)}
             </select>
           ) : (
@@ -644,7 +651,7 @@ export function AgentTable({ store, onProbe, probeBusy, navigate }: { store: Fle
             </span>
           ) : null}
           <button className="btn small" onClick={() => setShowModels((v) => !v)} title="Show each execution harness and configured provider model lane, where its model list comes from, and when it was last refreshed">
-            {showModels ? 'Hide model lanes' : `Model lanes${freshness.length ? ` (${freshness.filter((f) => f.count || f.source !== 'none').length})` : ''}`}
+            {showModels ? 'Hide model lanes' : `Model lanes${visibleFreshness.length ? ` (${visibleFreshness.length})` : ''}`}
           </button>
           {navigate ? <button className="btn small" onClick={() => navigate('teams:route')} title="Change team coordinators and primary routing in HR Manager Route → Hierarchy & sync">Open HR Route</button> : null}
           <button className="btn" disabled={!!busy} onClick={() => void probeRuntimes()} title="Probe each runtime's backing inference provider for its newest available models (also auto-refreshes every 6h)">Probe runtimes</button>
@@ -652,23 +659,27 @@ export function AgentTable({ store, onProbe, probeBusy, navigate }: { store: Fle
         {showModels ? (
           <div className="card" style={{ background: 'var(--bg-2)', margin: '0 0 8px', padding: '6px 10px' }}>
             <div className="muted small" style={{ marginBottom: 4 }}>
-              Harness &amp; provider model lanes — auto-refreshed on boot + every 6h, or hit <b>Probe runtimes</b> now.
+              Assignable harnesses &amp; provider model lanes — auto-refreshed on boot + every 6h, or hit <b>Probe runtimes</b> now.
             </div>
-            {freshness.filter((f) => f.count || f.source !== 'none').map((f) => (
-              <div key={f.runtime} className="row-actions" style={{ gap: 8, alignItems: 'baseline', padding: '2px 0' }}>
-                <b style={{ minWidth: 170 }}>{f.label ?? runtimeLabel(f.runtime)}</b>
-                <span className="chip" title={f.kind === 'harness' ? 'Manager-supported execution harness' : f.detail} style={{ minWidth: 72, textAlign: 'center' }}>
-                  {KIND_LABEL[f.kind ?? 'harness']}
-                </span>
-                <span className="muted small" style={{ minWidth: 64 }}>{f.count} model{f.count === 1 ? '' : 's'}</span>
-                <span className={`small ${f.source === 'curated' || f.source === 'none' ? 'warn-text' : 'ok-text'}`} style={{ minWidth: 140 }}
-                  title={f.detail ?? (f.source === 'curated' ? 'No live model API for this runtime — using a curated fallback list (subscription runtimes have no /models endpoint).' : SOURCE_LABEL[f.source])}>
-                  {SOURCE_LABEL[f.source]}{f.provider ? ` · ${f.provider}` : ''}
-                </span>
-                <span className="muted small">{f.lastCheckedMs ? `checked ${agoMs(f.lastCheckedMs)}` : ''}</span>
-              </div>
-            ))}
-            {freshness.length === 0 ? <div className="muted small">Loading model freshness…</div> : null}
+            {visibleFreshness.map((f) => {
+              const kind = f.kind ?? 'harness';
+              const currentOnly = kind === 'harness' && f.selectable === false;
+              return (
+                <div key={f.runtime} className="row-actions" style={{ gap: 8, alignItems: 'baseline', padding: '2px 0' }}>
+                  <b style={{ minWidth: 170 }}>{f.label ?? runtimeLabel(f.runtime)}</b>
+                  <span className={`chip${currentOnly ? ' brain-review' : ''}`} title={currentOnly ? (f.detail ?? 'Current assignment only; not available for new selection from Settings.') : kind === 'harness' ? 'Settings-available manager execution harness' : f.detail} style={{ minWidth: 86, textAlign: 'center' }}>
+                    {currentOnly ? 'current only' : KIND_LABEL[kind]}
+                  </span>
+                  <span className="muted small" style={{ minWidth: 64 }}>{f.count} model{f.count === 1 ? '' : 's'}</span>
+                  <span className={`small ${currentOnly || f.source === 'curated' || f.source === 'none' ? 'warn-text' : 'ok-text'}`} style={{ minWidth: 140 }}
+                    title={f.detail ?? (f.source === 'curated' ? 'No live model API for this runtime — using a curated fallback list (subscription runtimes have no /models endpoint).' : SOURCE_LABEL[f.source])}>
+                    {currentOnly ? 'not available in Settings' : `${SOURCE_LABEL[f.source]}${f.provider ? ` · ${f.provider}` : ''}`}
+                  </span>
+                  <span className="muted small">{f.lastCheckedMs ? `checked ${agoMs(f.lastCheckedMs)}` : ''}</span>
+                </div>
+              );
+            })}
+            {freshness.length === 0 ? <div className="muted small">Loading model freshness…</div> : visibleFreshness.length === 0 ? <div className="muted small">No Settings-available harnesses or provider model lanes yet.</div> : null}
           </div>
         ) : null}
         {configDraftList.length ? (
@@ -682,7 +693,7 @@ export function AgentTable({ store, onProbe, probeBusy, navigate }: { store: Fle
         ) : null}
         <table className="grid">
           <thead>
-            <tr><th>Agent</th><th>Status</th><th title="Manager-supported execution harness. Configured API/local providers appear under Model lanes until the manager exposes direct provider-runtime assignment.">Harness</th><th>Model</th><th title="Reasoning effort — lower spends fewer subscription tokens (codex & Claude CLI only)">Effort</th><th title="Output speed — Claude Code runtimes only">Speed</th><th>Port</th><th>Actions</th>{onProbe ? <th>Probe</th> : null}</tr>
+            <tr><th>Agent</th><th>Status</th><th title="Settings-available manager execution harness. Configured API/local provider model lanes appear under Model lanes until the manager exposes direct provider-runtime assignment.">Harness</th><th>Model</th><th title="Reasoning effort — lower spends fewer subscription tokens (codex & Claude CLI only)">Effort</th><th title="Output speed — Claude Code runtimes only">Speed</th><th>Port</th><th>Actions</th>{onProbe ? <th>Probe</th> : null}</tr>
           </thead>
           <tbody>
             {groups.flatMap((g) => {

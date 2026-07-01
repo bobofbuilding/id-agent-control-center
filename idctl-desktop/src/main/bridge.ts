@@ -48,7 +48,8 @@ import { ProviderClient } from '../../../idctl/src/settings/ProviderClient.ts';
 import { discoverLocalServers, type DiscoveredServer } from '../../../idctl/src/settings/localDiscovery.ts';
 import { type HeadroomPilotSettings, type ProviderProfile, type McpServerProfile, type ProjectEntry } from '../../../idctl/src/settings/schema.ts';
 import { providerNeedsKey } from '../../../idctl/src/settings/providerCatalog.ts';
-import { buildProviderModelLanes, buildRuntimeCatalog, RUNTIMES, providerKindToRuntimes, isLocalProvider, type RuntimeModelLaneKind } from '../../../idctl/src/settings/runtimeCatalog.ts';
+import { buildProviderModelLanes, buildRuntimeCatalog, RUNTIMES, providerKindToRuntimes, isLocalProvider, settingsAvailableRuntimeSet, type RuntimeModelLaneKind } from '../../../idctl/src/settings/runtimeCatalog.ts';
+import { subsStatus } from './subscriptions.ts';
 import { testMcpServer } from './mcpTest.ts';
 import { headroomBackendContractAudit, headroomCoreAudit, headroomStatus } from './headroom.ts';
 import { headroomPluginPathAudit } from './headroomPlugin.ts';
@@ -400,9 +401,11 @@ type RuntimeFreshness = {
   selectable?: boolean;
   detail?: string;
 };
-function runtimeFreshness(): RuntimeFreshness[] {
+async function runtimeFreshness(): Promise<RuntimeFreshness[]> {
   const providers = loadSettings().providers;
   const cat = runtimeCatalogWithCodex();
+  const managed = await subsStatus().then((rows) => Object.values(rows)).catch(() => []);
+  const available = settingsAvailableRuntimeSet(listProvidersEnriched(), managed);
   // Newest enabled provider that has synced models AND backs this runtime.
   const providerFor = (rt: string): ProviderProfile | undefined =>
     providers
@@ -416,15 +419,17 @@ function runtimeFreshness(): RuntimeFreshness[] {
       .sort((a, b) => (b.lastSync?.at ?? 0) - (a.lastSync?.at ?? 0))[0];
   const harnessRows = RUNTIMES.map((rt): RuntimeFreshness => {
     const models = cat[rt] ?? [];
+    const selectable = available.has(rt);
+    const unavailableDetail = selectable ? undefined : 'Not currently available from Settings; install/sign in or sync a matching backend before assigning this harness.';
     if (rt === 'codex') {
       let mt: number | null = null;
       try { mt = statSync(join(homedir(), '.codex', 'models_cache.json')).mtimeMs; } catch { mt = null; }
       const live = codexModelsFromCache().length > 0;
-      return { runtime: rt, kind: 'harness', models, count: models.length, source: live ? 'codex-cache' : 'curated', lastCheckedMs: live ? mt : null, selectable: true };
+      return { runtime: rt, kind: 'harness', models, count: models.length, source: live ? 'codex-cache' : 'curated', lastCheckedMs: live ? mt : null, selectable, detail: unavailableDetail };
     }
     const p = providerFor(rt);
-    if (p) return { runtime: rt, kind: 'harness', models, count: models.length, source: 'provider', provider: p.name, lastCheckedMs: p.lastSync?.at ?? null, selectable: true };
-    return { runtime: rt, kind: 'harness', models, count: models.length, source: models.length ? 'curated' : 'none', lastCheckedMs: null, selectable: true };
+    if (p) return { runtime: rt, kind: 'harness', models, count: models.length, source: 'provider', provider: p.name, lastCheckedMs: p.lastSync?.at ?? null, selectable, detail: unavailableDetail };
+    return { runtime: rt, kind: 'harness', models, count: models.length, source: models.length ? 'curated' : 'none', lastCheckedMs: null, selectable, detail: unavailableDetail };
   });
   const providerRows = buildProviderModelLanes(providers).map((lane): RuntimeFreshness => ({
     runtime: lane.id,

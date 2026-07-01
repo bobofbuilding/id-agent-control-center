@@ -290,8 +290,11 @@ and errors.
 **Data & actions:** `usage` (`/usage`, null when absent), `agents:allTeams`, `probeAll/probeOne`.
 
 **Polish:** token numbers are manager-reported harness telemetry for trends, not provider billing
-invoices; stale last-turn samples remain visible but no longer drive the live gauge. "Running" is a
-status-string regex (non-matching healthy statuses show red).
+invoices; stale last-turn samples remain visible but no longer drive the live gauge. The model-lanes
+panel uses the same Settings availability gate as the per-agent Harness dropdown: unavailable curated
+fallback harnesses are hidden unless already assigned, while configured API/provider lanes stay
+read-only until a manager provider-runtime adapter exists. "Running" is a status-string regex
+(non-matching healthy statuses show red).
 
 ---
 
@@ -478,7 +481,10 @@ Manager; this is the plumbing.)
   backends.
   Agent Harness pickers only offer runtimes that Settings can currently prove through sign-in,
   install, route-ready API backend, or synced local-backend evidence; existing assigned runtimes
-  remain visible as the current value for review.
+  remain visible as the current value for review. Gemini CLI `oauth-personal` evidence is not treated
+  as assignable by itself because current Gemini Code Assist flows can authenticate in the browser
+  yet still fail the CLI project auth step; use Gemini API key/Vertex auth or the Google Gemini
+  inference backend for agent routing.
 - **Local models (Ollama)**: parallel-inference cap (1–16), installed chips, **Download** by id
   (streamed progress), a searchable **catalog** with capability filters and hardware fit-warnings.
 - **Local image generator**: URL + API style (Automatic1111 / OpenAI-images), **Detect**, Save/Clear

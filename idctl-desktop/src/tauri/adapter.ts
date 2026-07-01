@@ -14,7 +14,7 @@ import { SCOPE_PRESETS, TTL_PRESETS } from '../../../idctl/src/keys/types.ts';
 import type { AgentAccount, KeyAuthorityTarget, LegacyKeyAuthority, SessionKey } from '../../../idctl/src/keys/types.ts';
 import { defaultHeadroomPilotSettings, type HeadroomPilotSettings, type ProviderProfile, type McpServerProfile, type ProjectEntry } from '../../../idctl/src/settings/schema.ts';
 import { providerNeedsKey } from '../../../idctl/src/settings/providerCatalog.ts';
-import { buildProviderModelLanes, buildRuntimeCatalog, isLocalProvider, providerKindToRuntimes, RUNTIMES } from '../../../idctl/src/settings/runtimeCatalog.ts';
+import { buildProviderModelLanes, buildRuntimeCatalog, isLocalProvider, providerKindToRuntimes, RUNTIMES, settingsAvailableRuntimeSet } from '../../../idctl/src/settings/runtimeCatalog.ts';
 import type { LibraryPluginInspection, LibrarySkillEntry, McpServerSpec, CreateSkillInput, ProjectPluginSkillResult } from '../../../idctl/src/api/client.ts';
 import { secp256k1 } from '@noble/curves/secp256k1.js';
 import { keccak_256 } from '@noble/hashes/sha3.js';
@@ -118,6 +118,7 @@ function enrichProviders(list: ProviderProfile[]) {
 function runtimeFreshnessLocal() {
   const providers = lsGet<ProviderProfile[]>('idctl.providers', []);
   const cat = buildRuntimeCatalog(providers);
+  const available = settingsAvailableRuntimeSet(enrichProviders(providers), []);
   const providerFor = (rt: string): ProviderProfile | undefined =>
     providers
       .filter(
@@ -130,11 +131,13 @@ function runtimeFreshnessLocal() {
       .sort((a, b) => (b.lastSync?.at ?? 0) - (a.lastSync?.at ?? 0))[0];
   const harnessRows = RUNTIMES.map((rt) => {
     const models = cat[rt] ?? [];
+    const selectable = available.has(rt);
+    const unavailableDetail = selectable ? undefined : 'Not currently available from Settings in this shell; install/sign in or sync a matching backend before assigning this harness.';
     const p = providerFor(rt);
     if (p) {
-      return { runtime: rt, kind: 'harness', models, count: models.length, source: 'provider', provider: p.name, lastCheckedMs: p.lastSync?.at ?? null, selectable: true };
+      return { runtime: rt, kind: 'harness', models, count: models.length, source: 'provider', provider: p.name, lastCheckedMs: p.lastSync?.at ?? null, selectable, detail: unavailableDetail };
     }
-    return { runtime: rt, kind: 'harness', models, count: models.length, source: models.length ? 'curated' : 'none', lastCheckedMs: null, selectable: true };
+    return { runtime: rt, kind: 'harness', models, count: models.length, source: models.length ? 'curated' : 'none', lastCheckedMs: null, selectable, detail: unavailableDetail };
   });
   const providerRows = buildProviderModelLanes(providers).map((lane) => ({
     runtime: lane.id,

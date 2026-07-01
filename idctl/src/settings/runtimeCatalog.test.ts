@@ -12,20 +12,26 @@ const managed = [
   { runtime: 'codex', installed: true, loggedIn: true, statusSupported: true },
   { runtime: 'cursor-cli', installed: true, loggedIn: false, statusSupported: true },
   { runtime: 'grok', installed: true, loggedIn: false, statusSupported: false },
-  { runtime: 'gemini', installed: false, loggedIn: false, statusSupported: false },
+  { runtime: 'gemini', installed: true, loggedIn: false, statusSupported: true },
   { runtime: 'claude-code-cli', installed: true, loggedIn: true, statusSupported: true },
 ];
 
 assert.deepEqual(
   offerableRuntimes(providers, undefined, managed),
   ['codex', 'grok', 'claude-code-cli', 'claude-code-local', 'claude-agent-sdk', 'ollama'],
-  'runtime pickers should list only Settings-proven runtimes, not the whole catalog',
+  'runtime pickers should list only Settings-proven runtimes, not the whole catalog or an installed-but-not-usable Gemini CLI',
 );
 
 assert.deepEqual(
   offerableRuntimes([], 'cursor-cli', []),
   ['cursor-cli'],
   'current assigned runtimes should remain visible even when no longer newly available',
+);
+
+assert.deepEqual(
+  offerableRuntimes([], undefined, [{ runtime: 'gemini', installed: true, loggedIn: false, statusSupported: false }]),
+  [],
+  'Gemini CLI should not become assignable from binary presence alone',
 );
 
 console.log('[runtimeCatalog.test] OK');

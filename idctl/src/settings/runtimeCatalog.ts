@@ -209,7 +209,21 @@ function managedRuntimeReady(s: ManagedRuntimeForOffer): boolean {
   if (s.statusSupported === true) return s.loggedIn === true;
   // These CLIs do not expose a safe non-interactive account status in Settings;
   // binary presence is the strongest read-only availability signal we have.
-  return s.installed === true && ['grok', 'gemini', 'copilot'].includes(s.runtime);
+  // Gemini is excluded because IDACC can inspect non-secret local auth mode
+  // evidence, and oauth-personal can be installed yet unusable for assignment.
+  return s.installed === true && ['grok', 'copilot'].includes(s.runtime);
+}
+
+/**
+ * Runtime ids that Settings can prove are currently assignable. This intentionally
+ * excludes provider:model reference lanes, because the manager cannot execute a
+ * provider id directly until a provider-runtime adapter exists.
+ */
+export function settingsAvailableRuntimeSet(
+  providers: ProviderForRuntime[],
+  managed: ManagedRuntimeForOffer[] = [],
+): Set<string> {
+  return new Set(offerableRuntimes(providers, undefined, managed));
 }
 
 /**
