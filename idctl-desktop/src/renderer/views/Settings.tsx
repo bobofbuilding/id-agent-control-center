@@ -1214,6 +1214,7 @@ export function Settings({ store, navigate }: { store: FleetStore; navigate?: (v
     if (!ports.length) return null;
     return ports.length === 1 ? `:${ports[0]}` : `ports ${ports.join('/')}`;
   }
+  type SharedStackPort = { port: number; names: string[]; suggested?: number };
   function stackPortConflicts(s: LocalStackEntry): { live: number[]; configured: { port: number; names: string[] }[] } {
     const ports = stackClaimedPorts(s);
     const live = ports.filter((p) => runningPorts.has(p));
@@ -1225,11 +1226,50 @@ export function Settings({ store, navigate }: { store: FleetStore; navigate?: (v
       .filter((hit) => hit.names.length > 0);
     return { live, configured };
   }
+  function stackSharedPorts(s: LocalStackEntry): SharedStackPort[] {
+    const ports = stackClaimedPorts(s);
+    const configuredPorts = new Set(providers.map(providerPort).filter((p): p is number => typeof p === 'number'));
+    const catalogPorts = new Map<number, string[]>();
+    for (const row of TOP_LOCAL_STACKS) {
+      for (const port of stackClaimedPorts(row)) {
+        const names = catalogPorts.get(port) ?? [];
+        names.push(row.name);
+        catalogPorts.set(port, names);
+      }
+    }
+    const blocked = new Set<number>([...catalogPorts.keys(), ...runningPorts, ...configuredPorts]);
+    const suggest = (port: number): number | undefined => {
+      for (let next = port + 1; next < Math.min(65535, port + 50); next += 1) {
+        if (!blocked.has(next)) return next;
+      }
+      return undefined;
+    };
+    return ports
+      .map((port) => ({
+        port,
+        names: (catalogPorts.get(port) ?? []).filter((name) => name !== s.name),
+        suggested: suggest(port),
+      }))
+      .filter((hit) => hit.names.length > 0);
+  }
+  function stackPortEditHint(s: LocalStackEntry, port: number, suggested?: number): string {
+    if (!suggested) return 'choose another free host port before starting a second server on that stack';
+    const cmd = stackCommand(s.install);
+    const portRe = String(port).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const dockerMap = new RegExp(`-p\\\\s+(?:(?:\\\\d{1,3}\\\\.){3}\\\\d{1,3}:)?${portRe}:(\\\\d+)`);
+    const dockerHit = cmd.match(dockerMap);
+    if (dockerHit) return `change the host mapping to -p ${suggested}:${dockerHit[1]}`;
+    if (new RegExp(`--port\\\\s+${portRe}`).test(cmd)) return `change --port ${port} to --port ${suggested}`;
+    if (new RegExp(`--tcp\\\\s+${portRe}`).test(cmd)) return `change --tcp ${port} to --tcp ${suggested}`;
+    return `use port ${suggested} when starting this server`;
+  }
   function reviewStackInstall(s: LocalStackEntry) {
     const conflicts = stackPortConflicts(s);
+    const shared = stackSharedPorts(s);
     const warnings = [
       conflicts.live.length ? `Live server detected on port ${conflicts.live.join(', ')}; stop it or edit the Terminal command to use another port.` : '',
       ...conflicts.configured.map((hit) => `Configured inference backend on port ${hit.port}: ${hit.names.join(', ')}.`),
+      ...shared.map((hit) => `Port ${hit.port} is also used by ${hit.names.join(', ')}; run only one on that port or ${stackPortEditHint(s, hit.port, hit.suggested)}.`),
     ].filter(Boolean);
     if (warnings.length && !window.confirm([
       `Review install for ${s.name}?`,
@@ -1295,10 +1335,7 @@ export function Settings({ store, navigate }: { store: FleetStore; navigate?: (v
       setStackMsg(`Terminal automation was blocked — ${action} command copied to clipboard`);
     }
   }
-  /** Real port conflict only: one of this stack's claimed ports is ACTUALLY in use right now
-   *  by a detected running server or a configured provider. We no longer warn about stacks
-   *  that merely share a possible port unless the port is live/configured; run "Scan running"
-   *  to refresh what's live. */
+  /** Port conflict display separates hard evidence (live/configured) from lighter shared-default risk. */
   function stackPortWarn(s: LocalStackEntry): { level: 'warn' | 'error'; msg: string } | null {
     const conflicts = stackPortConflicts(s);
     if (conflicts.live.length) {
@@ -1306,6 +1343,14 @@ export function Settings({ store, navigate }: { store: FleetStore; navigate?: (v
     }
     if (conflicts.configured.length) {
       return { level: 'warn', msg: `backend configured on port ${conflicts.configured.map((hit) => hit.port).join(', ')}; scan running servers before reusing it` };
+    }
+    const shared = stackSharedPorts(s);
+    if (shared.length) {
+      const hit = shared[0];
+      return {
+        level: 'warn',
+        msg: `shared port ${hit.port} with ${hit.names.join(', ')}; ${stackPortEditHint(s, hit.port, hit.suggested)}`,
+      };
     }
     return null;
   }
