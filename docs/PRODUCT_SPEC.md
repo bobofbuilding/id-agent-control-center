@@ -349,9 +349,10 @@ questions through `legal/general-counsel`.
 - **AI Team Builder** (describe/paste a spec → live deterministic parse → **✦ Build with AI**
   (`team:designAI`, constrained to valid runtimes/models/skills) → editable roster (per-agent ★lead,
   name, runtime, model, role, persona/instructions, skill chips) → fleet-wide options (MCP server,
-  heartbeat, OWS wallet, probe-after) → coordination preset + cross-team relay → **Build**
-  (sequential `onboard:run` with a live checklist, then auto-wires coordinator + instructions +
-  relay) → per-agent **↻ retry**).
+  heartbeat, OWS wallet, probe-after) → coordination preset + cross-team relay → **Build** for a
+  new team or **Build + merge** for an existing target (sequential `onboard:run` with duplicate
+  names skipped, a live checklist, then auto-wires coordinator + instructions + relay) → per-agent
+  **↻ retry**).
 - **Create team from template/config** (+ From template): pick source (default template / library
   template / saved config), name it, debounced **Preflight** preview, create.
 - **Structure**: live **team graph** (lead-on-top, click to select/switch), **⭑ make primary lead**,
@@ -362,7 +363,8 @@ questions through `legal/general-counsel`.
   member rows only for teams still present in the current team list, successful team deletes are
   tombstoned locally, and the manager-reserved empty `public` namespace is hidden until it contains
   actual public-agent registrations.
-- **Build**: launcher to add agents to the active team.
+- **Build**: one-click builder for a new team or direct merge of reviewed new agent rows into an
+  existing team; maintenance merge remains for moving an already-created source team.
 - **Manage**: lifecycle-only Team ops (Probe/Start/Stop/Rebuild/Delete empty teams) with selected-agent
   instruction edits handed back to Structure.
 - **Route**: cross-team **relay** policy (Any / All `*` / Selected / Blocked) with dirty indicator +

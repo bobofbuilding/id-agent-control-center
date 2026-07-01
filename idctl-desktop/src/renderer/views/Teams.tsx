@@ -2148,7 +2148,7 @@ function TeamBuilder({
   const relayTargets = existingTeams.filter((n) => n !== targetTeam);
 
   // ---- build progress ----
-  type ResultEntry = { name: string; team: string; plan: OnboardPlan; result?: OnboardResult; error?: string; running?: boolean; skipped?: boolean };
+  type ResultEntry = { name: string; team: string; plan: OnboardPlan; result?: OnboardResult; error?: string; running?: boolean; skipped?: boolean; merged?: boolean };
   const [building, setBuilding] = useState(false);
   const [error, setError] = useState('');
   const [results, setResults] = useState<ResultEntry[]>([]);
@@ -2285,6 +2285,8 @@ function TeamBuilder({
 
   type BuilderPreflight = {
     targetTeam: string;
+    teamExists: boolean;
+    existingAgentCount: number;
     hierarchy: HrHierarchy;
     hierarchyStamp: string;
     relayStamp: string;
@@ -2306,7 +2308,8 @@ function TeamBuilder({
       onDone();
       return null;
     }
-    const freshRosterKey = agentNameKey(agentsForTeam(groupsNow, targetTeam));
+    const freshRoster = agentsForTeam(groupsNow, targetTeam);
+    const freshRosterKey = agentNameKey(freshRoster);
     const renderedRosterKey = sortedKey((existingAgents[targetTeam] ?? []).map((n) => slugName(n)));
     if (freshRosterKey !== renderedRosterKey) {
       setError(`The ${targetTeam} roster changed while this builder was open. Refresh and review the current agents before building.`);
@@ -2323,6 +2326,8 @@ function TeamBuilder({
     const freshFleetAgents = groupsNow.flatMap((g) => g.agents.map((a) => ({ ...a, team: g.team })));
     return {
       targetTeam,
+      teamExists: freshTeamExists,
+      existingAgentCount: freshRoster.length,
       hierarchy: hierarchyNow,
       hierarchyStamp: hierarchyStamp(hierarchyNow),
       relayStamp: relayKey(relayBefore),
@@ -2353,19 +2358,23 @@ function TeamBuilder({
     ].filter(Boolean);
     const preflight = await preflightBuildTarget();
     if (!preflight) return;
+    const mergeIntoExisting = preflight.teamExists;
     const backboneWarning = targetTeam !== PRIMARY_TEAM && !preflight.leadershipBackbone.ready
       ? `\n\nDefault leadership return path is incomplete:\n- ${leadershipBackboneIssues(preflight.leadershipBackbone).join('\n- ')}\n\nContinue only if you intend to build this team before wiring the default primary and validators.`
       : '';
-    if (!window.confirm(`Build ${batch.length} agent${batch.length === 1 ? '' : 's'} in ${targetTeam}?\n\nThis onboards and starts new agents${heartbeat ? ', adds heartbeats' : ''}${probeAfter ? ', and probes them' : ''}.${postSteps.length ? `\n\nAfter build it will also ${postSteps.join('; ')}.` : ''}${backboneWarning}`)) return;
+    const mergeNote = mergeIntoExisting
+      ? `\n\nExisting ${targetTeam} roster stays in place (${preflight.existingAgentCount} current). Duplicate names are skipped before build${alreadyThere.length ? ` (${alreadyThere.length} already there)` : ''}.`
+      : '';
+    if (!window.confirm(`${mergeIntoExisting ? 'Build + merge' : 'Build'} ${batch.length} agent${batch.length === 1 ? '' : 's'} ${mergeIntoExisting ? `into existing ${targetTeam}` : `in ${targetTeam}`}?\n\nThis onboards and starts new agents${heartbeat ? ', adds heartbeats' : ''}${probeAfter ? ', and probes them' : ''}.${mergeNote}${postSteps.length ? `\n\nAfter build it will also ${postSteps.join('; ')}.` : ''}${backboneWarning}`)) return;
     setBuilding(true); onBusy(true); setError(''); setPost({});
-    onMessage(`adding ${batch.length} new agent(s) to ${targetTeam}${alreadyThere.length ? ` (${alreadyThere.length} already there)` : ''}…`);
+    onMessage(`${mergeIntoExisting ? 'merging' : 'adding'} ${batch.length} new agent(s) ${mergeIntoExisting ? 'into' : 'to'} ${targetTeam}${alreadyThere.length ? ` (${alreadyThere.length} already there)` : ''}…`);
     // Freeze a plan per agent so a later "retry" re-runs the exact same spec.
     const plans = batch.map(planFor);
     // Results: existing agents first (skipped, no-op), then the ones we're building. Updates
     // below are keyed by NAME (not index) so the skipped rows don't shift the targets.
     setResults([
-      ...alreadyThere.map((r) => ({ name: r.slug, team: targetTeam, plan: planFor(r), skipped: true })),
-      ...batch.map((r, i) => ({ name: r.slug, team: targetTeam, plan: plans[i] })),
+      ...alreadyThere.map((r) => ({ name: r.slug, team: targetTeam, plan: planFor(r), skipped: true, merged: mergeIntoExisting })),
+      ...batch.map((r, i) => ({ name: r.slug, team: targetTeam, plan: plans[i], merged: mergeIntoExisting })),
     ]);
     let anyOk = false;
     // Sequential — the manager serializes local-model spawns anyway, and it keeps
@@ -2423,7 +2432,7 @@ function TeamBuilder({
       } catch (e) { setPost((p) => ({ ...p, relay: 'failed', relayErr: e instanceof Error ? e.message : String(e) })); }
     }
     setBuilding(false); onBusy(false);
-    if (anyOk) { onMessage(`built into ${targetTeam} ✓`); onDone(targetTeam); }
+    if (anyOk) { onMessage(`${mergeIntoExisting ? 'merged into' : 'built into'} ${targetTeam} ✓`); onDone(targetTeam); }
     else onMessage(`build failed — no agents created in ${targetTeam}`);
   }
 
@@ -2456,7 +2465,7 @@ function TeamBuilder({
   return (
     <div className={inline ? 'card' : 'modal-overlay'} onMouseDown={inline ? undefined : () => (locked ? undefined : onClose())}>
       <div className={inline ? '' : 'modal onboard-modal create-team-modal'} onMouseDown={inline ? undefined : (e) => e.stopPropagation()}>
-        <div className="modal-title">{inline ? 'Build a team — or add agents to an existing one' : 'Build a team'}</div>
+        <div className="modal-title">{inline ? 'Build a team — or merge agents into an existing one' : 'Build a team'}</div>
         <div className="create-team-layout">
           {/* LEFT: describe + batch options + coordination/relay */}
           <div>
@@ -2606,7 +2615,8 @@ function TeamBuilder({
             </div>
             {usingNewTeam && newTeam && targetTeam !== newTeam ? <p className="muted small">Will create as <span className="mono">{targetTeam}</span>.</p> : null}
             {usingNewTeam && isReservedName(targetTeam) ? <p className="status-error small"><span className="mono">{targetTeam}</span> is a reserved word — choose another team name.</p> : null}
-            {usingNewTeam && teamExists ? <p className="warn-text small">Team <span className="mono">{targetTeam}</span> exists — these agents will be added to it.</p> : null}
+            {usingNewTeam && teamExists ? <p className="warn-text small">Team <span className="mono">{targetTeam}</span> exists — Build + merge will add only new agent rows and leave existing names as-is.</p> : null}
+            {!usingNewTeam && teamExists ? <p className="muted small">Build + merge adds these reviewed agent rows directly into <span className="mono">{targetTeam}</span>; no separate Team maintenance merge is needed.</p> : null}
             {targetNeedsBackbone ? <p className="warn-text small">Default return path incomplete — build will ask before adding <span className="mono">{targetTeam}</span>.</p> : null}
             {defaultLeadMissingForWire ? <p className="warn-text small">Default-team routing is locked to <span className="mono">{PRIMARY_TEAM}/{DEFAULT_LEAD}</span>; add/restore that agent or turn off Wire agentic routing.</p> : null}
 
@@ -2707,7 +2717,7 @@ function TeamBuilder({
               const mark = r.skipped ? '•' : r.running ? '…' : r.error ? '✗' : r.result?.ok ? '✓' : failed ? '!' : '·';
               const detail = r.skipped ? `already in ${r.team} — left as-is`
                 : r.error ? r.error
-                : r.result ? (r.result.ok ? `built into ${r.team}` : (r.result.steps.filter((s) => s.status === 'failed').map((s) => `${s.label}: ${s.error || 'failed'}`).join('; ') || 'finished with issues'))
+                : r.result ? (r.result.ok ? `${r.merged ? 'merged into' : 'built into'} ${r.team}` : (r.result.steps.filter((s) => s.status === 'failed').map((s) => `${s.label}: ${s.error || 'failed'}`).join('; ') || 'finished with issues'))
                 : (r.running ? 'building…' : 'queued');
               const cls = r.skipped ? 'pending' : failed ? 'failed' : r.result?.ok ? 'ok' : r.running ? 'running' : 'pending';
               return (
@@ -2746,7 +2756,7 @@ function TeamBuilder({
           <button className="btn primary" disabled={!canBuild} onClick={() => void build()}>
             {building ? 'Building…'
               : toCreate.length === 0 && named.length > 0 ? `All ${named.length} already in ${targetTeam || '…'}`
-              : teamExists ? `Add ${toCreate.length} new agent${toCreate.length === 1 ? '' : 's'} to ${targetTeam || '…'}${alreadyThere.length ? ` (${alreadyThere.length} already there)` : ''}`
+              : teamExists ? `Build + merge ${toCreate.length} agent${toCreate.length === 1 ? '' : 's'} into ${targetTeam || '…'}${alreadyThere.length ? ` (${alreadyThere.length} already there)` : ''}`
               : `Build ${targetTeam || 'team'} + ${toCreate.length} agent${toCreate.length === 1 ? '' : 's'}`}
           </button>
         </div>
