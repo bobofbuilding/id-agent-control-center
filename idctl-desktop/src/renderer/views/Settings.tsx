@@ -1185,11 +1185,11 @@ export function Settings({ store, navigate }: { store: FleetStore; navigate?: (v
     return t === STACK_BACKEND_PRESET_FILTER ? 'backend presets' : t;
   }
   function stackPrimaryAction(s: LocalStackEntry): boolean {
-    return s.installEase === 'start-here' || s.installEase === 'easy';
+    if (!stackInstallCmd(s)) return false;
+    return ['start-here', 'easy', 'guided', 'advanced'].includes(s.installEase ?? '');
   }
   function stackInstallLabel(s: LocalStackEntry): string {
     if (stackPrimaryAction(s)) return 'Install';
-    if (s.installEase === 'guided') return 'Review steps';
     return 'Review command';
   }
   function stackInstallCmd(s: LocalStackEntry): string | null {
