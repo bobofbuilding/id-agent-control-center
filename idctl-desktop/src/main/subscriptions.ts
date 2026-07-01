@@ -14,7 +14,7 @@ import { runInTerminal } from './system.ts';
 
 const execFileP = promisify(execFile);
 
-export type SubProvider = 'claude' | 'chatgpt' | 'cursor' | 'grok' | 'gemini' | 'copilot' | 'kiro-cli' | 'q';
+export type SubProvider = 'claude' | 'chatgpt' | 'cursor' | 'grok' | 'gemini' | 'antigravity' | 'copilot' | 'kiro-cli' | 'q';
 
 type LoginMode = 'spawn' | 'terminal';
 type CommandSpec = [string, string[]];
@@ -60,7 +60,7 @@ export interface SubStatus {
   installOpensApp?: boolean;
 }
 
-const SUB_PROVIDERS: SubProvider[] = ['claude', 'chatgpt', 'cursor', 'grok', 'gemini', 'copilot', 'kiro-cli', 'q'];
+const SUB_PROVIDERS: SubProvider[] = ['claude', 'chatgpt', 'cursor', 'grok', 'gemini', 'antigravity', 'copilot', 'kiro-cli', 'q'];
 
 const SUB_META: Record<SubProvider, SubProviderMeta> = {
   claude: {
@@ -112,8 +112,20 @@ const SUB_META: Record<SubProvider, SubProviderMeta> = {
     loginMode: 'terminal',
     install: 'npm install -g @google/gemini-cli',
     installHint: 'gemini CLI not installed',
-    postInstall: 'After install, IDACC will detect the gemini binary. Use Manage account in IDACC to open Gemini and run /auth.',
-    statusNote: 'Installed. IDACC can launch Gemini; account selection lives in Gemini /auth and has no safe non-interactive status command.',
+    postInstall: 'After install, IDACC will detect the gemini binary. Use Configure API/Vertex in IDACC, then choose Gemini API Key or Vertex AI in the Gemini prompt.',
+    statusNote: 'Installed. Gemini CLI Google OAuth no longer supports consumer accounts; use Gemini API key/Vertex, or use Antigravity CLI for subscription access.',
+  },
+  antigravity: {
+    provider: 'antigravity',
+    runtime: 'antigravity',
+    label: 'Google Antigravity CLI',
+    bin: 'agy',
+    login: ['agy', []],
+    loginMode: 'terminal',
+    install: 'curl -fsSL https://antigravity.google/cli/install.sh | bash',
+    installHint: 'agy CLI not installed',
+    postInstall: 'After install, IDACC will detect the agy binary. Use Manage account in IDACC to open Antigravity login.',
+    statusNote: 'Installed. IDACC can launch Antigravity login, but agent assignment stays disabled until the manager exposes an Antigravity harness.',
   },
   copilot: {
     provider: 'copilot',
@@ -370,8 +382,8 @@ function geminiLocalAuthEvidence(): { loggedIn: boolean; detail: string; method?
       loggedIn: false,
       method: selectedType,
       detail: oauthFresh
-        ? 'Gemini OAuth cache exists, but oauth-personal may fail for individual Gemini Code Assist accounts; switch Gemini CLI to API key/Vertex or configure Google Gemini under Inference backends before assigning agents.'
-        : 'Gemini CLI is set to oauth-personal, but no fresh OAuth cache was found. Use Manage account or configure Google Gemini under Inference backends.',
+        ? 'Gemini OAuth cache exists, but Gemini CLI Google OAuth is no longer supported for consumer accounts. Switch Gemini CLI to API key/Vertex, use Antigravity CLI for subscription access, or configure Google Gemini under Inference backends.'
+        : 'Gemini CLI is set to oauth-personal, but no fresh OAuth cache was found. Use Configure API/Vertex, use Antigravity CLI for subscription access, or configure Google Gemini under Inference backends.',
     };
   }
   if (hasApiEnv) return { loggedIn: true, method: 'env-api-key', detail: 'Gemini API key is present in the local environment.' };
@@ -380,8 +392,8 @@ function geminiLocalAuthEvidence(): { loggedIn: boolean; detail: string; method?
     loggedIn: false,
     method: selectedType || undefined,
     detail: hasOauthCache
-      ? 'Gemini OAuth cache exists, but no supported Gemini CLI auth mode is selected. Use Manage account to choose API key/Vertex, or add Google Gemini under Inference backends.'
-      : 'Gemini CLI is installed but no usable local auth evidence was found. Use Manage account or configure Google Gemini under Inference backends.',
+      ? 'Gemini OAuth cache exists, but no supported Gemini CLI auth mode is selected. Use Configure API/Vertex to choose API key/Vertex, use Antigravity CLI for subscription access, or add Google Gemini under Inference backends.'
+      : 'Gemini CLI is installed but no usable local auth evidence was found. Use Configure API/Vertex, use Antigravity CLI for subscription access, or configure Google Gemini under Inference backends.',
   };
 }
 
@@ -398,7 +410,7 @@ async function geminiStatus(): Promise<SubStatus> {
   });
 }
 
-async function cliPresenceStatus(provider: 'grok' | 'copilot'): Promise<SubStatus> {
+async function cliPresenceStatus(provider: 'grok' | 'antigravity' | 'copilot'): Promise<SubStatus> {
   const meta = SUB_META[provider];
   if (!cliPath(meta.bin)) return notInstalled(provider);
   return baseStatus(provider, { installed: true, statusSupported: false, detail: meta.statusNote });
@@ -412,6 +424,7 @@ async function providerStatus(provider: SubProvider): Promise<SubStatus> {
     case 'kiro-cli': return whoamiStatus('kiro-cli', ['kiro-cli', ['whoami']]);
     case 'q': return whoamiStatus('q', ['q', ['whoami']]);
     case 'grok':
+    case 'antigravity':
     case 'copilot':
       return cliPresenceStatus(provider);
     case 'gemini':

@@ -164,13 +164,14 @@ export function Settings({ store, navigate }: { store: FleetStore; navigate?: (v
     postInstall?: string;
     installOpensApp?: boolean;
   };
-  type SubKey = 'claude' | 'chatgpt' | 'cursor' | 'grok' | 'gemini' | 'copilot' | 'kiro-cli' | 'q';
+  type SubKey = 'claude' | 'chatgpt' | 'cursor' | 'grok' | 'gemini' | 'antigravity' | 'copilot' | 'kiro-cli' | 'q';
   const managedSubRows: { key: SubKey; label: string; runtime: string }[] = [
     { key: 'claude', label: 'Claude (Anthropic)', runtime: 'claude-code-cli' },
     { key: 'chatgpt', label: 'OpenAI (ChatGPT)', runtime: 'codex' },
     { key: 'cursor', label: 'Cursor', runtime: 'cursor-cli' },
     { key: 'grok', label: 'xAI Grok Build', runtime: 'grok' },
     { key: 'gemini', label: 'Google Gemini CLI', runtime: 'gemini' },
+    { key: 'antigravity', label: 'Google Antigravity CLI', runtime: 'antigravity' },
     { key: 'copilot', label: 'GitHub Copilot CLI', runtime: 'copilot' },
     { key: 'kiro-cli', label: 'Kiro CLI', runtime: 'kiro-cli' },
     { key: 'q', label: 'Amazon Q CLI (legacy)', runtime: 'q' },
@@ -204,6 +205,7 @@ export function Settings({ store, navigate }: { store: FleetStore; navigate?: (v
     finally { setSubsBusy(false); }
   }
   async function signinSub(provider: SubKey) {
+    if (provider === 'gemini' && !window.confirm('Gemini CLI Google OAuth no longer supports consumer Gemini Code Assist / Google AI Pro / Ultra accounts. Continue only if you plan to choose Gemini API Key or Vertex AI in the Gemini prompt.')) return;
     setSubBusy(provider);
     try {
       const r = await call<{ started: boolean; url?: string; command?: string; error?: string }>('subs:signin', provider);
@@ -214,9 +216,15 @@ export function Settings({ store, navigate }: { store: FleetStore; navigate?: (v
         } else {
           window.alert(`sign-in failed: ${r.error}`);
         }
+        return;
       }
       const label = managedSubRows.find((row) => row.key === provider)?.label ?? provider;
-      setSubNotice(`${label} account flow started from IDACC. Finish the vendor prompt/browser flow, then Re-check if the row does not update automatically.`);
+      const note = provider === 'gemini'
+        ? `${label} opened from IDACC. Choose Gemini API Key or Vertex AI; Google OAuth is deprecated for consumer accounts.`
+        : provider === 'antigravity'
+          ? `${label} opened from IDACC. Finish the Antigravity login flow, then Re-check if the row does not update automatically. Agent assignment remains disabled until the manager exposes an Antigravity harness.`
+          : `${label} account flow started from IDACC. Finish the vendor prompt/browser flow, then Re-check if the row does not update automatically.`;
+      setSubNotice(note);
       setTimeout(() => void recheckSubs(), 4000);
     } finally {
       setSubBusy(null);
@@ -1294,6 +1302,7 @@ export function Settings({ store, navigate }: { store: FleetStore; navigate?: (v
       );
     }
     if (s?.installed === false) return <span className="warn-text" title={s.detail}>○ CLI not installed</span>;
+    if (s?.provider === 'gemini' && s.installed && !s.loggedIn) return <span className="warn-text" title={s.detail}>○ needs API key/Vertex</span>;
     if (s?.installed && s.statusSupported === false) {
       return (
         <span title={s.detail}>
@@ -1306,6 +1315,7 @@ export function Settings({ store, navigate }: { store: FleetStore; navigate?: (v
   }
   function subPrimaryLabel(s: Sub | undefined): string {
     if (s?.installed === false) return s.installSupported ? 'Install' : 'Install unavailable';
+    if (s?.provider === 'gemini') return s.loggedIn ? 'Reconfigure auth' : 'Configure API/Vertex';
     if (s?.loggedIn && s.loginSupported) return 'Switch account';
     if (s?.statusSupported === false && s?.loginSupported) return 'Manage account';
     if (s?.statusSupported === false) return 'Installed';
@@ -1558,7 +1568,7 @@ export function Settings({ store, navigate }: { store: FleetStore; navigate?: (v
           );
         })}
         <div className="row-actions" style={{ marginTop: 6 }}>
-          <span className="muted small grow">Perplexity, xAI API, OpenRouter, NVIDIA, Groq API, and similar metered accounts stay in Inference backends. The <span className="mono">q</span> row is legacy; prefer <span className="mono">kiro-cli</span> for current Amazon Q/Kiro CLI installs.</span>
+          <span className="muted small grow">Perplexity, xAI API, OpenRouter, NVIDIA, Groq API, and similar metered accounts stay in Inference backends. Gemini CLI Google OAuth is deprecated for consumer accounts; use API key/Vertex there or Antigravity CLI for subscription access. The <span className="mono">q</span> row is legacy; prefer <span className="mono">kiro-cli</span> for current Amazon Q/Kiro CLI installs.</span>
           <button className="btn" disabled={subsBusy} onClick={() => void recheckSubs()}>{subsBusy ? 'Checking…' : 'Re-check'}</button>
         </div>
         {subNotice ? <p className="muted small" style={{ marginTop: 8 }}>{subNotice}</p> : null}

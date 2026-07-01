@@ -8,6 +8,9 @@ Every change pushed or merged to `main` carries its version number in the commit
 subject (`vX.Y.Z: …`), stamped automatically by the `commit-msg` hook — see
 [CONTRIBUTING.md](CONTRIBUTING.md).
 
+## [0.1.415] — 2026-07-01
+- Triage Gemini CLI OAuth deprecation
+
 ## [0.1.414] — 2026-07-01
 - Hide stale managed subscription sign-out controls
 

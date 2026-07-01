@@ -34,4 +34,10 @@ assert.deepEqual(
   'Gemini CLI should not become assignable from binary presence alone',
 );
 
+assert.deepEqual(
+  offerableRuntimes([], undefined, [{ runtime: 'antigravity', installed: true, loggedIn: false, statusSupported: false }]),
+  [],
+  'Antigravity CLI should not become assignable until the manager exposes an Antigravity harness',
+);
+
 console.log('[runtimeCatalog.test] OK');
