@@ -469,14 +469,16 @@ Manager; this is the plumbing.)
 - **Self-update**: version, status, **auto-upgrade** toggle, **Check now**.
 - **Managed subscription sign-ins**: CLI OAuth/device/browser flows (no API key) for `claude-*`,
   `codex`, `cursor-cli`, `grok`, `gemini`, `copilot`, `kiro-cli`, and legacy `q`. Rows distinguish
-  status-inspectable CLIs from TUI-owned account state; metered API providers stay under Inference
-  backends.
+  status-inspectable CLIs from TUI-owned account state, auto-detect installed binaries after a
+  visible installer handoff, and keep sign-in/opening as a separate user action; metered API
+  providers stay under Inference backends.
 - **Local models (Ollama)**: parallel-inference cap (1–16), installed chips, **Download** by id
   (streamed progress), a searchable **catalog** with capability filters and hardware fit-warnings.
 - **Local image generator**: URL + API style (Automatic1111 / OpenAI-images), **Detect**, Save/Clear
   (used first for in-chat images; cloud is fallback).
 - **Local LLM stacks**: starter-first curated list, **⟳ Scan running**, reviewed Install/Run-in-Terminal/
-  Uninstall actions, setup notes, docs ↗.
+  Uninstall actions, setup notes, docs ↗, and row-level **Add backend** once a scanned local server is
+  live.
 - **Inference backends**: **⟳ Discover local servers** (+ Add / Add all), provider table (★ default,
   enable, key badge, status, model list, **Connect & sync**, ✕), **Add a backend** (catalog or custom;
   provider-specific key requirements, NVIDIA API Catalog preset models, and cloud keys auto-detected

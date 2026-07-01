@@ -8,6 +8,9 @@ Every change pushed or merged to `main` carries its version number in the commit
 subject (`vX.Y.Z: …`), stamped automatically by the `commit-msg` hook — see
 [CONTRIBUTING.md](CONTRIBUTING.md).
 
+## [0.1.405] — 2026-07-01
+- Clean up Settings install handoff and backend add states
+
 ## [0.1.404] — 2026-07-01
 - Treat Grok, Gemini, Copilot, Kiro, and q as managed runtime options
 

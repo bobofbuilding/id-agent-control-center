@@ -24,11 +24,14 @@ interface SubProviderMeta {
   runtime: string;
   label: string;
   bin: string;
+  appPaths?: string[];
   login?: CommandSpec;
   loginMode?: LoginMode;
   logout?: CommandSpec;
   install?: string;
   installHint: string;
+  installOpensApp?: boolean;
+  postInstall?: string;
   statusNote?: string;
 }
 
@@ -39,6 +42,8 @@ export interface SubStatus {
   loggedIn: boolean;
   /** Whether the provider's CLI is installed at all. */
   installed?: boolean;
+  /** Read-only evidence path/source for installed state. */
+  installedSource?: string;
   /** Whether IDACC can check sign-in state without opening the interactive CLI. */
   statusSupported?: boolean;
   /** Whether IDACC can launch a sign-in/account-selection flow. */
@@ -51,6 +56,8 @@ export interface SubStatus {
   email?: string;
   method?: string;
   detail?: string;
+  postInstall?: string;
+  installOpensApp?: boolean;
 }
 
 const SUB_PROVIDERS: SubProvider[] = ['claude', 'chatgpt', 'cursor', 'grok', 'gemini', 'copilot', 'kiro-cli', 'q'];
@@ -93,6 +100,7 @@ const SUB_META: Record<SubProvider, SubProviderMeta> = {
     loginMode: 'terminal',
     install: 'curl -fsSL https://x.ai/cli/install.sh | bash',
     installHint: 'grok CLI not installed',
+    postInstall: 'After install, IDACC will detect the grok binary; open it only when you want to sign in or switch accounts.',
     statusNote: 'Grok opens browser auth on first launch; IDACC only checks whether the CLI exists.',
   },
   gemini: {
@@ -104,6 +112,7 @@ const SUB_META: Record<SubProvider, SubProviderMeta> = {
     loginMode: 'terminal',
     install: 'npm install -g @google/gemini-cli',
     installHint: 'gemini CLI not installed',
+    postInstall: 'After install, IDACC will detect the gemini binary; account selection remains inside Gemini /auth.',
     statusNote: 'Gemini account selection lives inside the CLI /auth flow; IDACC only checks whether the CLI exists.',
   },
   copilot: {
@@ -115,6 +124,7 @@ const SUB_META: Record<SubProvider, SubProviderMeta> = {
     loginMode: 'terminal',
     install: 'npm install -g @github/copilot',
     installHint: 'copilot CLI not installed',
+    postInstall: 'After install, IDACC will detect the copilot binary; account selection remains inside Copilot /login.',
     statusNote: 'Copilot sign-in lives inside the CLI /login flow; sign-out is performed inside Copilot with /logout.',
   },
   'kiro-cli': {
@@ -122,11 +132,14 @@ const SUB_META: Record<SubProvider, SubProviderMeta> = {
     runtime: 'kiro-cli',
     label: 'Kiro CLI',
     bin: 'kiro-cli',
+    appPaths: ['/Applications/Kiro.app', '/Applications/Kiro CLI.app'],
     login: ['kiro-cli', ['login']],
     loginMode: 'terminal',
     logout: ['kiro-cli', ['logout']],
     install: 'curl -fsSL https://cli.kiro.dev/install | bash',
     installHint: 'kiro-cli not installed',
+    installOpensApp: true,
+    postInstall: 'The official macOS installer may open Kiro once to finish CLI setup. IDACC will re-check for kiro-cli after install; sign-in is still a separate action.',
   },
   q: {
     provider: 'q',
@@ -144,7 +157,15 @@ const SUB_META: Record<SubProvider, SubProviderMeta> = {
 /** Candidate CLI dirs (GUI apps inherit a minimal PATH). */
 function cliDirs(): string[] {
   const home = homedir();
-  return Array.from(new Set(['/opt/homebrew/bin', `${home}/.local/bin`, '/usr/local/bin', '/usr/bin', '/bin', ...(process.env.PATH ? process.env.PATH.split(':') : [])]));
+  return Array.from(new Set([
+    '/opt/homebrew/bin',
+    `${home}/.local/bin`,
+    `${home}/.grok/bin`,
+    '/usr/local/bin',
+    '/usr/bin',
+    '/bin',
+    ...(process.env.PATH ? process.env.PATH.split(':') : []),
+  ]));
 }
 
 /** GUI apps inherit a minimal PATH; add the usual CLI locations. */
@@ -153,8 +174,22 @@ function cliEnv(): NodeJS.ProcessEnv {
 }
 
 /** Is a CLI binary installed (resolvable on the augmented PATH)? */
-function cliInstalled(bin: string): boolean {
-  return cliDirs().some((d) => existsSync(`${d}/${bin}`));
+function cliPath(bin: string): string | undefined {
+  return cliDirs().map((d) => `${d}/${bin}`).find((p) => existsSync(p));
+}
+
+function expandHome(p: string): string {
+  return p.replace(/^~(?=\/|$)/, homedir());
+}
+
+function installEvidence(meta: SubProviderMeta): { installed: boolean; source?: string; detail?: string; cliPath?: string } {
+  const binPath = cliPath(meta.bin);
+  if (binPath) return { installed: true, source: binPath, detail: `${meta.bin} found at ${binPath}`, cliPath: binPath };
+  for (const app of meta.appPaths ?? []) {
+    const p = expandHome(app);
+    if (existsSync(p)) return { installed: true, source: p, detail: `App installed at ${p}, but ${meta.bin} is not on PATH yet.` };
+  }
+  return { installed: false };
 }
 
 function shellQuote(arg: string): string {
@@ -172,17 +207,21 @@ function truncateDetail(s: string): string {
 
 function baseStatus(provider: SubProvider, patch: Partial<SubStatus>): SubStatus {
   const meta = SUB_META[provider];
+  const evidence = installEvidence(meta);
   return {
     provider,
     runtime: meta.runtime,
     label: meta.label,
     loggedIn: false,
-    installed: cliInstalled(meta.bin),
+    installed: evidence.installed,
+    installedSource: evidence.source,
     statusSupported: false,
     loginSupported: Boolean(meta.login),
     logoutSupported: Boolean(meta.logout),
     installSupported: Boolean(meta.install),
-    detail: meta.statusNote,
+    installOpensApp: meta.installOpensApp,
+    postInstall: meta.postInstall,
+    detail: evidence.detail ?? meta.statusNote,
     ...patch,
   };
 }
@@ -193,7 +232,7 @@ function notInstalled(provider: SubProvider): SubStatus {
 }
 
 async function claudeStatus(): Promise<SubStatus> {
-  if (!cliInstalled(SUB_META.claude.bin)) return notInstalled('claude');
+  if (!cliPath(SUB_META.claude.bin)) return notInstalled('claude');
   try {
     const { stdout } = await execFileP('claude', ['auth', 'status'], { env: cliEnv(), timeout: 8000 });
     const j = JSON.parse(stdout) as { loggedIn?: boolean; authMethod?: string; subscriptionType?: string; email?: string };
@@ -242,7 +281,7 @@ function codexAccount(): { email?: string; plan?: string } {
 }
 
 async function codexStatus(): Promise<SubStatus> {
-  if (!cliInstalled(SUB_META.chatgpt.bin)) return notInstalled('chatgpt');
+  if (!cliPath(SUB_META.chatgpt.bin)) return notInstalled('chatgpt');
   try {
     const { stdout, stderr } = await execFileP('codex', ['login', 'status'], { env: cliEnv(), timeout: 8000 });
     const out = `${stdout}${stderr}`.trim();
@@ -257,7 +296,7 @@ async function codexStatus(): Promise<SubStatus> {
 
 /** Cursor subscription via `cursor-agent status` (Pro/Business OAuth). */
 async function cursorStatus(): Promise<SubStatus> {
-  if (!cliInstalled(SUB_META.cursor.bin)) return notInstalled('cursor');
+  if (!cliPath(SUB_META.cursor.bin)) return notInstalled('cursor');
   try {
     const { stdout, stderr } = await execFileP('cursor-agent', ['status'], { env: cliEnv(), timeout: 8000 });
     const out = `${stdout}${stderr}`.trim();
@@ -272,7 +311,17 @@ async function cursorStatus(): Promise<SubStatus> {
 
 async function whoamiStatus(provider: 'kiro-cli' | 'q', command: CommandSpec): Promise<SubStatus> {
   const meta = SUB_META[provider];
-  if (!cliInstalled(meta.bin)) return notInstalled(provider);
+  const evidence = installEvidence(meta);
+  if (!evidence.installed) return notInstalled(provider);
+  if (!evidence.cliPath) {
+    return baseStatus(provider, {
+      installed: true,
+      statusSupported: false,
+      loginSupported: false,
+      logoutSupported: false,
+      detail: `${meta.label} is installed, but ${meta.bin} is not on PATH yet. Open the app once or add the CLI to PATH, then re-check.`,
+    });
+  }
   try {
     const { stdout, stderr } = await execFileP(command[0], command[1], { env: cliEnv(), timeout: 8000 });
     const out = `${stdout}${stderr}`.trim();
@@ -287,7 +336,7 @@ async function whoamiStatus(provider: 'kiro-cli' | 'q', command: CommandSpec): P
 
 async function cliPresenceStatus(provider: 'grok' | 'gemini' | 'copilot'): Promise<SubStatus> {
   const meta = SUB_META[provider];
-  if (!cliInstalled(meta.bin)) return notInstalled(provider);
+  if (!cliPath(meta.bin)) return notInstalled(provider);
   return baseStatus(provider, { installed: true, statusSupported: false, detail: meta.statusNote });
 }
 
@@ -315,11 +364,11 @@ export async function subsStatus(): Promise<Record<SubProvider, SubStatus>> {
  * official installer there — visible and abortable — and returns the command either
  * way so the UI can fall back to clipboard if macOS blocks Terminal automation.
  */
-export async function subsInstall(provider: SubProvider): Promise<{ ok: boolean; ran: boolean; command?: string; error?: string }> {
+export async function subsInstall(provider: SubProvider): Promise<{ ok: boolean; ran: boolean; command?: string; error?: string; postInstall?: string; installOpensApp?: boolean }> {
   const meta = SUB_META[provider];
   if (!meta?.install) return { ok: false, ran: false, error: 'no installer available for this provider' };
   const r = await runInTerminal(meta.install);
-  return { ok: r.ok, ran: r.ran, command: r.command, error: r.error };
+  return { ok: r.ok, ran: r.ran, command: r.command, error: r.error, postInstall: meta.postInstall, installOpensApp: meta.installOpensApp };
 }
 
 /**
@@ -330,8 +379,12 @@ export function subsSignin(provider: SubProvider): Promise<{ started: boolean; u
   const meta = SUB_META[provider];
   if (!meta?.login) return Promise.resolve({ started: false, error: 'no sign-in command available for this provider' });
   const [bin, args] = meta.login;
-  if (!cliInstalled(bin)) {
-    return Promise.resolve({ started: false, error: meta.installHint ?? `${bin} is not installed` });
+  if (!cliPath(bin)) {
+    const evidence = installEvidence(meta);
+    const detail = evidence.installed
+      ? `${meta.label} is installed, but ${bin} is not on PATH yet. Open the app once or update PATH, then re-check.`
+      : (meta.installHint ?? `${bin} is not installed`);
+    return Promise.resolve({ started: false, error: detail });
   }
   if (meta.loginMode === 'terminal') {
     const cmd = commandLine(meta.login);

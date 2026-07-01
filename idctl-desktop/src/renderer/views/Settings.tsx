@@ -150,6 +150,7 @@ export function Settings({ store, navigate }: { store: FleetStore; navigate?: (v
     label: string;
     loggedIn: boolean;
     installed?: boolean;
+    installedSource?: string;
     statusSupported?: boolean;
     loginSupported?: boolean;
     logoutSupported?: boolean;
@@ -158,6 +159,8 @@ export function Settings({ store, navigate }: { store: FleetStore; navigate?: (v
     email?: string;
     method?: string;
     detail?: string;
+    postInstall?: string;
+    installOpensApp?: boolean;
   };
   type SubKey = 'claude' | 'chatgpt' | 'cursor' | 'grok' | 'gemini' | 'copilot' | 'kiro-cli' | 'q';
   const managedSubRows: { key: SubKey; label: string; runtime: string }[] = [
@@ -173,6 +176,7 @@ export function Settings({ store, navigate }: { store: FleetStore; navigate?: (v
   const [subs, setSubs] = useState<Record<SubKey, Sub> | null>(null);
   const [subsBusy, setSubsBusy] = useState(false);
   const [subBusy, setSubBusy] = useState<string | null>(null);
+  const [subNotice, setSubNotice] = useState('');
 
   async function reload() {
     setProviders(await call<ProviderRow[]>('providers:list').catch(() => []));
@@ -218,13 +222,17 @@ export function Settings({ store, navigate }: { store: FleetStore; navigate?: (v
   async function installSub(provider: SubKey) {
     setSubBusy(provider);
     try {
-      const r = await call<{ ok: boolean; ran: boolean; command?: string; error?: string }>('subs:install', provider);
+      const r = await call<{ ok: boolean; ran: boolean; command?: string; error?: string; postInstall?: string; installOpensApp?: boolean }>('subs:install', provider);
       if (r.ran) {
         const label = managedSubRows.find((row) => row.key === provider)?.label ?? provider;
-        window.alert(`Opened Terminal to install ${label}. Let it finish, then click “Re-check”.`);
-        setTimeout(() => void recheckSubs(), 8000);
+        const note = r.installOpensApp
+          ? `${label} installer opened in Terminal. Its vendor installer may open the app once; IDACC will re-check for the CLI automatically.`
+          : `${label} installer opened in Terminal. IDACC will re-check for the CLI automatically.`;
+        setSubNotice(r.postInstall ? `${note} ${r.postInstall}` : note);
+        scheduleSubInstallChecks(provider, label);
       } else if (r.command) {
         try { await navigator.clipboard.writeText(r.command); } catch { /* clipboard best-effort */ }
+        setSubNotice(`Terminal automation was blocked; copied the install command. Paste it into a terminal, then use Re-check.`);
         window.alert(`Couldn't open Terminal automatically — the install command is copied to your clipboard. Paste it into a terminal:\n\n${r.command}`);
       } else {
         window.alert(`install unavailable: ${r.error ?? 'unknown'}`);
@@ -232,6 +240,21 @@ export function Settings({ store, navigate }: { store: FleetStore; navigate?: (v
     } finally {
       setSubBusy(null);
     }
+  }
+  function scheduleSubInstallChecks(provider: SubKey, label: string) {
+    [5000, 12000, 25000, 45000].forEach((delay, idx, arr) => {
+      setTimeout(async () => {
+        const next = await call<Record<SubKey, Sub>>('subs:status').catch(() => null);
+        if (!next) return;
+        setSubs(next);
+        const current = next[provider];
+        if (current?.installed) {
+          setSubNotice(`${label} detected. It is now available in IDACC; open the CLI only when you want to sign in or switch accounts.`);
+        } else if (idx === arr.length - 1) {
+          setSubNotice(`${label} was not detected yet. Finish the installer, make sure the CLI is on PATH, then Re-check.`);
+        }
+      }, delay);
+    });
   }
   async function signoutSub(provider: SubKey) {
     const label = managedSubRows.find((row) => row.key === provider)?.label ?? provider;
@@ -639,6 +662,21 @@ export function Settings({ store, navigate }: { store: FleetStore; navigate?: (v
     } finally {
       setBusy(false);
     }
+  }
+  async function addStackBackend(s: LocalStackEntry) {
+    if (!s.apiBase) {
+      setStackMsg(`${s.name} does not expose an addable local API preset.`);
+      return;
+    }
+    setStackMsg(`checking ${s.name} before adding backend…`);
+    const fresh = await runDiscover();
+    const match = fresh.find((x) => normUrl(x.baseUrl) === normUrl(s.apiBase ?? ''));
+    if (!match || match.status !== 'live') {
+      setStackMsg(`${s.name} is installed, but no live server answered at ${s.apiBase}. Start its server, then scan again.`);
+      return;
+    }
+    await addDiscovered(match);
+    setStackMsg(`${s.name} added as an inference backend.`);
   }
   async function addAllDiscovered() {
     setBusy(true);
@@ -1172,11 +1210,34 @@ export function Settings({ store, navigate }: { store: FleetStore; navigate?: (v
     ].join('\n'))) return;
     setStackConfirm(`u:${s.id}`);
   }
-  async function runStackCmd(cmd: string, action: 'install' | 'uninstall' = 'install') {
+  function scheduleStackInstallChecks(s: LocalStackEntry, action: 'install' | 'uninstall') {
+    [6000, 18000, 36000].forEach((delay, idx, arr) => {
+      setTimeout(async () => {
+        const status = await call<Record<string, LocalStackInstallStatus>>('stack:installStatus', [s.id]).catch((): Record<string, LocalStackInstallStatus> => ({}));
+        setStackInstallStatus((prev) => ({ ...prev, ...status }));
+        const installed = status[s.id]?.installed === true;
+        if (action === 'install' && installed) {
+          setStackMsg(`${s.name} installed. Start its local server, then Scan running to add it as a backend.`);
+        } else if (action === 'uninstall' && !installed) {
+          setStackMsg(`${s.name} uninstall no longer has matching package/container evidence.`);
+        } else if (idx === arr.length - 1) {
+          setStackMsg(action === 'install'
+            ? `${s.name} install not detected yet. Finish the installer, then Scan running once the server is started.`
+            : `${s.name} still appears installed. Finish the uninstall command, then check again.`);
+        }
+      }, delay);
+    });
+  }
+  async function runStackCmd(s: LocalStackEntry, action: 'install' | 'uninstall' = 'install') {
+    const cmd = action === 'install' ? stackInstallCmd(s) : stackUninstallCmd(s);
+    if (!cmd) return;
     setStackConfirm(null);
     const r = await call<{ ran: boolean }>('app:runInTerminal', cmd).catch(() => ({ ran: false }));
     if (r.ran) {
-      setStackMsg(`opened Terminal for ${action} — review and stop it there if anything looks wrong`);
+      setStackMsg(action === 'install'
+        ? `opened Terminal to install ${s.name}. Install only adds the app/server; start it before adding a backend.`
+        : `opened Terminal to uninstall ${s.name}. Review and stop it there if anything looks wrong.`);
+      scheduleStackInstallChecks(s, action);
     } else {
       await copyText(cmd);
       setStackMsg(`Terminal automation was blocked — ${action} command copied to clipboard`);
@@ -1223,13 +1284,20 @@ export function Settings({ store, navigate }: { store: FleetStore; navigate?: (v
       );
     }
     if (s?.installed === false) return <span className="warn-text" title={s.detail}>○ CLI not installed</span>;
-    if (s?.installed && s.statusSupported === false) return <span className="muted" title={s.detail}>○ available · status in CLI</span>;
+    if (s?.installed && s.statusSupported === false) {
+      return (
+        <span title={s.detail}>
+          <span className="ok-text">● installed</span>
+          <span className="muted"> · account managed in CLI</span>
+        </span>
+      );
+    }
     return <span className="muted" title={s?.detail}>○ not signed in</span>;
   }
   function subPrimaryLabel(s: Sub | undefined): string {
-    if (s?.installed === false) return s.installSupported ? 'Install…' : 'Install unavailable';
+    if (s?.installed === false) return s.installSupported ? 'Install' : 'Install unavailable';
     if (s?.loggedIn && s.loginSupported) return 'Switch account';
-    if (s?.statusSupported === false && s?.loginSupported) return 'Open CLI';
+    if (s?.statusSupported === false && s?.loginSupported) return 'Open / sign in';
     return s?.loginSupported ? 'Sign in' : 'Managed in CLI';
   }
   function subPrimaryDisabled(key: SubKey, s: Sub | undefined): boolean {
@@ -1448,6 +1516,11 @@ export function Settings({ store, navigate }: { store: FleetStore; navigate?: (v
                 <span className="muted small" style={{ marginLeft: 8 }} title="Managed runtime id">
                   <span className="mono">{s?.runtime ?? runtime}</span>
                 </span>
+                {s?.installedSource ? (
+                  <span className="muted small" style={{ marginLeft: 8 }} title={s.installedSource}>
+                    detected
+                  </span>
+                ) : null}
                 <span className="row-actions" style={{ display: 'inline-flex', marginLeft: 12 }}>
                   <button
                     className="btn"
@@ -1471,6 +1544,7 @@ export function Settings({ store, navigate }: { store: FleetStore; navigate?: (v
           <span className="muted small grow">Perplexity, xAI API, OpenRouter, NVIDIA, Groq, and similar metered accounts stay in Inference backends. The <span className="mono">q</span> row is legacy; prefer <span className="mono">kiro-cli</span> for current Amazon Q/Kiro CLI installs.</span>
           <button className="btn" disabled={subsBusy} onClick={() => void recheckSubs()}>{subsBusy ? 'Checking…' : 'Re-check'}</button>
         </div>
+        {subNotice ? <p className="muted small" style={{ marginTop: 8 }}>{subNotice}</p> : null}
       </section>
 
       <section className="card">
@@ -1660,7 +1734,7 @@ export function Settings({ store, navigate }: { store: FleetStore; navigate?: (v
       <section className="card">
         <h3>Local LLM stacks</h3>
         <p className="muted small" style={{ marginTop: -4 }}>
-          Self-hostable inference servers you can run <b>next to Ollama</b>. <b>Backend presets</b> matches the local choices under <b>Inference backends</b>; <b>start-here</b> narrows to Ollama and LM Studio. <b>Install</b> and <b>Uninstall</b> review the command first, then open Terminal visibly so nothing runs silently. After installing + starting one, hit <b>⟳ Scan running</b> then add it below.
+          Self-hostable inference servers you can run <b>next to Ollama</b>. <b>Install</b> only installs the app/server; <b>running</b> means a local API answered a scan; <b>backend added</b> means IDACC can route agents to it.
         </p>
         <div className="row-actions" style={{ flexWrap: 'wrap', gap: 6 }}>
           <span className="chips grow">
@@ -1686,7 +1760,7 @@ export function Settings({ store, navigate }: { store: FleetStore; navigate?: (v
         </div>
         <div className="stack-list">
           {filteredStacks.map((s) => {
-            const running = s.defaultPort != null && runningPorts.has(s.defaultPort);
+            const running = stackClaimedPorts(s).some((port) => runningPorts.has(port));
             const pw = stackPortWarn(s);
             const ic = stackInstallCmd(s);
             const uc = stackUninstallCmd(s);
@@ -1722,13 +1796,13 @@ export function Settings({ store, navigate }: { store: FleetStore; navigate?: (v
                   {confirmInstall && ic && !stackInstalled ? (
                     <>
                       <code className="mono">{ic}</code>
-                      <button className={`btn small${stackPrimaryAction(s) ? ' primary' : ''}`} title="Runs in your Terminal — visible and abortable" onClick={() => void runStackCmd(ic, 'install')}>Run install</button>
+                      <button className={`btn small${stackPrimaryAction(s) ? ' primary' : ''}`} title="Runs in your Terminal — visible and abortable" onClick={() => void runStackCmd(s, 'install')}>Run install</button>
                       <button className="btn small" onClick={() => setStackConfirm(null)}>Cancel</button>
                     </>
                   ) : confirmUninstall && uc && stackInstalled ? (
                     <>
                       <code className="mono">{uc}</code>
-                      <button className="btn small" title="Runs in your Terminal — visible and abortable" onClick={() => void runStackCmd(uc, 'uninstall')}>Run uninstall</button>
+                      <button className="btn small" title="Runs in your Terminal — visible and abortable" onClick={() => void runStackCmd(s, 'uninstall')}>Run uninstall</button>
                       <button className="btn small" onClick={() => setStackConfirm(null)}>Cancel</button>
                     </>
                   ) : (
@@ -1737,6 +1811,9 @@ export function Settings({ store, navigate }: { store: FleetStore; navigate?: (v
                         <button className={`btn small${stackPrimaryAction(s) ? ' primary' : ''}`} title={ic} onClick={() => reviewStackInstall(s)}>{stackInstallLabel(s)}</button>
                       ) : !stackInstalled ? (
                         <a className="btn small" href={s.homepage} target="_blank" rel="noreferrer" title="No CLI install — opens the download page">Get ↗</a>
+                      ) : null}
+                      {running && !configured && s.apiBase ? (
+                        <button className="btn small primary" title={`Add ${s.apiBase} as an inference backend after a fresh scan`} onClick={() => void addStackBackend(s)}>Add backend</button>
                       ) : null}
                       {configuredProviders.length === 1 ? (
                         <button className="btn small" title={`Remove inference backend ${configuredProviders[0].name}; does not uninstall the app/server`} onClick={() => void removeProviderProfile(configuredProviders[0].name)}>Remove backend</button>
