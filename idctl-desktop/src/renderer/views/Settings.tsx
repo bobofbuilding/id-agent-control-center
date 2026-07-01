@@ -1288,7 +1288,7 @@ export function Settings({ store, navigate }: { store: FleetStore; navigate?: (v
       return (
         <span title={s.detail}>
           <span className="ok-text">● installed</span>
-          <span className="muted"> · account managed in CLI</span>
+          <span className="muted"> · account managed outside IDACC</span>
         </span>
       );
     }
@@ -1297,12 +1297,13 @@ export function Settings({ store, navigate }: { store: FleetStore; navigate?: (v
   function subPrimaryLabel(s: Sub | undefined): string {
     if (s?.installed === false) return s.installSupported ? 'Install' : 'Install unavailable';
     if (s?.loggedIn && s.loginSupported) return 'Switch account';
-    if (s?.statusSupported === false && s?.loginSupported) return 'Open / sign in';
+    if (s?.statusSupported === false) return 'Managed outside IDACC';
     return s?.loginSupported ? 'Sign in' : 'Managed in CLI';
   }
   function subPrimaryDisabled(key: SubKey, s: Sub | undefined): boolean {
     if (subBusy === key) return true;
     if (s?.installed === false) return !s.installSupported;
+    if (s?.statusSupported === false) return true;
     return !s?.loginSupported;
   }
 
@@ -1507,7 +1508,9 @@ export function Settings({ store, navigate }: { store: FleetStore; navigate?: (v
         {managedSubRows.map(({ key, label, runtime }) => {
           const s = subs?.[key];
           const canInstall = s?.installed === false && s.installSupported;
-          const canLaunch = s?.installed !== false && s?.loginSupported;
+          const canLaunch = s?.installed !== false && s?.loginSupported && s.statusSupported !== false;
+          const showPrimary = canInstall || canLaunch;
+          const showSignOut = !!(s?.loggedIn && s.logoutSupported);
           return (
             <div className="kv" key={key} style={{ marginBottom: 8 }}>
               <span>{label}</span>
@@ -1521,21 +1524,25 @@ export function Settings({ store, navigate }: { store: FleetStore; navigate?: (v
                     detected
                   </span>
                 ) : null}
-                <span className="row-actions" style={{ display: 'inline-flex', marginLeft: 12 }}>
-                  <button
-                    className="btn"
-                    disabled={subPrimaryDisabled(key, s)}
-                    onClick={() => void (canInstall ? installSub(key) : canLaunch ? signinSub(key) : undefined)}
-                    title={s?.detail}
-                  >
-                    {subPrimaryLabel(s)}
-                  </button>
-                  {s?.loggedIn && s.logoutSupported ? (
-                    <button className="btn" disabled={subBusy === key} onClick={() => void signoutSub(key)}>
-                      Sign out
-                    </button>
-                  ) : null}
-                </span>
+                {showPrimary || showSignOut ? (
+                  <span className="row-actions" style={{ display: 'inline-flex', marginLeft: 12 }}>
+                    {showPrimary ? (
+                      <button
+                        className="btn"
+                        disabled={subPrimaryDisabled(key, s)}
+                        onClick={() => void (canInstall ? installSub(key) : canLaunch ? signinSub(key) : undefined)}
+                        title={s?.detail}
+                      >
+                        {subPrimaryLabel(s)}
+                      </button>
+                    ) : null}
+                    {showSignOut ? (
+                      <button className="btn" disabled={subBusy === key} onClick={() => void signoutSub(key)}>
+                        Sign out
+                      </button>
+                    ) : null}
+                  </span>
+                ) : null}
               </b>
             </div>
           );

@@ -8,6 +8,9 @@ Every change pushed or merged to `main` carries its version number in the commit
 subject (`vX.Y.Z: …`), stamped automatically by the `commit-msg` hook — see
 [CONTRIBUTING.md](CONTRIBUTING.md).
 
+## [0.1.407] — 2026-07-01
+- Remove Settings Terminal launchers for TUI managed runtimes
+
 ## [0.1.406] — 2026-07-01
 - Fix self-update auto-apply and staged zip pruning
 

@@ -472,8 +472,8 @@ Manager; this is the plumbing.)
 - **Managed subscription sign-ins**: CLI OAuth/device/browser flows (no API key) for `claude-*`,
   `codex`, `cursor-cli`, `grok`, `gemini`, `copilot`, `kiro-cli`, and legacy `q`. Rows distinguish
   status-inspectable CLIs from TUI-owned account state, auto-detect installed binaries after a
-  visible installer handoff, and keep sign-in/opening as a separate user action; metered API
-  providers stay under Inference backends.
+  visible installer handoff, and keep TUI-owned CLIs such as Grok/Gemini/Copilot read-only in
+  Settings instead of opening Terminal popups; metered API providers stay under Inference backends.
 - **Local models (Ollama)**: parallel-inference cap (1–16), installed chips, **Download** by id
   (streamed progress), a searchable **catalog** with capability filters and hardware fit-warnings.
 - **Local image generator**: URL + API style (Automatic1111 / OpenAI-images), **Detect**, Save/Clear
