@@ -669,6 +669,24 @@ textarea.composer-input { resize: none; line-height: 1.4; min-height: 38px; max-
 .local-driving-strip b { display: block; }
 .local-driving-strip span { display: block; color: var(--muted); font-size: 12px; margin-top: 2px; }
 .local-driving-strip .row-actions { flex-wrap: wrap; }
+.local-image-actions {
+  display: grid;
+  grid-template-columns: minmax(260px, 1fr) minmax(176px, 220px) auto auto auto;
+  gap: 8px;
+  align-items: center;
+  margin-top: 8px;
+}
+.local-image-url,
+.local-image-type {
+  width: 100%;
+  min-width: 0;
+}
+.local-image-status {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  margin-top: 8px;
+}
 .provider-replace-review { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin-top: 8px; padding: 8px 10px; border: 1px solid var(--warn); border-radius: 6px; background: color-mix(in srgb, var(--warn) 8%, transparent); }
 
 @media (max-width: 980px) {
@@ -863,6 +881,9 @@ select:focus, input:focus { border-color: var(--accent); }
 }
 
 @media (max-width: 760px) {
+  .local-image-actions {
+    grid-template-columns: 1fr;
+  }
   .model-lanes-grid {
     grid-template-columns: minmax(130px, 1fr) 84px 68px minmax(130px, 1fr);
   }

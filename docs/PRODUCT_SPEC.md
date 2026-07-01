@@ -502,8 +502,8 @@ Manager; this is the plumbing.)
   Antigravity adapter.
 - **Local models (Ollama)**: parallel-inference cap (1–16), installed chips, **Download** by id
   (streamed progress), a searchable **catalog** with capability filters and hardware fit-warnings.
-- **Local image generator**: URL + API style (Automatic1111 / OpenAI-images), **Detect**, Save/Clear
-  (used first for in-chat images; cloud is fallback).
+- **Local image generator**: URL + API style (Stable Diffusion WebUI / OpenAI Images API),
+  **Scan local**, Save/Clear (local first for in-chat images; image-capable API backend fallback).
 - **Local LLM stacks**: starter-first curated list with compact primary filters, an optional tag
   dropdown for advanced filters, **Scan running**, reviewed Install/Run-in-Terminal/Uninstall
   actions, setup notes, docs ↗, automatic backend add for matching live backend presets after a

@@ -99,6 +99,11 @@ function rpcStamp(rpc: EvmRpcRow): string {
 function imageServerStamp(server: { url: string; type: string; model?: string } | null): string {
   return server ? JSON.stringify({ url: server.url.replace(/\/+$/, ''), type: server.type, model: server.model ?? '' }) : '';
 }
+function imageMessageClass(msg: string): string {
+  if (/(failed|blocked|changed)/i.test(msg)) return 'status-error';
+  if (/(no server|not found|not configured)/i.test(msg)) return 'warn-text';
+  return 'ok-text';
+}
 
 export function Settings({ store, navigate }: { store: FleetStore; navigate?: (view: string) => void }) {
   const [providers, setProviders] = useState<ProviderRow[]>([]);
@@ -834,7 +839,7 @@ export function Settings({ store, navigate }: { store: FleetStore; navigate?: (v
     finally { setConcBusy(false); }
   }
 
-  // Local image generator (preferred over the cloud provider for image creation).
+  // Local image generator (preferred over API fallback for image creation).
   type ImgServer = { url: string; type: 'auto1111' | 'openai'; model?: string };
   const [imgServer, setImgServer] = useState<ImgServer | null>(null);
   const [imgUrl, setImgUrl] = useState('');
@@ -859,7 +864,7 @@ export function Settings({ store, navigate }: { store: FleetStore; navigate?: (v
         setImgMsg('save blocked: image server changed since this page rendered; refreshed');
         return;
       }
-      if (!url && imgServer && !window.confirm('Clear the local image generator?\n\nImage creation will fall back to the cloud provider when available.')) return;
+      if (!url && imgServer && !window.confirm('Clear the local image generator?\n\nImage creation will fall back to an image-capable API backend when available.')) return;
       if (url && imgServer && imageServerStamp({ url, type }) !== imageServerStamp(imgServer) && !window.confirm(`Replace local image generator?\n\nBefore: ${imgServer.type} · ${imgServer.url}\nAfter:  ${type} · ${url}`)) return;
       const afterReview = await call<ImgServer | null>('image:getServer').catch(() => null);
       if (imageServerStamp(afterReview) !== imageServerStamp(imgServer)) {
@@ -873,7 +878,7 @@ export function Settings({ store, navigate }: { store: FleetStore; navigate?: (v
       setImgServer(saved);
       if (saved) { setImgUrl(saved.url); setImgType(saved.type); }
       else setImgUrl('');
-      setImgMsg(url ? 'saved ✓ — image creation will use this server first (cloud is the fallback)' : 'cleared — image creation uses the cloud provider');
+      setImgMsg(url ? 'saved ✓ — local image server will be tried first' : 'cleared — image creation will use an image-capable API backend when available');
     } catch {
       setImgMsg('save failed');
     } finally { setImgBusy(false); }
@@ -882,8 +887,8 @@ export function Settings({ store, navigate }: { store: FleetStore; navigate?: (v
     setImgBusy(true); setImgMsg('scanning localhost…');
     try {
       const found = await call<ImgServer | null>('image:detectServer').catch(() => null);
-      if (found) { setImgUrl(found.url); setImgType(found.type); setImgMsg(`found ${found.type === 'auto1111' ? 'Stable Diffusion (Automatic1111)' : 'an image API'} at ${found.url} — click Save to use it`); }
-      else setImgMsg('no local image server found — run Automatic1111 (Stable Diffusion WebUI) on :7860, or LocalAI on :8080');
+      if (found) { setImgUrl(found.url); setImgType(found.type); setImgMsg(`found ${found.type === 'auto1111' ? 'Stable Diffusion WebUI' : 'OpenAI Images API'} at ${found.url} — click Save to use it`); }
+      else setImgMsg('no server found on localhost ports 7860, 7861, 8080, or 1234');
     } finally { setImgBusy(false); }
   }
 
@@ -1824,21 +1829,27 @@ export function Settings({ store, navigate }: { store: FleetStore; navigate?: (v
       <section className="card">
         <h3>Local image generator</h3>
         <p className="muted small" style={{ marginTop: -4 }}>
-          Image creation in chat uses this <b>first</b> (free, private), falling back to the cloud provider (OpenRouter) only if it’s unset or unreachable. Run a local image server — <a className="ext-link" href="https://github.com/AUTOMATIC1111/stable-diffusion-webui" target="_blank" rel="noreferrer">Automatic1111</a> / Forge (Stable Diffusion WebUI, start with <span className="mono">--api</span>) on <span className="mono">:7860</span>, or a <a className="ext-link" href="https://localai.io" target="_blank" rel="noreferrer">LocalAI</a>-style image API on <span className="mono">:8080</span>. The subscriptions and Ollama models are text/vision-only and can’t generate images.
+          Optional local image server for chat image requests. IDACC tries this first; if it is unset or unreachable, image generation falls back to an image-capable API backend configured under <b>Inference backends</b>. Run <a className="ext-link" href="https://github.com/AUTOMATIC1111/stable-diffusion-webui" target="_blank" rel="noreferrer">Automatic1111</a> / Forge with <span className="mono">--api</span> on <span className="mono">:7860</span>, or a <a className="ext-link" href="https://localai.io" target="_blank" rel="noreferrer">LocalAI</a>-style OpenAI Images API on <span className="mono">:8080</span>.
         </p>
-        <div className="row-actions" style={{ gap: 8, flexWrap: 'wrap', alignItems: 'center', marginTop: 8 }}>
-          <input className="catalog-search" style={{ flex: '1 1 280px' }} placeholder="http://127.0.0.1:7860" value={imgUrl} disabled={imgBusy} onChange={(e) => setImgUrl(e.target.value)} />
-          <select className="cell-select" value={imgType} disabled={imgBusy} onChange={(e) => setImgType(e.target.value as 'auto1111' | 'openai')} title="API style">
-            <option value="auto1111">Stable Diffusion (Automatic1111)</option>
-            <option value="openai">OpenAI images API (LocalAI…)</option>
+        <div className="local-image-actions">
+          <input className="local-image-url" placeholder="http://127.0.0.1:7860" value={imgUrl} disabled={imgBusy} onChange={(e) => setImgUrl(e.target.value)} />
+          <select className="local-image-type" value={imgType} disabled={imgBusy} onChange={(e) => setImgType(e.target.value as 'auto1111' | 'openai')} title="Local image API style">
+            <option value="auto1111">Stable Diffusion WebUI</option>
+            <option value="openai">OpenAI Images API</option>
           </select>
-          <button className="btn" disabled={imgBusy} onClick={() => void detectImg()}>Detect</button>
+          <button className="btn" disabled={imgBusy} onClick={() => void detectImg()}>Scan local</button>
           <button className="btn primary" disabled={imgBusy} onClick={() => void saveImgServer()}>{imgBusy ? '…' : 'Save'}</button>
-          {imgServer ? <button className="btn" disabled={imgBusy} title="Clear — use the cloud provider" onClick={() => void saveImgServer(null)}>Clear</button> : null}
+          {imgServer ? <button className="btn" disabled={imgBusy} title="Clear — use an image-capable API backend when available" onClick={() => void saveImgServer(null)}>Clear</button> : null}
         </div>
-        <div className="muted small" style={{ marginTop: 6 }}>
-          {imgServer ? <>Active: <b className="accent-text">{imgServer.type === 'auto1111' ? 'Stable Diffusion' : 'image API'}</b> at <span className="mono">{imgServer.url}</span>. </> : <>No local image server — image creation uses the cloud provider. </>}
-          {imgMsg ? <span className={/(failed|no local)/.test(imgMsg) ? 'status-error' : 'ok-text'}>{imgMsg}</span> : null}
+        <div className="local-image-status">
+          <div>
+            <span className="muted small">Local preference</span>{' '}
+            {imgServer
+              ? <><b className="accent-text">{imgServer.type === 'auto1111' ? 'Stable Diffusion WebUI' : 'OpenAI Images API'}</b> <span className="mono">{imgServer.url}</span></>
+              : <span className="muted">not configured</span>}
+          </div>
+          <div className="muted small">Fallback: image-capable API backend from Inference backends when available.</div>
+          {imgMsg ? <div className={`small ${imageMessageClass(imgMsg)}`}>{imgMsg}</div> : null}
         </div>
       </section>
 

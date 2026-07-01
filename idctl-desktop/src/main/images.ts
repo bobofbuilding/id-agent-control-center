@@ -1,6 +1,6 @@
 /**
  * Image generation + caching (main process). Generates via the configured
- * OpenRouter-style provider (chat/completions with an image-output model, which
+ * image-capable API provider (chat/completions with an image-output model, which
  * returns a base64 data URL), caches the PNG to <config>/chats/images/, and
  * reads cached images back as data URLs for CSP-safe (`img-src 'self' data:`)
  * display in the sandboxed renderer.
@@ -23,8 +23,8 @@ function pickImageModel(prompt: string): string {
     : DEFAULT_IMAGE_MODEL;
 }
 
-/** The CLOUD provider used for image generation: prefer OpenRouter, else any
- *  enabled openai-compatible/openai provider. */
+/** The API provider used for image generation: prefer OpenRouter when present,
+ *  else any enabled OpenAI-compatible/OpenAI backend with image-model support. */
 function imageProvider() {
   const ps = (loadSettings().providers ?? []).filter((p) => p.enabled !== false);
   return ps.find((p) => p.name === 'openrouter') || ps.find((p) => p.kind === 'openai-compatible' || p.kind === 'openai');
@@ -134,7 +134,7 @@ async function genViaChatModalities(prov: { name: string; baseUrl?: string }, ke
 
 /**
  * Generate an image — preferring a configured LOCAL image server (free, private)
- * over the cloud (OpenRouter) provider, falling back to the cloud only if no
+ * over the API image provider, falling back only if no
  * local server is set or the local attempt fails.
  */
 export async function generateImage(prompt: string, model?: string): Promise<ImageResult> {
@@ -153,12 +153,12 @@ export async function generateImage(prompt: string, model?: string): Promise<Ima
     localErr = res.error || 'local image server failed';
   }
 
-  // 2) Cloud fallback (OpenRouter / openai-compatible).
+  // 2) API fallback (OpenRouter / OpenAI-compatible image model).
   const prov = imageProvider();
   if (!prov) {
     return { ok: false, error: local?.url
-      ? `local image server failed (${localErr}); no cloud image provider configured`
-      : 'no image generator — set a local image server in Settings → Inference, or add an OpenRouter key' };
+      ? `local image server failed (${localErr}); no API image provider configured`
+      : 'no image generator — set a local image server in Settings, or add an image-capable API backend in Settings → Inference backends' };
   }
   const key = resolveProviderKey(prov);
   if (!key) return { ok: false, error: `no API key for ${prov.name}` };
@@ -212,13 +212,13 @@ export function getImageServer(): ImageServerConfig | null {
   return loadSettings().imageServer ?? null;
 }
 
-/** Whether image generation is possible at all (a local server OR a cloud
- *  provider) + the model list the cloud provider offers (best-effort). The
+/** Whether image generation is possible at all (a local server OR an API
+ *  provider) + the model list the API provider offers (best-effort). The
  *  renderer treats a non-empty result as "image generation available". */
 export async function imageModels(): Promise<string[]> {
   const out: string[] = [];
   const local = loadSettings().imageServer;
-  if (local?.url) out.push(`local:${local.type}`); // makes image generation available even with no cloud provider
+  if (local?.url) out.push(`local:${local.type}`); // makes image generation available even with no API provider
   const prov = imageProvider();
   if (prov) {
     const key = resolveProviderKey(prov);
