@@ -16,6 +16,7 @@ import {
 const MODEL_CAPS: ModelCapability[] = ['general', 'tools', 'reasoning', 'coding', 'vision', 'embedding', 'fast'];
 const STARTER_LOCAL_MODEL_ID = 'qwen3:1.7b';
 const SUB_NOTICE_TTL_MS = 18_000;
+const SUB_AUTO_REFRESH_MS = 5 * 60 * 1000;
 const LOCAL_FIRST_PROVIDER = findProvider('ollama');
 const DISCOVERY_MAX_AGE_MS = 2 * 60 * 1000;
 const STACK_BACKEND_PRESET_FILTER = 'backend-presets';
@@ -183,7 +184,27 @@ export function Settings({ store, navigate }: { store: FleetStore; navigate?: (v
   const [subsBusy, setSubsBusy] = useState(false);
   const [subBusy, setSubBusy] = useState<string | null>(null);
   const [subNotice, setSubNotice] = useState('');
+  const [subsCheckedAt, setSubsCheckedAt] = useState<number | null>(null);
   const visibleManagedSubRows = managedSubRows.filter(({ key }) => key !== 'q' || subs?.q?.installed === true);
+
+  async function refreshManagedSubscriptions(options: { busy?: boolean; notice?: boolean } = {}) {
+    if (options.busy) setSubsBusy(true);
+    try {
+      const next = await call<Record<SubKey, Sub>>('subs:status').catch(() => null);
+      if (next) {
+        setSubs(next);
+        setSubsCheckedAt(Date.now());
+      }
+      // Keep model picker data current too. The main process also refreshes provider
+      // models on boot + every 6h; this warms the renderer-visible catalog/freshness
+      // routes when Settings is open without running package installers or updaters.
+      void call<Record<string, string[]>>('runtime:models').catch(() => null);
+      void call('runtime:freshness').catch(() => null);
+      if (options.notice) setSubNotice('Managed runtimes refreshed. Account status and model freshness were checked.');
+    } finally {
+      if (options.busy) setSubsBusy(false);
+    }
+  }
 
   async function reload() {
     setProviders(await call<ProviderRow[]>('providers:list').catch(() => []));
@@ -196,7 +217,7 @@ export function Settings({ store, navigate }: { store: FleetStore; navigate?: (v
     // Kick a FRESH check so the card reflects the true latest when you open
     // Settings (the cached status above can lag a release until the next check).
     void call<typeof updStatus>('update:check').then((s) => { if (s) setUpdStatus(s); }).catch(() => {});
-    setSubs(await call<Record<SubKey, Sub>>('subs:status').catch(() => null));
+    await refreshManagedSubscriptions();
     void checkStackInstalls();
   }
   async function reloadManagerCapabilities() {
@@ -204,9 +225,7 @@ export function Settings({ store, navigate }: { store: FleetStore; navigate?: (v
     setManagerCaps(await call<ManagerCapabilities>('manager:capabilities').catch(() => null));
   }
   async function recheckSubs() {
-    setSubsBusy(true);
-    try { setSubs(await call<Record<SubKey, Sub>>('subs:status').catch(() => null)); }
-    finally { setSubsBusy(false); }
+    await refreshManagedSubscriptions({ busy: true, notice: true });
   }
   async function signinSub(provider: SubKey) {
     setSubBusy(provider);
@@ -226,7 +245,7 @@ export function Settings({ store, navigate }: { store: FleetStore; navigate?: (v
           ? `${label} opened from IDACC. Finish the Antigravity login flow, then Re-check if the row does not update automatically. Agent assignment remains disabled until the manager exposes an Antigravity harness.`
           : `${label} account flow started from IDACC. Finish the vendor prompt/browser flow, then Re-check if the row does not update automatically.`;
       setSubNotice(note);
-      setTimeout(() => void recheckSubs(), 4000);
+      setTimeout(() => void refreshManagedSubscriptions(), 4000);
     } finally {
       setSubBusy(null);
     }
@@ -259,6 +278,7 @@ export function Settings({ store, navigate }: { store: FleetStore; navigate?: (v
         const next = await call<Record<SubKey, Sub>>('subs:status').catch(() => null);
         if (!next) return;
         setSubs(next);
+        setSubsCheckedAt(Date.now());
         const current = next[provider];
         if (current?.installed) {
           setSubNotice(`${label} detected. It is now available in IDACC; use Manage account here when you want to sign in or switch accounts.`);
@@ -291,6 +311,30 @@ export function Settings({ store, navigate }: { store: FleetStore; navigate?: (v
   useEffect(() => {
     reload();
   }, [store.team, store.coordinator]);
+
+  useEffect(() => {
+    let cancelled = false;
+    const tick = async () => {
+      const next = await call<Record<SubKey, Sub>>('subs:status').catch(() => null);
+      if (!cancelled && next) {
+        setSubs(next);
+        setSubsCheckedAt(Date.now());
+      }
+      void call<Record<string, string[]>>('runtime:models').catch(() => null);
+      void call('runtime:freshness').catch(() => null);
+    };
+    const onVisibility = () => { if (!document.hidden) void tick(); };
+    const onFocus = () => { void tick(); };
+    const interval = window.setInterval(() => void tick(), SUB_AUTO_REFRESH_MS);
+    document.addEventListener('visibilitychange', onVisibility);
+    window.addEventListener('focus', onFocus);
+    return () => {
+      cancelled = true;
+      window.clearInterval(interval);
+      document.removeEventListener('visibilitychange', onVisibility);
+      window.removeEventListener('focus', onFocus);
+    };
+  }, []);
 
 
   async function freshProviders(): Promise<ProviderRow[]> {
@@ -1538,7 +1582,7 @@ export function Settings({ store, navigate }: { store: FleetStore; navigate?: (v
       <section className="card">
         <h3>Managed subscription sign-ins</h3>
         <p className="muted small" style={{ marginTop: -4 }}>
-          Local CLI sign-ins and subscription-backed runtimes are launched and tracked from IDACC. Signed in means the CLI confirms live status; account linked means IDACC found safe local account evidence for a CLI that does not expose live status. Metered API providers still live under <b>Inference backends</b>.
+          Local CLI sign-ins and subscription-backed runtimes are launched and tracked from IDACC. Signed in means live CLI status; account linked means safe local account evidence. Account status and model freshness auto-check on open, focus, and every 5 minutes. Metered API providers still live under <b>Inference backends</b>.
         </p>
         {visibleManagedSubRows.map(({ key, label, runtime }) => {
           const s = subs?.[key];
@@ -1583,7 +1627,10 @@ export function Settings({ store, navigate }: { store: FleetStore; navigate?: (v
           );
         })}
         <div className="row-actions" style={{ marginTop: 6, justifyContent: 'flex-end' }}>
-          <button className="btn" disabled={subsBusy} onClick={() => void recheckSubs()}>{subsBusy ? 'Checking…' : 'Re-check'}</button>
+          <span className="muted small grow">
+            {subsCheckedAt ? `last checked ${timeAgo(subsCheckedAt)}` : 'auto-check pending'}
+          </span>
+          <button className="btn" disabled={subsBusy} onClick={() => void recheckSubs()}>{subsBusy ? 'Checking…' : 'Re-check now'}</button>
         </div>
         {subNotice ? <p className="muted small" style={{ marginTop: 8 }}>{subNotice}</p> : null}
       </section>

@@ -481,6 +481,9 @@ Manager; this is the plumbing.)
   visible installer handoff, show safe account labels from provider status/cache metadata when
   available, label live CLI-confirmed rows as signed in, label cache-evidence rows as account linked
   with a status-not-live caveat, hide uninstalled legacy-only rows, auto-expire account-flow notices,
+  auto-check account status plus model freshness on Settings open/focus and every 5 minutes while
+  mounted, warm the runtime model/freshness routes without silently installing or upgrading vendor
+  CLIs,
   and keep managed account launches inside the Settings row even when the vendor CLI owns the final
   TUI/device-flow prompt. Sign out is shown only for installed/linked providers with a reviewed
   logout command; metered API providers stay under Inference backends.
