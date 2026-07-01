@@ -513,11 +513,11 @@ export class ManagerClient {
     await this.post('/manager/inbox/respond', { query_id: queryId, message, session_id: sessionId }, signal);
   }
 
-  // ---- Local-model token usage (Ollama) ---------------------------------
+  // ---- Manager token-usage telemetry ------------------------------------
 
   /**
-   * Aggregated local-model (Ollama) token usage for the Health page: 24h/7d
-   * windows + a recent-throughput reading. Returns null on managers that
+   * Aggregated manager-reported token usage for the Health page: 24h/7d
+   * windows + a last-turn throughput reading. Returns null on managers that
    * predate the /usage route (older managers don't track tokens).
    */
   async usage(signal?: AbortSignal): Promise<UsageReport | null> {

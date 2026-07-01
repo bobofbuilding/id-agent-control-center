@@ -5,6 +5,7 @@ import { AgentTable } from './AgentTable.tsx';
 
 type ProbeTarget = { id?: string; name: string; team: string; status?: string };
 type UsageRow = UsageAgent | UsageModel;
+const FRESH_SAMPLE_MS = 15 * 60_000;
 
 /** Compact number: 1234 → "1.2k", 2_500_000 → "2.5M". */
 function fmt(n: number): string {
@@ -28,6 +29,9 @@ function ageLabel(ms: number | null | undefined): string {
 function epochMs(value: number | null | undefined): number | null {
   if (!value || !Number.isFinite(value)) return null;
   return value < 10_000_000_000 ? value * 1000 : value;
+}
+function elapsedMs(value: number | null): number | null {
+  return value ? Math.max(0, Date.now() - value) : null;
 }
 function totalTokens(row: UsageRow): number {
   return row.total ?? row.output ?? 0;
@@ -62,7 +66,7 @@ function WindowCard({ title, w }: { title: string; w: UsageWindow }) {
       <div className="usage-card-title">{title}</div>
       <div className="usage-stat"><b>{fmt(w.total)}</b><span className="muted small">tokens</span></div>
       <div className="usage-sub muted small">
-        {w.count} {w.count === 1 ? 'query' : 'queries'} · {fmt(w.avgPerQuery)}/query · {fmtTps(w.avgTps)} tok/s avg
+        {w.count} {w.count === 1 ? 'turn' : 'turns'} · {fmt(w.avgPerQuery)}/turn · {fmtTps(w.avgTps)} tok/s avg
       </div>
     </div>
   );
@@ -87,7 +91,7 @@ function UsageList({ title, rows, empty }: { title: string; rows: UsageRow[]; em
       {shown.length ? shown.map((row) => (
         <div className="usage-agent-row" key={rowName(row)}>
           <span className="b mono">{rowName(row)}</span>
-          <span className="muted small grow">{fmt(totalTokens(row))} tokens · {row.count}q</span>
+          <span className="muted small grow">{fmt(totalTokens(row))} tokens · {row.count} turns</span>
           <span className="ok-text small" title="average output throughput rate">{fmtTps(row.avgTps)} tok/s</span>
         </div>
       )) : <span className="muted small">{empty}</span>}
@@ -106,19 +110,25 @@ function UsageSection({
   error: string | null;
   onRefresh: () => void;
 }) {
-  const gaugeVal = usage ? (usage.recent?.tps ?? usage.day.avgTps ?? 0) : 0;
+  const recentAt = epochMs(usage?.recent?.at);
+  const recentAge = elapsedMs(recentAt);
+  const recentFresh = Boolean(usage?.recent?.tps != null && recentAge != null && recentAge <= FRESH_SAMPLE_MS);
+  const gaugeVal = usage ? (recentFresh ? usage.recent?.tps ?? 0 : usage.day.avgTps ?? 0) : 0;
   const gaugeMax = usage ? niceMax(Math.max(gaugeVal, usage.day.avgTps, usage.week.avgTps)) : 100;
   const localAgents = usage?.day.agents ?? [];
   const localModels = usage?.day.models ?? [];
   const topAgent = topUsage(localAgents);
   const topModel = topUsage(localModels);
-  const recentAt = epochMs(usage?.recent?.at);
-  const throughputLabel = usage?.recent?.tps != null ? 'Recent sample' : '24h average';
+  const throughputLabel = recentFresh ? 'Fresh sample' : '24h average';
+  const sourceLabel = usage?.recent
+    ? `${recentFresh ? '' : 'last turn · '}${usage.recent.agent} · ${usage.recent.model}${recentAt ? ` · ${ageLabel(recentAt)}` : ''}${recentFresh ? '' : ` · ${fmtTps(usage.recent.tps ?? 0)} tok/s`}`
+    : 'fallback from 24h average';
 
   return (
     <section className="card health-section">
       <div className="row-actions health-section-head">
         <h3 className="grow">Token throughput</h3>
+        {usage && usage.week.count > 0 ? <span className="muted small" title="Reported by manager harness telemetry; useful for trends, not a provider billing invoice.">reported telemetry</span> : null}
         <span className="muted small" title="auto-refreshes every 15s and after probes">{usageAt ? `updated ${ageLabel(usageAt)}` : usage === undefined ? 'loading...' : ''}</span>
         <button className="btn small" onClick={onRefresh}>Refresh</button>
       </div>
@@ -132,7 +142,7 @@ function UsageSection({
         </p>
       ) : usage.week.count === 0 ? (
         <p className="muted small">
-          No local-model activity recorded yet. Probe or message a local-model agent and Health will start tracking throughput. Cloud API runtimes are excluded.
+          No token-usage telemetry recorded yet. Probe or message an agent and Health will start tracking reported throughput.
         </p>
       ) : (
         <>
@@ -140,7 +150,7 @@ function UsageSection({
             <div className="health-metric primary">
               <span>{throughputLabel}</span>
               <b>{fmtTps(gaugeVal)} tok/s</b>
-              <small>{usage.recent ? `${usage.recent.agent} · ${usage.recent.model}${recentAt ? ` · ${ageLabel(recentAt)}` : ''}` : 'fallback from 24h average'}</small>
+              <small>{sourceLabel}</small>
             </div>
             <div className="health-metric">
               <span>24h tokens</span>
@@ -168,7 +178,7 @@ function UsageSection({
               <Gauge value={gaugeVal} max={gaugeMax} />
               <div className="gauge-cap">throughput</div>
               <div className="muted small" style={{ textAlign: 'center' }}>
-                24h avg {fmtTps(usage.day.avgTps)} · 7d avg {fmtTps(usage.week.avgTps)} tok/s
+                {recentFresh ? 'fresh sample' : '24h average'} · 7d avg {fmtTps(usage.week.avgTps)} tok/s
               </div>
             </div>
             <WindowCard title="Last 24 hours" w={usage.day} />

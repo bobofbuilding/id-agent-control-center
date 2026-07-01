@@ -278,19 +278,20 @@ headers wrap long names/actions instead of overflowing.
 
 ## 8. Health (nav: "Health" ✚, route: `health`)
 
-**Purpose:** Fleet health — local-model (Ollama) token-throughput analytics + a cross-team roster
+**Purpose:** Fleet health — reported token-throughput telemetry + a cross-team roster
 with on-demand liveness probes.
 
-**What you can do:** read the **throughput gauge** (live tok/s), **24h / 7d** windows (tokens,
-queries, avg/query, avg tok/s) and **per-agent 24h** breakdown; browse the **all-teams roster**
-(grouped, active team first, "N/M up"); **Probe all** / per-row **Probe** (active team only) → a
-results panel with pass/fail, duration, and errors.
+**What you can do:** read the **throughput gauge** (fresh sample only when manager telemetry is less
+than 15m old; otherwise 24h average), **24h / 7d** windows (reported tokens, turns, avg/turn, avg
+tok/s), and **per-agent/per-model 24h** breakdown; browse the **all-teams roster** (grouped, active
+team first, "N/M up"); **Probe all** / per-row **Probe** → a results panel with pass/fail, duration,
+and errors.
 
 **Data & actions:** `usage` (`/usage`, null when absent), `agents:allTeams`, `probeAll/probeOne`.
 
-**Polish:** probes gated to the active team though the roster is cross-team; `usage` + roster
-re-fetch on every 3s poll (heavy on large fleets); "running" is a status-string regex (non-matching
-healthy statuses show red).
+**Polish:** token numbers are manager-reported harness telemetry for trends, not provider billing
+invoices; stale last-turn samples remain visible but no longer drive the live gauge. "Running" is a
+status-string regex (non-matching healthy statuses show red).
 
 ---
 
