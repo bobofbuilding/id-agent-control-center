@@ -263,10 +263,13 @@ button.chip.incompat:hover { border-color: var(--line); }
 /* Projects → git tracking */
 .accent-text { color: var(--accent); }
 .projects-root { margin: -4px 0 4px; }
-.projects-root .mono { font-family: var(--mono, ui-monospace, monospace); opacity: .85; }
+.projects-root .mono { font-family: var(--mono, ui-monospace, monospace); opacity: .85; overflow-wrap: anywhere; }
 .link-btn { background: none; border: none; color: var(--accent); padding: 0; font: inherit; cursor: pointer; }
 .link-btn:hover { text-decoration: underline; }
 .link-btn:disabled { opacity: .5; cursor: default; text-decoration: none; }
+.project-card-head { flex-wrap: wrap; align-items: center; }
+.project-card-title { min-width: min(180px, 100%); overflow-wrap: anywhere; }
+.project-card-head .cell-select { max-width: 140px; }
 .project-git { margin-top: 8px; border-top: 1px solid var(--line); padding-top: 8px; }
 .git-badge { display: inline-flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .project-path { margin-top: 4px; opacity: .8; word-break: break-all; }

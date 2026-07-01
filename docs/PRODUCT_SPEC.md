@@ -1,6 +1,6 @@
 # ID Agents Control Center — Product Spec
 
-_Updated 2026-07-01 · reflects app **v0.1.388**. This is a page-by-page specification of
+_Updated 2026-07-01 · reflects app **v0.1.389**. This is a page-by-page specification of
 the desktop app as it actually ships today, produced by reviewing every page._
 
 ---
@@ -266,11 +266,11 @@ panel — status badge (branch, ahead/behind, fork, dirty), **open ↗**, and wh
 (**fetch / pull / status / log / diff**) streamed into a `<pre>`, plus **remote ↗**.
 
 **Data & actions:** `projects:list/save/remove/detectRoot/syncRoot`, `project:git/gitRun/readme/
-pickFolder/openFolder/cloneGithub/githubMeta`, `dispatch`.
+pickFolder/openFolder/cloneGithub/githubMeta`, `dispatch:start/query:poll`.
 
-**Polish:** first-run auto-sync repopulates if the list is emptied (deletions can "come back");
-`project:git` fan-out runs for every project on each load (no cancellation); quick-status save is
-silent on failure.
+**Polish:** Project-team AI helpers are pinned to the selected project's team, git fan-out ignores stale
+loads after newer project snapshots arrive, removed rows close their inline panels, and crowded project
+headers wrap long names/actions instead of overflowing.
 
 ---
 

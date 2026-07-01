@@ -54,6 +54,8 @@ type ProjectOrgHierarchy = {
   coordinators: Record<string, string>;
   teams: string[];
 };
+type DispatchStart = { queryId?: string; inline?: string };
+type QueryPoll = { status?: string; text?: string; error?: string };
 
 function newId(): string {
   return `p_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 7)}`;
@@ -255,6 +257,7 @@ export function Projects({ store }: { store: FleetStore }) {
   const [linkFor, setLinkFor] = useState<string | null>(null);    // project whose "link existing repo" form is open
   const [linkUrl, setLinkUrl] = useState('');
   const [automationFor, setAutomationFor] = useState<string | null>(null);
+  const gitLoadSeqRef = useRef(0);
 
   // New projects default to the DEFAULT team, which delegates git work to the
   // responsible agent (git-manager). Falls back to the first team if absent.
@@ -274,6 +277,22 @@ export function Projects({ store }: { store: FleetStore }) {
   };
   const formLead = teamLeadOf(form.team || defaultTeamName);
   const defaultProjectLead = teamLeadOf(defaultTeamName);
+  const q = (s: string) => `"${s.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`;
+  async function askProjectLead(team: string | undefined, agent: string, prompt: string, sessionKey: string): Promise<string> {
+    const targetTeam = team || defaultTeamName || undefined;
+    const sessionId = `projects:${sessionKey.replace(/[^a-z0-9:_-]/gi, '_')}:${Date.now().toString(36)}`;
+    const start = await call<DispatchStart>('dispatch:start', `/ask ${agent} ${q(prompt)}`, sessionId, targetTeam).catch(() => null);
+    if (!start) return '';
+    if (start.inline) return start.inline;
+    if (!start.queryId) return '';
+    for (let i = 0; i < 15; i++) {
+      const polled = await call<QueryPoll>('query:poll', start.queryId, 4, targetTeam).catch(() => null);
+      if (!polled?.status) return '';
+      if (polled.status === 'delivered') return polled.text ?? '';
+      if (polled.status === 'failed' || polled.status === 'expired') return polled.text || polled.error || '';
+    }
+    return '';
+  }
   // Per-project checkpoint state: completed-task refs seen so far (baseline) + last
   // auto-commit time (throttle). A ref so the 45s watcher doesn't trigger re-renders.
   const autoSeenRef = useRef<Record<string, { seen: Set<string>; lastFire: number }>>({});
@@ -288,6 +307,23 @@ export function Projects({ store }: { store: FleetStore }) {
     void call<ProjectOrgHierarchy>('org:hierarchy').then((h) => { if (live && h) setHier(h); }).catch(() => {});
     return () => { live = false; };
   }, [store.lastUpdated, hierarchySyncVersion]);
+  useEffect(() => {
+    const ids = new Set(projects.map((p) => p.id));
+    if (editing && editing !== 'new' && !ids.has(editing)) { setEditing(null); setEditBaseline(null); }
+    if (confirmDel && !ids.has(confirmDel)) setConfirmDel(null);
+    if (commitFor && !ids.has(commitFor)) { setCommitFor(null); setCommitMsg(''); }
+    if (repoFor && !ids.has(repoFor)) { setRepoFor(null); setRepoName(''); }
+    if (linkFor && !ids.has(linkFor)) { setLinkFor(null); setLinkUrl(''); }
+    if (automationFor && !ids.has(automationFor)) setAutomationFor(null);
+    setGitMap((prev) => {
+      const next = Object.fromEntries(Object.entries(prev).filter(([id]) => ids.has(id)));
+      return Object.keys(next).length === Object.keys(prev).length ? prev : next;
+    });
+    setGitOut((prev) => {
+      const next = Object.fromEntries(Object.entries(prev).filter(([id]) => ids.has(id)));
+      return Object.keys(next).length === Object.keys(prev).length ? prev : next;
+    });
+  }, [projects, editing, confirmDel, commitFor, repoFor, linkFor, automationFor]);
 
   // Checkpoint auto-commit watcher: poll every team's tasks; when a NEW matching
   // completion appears for an auto-enabled project AND its repo is dirty, request a
@@ -322,10 +358,12 @@ export function Projects({ store }: { store: FleetStore }) {
   }, [projects]);
 
   async function loadGit(list: ProjectEntry[]) {
+    const seq = ++gitLoadSeqRef.current;
     const withPath = list.filter((p) => p.path);
     const pairs = await Promise.all(
       withPath.map(async (p) => [p.id, await call<GitInfo>('project:git', p.path).catch(() => ({ isRepo: false }) as GitInfo)] as const),
     );
+    if (seq !== gitLoadSeqRef.current) return;
     setGitMap(Object.fromEntries(pairs));
   }
   function replaceProjects(list: ProjectEntry[]) {
@@ -511,11 +549,12 @@ export function Projects({ store }: { store: FleetStore }) {
     if (!slug) { setNote('need a repo or name to summarize'); return; }
     const projectLead = teamLeadOf(form.team || defaultTeamName);
     if (!projectLead) { setNote(`no ${form.team || defaultTeamName || 'project'} team lead online to route through`); return; }
+    const targetTeam = form.team || defaultTeamName;
     setBusy(true);
-    setNote(`asking ${form.team || defaultTeamName}/${projectLead} to summarize…`);
+    setNote(`asking ${targetTeam}/${projectLead} to summarize…`);
     try {
       const ask = `Summarize the GitHub repo ${slug} for a project tracker. Use your GitHub tools to look it up if needed. Reply with ONLY a JSON object and nothing else: {"description":"<one concise sentence>","tags":["tag1","tag2","tag3"]}. Tags lowercase, 3-6 of them.`;
-      const reply = await call<string>('dispatch', `/ask ${projectLead} ${ask}`).catch(() => '');
+      const reply = await askProjectLead(targetTeam, projectLead, ask, `refine:${slug}`).catch(() => '');
       const m = String(reply).match(/\{[\s\S]*\}/);
       if (m) {
         try {
@@ -524,7 +563,7 @@ export function Projects({ store }: { store: FleetStore }) {
           const tags = Array.isArray(o.tags) ? o.tags.map((t) => String(t).trim()).filter(Boolean) : [];
           if (desc || tags.length) {
             setForm((f) => ({ ...f, description: desc || f.description, tags: tags.length ? tags.join(', ') : f.tags }));
-            setNote(`refined by ${form.team || defaultTeamName}/${projectLead} ✓ — review & Save`);
+            setNote(`refined by ${targetTeam}/${projectLead} ✓ — review & Save`);
             return;
           }
         } catch { /* unparseable — fall through */ }
@@ -584,7 +623,6 @@ export function Projects({ store }: { store: FleetStore }) {
       setBusy(false);
     }
   }
-  const q = (s: string) => `"${s.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`;
   // Publish a change: the project's owning team (default) owns the task and delegates the
   // creds) rather than committing from here. This is the standard "request for change" flow.
   async function submitCommit(p: ProjectEntry, desc: string, opts: { confirm?: boolean; quietStale?: boolean } = {}) {
@@ -676,17 +714,18 @@ export function Projects({ store }: { store: FleetStore }) {
     try {
       const fresh = await ensureProjectFresh(p, 'drafting commit');
       if (!fresh?.path) return;
-      const projectLead = teamLeadOf(fresh.team || defaultTeamName);
-      if (!projectLead) { setNote(`no ${fresh.team || defaultTeamName || 'project'} team lead online to draft with`); return; }
+      const targetTeam = fresh.team || defaultTeamName;
+      const projectLead = teamLeadOf(targetTeam);
+      if (!projectLead) { setNote(`no ${targetTeam || 'project'} team lead online to draft with`); return; }
       const d = await call<{ ok: boolean; stat: string; diff: string; untracked: string[]; error?: string }>('project:diff', fresh.path).catch(() => null);
       if (!d || !d.ok) { setNote(`couldn't read the diff: ${d?.error ?? 'unknown'}`); return; }
       if (!d.stat && !d.diff && !d.untracked.length) { setNote('no working changes to summarize'); return; }
       const ask = `Draft a git commit message for the project "${fresh.name}". Working changes below.\n\nFiles changed (git diff --stat):\n${d.stat || '(none tracked)'}\n\nUntracked files: ${d.untracked.join(', ') || 'none'}\n\nDiff:\n${d.diff || '(no tracked changes)'}\n\nReply with ONLY the commit message: a concise imperative subject line (≤72 chars), then a blank line, then 1-4 short bullet points. No code fences, no preamble.`;
-      const reply = await call<string>('dispatch', `/ask ${projectLead} ${q(ask)}`).catch(() => '');
+      const reply = await askProjectLead(targetTeam, projectLead, ask, `commit-draft:${fresh.id}`).catch(() => '');
       const clean = String(reply || '').replace(/^```[a-z]*\n?/i, '').replace(/```$/,'').trim();
       if (!clean) { setNote(`${projectLead} didn't return a draft — write one manually`); return; }
       setCommitMsg(clean);
-      setNote(`drafted by ${fresh.team || defaultTeamName}/${projectLead} — review & commit`);
+      setNote(`drafted by ${targetTeam}/${projectLead} — review & commit`);
     } finally {
       setDrafting(false);
     }
@@ -845,10 +884,11 @@ export function Projects({ store }: { store: FleetStore }) {
     }
     let msg = '';
     try {
-      const projectLead = teamLeadOf(fresh.team || defaultTeamName);
+      const targetTeam = fresh.team || defaultTeamName;
+      const projectLead = teamLeadOf(targetTeam);
       if (d?.ok && projectLead && (d.stat || d.diff || d.untracked.length)) {
         const ask = `Draft a git commit message for the project "${fresh.name}". Files (git diff --stat):\n${d.stat || '(none)'}\n\nUntracked: ${d.untracked.join(', ') || 'none'}\n\nDiff:\n${d.diff || '(no tracked changes)'}\n\nReply with ONLY the commit message: a concise imperative subject (≤72 chars), blank line, then 1-4 bullets. No code fences.`;
-        const reply = await call<string>('dispatch', `/ask ${projectLead} ${q(ask)}`).catch(() => '');
+        const reply = await askProjectLead(targetTeam, projectLead, ask, `auto-commit:${fresh.id}:${triggerRef}`).catch(() => '');
         msg = String(reply || '').replace(/^```[a-z]*\n?/i, '').replace(/```$/, '').trim();
       }
     } catch { /* fall back to a generic message */ }
@@ -917,7 +957,7 @@ export function Projects({ store }: { store: FleetStore }) {
         <h3>{editing === 'new' ? 'New project' : 'Edit project'}</h3>
         <div className="kv" style={{ gridTemplateColumns: '110px 1fr', gap: '8px 12px' }}>
           <span>name *</span>
-          <b><input style={{ width: 320 }} placeholder="e.g. onchain launch" value={form.name} onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))} /></b>
+          <b><input style={{ width: '100%', maxWidth: 360 }} placeholder="e.g. onchain launch" value={form.name} onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))} /></b>
           <span>folder</span>
           <b style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}>
             <input style={{ flex: 1, minWidth: 220 }} className="mono" placeholder="/path/to/project — enables git tracking + README import" value={form.path} onChange={(e) => setForm((f) => ({ ...f, path: e.target.value }))} />
@@ -962,7 +1002,7 @@ export function Projects({ store }: { store: FleetStore }) {
     <div className="view">
       <header className="view-head">
         <h1>Projects</h1>
-        <div className="row-actions">
+        <div className="row-actions" style={{ flexWrap: 'wrap' }}>
           <button className="btn" disabled={busy || syncing} title={root ? `Scan ${root} and track each subfolder` : 'Find the id-agents workspace projects folder and track its subfolders'} onClick={() => void doSync()}>{syncing ? 'Syncing…' : '⟳ Sync workspace'}</button>
           {dupCount > 0 ? <button className="btn" disabled={busy} title="Merge projects that point at the same folder or repo into one (folders left untouched)" onClick={() => void combineDuplicates()}>⧉ Combine duplicates ({dupCount})</button> : null}
           <button className="btn" disabled={busy} onClick={() => { setGhOpen((v) => !v); setNote(''); }}>{ghOpen ? '− Cancel' : '⤓ Add from GitHub'}</button>
@@ -1040,9 +1080,9 @@ export function Projects({ store }: { store: FleetStore }) {
           }
           return (
             <div className="skill-card" key={p.id}>
-              <div className="skill-card-head">
+              <div className="skill-card-head project-card-head">
                 <span className={`st-badge ${STATUS_CLASS[p.status]}`}>{STATUS_LABEL[p.status]}</span>
-                <span className="b">{p.name}</span>
+                <span className="b project-card-title">{p.name}</span>
                 {p.team ? <span className="muted small">· {p.team}</span> : null}
                 <span className="grow" />
                 <select className="cell-select small" value={p.status} disabled={busy} onChange={(e) => void setStatus(p, e.target.value as ProjectStatus)} title="Change status">
