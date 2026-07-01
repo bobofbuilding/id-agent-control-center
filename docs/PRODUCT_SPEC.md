@@ -366,10 +366,10 @@ questions through `legal/general-counsel`.
   actual public-agent registrations.
 - **Build**: one-click builder for a new team or direct merge of reviewed new agent rows into an
   existing team; maintenance merge remains for moving an already-created source team.
-- **Route**: merged operations + routing workspace. **Operations** owns lifecycle-only Team ops
+- **Route**: merged management + routing workspace. **Manage** owns lifecycle-only Team ops
   (Probe/Start/Stop/Rebuild/Delete empty teams); **Overview** shows cross-team relay at a glance;
-  **Relay policy** owns team relay and per-agent overrides; **Hierarchy & sync** owns coordinators,
-  default-primary review, secondary validators, and org sync.
+  **Relay** owns team relay and per-agent overrides; **Hierarchy** owns coordinators, default-primary
+  review, secondary validators, and org sync.
 
 **Data & actions:** `agents:allTeams`, `runtime:models`, `librarySkills`, `providers:list`,
 `teamConfig`, `setTeamDelegates`, `setAgentDelegates`, `agent:getInstructions/setInstructions`,
