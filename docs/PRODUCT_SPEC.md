@@ -344,7 +344,7 @@ primary cross-team lead), edit per-agent instructions, and govern cross-team del
 behavior, and future page optimization proposals. Escalate legal-team policy or personnel-process
 questions through `legal/general-counsel`.
 
-**What you can do** — four sub-tabs: **Structure · Build · Manage · Route**, plus header
+**What you can do** — three top-level tabs: **Structure · Build · Route**, plus header
 **+ From template** and **✦ Build a team**.
 - **AI Team Builder** (describe/paste a spec → live deterministic parse → **✦ Build with AI**
   (`team:designAI`, constrained to valid runtimes/models/skills) → editable roster (per-agent ★lead,
@@ -366,11 +366,10 @@ questions through `legal/general-counsel`.
   actual public-agent registrations.
 - **Build**: one-click builder for a new team or direct merge of reviewed new agent rows into an
   existing team; maintenance merge remains for moving an already-created source team.
-- **Manage**: lifecycle-only Team ops (Probe/Start/Stop/Rebuild/Delete empty teams) with selected-agent
-  instruction edits handed back to Structure.
-- **Route**: cross-team **relay** policy (Any / All `*` / Selected / Blocked) with dirty indicator +
-  save, and **per-agent overrides** (Inherit / Any / Selected / Blocked) applied immediately, plus
-  per-agent reassign-to-team.
+- **Route**: merged operations + routing workspace. **Operations** owns lifecycle-only Team ops
+  (Probe/Start/Stop/Rebuild/Delete empty teams); **Overview** shows cross-team relay at a glance;
+  **Relay policy** owns team relay and per-agent overrides; **Hierarchy & sync** owns coordinators,
+  default-primary review, secondary validators, and org sync.
 
 **Data & actions:** `agents:allTeams`, `runtime:models`, `librarySkills`, `providers:list`,
 `teamConfig`, `setTeamDelegates`, `setAgentDelegates`, `agent:getInstructions/setInstructions`,

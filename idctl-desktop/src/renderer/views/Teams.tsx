@@ -423,8 +423,8 @@ export function Teams({ store, focus, onFocusHandled }: { store: FleetStore; foc
   const hrOwner = useMemo(() => resolveHrManagerAgent(store), [store.allAgents, store.agents, store.team]);
 
   // HR pillars as tabs + the live structure graph.
-  const [tab, setTab] = useState<'structure' | 'build' | 'manage' | 'route'>('structure');
-  const [routePane, setRoutePane] = useState<'overview' | 'relay' | 'hierarchy'>('overview');
+  const [tab, setTab] = useState<'structure' | 'build' | 'route'>('structure');
+  const [routePane, setRoutePane] = useState<'operations' | 'overview' | 'relay' | 'hierarchy'>('operations');
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
   const [graphGroups, setGraphGroups] = useState<{ team: string; agents: Agent[] }[]>([]);
   const [locallyDeletedTeams, setLocallyDeletedTeams] = useState<string[]>([]);
@@ -1108,7 +1108,7 @@ export function Teams({ store, focus, onFocusHandled }: { store: FleetStore; foc
       return null;
     }
     if (!isRunnableAgent(fresh)) {
-      setMsg(`${action} blocked: ${team}/${agent} is not running (${fresh.status || 'unknown'}). Start or repair it in Manage before routing work to it.`);
+      setMsg(`${action} blocked: ${team}/${agent} is not running (${fresh.status || 'unknown'}). Start or repair it in Route > Operations before routing work to it.`);
       store.refresh();
       return null;
     }
@@ -1518,7 +1518,7 @@ export function Teams({ store, focus, onFocusHandled }: { store: FleetStore; foc
         </span>
       </header>
       <div className="tabs">
-        {([['structure', 'Structure'], ['build', 'Build'], ['manage', 'Manage'], ['route', 'Route']] as const).map(([k, lbl]) => (
+        {([['structure', 'Structure'], ['build', 'Build'], ['route', 'Route']] as const).map(([k, lbl]) => (
           <button key={k} className={`tab${tab === k ? ' active' : ''}`} onClick={() => setTab(k)}>{lbl}</button>
         ))}
       </div>
@@ -1626,7 +1626,7 @@ export function Teams({ store, focus, onFocusHandled }: { store: FleetStore; foc
                 <span className="row-actions" style={{ gap: 6 }}>
                   <button className="btn small primary" onClick={() => setTab('build')}>✦ Build / add agents</button>
                   <button className="btn small" title="Edit this team's relay (switches to it — a team-wide setting)" onClick={() => void openRelayForTeam(selectedTeamName)}>⇄ Relay</button>
-                  <button className="btn small" title="Start / stop this team in the Manage tab" onClick={() => setTab('manage')}>⏻ Start / stop</button>
+                  <button className="btn small" title="Start / stop this team in Route > Operations" onClick={() => { setTab('route'); setRoutePane('operations'); }}>⏻ Start / stop</button>
                 </span>
               </div>
               <div className="kv" style={{ gridTemplateColumns: '120px 1fr', gap: '4px 12px', marginTop: 8 }}>
@@ -1649,14 +1649,22 @@ export function Teams({ store, focus, onFocusHandled }: { store: FleetStore; foc
         </section>
       ) : null}
 
-      {tab === 'manage' ? (
+      {tab === 'route' ? (
+        <div className="tabs" style={{ marginTop: -4 }}>
+          {([['operations', 'Operations'], ['overview', 'Overview'], ['relay', 'Relay policy'], ['hierarchy', 'Hierarchy & sync']] as const).map(([k, lbl]) => (
+            <button key={k} className={`tab${routePane === k ? ' active' : ''}`} onClick={() => setRoutePane(k)}>{lbl}</button>
+          ))}
+        </div>
+      ) : null}
+
+      {tab === 'route' && routePane === 'operations' ? (
       <section className="card">
         <div className="row-actions" style={{ alignItems: 'baseline', marginBottom: 4 }}>
           <h3 style={{ margin: 0 }}>Team operations</h3>
-          <span className="muted small">· lifecycle only. Edit selected-agent instructions in Structure; compose hierarchy goals in Route.</span>
+          <span className="muted small">· lifecycle only. Edit selected-agent instructions in Structure; compose hierarchy goals under Hierarchy & sync.</span>
           <span className="grow" />
           <button className="btn small" disabled={busy} title="Open the live structure graph to select an agent and edit its instruction addendum" onClick={() => setTab('structure')}>Structure</button>
-          <button className="btn small" disabled={busy} title="Open hierarchy and org sync" onClick={() => { setTab('route'); setRoutePane('hierarchy'); }}>Route</button>
+          <button className="btn small" disabled={busy} title="Open hierarchy and org sync" onClick={() => setRoutePane('hierarchy')}>Hierarchy</button>
           {teamOpBusy ? <span className="muted small">working…</span> : teamOpMsg ? <span className={`small ${/fail/.test(teamOpMsg) ? 'status-error' : 'ok-text'}`}>{teamOpMsg}</span> : null}
         </div>
         <table className="grid">
@@ -1762,14 +1770,6 @@ export function Teams({ store, focus, onFocusHandled }: { store: FleetStore; foc
             </div>
           </section>
         </>
-      ) : null}
-
-      {tab === 'route' ? (
-        <div className="tabs" style={{ marginTop: -4 }}>
-          {([['overview', 'Overview'], ['relay', 'Relay policy'], ['hierarchy', 'Hierarchy & sync']] as const).map(([k, lbl]) => (
-            <button key={k} className={`tab${routePane === k ? ' active' : ''}`} onClick={() => setRoutePane(k)}>{lbl}</button>
-          ))}
-        </div>
       ) : null}
 
       {tab === 'route' && routePane === 'overview' ? (
@@ -1946,7 +1946,7 @@ export function Teams({ store, focus, onFocusHandled }: { store: FleetStore; foc
                 <span className="b">{isPrimary ? '⭑ ' : ''}{t.name} <span className="muted small">· {ags.length}</span>{staleCoord ? <span className="warn-text small" title={`${t.name}/${coord} is not a running current coordinator`}> · coordinator not running</span> : null}</span>
                 <select className="cell-select" disabled={busy || coordChoices.length === 0} value={coordChoices.some((a) => a.name === coord) ? coord : ''}
                   onChange={(e) => void setTeamCoordinator(t.name, e.target.value)}>
-                  <option value="">{coordChoices.length ? (staleCoord ? `${coord} unavailable — choose running…` : t.name === PRIMARY_TEAM ? 'default/lead only' : 'no coordinator — choose…') : staleCoord ? `${coord} unavailable — start in Manage` : 'no running agents'}</option>
+                  <option value="">{coordChoices.length ? (staleCoord ? `${coord} unavailable — choose running…` : t.name === PRIMARY_TEAM ? 'default/lead only' : 'no coordinator — choose…') : staleCoord ? `${coord} unavailable — start in Operations` : 'no running agents'}</option>
                   {coordChoices.map((a) => <option key={a.id} value={a.name}>{a.name}</option>)}
                 </select>
                 {primaryIsLockedLead ? (
