@@ -5,7 +5,8 @@
  *   claude-* runtimes         ← anthropic provider (GET /v1/models with a key)
  *   codex runtime             ← openai provider
  *   cursor-cli runtime        ← (no public model API) curated only
- *   grok/gemini/copilot/kiro/q ← managed CLI runtimes; CLI-owned auth/models
+ *   grok/copilot/kiro/q        ← managed CLI runtimes; CLI-owned auth/models
+ *   gemini                     ← legacy/current-only CLI harness id; API setup lives in providers
  *
  * When a backing provider is configured and has a synced model list, we use it
  * (that IS "probing the runtime"). Otherwise we fall back to a curated list of
@@ -91,8 +92,8 @@ export type RuntimeCapability = 'mcp' | 'plugins' | 'portablePlugins' | 'skills'
  * codex received `-c mcp_servers.*` config injection (2026-06), and ollama now
  * ships the agentic tool-calling loop (id-agents OllamaHarness.runWithTools +
  * McpToolHub) so local models with tool support can call MCP tools. A non-tool
- * ollama model degrades gracefully to plain text. Grok Build, Gemini CLI,
- * GitHub Copilot CLI, Kiro CLI, and the legacy Amazon Q CLI are listed as
+ * ollama model degrades gracefully to plain text. Grok Build, GitHub Copilot
+ * CLI, Kiro CLI, and the legacy Amazon Q CLI are listed as
  * managed CLI runtimes with MCP-capable vendor surfaces, but manager execution
  * still depends on a matching harness/adapter. cursor-cli and the remote runtime
  * still don't consume our McpServerSpec.
@@ -209,8 +210,8 @@ function managedRuntimeReady(s: ManagedRuntimeForOffer): boolean {
   if (s.statusSupported === true) return s.loggedIn === true;
   // These CLIs do not expose a safe non-interactive account status in Settings;
   // binary presence is the strongest read-only availability signal we have.
-  // Gemini is excluded because IDACC can inspect non-secret local auth mode
-  // evidence, and oauth-personal can be installed yet unusable for assignment.
+  // Gemini CLI is excluded from managed sign-ins; use Google Gemini API under
+  // Inference backends. Existing gemini assignments remain current-only via keep.
   return s.installed === true && ['grok', 'copilot'].includes(s.runtime);
 }
 

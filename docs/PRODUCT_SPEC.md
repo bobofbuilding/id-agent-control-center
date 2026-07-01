@@ -474,18 +474,17 @@ Manager; this is the plumbing.)
   stage newer builds, auto-upgrade applies a previously staged build on the next app launch, and
   stale/consumed staged zips are pruned from app storage.
 - **Managed subscription sign-ins**: CLI OAuth/device/browser flows (no API key) for `claude-*`,
-  `codex`, `cursor-cli`, `grok`, Antigravity `agy`, `copilot`, `kiro-cli`, and legacy `q` only when installed; Gemini
-  CLI is shown as an API-key/Vertex configuration path, not a consumer OAuth subscription path. Rows distinguish
+  `codex`, `cursor-cli`, `grok`, Antigravity `agy`, `copilot`, `kiro-cli`, and legacy `q` only when installed. Rows distinguish
   status-inspectable CLIs from TUI-owned account state, auto-detect installed binaries after a
   visible installer handoff, hide uninstalled legacy-only rows, auto-expire account-flow notices, and keep managed account launches inside the Settings row even when the
   vendor CLI owns the final TUI/device-flow prompt; metered API providers stay under Inference
   backends.
   Agent Harness pickers only offer runtimes that Settings can currently prove through sign-in,
   install, route-ready API backend, or synced local-backend evidence; existing assigned runtimes
-  remain visible as the current value for review. Gemini CLI `oauth-personal` evidence is not treated
-  as assignable by itself because consumer Gemini Code Assist / Google AI Pro / Ultra OAuth is
-  deprecated in Gemini CLI; use Gemini API key/Vertex auth or the Google Gemini inference backend
-  for agent routing. Antigravity CLI is managed from Settings as the consumer subscription successor,
+  remain visible as the current value for review. Gemini CLI `oauth-personal` evidence is not part
+  of managed sign-in availability because consumer Gemini Code Assist / Google AI Pro / Ultra OAuth
+  is deprecated in Gemini CLI; use the Google Gemini API preset under Inference backends instead.
+  Antigravity CLI is managed from Settings as the consumer subscription successor,
   but is not offered as an agent harness until the manager exposes an Antigravity adapter.
 - **Local models (Ollama)**: parallel-inference cap (1–16), installed chips, **Download** by id
   (streamed progress), a searchable **catalog** with capability filters and hardware fit-warnings.
@@ -512,7 +511,7 @@ concurrency running/queued figures are a snapshot; clipboard fallbacks fail sile
 ## 14. Cross-cutting concepts
 
 - **Active-team scoping**: everything is scoped to `store.team`; switch via the status-bar selector.
-- **Runtimes**: `claude-*`, `codex`, `cursor-cli`, `grok`, `gemini`, `copilot`, `kiro-cli`, and
+- **Runtimes**: `claude-*`, `codex`, `cursor-cli`, `grok`, `copilot`, `kiro-cli`, and
   legacy `q` are managed CLI runtime lanes, with legacy `q` hidden from first-run Settings unless installed; Antigravity is a managed sign-in/install row until a
   manager harness exists; `ollama` / local servers and metered API providers are
   configured in Settings → Inference. MCP works where a runtime/tool harness supports it; skills and

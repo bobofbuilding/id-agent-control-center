@@ -45,7 +45,7 @@ export const PROVIDER_CATALOG: ProviderCatalogEntry[] = [
   { id: 'mistral', name: 'Mistral AI', kind: 'openai-compatible', baseUrl: 'https://api.mistral.ai/v1', needsKey: true },
   { id: 'deepseek', name: 'DeepSeek', kind: 'openai-compatible', baseUrl: 'https://api.deepseek.com/v1', needsKey: true },
   { id: 'xai', name: 'xAI (Grok)', kind: 'openai-compatible', baseUrl: 'https://api.x.ai/v1', needsKey: true },
-  { id: 'gemini', name: 'Google Gemini', kind: 'openai-compatible', baseUrl: 'https://generativelanguage.googleapis.com/v1beta/openai', needsKey: true, notes: "Google's OpenAI-compatible shim; uses your Gemini API key." },
+  { id: 'gemini', name: 'Google Gemini API', kind: 'openai-compatible', baseUrl: 'https://generativelanguage.googleapis.com/v1beta/openai', needsKey: true, notes: "Google's OpenAI-compatible shim; use a Gemini API key here instead of the Gemini CLI OAuth flow." },
   { id: 'fireworks', name: 'Fireworks AI', kind: 'openai-compatible', baseUrl: 'https://api.fireworks.ai/inference/v1', needsKey: true },
   { id: 'cerebras', name: 'Cerebras', kind: 'openai-compatible', baseUrl: 'https://api.cerebras.ai/v1', needsKey: true, notes: 'Very high tok/s on wafer-scale hardware.' },
   { id: 'deepinfra', name: 'DeepInfra', kind: 'openai-compatible', baseUrl: 'https://api.deepinfra.com/v1/openai', needsKey: true },
