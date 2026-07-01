@@ -606,8 +606,9 @@ export class ManagerClient {
 
   /**
    * Reassign a local agent to a different team. Ports are global so no re-port is
-   * needed; the manager updates the agent's team_id and rebuilds it under the new
-   * team. Rejects on name collision in the target team (409) or same team (400).
+   * needed; the manager updates the agent's team_id, rebuilds running agents under
+   * the new team, and leaves stopped agents stopped with a warning. Rejects on name
+   * collision in the target team (409) or same team (400).
    */
   async moveAgent(agentId: string, team: string, signal?: AbortSignal): Promise<{ ok: boolean; agent?: string; team?: string; rebuilt?: boolean; warning?: string; message?: string }> {
     return this.requireRoute('Reassign an agent to another team', () =>
