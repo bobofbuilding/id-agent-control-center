@@ -520,7 +520,7 @@ export function AgentTable({ store, onProbe, probeBusy, navigate }: { store: Fle
     if (!fresh) return;
     if (act === 'Delete') {
       if (isDefaultBackboneAgent(fresh)) {
-        window.alert(`${teamFor(fresh)}/${fresh.name} is part of the locked default leadership backbone and cannot be deleted from Health.\n\nUse HR Manager Route/Structure to review the backbone before making organizational changes.`);
+        window.alert(`${teamFor(fresh)}/${fresh.name} is part of the locked default leadership backbone and cannot be deleted from Health.\n\nUse HR Manager Manage/Structure to review the backbone before making organizational changes.`);
         return;
       }
       if (confirmAgentChange(
@@ -700,7 +700,7 @@ export function AgentTable({ store, onProbe, probeBusy, navigate }: { store: Fle
           <button className="btn small" onClick={() => setShowModels((v) => !v)} title="Show each execution harness and configured provider model lane, where its model list comes from, and when it was last refreshed">
             {showModels ? 'Hide model lanes' : `Model lanes${visibleFreshness.length ? ` (${visibleFreshness.length})` : ''}`}
           </button>
-          {navigate ? <button className="btn small" onClick={() => navigate('teams:route')} title="Change team coordinators and primary routing in HR Manager Route → Hierarchy & sync">Open HR Route</button> : null}
+          {navigate ? <button className="btn small" onClick={() => navigate('teams:route')} title="Change team coordinators and primary routing in HR Manager Manage → Hierarchy & sync">Open HR Manage</button> : null}
           <button className="btn" disabled={!!busy} onClick={() => void probeRuntimes()} title="Probe each runtime's backing inference provider for its newest available models (also auto-refreshes every 6h)">Probe runtimes</button>
         </div>
         {showModels ? (

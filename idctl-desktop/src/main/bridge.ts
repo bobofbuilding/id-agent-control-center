@@ -10,6 +10,7 @@ import type { Agent } from '../../../idctl/src/api/types.ts';
 import { brain } from '../../../idctl/src/api/brain.ts';
 import type { BrainAgentsReport, BrainControllerReport, BrainCoreHealthReport, BrainFleetReport, BrainGraphReport, BrainSkillIndex, BrainSkillNode } from '../../../idctl/src/api/brain.ts';
 import { runOnboarding, type OnboardPlan } from '../../../idctl/src/api/onboard.ts';
+import { slugName } from '../../../idctl/src/api/teamSpec.ts';
 import { loadConfig, type Config } from '../../../idctl/src/config.ts';
 import { getKeyProvider, legacyMockAuthorityReport } from '../../../idctl/src/keys/mockProvider.ts';
 import type { KeyAuthorityTarget } from '../../../idctl/src/keys/types.ts';
@@ -80,6 +81,7 @@ const controllerProofs = new Map<string, ControllerProofRecord>();
 const ETH_ADDRESS_RE = /^0x[0-9a-fA-F]{40}$/;
 const PRIMARY_TEAM = 'default';
 const DEFAULT_PRIMARY_AGENT = 'lead';
+const DEFAULT_VALIDATORS = ['coder', 'researcher'];
 
 function assertDefaultPrimaryWrite(team: string, agent: string): void {
   if (team !== PRIMARY_TEAM || agent !== DEFAULT_PRIMARY_AGENT) {
@@ -94,13 +96,23 @@ function assertDefaultCoordinatorWrite(team: string, agent: string): void {
 }
 
 function normalizeSecondaryLeadWrites(leads: SecondaryLead[]): SecondaryLead[] {
-  return leads
-    .map((lead) => ({
-      agent: String(lead.agent ?? '').trim(),
-      team: PRIMARY_TEAM,
-      leadsTeams: Array.from(new Set((lead.leadsTeams ?? []).map((t) => String(t).trim()).filter((t) => t && t !== PRIMARY_TEAM && t !== 'public'))).sort((a, b) => a.localeCompare(b)),
-    }))
-    .filter((lead) => lead.agent);
+  const byAgent = new Map<string, SecondaryLead>();
+  for (const agent of DEFAULT_VALIDATORS) byAgent.set(agent, { agent, team: PRIMARY_TEAM, leadsTeams: [] });
+  for (const lead of leads) {
+    const agent = slugName(String(lead.agent ?? ''));
+    if (!agent || agent === DEFAULT_PRIMARY_AGENT) continue;
+    const existing = byAgent.get(agent) ?? { agent, team: PRIMARY_TEAM, leadsTeams: [] };
+    existing.leadsTeams = Array.from(new Set([
+      ...existing.leadsTeams,
+      ...(lead.leadsTeams ?? []).map((t) => String(t).trim()).filter((t) => t && t !== PRIMARY_TEAM && t !== 'public'),
+    ])).sort((a, b) => a.localeCompare(b));
+    byAgent.set(agent, existing);
+  }
+  return Array.from(byAgent.values()).sort((a, b) => {
+    const ai = DEFAULT_VALIDATORS.indexOf(a.agent);
+    const bi = DEFAULT_VALIDATORS.indexOf(b.agent);
+    return (ai === -1 ? DEFAULT_VALIDATORS.length : ai) - (bi === -1 ? DEFAULT_VALIDATORS.length : bi) || a.agent.localeCompare(b.agent);
+  });
 }
 
 function controllerProofKey(agent: string, team?: string): string {

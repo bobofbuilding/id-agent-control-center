@@ -70,7 +70,7 @@ active team when one is selected in the status bar. Per-agent actions route to t
 
 **What you can do**
 - Header summary: read-only `talk to` target showing the routed team lead; routing edits belong in
-  HR Manager Route, not Dashboard.
+  HR Manager Manage, not Dashboard.
 - **Probe runtimes** (header) — re-query each runtime's provider to refresh model lists.
 - **Agent grid**, grouped by team in All-teams mode (lead pinned first within each group): name,
   status (colored dot), runtime, model, port, actions.
@@ -106,7 +106,7 @@ replies into Work › Plans.
 
 **What you can do**
 - Compose & send (Enter sends, Shift+Enter newline); **target any agent** from the Address sidebar;
-  view the coordinator marker there; routing changes hand off to HR Manager Route.
+  view the coordinator marker there; routing changes hand off to HR Manager Manage.
 - **Focus on a project** (dropdown) — adds a `[Focus: …]` context line and sets the attachment
   destination; banner with **open ↗** to Finder.
 - **Attach files** (📎 / paste / drop) — chips with remove; land in `<project>/uploads` or the
@@ -349,7 +349,7 @@ primary cross-team lead), edit per-agent instructions, and govern cross-team del
 behavior, and future page optimization proposals. Escalate legal-team policy or personnel-process
 questions through `legal/general-counsel`.
 
-**What you can do** — three top-level tabs: **Structure · Build · Route**, plus header
+**What you can do** — three top-level tabs: **Structure · Build · Manage**, plus header
 **+ From template** and **✦ Build a team**.
 - **AI Team Builder** (describe/paste a spec → live deterministic parse → **✦ Build with AI**
   (`team:designAI`, constrained to valid runtimes/models/skills) → editable roster (per-agent ★lead,
@@ -372,10 +372,10 @@ questions through `legal/general-counsel`.
 - **Build**: one-click builder for a new team or direct merge of reviewed new agent rows into an
   existing team; the compact Team maintenance row handles rename/merge for already-created source
   teams through the manager-backed `/agents/:id/team` move route.
-- **Route**: merged management + routing workspace. **Manage** owns lifecycle-only Team ops
+- **Manage**: merged management + routing workspace. **Team ops** owns lifecycle-only controls
   (Probe/Start/Stop/Rebuild/Delete empty teams); **Overview** shows cross-team relay at a glance;
   **Relay** owns team relay and per-agent overrides; **Hierarchy** owns coordinators, default-primary
-  review, secondary validators, and org sync.
+  review, protected default validators, additional default-team validators, coverage, and org sync.
 
 **Data & actions:** `agents:allTeams`, `runtime:models`, `librarySkills`, `providers:list`,
 `teamConfig`, `setTeamDelegates`, `setAgentDelegates`, `agent:getInstructions/setInstructions`,
@@ -485,7 +485,7 @@ Manager; this is the plumbing.)
   check is not green).
 - **Hardware**: read-only host compute (chip, cores, GPU, memory, disk) — used for local-model fit
   warnings.
-- **Connection**: manager URL, active team, read-only coordinator status, and an HR Manager Route
+- **Connection**: manager URL, active team, read-only coordinator status, and an HR Manager Manage
   handoff for hierarchy/routing changes.
 - **Self-update**: version, status, **auto-upgrade** toggle, **Check now**. Background checks
   stage newer builds, auto-upgrade applies a previously staged build on the next app launch, and

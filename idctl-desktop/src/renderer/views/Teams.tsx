@@ -30,6 +30,7 @@ type TeamAgentsGroup = { team: string; agents: Agent[] };
 type TeamSnapshot = { exists: boolean; agents: Agent[]; running: number; total: number; rosterKnown: boolean };
 type HrHierarchy = { primary: { team: string; agent: string } | null; coordinators: Record<string, string> };
 type OrgCfg = { enabled?: boolean; autoRebuild?: boolean };
+type SecLead = { agent: string; team: string; leadsTeams: string[] };
 type TeamBlueprint = { id: string; team: string; label: string; description: string; spec: string };
 type BlueprintCoverage = TeamBlueprint & { present: number; total: number; missing: string[]; complete: boolean };
 type HrFocus = 'route-hierarchy';
@@ -46,6 +47,28 @@ const PRIMARY_TEAM = 'default';
 const DEFAULT_LEAD = 'lead';
 const DEFAULT_VALIDATORS = ['coder', 'researcher'];
 const DEFAULT_BACKBONE_AGENTS = [DEFAULT_LEAD, ...DEFAULT_VALIDATORS];
+function validatorRank(agent: string): number {
+  const i = DEFAULT_VALIDATORS.indexOf(slugName(agent));
+  return i === -1 ? DEFAULT_VALIDATORS.length : i;
+}
+function sortSecondaryLeads(list: SecLead[]): SecLead[] {
+  return [...list].sort((a, b) => validatorRank(a.agent) - validatorRank(b.agent) || slugName(a.agent).localeCompare(slugName(b.agent)));
+}
+function normalizeSecondaryRows(list: SecLead[]): SecLead[] {
+  const byAgent = new Map<string, SecLead>();
+  for (const agent of DEFAULT_VALIDATORS) byAgent.set(agent, { agent, team: PRIMARY_TEAM, leadsTeams: [] });
+  for (const row of list) {
+    const agent = slugName(row.agent);
+    if (!agent || agent === DEFAULT_LEAD) continue;
+    const existing = byAgent.get(agent) ?? { agent, team: PRIMARY_TEAM, leadsTeams: [] };
+    existing.leadsTeams = Array.from(new Set([
+      ...existing.leadsTeams,
+      ...(row.leadsTeams ?? []).map((t) => String(t).trim()).filter((t) => t && t !== PRIMARY_TEAM && t !== 'public'),
+    ])).sort((a, b) => a.localeCompare(b));
+    byAgent.set(agent, existing);
+  }
+  return sortSecondaryLeads(Array.from(byAgent.values()));
+}
 function isReservedEmptyPublicTeam(team: { name: string; agentCount?: number }, groups: TeamAgentsGroup[]): boolean {
   if (team.name.trim().toLowerCase() !== 'public') return false;
   const rosterCount = groups.find((g) => g.team.trim().toLowerCase() === 'public')?.agents.length ?? 0;
@@ -381,7 +404,7 @@ Default-team **coder** and **researcher** are your validation pair — NOT execu
 For any NON-TRIVIAL request:
 
 1. **Compress** — restate the objective, success criteria, and hard constraints in 1-2 lines.
-2. **Route** — choose an existing corresponding team lead. First-run starter leads are ${FIRST_RUN_LEAD_TARGETS.map((target) => `**${target}**`).join(', ')}. Optional leads such as ${OPTIONAL_LEAD_TARGETS.map((target) => `**${target}**`).join(', ')} are valid only after those teams exist and are current in HR Manager. Hand each lead a scoped objective with \`/ask <team>/<lead> "<objective>"\`.
+2. **Route objectives** — choose an existing corresponding team lead. First-run starter leads are ${FIRST_RUN_LEAD_TARGETS.map((target) => `**${target}**`).join(', ')}. Optional leads such as ${OPTIONAL_LEAD_TARGETS.map((target) => `**${target}**`).join(', ')} are valid only after those teams exist and are current in HR Manager. Hand each lead a scoped objective with \`/ask <team>/<lead> "<objective>"\`.
 3. **Decompose at the edge** — each team lead owns breaking its objective into member-owned tasks, delegating independent work in parallel, collecting member summaries, and refining the result.
 4. **Validate on return** — when completed work comes back, send the completed-work packet to both default-team validators and wait for their findings before treating it as final.
 5. **Bounce or close** — if either validator rejects the work, return the concrete feedback to the responsible team lead for another refinement cycle. If both validate it, consolidate the findings for the operator.
@@ -803,7 +826,7 @@ export function Teams({ store, focus, onFocusHandled }: { store: FleetStore; foc
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeTeam, visibleTeams.length]);
 
-  // Whole-fleet relay topology — every team's outbound delegate policy, for the Route overview.
+  // Whole-fleet relay topology — every team's outbound delegate policy, for the Manage overview.
   const [relayMatrix, setRelayMatrix] = useState<{ team: string; delegates: string[] | null }[]>([]);
   useEffect(() => {
     if (tab !== 'route') return;
@@ -1108,7 +1131,7 @@ export function Teams({ store, focus, onFocusHandled }: { store: FleetStore; foc
       return null;
     }
     if (!isRunnableAgent(fresh)) {
-      setMsg(`${action} blocked: ${team}/${agent} is not running (${fresh.status || 'unknown'}). Start or repair it in Route > Manage before routing work to it.`);
+      setMsg(`${action} blocked: ${team}/${agent} is not running (${fresh.status || 'unknown'}). Start or repair it in Manage > Team ops before routing work to it.`);
       store.refresh();
       return null;
     }
@@ -1186,7 +1209,6 @@ export function Teams({ store, focus, onFocusHandled }: { store: FleetStore; foc
   }
 
   // ---- Reactive Org Sync: each agent's goals file composed from the hierarchy + brain ----
-  type SecLead = { agent: string; team: string; leadsTeams: string[] };
   type OrgPreview = {
     agents: number;
     changed: number;
@@ -1199,8 +1221,25 @@ export function Teams({ store, focus, onFocusHandled }: { store: FleetStore; foc
   };
   const [orgCfg, setOrgCfg] = useState<OrgCfg>({ enabled: true, autoRebuild: true });
   const [secondaries, setSecondaries] = useState<SecLead[]>([]);
+  const [validatorPick, setValidatorPick] = useState('');
   const [orgBusy, setOrgBusy] = useState(false);
   const [orgResult, setOrgResult] = useState<string | null>(null);
+  const validatorRows = useMemo(() => normalizeSecondaryRows(secondaries), [secondaries]);
+  const defaultTeamValidatorCandidates = useMemo(() => {
+    const names = new Set<string>();
+    for (const a of store.allAgents) {
+      if ((a.team ?? PRIMARY_TEAM) === PRIMARY_TEAM) names.add(slugName(a.name));
+    }
+    const graphDefault = structureGroups.find((g) => g.team === PRIMARY_TEAM)?.agents ?? [];
+    for (const a of graphDefault) names.add(slugName(a.name));
+    const configured = new Set(validatorRows.map((s) => slugName(s.agent)));
+    return Array.from(names)
+      .filter((name) => name && name !== DEFAULT_LEAD && !configured.has(name))
+      .sort((a, b) => a.localeCompare(b));
+  }, [store.allAgents, structureGroups, validatorRows]);
+  useEffect(() => {
+    if (validatorPick && !defaultTeamValidatorCandidates.includes(validatorPick)) setValidatorPick('');
+  }, [defaultTeamValidatorCandidates, validatorPick]);
   function formatOrgPreview(p: OrgPreview): string {
     const sample = p.changedAgents.slice(0, 8).map((a) =>
       `- ${a.team}/${a.agent}${a.rebuild ? ' -> rebuild' : a.reason ? ` -> ${a.reason}` : ''}${a.status ? ` (${a.status})` : ''}`,
@@ -1218,7 +1257,7 @@ export function Teams({ store, focus, onFocusHandled }: { store: FleetStore; foc
   }
   async function loadOrg() {
     setOrgCfg(await call<{ enabled?: boolean; autoRebuild?: boolean }>('org:getConfig').catch(() => ({ enabled: true, autoRebuild: true })));
-    setSecondaries(await call<{ secondaries: SecLead[] }>('org:hierarchy').then((h) => h.secondaries ?? []).catch(() => []));
+    setSecondaries(normalizeSecondaryRows(await call<{ secondaries: SecLead[] }>('org:hierarchy').then((h) => h.secondaries ?? []).catch(() => [])));
   }
   useEffect(() => { void loadOrg(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [activeTeam, store.lastUpdated]);
   async function ensureOrgConfigFresh(action: string): Promise<OrgCfg | null> {
@@ -1273,51 +1312,124 @@ export function Teams({ store, focus, onFocusHandled }: { store: FleetStore; foc
     finally { setOrgBusy(false); }
   }
   async function saveSecondaryCoverage(agent: string, teamName: string, enabled: boolean) {
-    if (!DEFAULT_VALIDATORS.includes(agent)) {
-      setOrgResult(`secondary update blocked: ${agent} is not part of the locked default validation pair`);
+    const validator = slugName(agent);
+    if (!validator || validator === DEFAULT_LEAD) {
+      setOrgResult(`secondary update blocked: ${PRIMARY_TEAM}/${DEFAULT_LEAD} is the primary lead, not a validator`);
       return;
     }
     setOrgBusy(true);
     try {
-      const freshSecondaries = await call<{ secondaries: SecLead[] }>('org:hierarchy').then((h) => h.secondaries ?? []).catch(() => [] as SecLead[]);
-      if (secondaryStamp(freshSecondaries) !== secondaryStamp(secondaries)) {
+      const freshSecondaries = normalizeSecondaryRows(await call<{ secondaries: SecLead[] }>('org:hierarchy').then((h) => h.secondaries ?? []).catch(() => [] as SecLead[]));
+      if (secondaryStamp(freshSecondaries) !== secondaryStamp(validatorRows)) {
         setSecondaries(freshSecondaries);
         setOrgResult('secondary update blocked: validator coverage changed elsewhere. Review refreshed coverage first.');
         return;
       }
-      const base = freshSecondaries.length ? freshSecondaries : DEFAULT_VALIDATORS.map((name) => ({ agent: name, team: PRIMARY_TEAM, leadsTeams: [] as string[] }));
+      const base = normalizeSecondaryRows(freshSecondaries);
       const next = base.map((s) => ({ ...s, team: PRIMARY_TEAM, leadsTeams: [...new Set(s.leadsTeams ?? [])] }));
-      let row = next.find((s) => s.agent === agent);
+      let row = next.find((s) => slugName(s.agent) === validator);
       if (!row) {
-        row = { agent, team: PRIMARY_TEAM, leadsTeams: [] };
+        row = { agent: validator, team: PRIMARY_TEAM, leadsTeams: [] };
         next.push(row);
       }
       row.leadsTeams = enabled
         ? [...new Set([...row.leadsTeams, teamName])].sort((a, b) => a.localeCompare(b))
         : row.leadsTeams.filter((t) => t !== teamName);
-      const other = next.find((s) => s.agent !== agent && DEFAULT_VALIDATORS.includes(s.agent));
       const review = [
-        `${enabled ? 'Add' : 'Remove'} ${PRIMARY_TEAM}/${agent} validator coverage for ${teamName}?`,
+        `${enabled ? 'Add' : 'Remove'} ${PRIMARY_TEAM}/${validator} validator coverage for ${teamName}?`,
         '',
-        `${PRIMARY_TEAM}/${agent}: ${(base.find((s) => s.agent === agent)?.leadsTeams ?? []).join(', ') || '—'} -> ${row.leadsTeams.join(', ') || '—'}`,
-        other ? `${PRIMARY_TEAM}/${other.agent}: ${(other.leadsTeams ?? []).join(', ') || '—'}` : '',
+        `${PRIMARY_TEAM}/${validator}: ${(base.find((s) => slugName(s.agent) === validator)?.leadsTeams ?? []).join(', ') || '—'} -> ${row.leadsTeams.join(', ') || '—'}`,
         '',
-        'Org sync will update agent instruction sidecars and the Brain hierarchy memory after saving.',
+        'Org sync will update agent instruction sidecars and the Brain hierarchy memory after saving. Default/coder and default/researcher remain protected validators.',
       ].filter(Boolean).join('\n');
       if (!window.confirm(review)) return;
-      const afterSecondaries = await call<{ secondaries: SecLead[] }>('org:hierarchy').then((h) => h.secondaries ?? []).catch(() => freshSecondaries);
+      const afterSecondaries = normalizeSecondaryRows(await call<{ secondaries: SecLead[] }>('org:hierarchy').then((h) => h.secondaries ?? []).catch(() => freshSecondaries));
       if (secondaryStamp(afterSecondaries) !== secondaryStamp(freshSecondaries)) {
         setSecondaries(afterSecondaries);
         setOrgResult('secondary update blocked: validator coverage changed after review. Review refreshed coverage first.');
+        return;
+      }
+      await call('org:setSecondaryLeads', normalizeSecondaryRows(next));
+      await call('org:sync', { autoRebuild: false }).catch(() => {});
+      await loadOrg();
+      store.refresh();
+      setOrgResult(`secondary coverage updated ✓ — ${PRIMARY_TEAM}/${validator} ${enabled ? 'validates' : 'no longer validates'} ${teamName}`);
+    } catch (e) {
+      setOrgResult(`secondary update failed: ${e instanceof Error ? e.message : String(e)}`);
+    } finally { setOrgBusy(false); }
+  }
+  async function addSecondaryValidator(agent: string) {
+    const validator = slugName(agent);
+    if (!validator || validator === DEFAULT_LEAD) {
+      setOrgResult(`add validator blocked: ${PRIMARY_TEAM}/${DEFAULT_LEAD} is the primary lead`);
+      return;
+    }
+    if (!defaultTeamValidatorCandidates.includes(validator)) {
+      setOrgResult(`add validator blocked: choose an available ${PRIMARY_TEAM} team agent that is not already a validator`);
+      return;
+    }
+    setOrgBusy(true);
+    try {
+      const freshSecondaries = normalizeSecondaryRows(await call<{ secondaries: SecLead[] }>('org:hierarchy').then((h) => h.secondaries ?? []).catch(() => [] as SecLead[]));
+      if (secondaryStamp(freshSecondaries) !== secondaryStamp(validatorRows)) {
+        setSecondaries(freshSecondaries);
+        setOrgResult('add validator blocked: validator roster changed elsewhere. Review refreshed coverage first.');
+        return;
+      }
+      const next = normalizeSecondaryRows([...freshSecondaries, { agent: validator, team: PRIMARY_TEAM, leadsTeams: [] }]);
+      if (!window.confirm(`Add ${PRIMARY_TEAM}/${validator} as an additional validator?\n\nThey will appear in the validator coverage matrix with no team coverage until you assign teams. Org sync will update instruction sidecars and the Brain hierarchy memory after saving.`)) return;
+      const afterSecondaries = normalizeSecondaryRows(await call<{ secondaries: SecLead[] }>('org:hierarchy').then((h) => h.secondaries ?? []).catch(() => freshSecondaries));
+      if (secondaryStamp(afterSecondaries) !== secondaryStamp(freshSecondaries)) {
+        setSecondaries(afterSecondaries);
+        setOrgResult('add validator blocked: validator roster changed after review. Review refreshed coverage first.');
+        return;
+      }
+      await call('org:setSecondaryLeads', next);
+      await call('org:sync', { autoRebuild: false }).catch(() => {});
+      setValidatorPick('');
+      await loadOrg();
+      store.refresh();
+      setOrgResult(`validator added ✓ — ${PRIMARY_TEAM}/${validator}`);
+    } catch (e) {
+      setOrgResult(`add validator failed: ${e instanceof Error ? e.message : String(e)}`);
+    } finally { setOrgBusy(false); }
+  }
+  async function removeSecondaryValidator(agent: string) {
+    const validator = slugName(agent);
+    if (DEFAULT_VALIDATORS.includes(validator)) {
+      setOrgResult(`remove validator blocked: ${PRIMARY_TEAM}/${validator} is part of the protected default validation pair`);
+      return;
+    }
+    setOrgBusy(true);
+    try {
+      const freshSecondaries = normalizeSecondaryRows(await call<{ secondaries: SecLead[] }>('org:hierarchy').then((h) => h.secondaries ?? []).catch(() => [] as SecLead[]));
+      if (secondaryStamp(freshSecondaries) !== secondaryStamp(validatorRows)) {
+        setSecondaries(freshSecondaries);
+        setOrgResult('remove validator blocked: validator roster changed elsewhere. Review refreshed coverage first.');
+        return;
+      }
+      const current = freshSecondaries.find((s) => slugName(s.agent) === validator);
+      if (!current) {
+        setSecondaries(freshSecondaries);
+        setOrgResult(`remove validator skipped: ${PRIMARY_TEAM}/${validator} is no longer configured`);
+        return;
+      }
+      const next = normalizeSecondaryRows(freshSecondaries.filter((s) => slugName(s.agent) !== validator));
+      const reassigned = current.leadsTeams.length ? `\n\nCurrent coverage: ${current.leadsTeams.join(', ')}\nAny teams left uncovered will be reassigned to the protected default validators by org sync.` : '';
+      if (!window.confirm(`Remove ${PRIMARY_TEAM}/${validator} from the validator roster?${reassigned}\n\nDefault/coder and default/researcher will remain in place.`)) return;
+      const afterSecondaries = normalizeSecondaryRows(await call<{ secondaries: SecLead[] }>('org:hierarchy').then((h) => h.secondaries ?? []).catch(() => freshSecondaries));
+      if (secondaryStamp(afterSecondaries) !== secondaryStamp(freshSecondaries)) {
+        setSecondaries(afterSecondaries);
+        setOrgResult('remove validator blocked: validator roster changed after review. Review refreshed coverage first.');
         return;
       }
       await call('org:setSecondaryLeads', next);
       await call('org:sync', { autoRebuild: false }).catch(() => {});
       await loadOrg();
       store.refresh();
-      setOrgResult(`secondary coverage updated ✓ — ${PRIMARY_TEAM}/${agent} ${enabled ? 'validates' : 'no longer validates'} ${teamName}`);
+      setOrgResult(`validator removed ✓ — ${PRIMARY_TEAM}/${validator}`);
     } catch (e) {
-      setOrgResult(`secondary update failed: ${e instanceof Error ? e.message : String(e)}`);
+      setOrgResult(`remove validator failed: ${e instanceof Error ? e.message : String(e)}`);
     } finally { setOrgBusy(false); }
   }
 
@@ -1528,7 +1640,7 @@ export function Teams({ store, focus, onFocusHandled }: { store: FleetStore; foc
         </span>
       </header>
       <div className="tabs">
-        {([['structure', 'Structure'], ['build', 'Build'], ['route', 'Route']] as const).map(([k, lbl]) => (
+        {([['structure', 'Structure'], ['build', 'Build'], ['route', 'Manage']] as const).map(([k, lbl]) => (
           <button key={k} className={`tab${tab === k ? ' active' : ''}`} onClick={() => setTab(k)}>{lbl}</button>
         ))}
       </div>
@@ -1536,7 +1648,7 @@ export function Teams({ store, focus, onFocusHandled }: { store: FleetStore; foc
         <section className="card">
           <div className="row-actions" style={{ justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
             <h3 style={{ margin: 0 }}>Team structure — live</h3>
-            <button className="btn" disabled={busy} onClick={() => { setTab('route'); setRoutePane('hierarchy'); }} title="Open Route > Hierarchy to review primary and coordinator changes">
+            <button className="btn" disabled={busy} onClick={() => { setTab('route'); setRoutePane('hierarchy'); }} title="Open Manage > Hierarchy to review primary and coordinator changes">
               Open hierarchy
             </button>
           </div>
@@ -1563,8 +1675,8 @@ export function Teams({ store, focus, onFocusHandled }: { store: FleetStore; foc
                     const leadLocked = selectedAgent.team === PRIMARY_TEAM && !isDefaultLead(selectedAgent.team, selectedAgent.agent.name);
                     return (
                       <button className={`star${isLead ? ' on' : ''}`} disabled={busy || isLead || leadLocked}
-                        title={leadLocked ? `${PRIMARY_TEAM} coordinator is locked to ${PRIMARY_TEAM}/${DEFAULT_LEAD}` : isLead ? `${selectedAgent.agent.name} is ${selectedAgent.team}'s lead (coordinator)` : `Open Route > Hierarchy to set ${selectedAgent.agent.name} as ${selectedAgent.team}'s lead`}
-                        onClick={() => { setTab('route'); setRoutePane('hierarchy'); }}>{isLead ? '★ lead' : '☆ set in Route'}</button>
+                        title={leadLocked ? `${PRIMARY_TEAM} coordinator is locked to ${PRIMARY_TEAM}/${DEFAULT_LEAD}` : isLead ? `${selectedAgent.agent.name} is ${selectedAgent.team}'s lead (coordinator)` : `Open Manage > Hierarchy to set ${selectedAgent.agent.name} as ${selectedAgent.team}'s lead`}
+                        onClick={() => { setTab('route'); setRoutePane('hierarchy'); }}>{isLead ? '★ lead' : '☆ set in Manage'}</button>
                     );
                   })()}
                   <select className="cell-select" disabled={busy || selectedAgentLocked || selectedAgent.reassignTargets.length === 0} value="" title={selectedAgentLocked ? 'Locked default leadership roles cannot be moved out of default' : 'Reassign to another team'}
@@ -1636,7 +1748,7 @@ export function Teams({ store, focus, onFocusHandled }: { store: FleetStore; foc
                 <span className="row-actions" style={{ gap: 6 }}>
                   <button className="btn small primary" onClick={() => setTab('build')}>✦ Build / add agents</button>
                   <button className="btn small" title="Edit this team's relay (switches to it — a team-wide setting)" onClick={() => void openRelayForTeam(selectedTeamName)}>⇄ Relay</button>
-                  <button className="btn small" title="Start / stop this team in Route > Manage" onClick={() => { setTab('route'); setRoutePane('operations'); }}>⏻ Start / stop</button>
+                  <button className="btn small" title="Start / stop this team in Manage > Team ops" onClick={() => { setTab('route'); setRoutePane('operations'); }}>⏻ Start / stop</button>
                 </span>
               </div>
               <div className="kv" style={{ gridTemplateColumns: '120px 1fr', gap: '4px 12px', marginTop: 8 }}>
@@ -1661,7 +1773,7 @@ export function Teams({ store, focus, onFocusHandled }: { store: FleetStore; foc
 
       {tab === 'route' ? (
         <div className="tabs" style={{ marginTop: -4 }}>
-          {([['operations', 'Manage'], ['overview', 'Overview'], ['relay', 'Relay'], ['hierarchy', 'Hierarchy']] as const).map(([k, lbl]) => (
+          {([['operations', 'Team ops'], ['overview', 'Overview'], ['relay', 'Relay'], ['hierarchy', 'Hierarchy']] as const).map(([k, lbl]) => (
             <button key={k} className={`tab${routePane === k ? ' active' : ''}`} onClick={() => setRoutePane(k)}>{lbl}</button>
           ))}
         </div>
@@ -1989,42 +2101,54 @@ export function Teams({ store, focus, onFocusHandled }: { store: FleetStore; foc
             <button className="btn small" disabled={orgBusy} onClick={() => void syncOrgNow()} title="Preview affected agents, then recompose goals from the hierarchy + brain">{orgBusy ? 'working…' : 'Preview & sync'}</button>
           </div>
           <p className="muted small" style={{ marginTop: 4 }}>
-            Each agent's <b>goals &amp; instructions</b> file is composed from its place in the org: <b>primary</b> (<code>{hier.primary?.agent ?? 'unset'}</code>) → team leads → workers, then completed work flows back through the default-team validators (<b>coder</b> and <b>researcher</b>) before returning to the primary. Brain <code>team-instruction</code> memories are embedded, and the hierarchy is written back to the brain.
+            Each agent's <b>goals &amp; instructions</b> file is composed from its place in the org: <b>primary</b> (<code>{hier.primary?.agent ?? 'unset'}</code>) → team leads → workers, then completed work flows back through the default-team validators before returning to the primary. <b>coder</b> and <b>researcher</b> stay protected; additional default-team validators can be added below. Brain <code>team-instruction</code> memories are embedded, and the hierarchy is written back to the brain.
           </p>
-	          <div className="kv" style={{ gridTemplateColumns: 'minmax(110px,160px) 1fr', gap: '4px 12px', alignItems: 'center', marginTop: 6 }}>
-	            <span className="muted small">secondary lead</span>
-	            <span className="muted small">validates completed work from</span>
-	            {secondaries.length ? secondaries.map((s) => (
-	              <Fragment key={s.agent}>
-	                <span className="b">{s.agent} <span className="muted small">· {s.team}</span></span>
-	                <span className="small">{s.leadsTeams.length ? s.leadsTeams.map((t) => `${hier.coordinators[t] ?? '(no lead)'} (${t})`).join(', ') : <span className="muted">— none —</span>}</span>
-	              </Fragment>
-	            )) : <><span className="muted small">—</span><span className="muted small">defaults to researcher + coder on default</span></>}
-	          </div>
-	          <div style={{ marginTop: 10 }}>
-	            <div className="muted small" style={{ marginBottom: 4 }}>validator coverage matrix</div>
-	            {DEFAULT_VALIDATORS.map((agent) => {
-	              const covered = new Set(secondaries.find((s) => s.agent === agent)?.leadsTeams ?? []);
-	              const editableTeams = allKnownTeamNames.filter((t) => t !== PRIMARY_TEAM && t !== 'public');
-	              return (
-	                <div key={agent} className="row-actions" style={{ gap: 8, alignItems: 'center', marginBottom: 6 }}>
-	                  <span className="b small" style={{ minWidth: 92 }}>{PRIMARY_TEAM}/{agent}</span>
-	                  <div className="chips">
-	                    {editableTeams.length ? editableTeams.map((teamName) => {
-	                      const on = covered.has(teamName);
-	                      return (
-	                        <button key={`${agent}:${teamName}`} className={`chip${on ? ' on' : ''}`} disabled={orgBusy} title={`${on ? 'Remove' : 'Add'} ${PRIMARY_TEAM}/${agent} validator coverage for ${teamName}`} onClick={() => void saveSecondaryCoverage(agent, teamName, !on)}>
-	                          {on ? '✓ ' : ''}{teamName}
-	                        </button>
-	                      );
-	                    }) : <span className="muted small">No non-default teams yet.</span>}
-	                  </div>
-	                </div>
-	              );
-	            })}
-	          </div>
-	          {orgResult ? <p className="muted small" style={{ marginTop: 6, whiteSpace: 'pre-wrap' }}>{orgResult}</p> : null}
-	        </div>
+          <div className="kv" style={{ gridTemplateColumns: 'minmax(110px,160px) 1fr', gap: '4px 12px', alignItems: 'center', marginTop: 6 }}>
+            <span className="muted small">validator</span>
+            <span className="muted small">validates completed work from</span>
+            {validatorRows.length ? validatorRows.map((s) => (
+              <Fragment key={s.agent}>
+                <span className="b">{s.agent} <span className="muted small">· {s.team}{DEFAULT_VALIDATORS.includes(slugName(s.agent)) ? ' · protected' : ''}</span></span>
+                <span className="small">{s.leadsTeams.length ? s.leadsTeams.map((t) => `${hier.coordinators[t] ?? '(no lead)'} (${t})`).join(', ') : <span className="muted">— none —</span>}</span>
+              </Fragment>
+            )) : <><span className="muted small">—</span><span className="muted small">defaults to researcher + coder on default</span></>}
+          </div>
+          <div style={{ marginTop: 10 }}>
+            <div className="row-actions" style={{ gap: 8, alignItems: 'center', marginBottom: 6 }}>
+              <div className="muted small grow">validator coverage matrix</div>
+              <select className="cell-select" value={validatorPick} disabled={orgBusy || !defaultTeamValidatorCandidates.length} onChange={(e) => setValidatorPick(e.target.value)} title="Additional validators must be agents on the default team; default/lead is reserved as primary.">
+                <option value="">{defaultTeamValidatorCandidates.length ? 'add default-team validator…' : 'no additional default agents'}</option>
+                {defaultTeamValidatorCandidates.map((name) => <option key={name} value={name}>{PRIMARY_TEAM}/{name}</option>)}
+              </select>
+              <button className="btn small" disabled={orgBusy || !validatorPick} onClick={() => void addSecondaryValidator(validatorPick)}>Add validator</button>
+            </div>
+            {validatorRows.map((s) => {
+              const agent = slugName(s.agent);
+              const isProtected = DEFAULT_VALIDATORS.includes(agent);
+              const covered = new Set(s.leadsTeams ?? []);
+              const editableTeams = allKnownTeamNames.filter((t) => t !== PRIMARY_TEAM && t !== 'public');
+              return (
+                <div key={agent} className="row-actions" style={{ gap: 8, alignItems: 'center', marginBottom: 6 }}>
+                  <span className="b small" style={{ minWidth: 132 }}>{PRIMARY_TEAM}/{agent}</span>
+                  <div className="chips">
+                    {editableTeams.length ? editableTeams.map((teamName) => {
+                      const on = covered.has(teamName);
+                      return (
+                        <button key={`${agent}:${teamName}`} className={`chip${on ? ' on' : ''}`} disabled={orgBusy} title={`${on ? 'Remove' : 'Add'} ${PRIMARY_TEAM}/${agent} validator coverage for ${teamName}`} onClick={() => void saveSecondaryCoverage(agent, teamName, !on)}>
+                          {on ? '✓ ' : ''}{teamName}
+                        </button>
+                      );
+                    }) : <span className="muted small">No non-default teams yet.</span>}
+                  </div>
+                  {isProtected ? <span className="muted small" title="Protected default validator">protected</span> : (
+                    <button className="btn small" disabled={orgBusy} onClick={() => void removeSecondaryValidator(agent)} title={`Remove ${PRIMARY_TEAM}/${agent} from the validator roster`}>Remove</button>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+          {orgResult ? <p className="muted small" style={{ marginTop: 6, whiteSpace: 'pre-wrap' }}>{orgResult}</p> : null}
+        </div>
       </section>
       ) : null}
 
@@ -2432,7 +2556,7 @@ function TeamBuilder({
           freshHrGroups(),
         ]);
         if (hierarchyStamp(hierNow) !== preflight.hierarchyStamp) {
-          throw new Error('lead hierarchy changed after build confirmation; review Route before auto-wiring');
+          throw new Error('lead hierarchy changed after build confirmation; review Manage before auto-wiring');
         }
         if (!findHrAgent(groupsNow, preflight.targetTeam, { name: leadName })) {
           throw new Error(`${preflight.targetTeam}/${leadName} is not in the current roster after build`);
@@ -2452,7 +2576,7 @@ function TeamBuilder({
           .then((r) => r.delegates_to)
           .catch(() => null);
         if (relayKey(relayNow) !== preflight.relayStamp) {
-          throw new Error(`${targetTeam} relay policy changed after build confirmation; review Route before applying builder relay`);
+          throw new Error(`${targetTeam} relay policy changed after build confirmation; review Manage before applying builder relay`);
         }
         await call('setTeamDelegates', targetTeam, relayPayload);
         setPost((p) => ({ ...p, relay: 'ok' }));

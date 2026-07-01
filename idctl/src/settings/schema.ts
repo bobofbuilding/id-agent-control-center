@@ -45,8 +45,9 @@ export interface IdctlConfig {
    * coordinator and the per-team coordinators. Each owns a set of teams whose
    * leads relay up to it; it delegates down to those team leads/agents, sequences
    * their results, and relays a consolidated status up to the primary. The org-sync
-   * loop composes each agent's goals file from this structure. (Default: researcher
-   * + coder on the default team.)
+   * loop composes each agent's goals file from this structure. `coder` and
+   * `researcher` on the default team are protected defaults; operators can add
+   * more default-team validators for specialist review.
    */
   secondaryLeads?: { agent: string; team: string; leadsTeams: string[] }[];
   /**
