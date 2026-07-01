@@ -8,7 +8,8 @@ import { parseTeamSpec, slugName, isReservedName } from '../../../../idctl/src/a
 import type { Agent } from '../../../../idctl/src/api/types.ts';
 import { TeamGraph, type GraphSelection } from './TeamGraph.tsx';
 
-type ProviderRow = { kind: string; enabled?: boolean; keySource?: string; lastSync?: { status?: string } };
+type ProviderRow = { kind: string; baseUrl?: string; enabled?: boolean; keySource?: string; needsKey?: boolean; lastSync?: { status?: string; modelCount?: number; models?: string[] } };
+type ManagedRuntimeStatus = { runtime?: string; installed?: boolean; loggedIn?: boolean; statusSupported?: boolean };
 
 type GoalStatus = 'draft' | 'active' | 'done' | 'archived';
 type GoalSummary = { id: string; title: string; status: GoalStatus; agent?: string; team: string; updatedAt: number; autopilot?: boolean };
@@ -890,11 +891,13 @@ export function Teams({ store, focus, onFocusHandled }: { store: FleetStore; foc
   const [modelCatalog, setModelCatalog] = useState<Record<string, string[]>>({});
   const [skillCatalog, setSkillCatalog] = useState<string[]>([]);
   const [providers, setProviders] = useState<ProviderRow[]>([]);
+  const [managedRuntimes, setManagedRuntimes] = useState<Record<string, ManagedRuntimeStatus>>({});
 
   useEffect(() => {
     call<Record<string, string[]>>('runtime:models').then(setModelCatalog).catch(() => setModelCatalog({}));
     call<LibrarySkillEntry[]>('librarySkills').then((s) => setSkillCatalog(s.map((x) => x.name))).catch(() => setSkillCatalog([]));
     call<ProviderRow[]>('providers:list').then(setProviders).catch(() => setProviders([]));
+    call<Record<string, ManagedRuntimeStatus>>('subs:status').then(setManagedRuntimes).catch(() => setManagedRuntimes({}));
   }, [store.lastUpdated]);
 
 
@@ -1707,6 +1710,7 @@ export function Teams({ store, focus, onFocusHandled }: { store: FleetStore; foc
             hierarchy={hier}
             hrOwner={hrOwner}
             providers={providers}
+            managedRuntimes={Object.values(managedRuntimes)}
             modelCatalog={modelCatalog}
             skillCatalog={skillCatalog}
             onClose={() => { /* inline — nothing to close */ }}
@@ -2042,6 +2046,7 @@ function TeamBuilder({
   hierarchy,
   hrOwner,
   providers,
+  managedRuntimes,
   modelCatalog,
   skillCatalog,
   inline = false,
@@ -2062,6 +2067,7 @@ function TeamBuilder({
   /** Preferred HR manager helper; may live in another team. */
   hrOwner?: { name: string; team?: string } | null;
   providers: ProviderRow[];
+  managedRuntimes: ManagedRuntimeStatus[];
   modelCatalog: Record<string, string[]>;
   skillCatalog: string[];
   inline?: boolean;
@@ -2070,8 +2076,8 @@ function TeamBuilder({
   onMessage: (m: string) => void;
   onDone: (createdTeam?: string) => void;
 }) {
-  const runtimes = useMemo(() => offerableRuntimes(providers), [providers]);
-  const initialRuntime = runtimes[0] ?? 'claude-code-cli';
+  const runtimes = useMemo(() => offerableRuntimes(providers, undefined, managedRuntimes), [providers, managedRuntimes]);
+  const initialRuntime = runtimes[0] ?? '';
   type Row = { name: string; runtime: string; model: string; role: string; description: string; skills: string[]; lead: boolean; open: boolean };
   const blankRow = (): Row => ({ name: '', runtime: initialRuntime, model: '', role: '', description: '', skills: [], lead: false, open: false });
   // Map a parsed/AI-designed agent onto a builder row, sanitizing the AI's runtime/
@@ -2156,13 +2162,14 @@ function TeamBuilder({
   const existingInTeam = useMemo(() => new Set((existingAgents[targetTeam] ?? []).map((n) => slugName(n))), [existingAgents, targetTeam]);
   const alreadyThere = named.filter((r) => existingInTeam.has(r.slug));
   const toCreate = named.filter((r) => !existingInTeam.has(r.slug));
+  const missingRuntime = toCreate.some((r) => !r.runtime);
   const relayPayload: string[] | null =
     relayMode === 'all' ? ['*'] : relayMode === 'none' ? [] : relayMode === 'select' ? relaySel : null;
   const builderRelayBlocksDefault = targetTeam === PRIMARY_TEAM && relayBlocksAll(relayPayload);
   const defaultLeadAvailableForWire = targetTeam !== PRIMARY_TEAM || existingInTeam.has(DEFAULT_LEAD) || named.some((r) => r.slug === DEFAULT_LEAD);
   const defaultLeadMissingForWire = coordinate && targetTeam === PRIMARY_TEAM && !defaultLeadAvailableForWire;
   const locked = building || aiBusy;
-  const canBuild = !locked && Boolean(targetTeam) && !isReservedName(targetTeam) && toCreate.length > 0 && reserved.length === 0 && dupes.length === 0 && !builderRelayBlocksDefault && !defaultLeadMissingForWire;
+  const canBuild = !locked && Boolean(targetTeam) && !isReservedName(targetTeam) && toCreate.length > 0 && reserved.length === 0 && dupes.length === 0 && !builderRelayBlocksDefault && !defaultLeadMissingForWire && !missingRuntime;
   const leadershipBackbone = useMemo(() => assessLeadershipBackbone(fleetAgents, hierarchy), [fleetAgents, hierarchy]);
   const leadershipIssues = leadershipBackboneIssues(leadershipBackbone);
   const blueprintCoverages = useMemo(() => RECOMMENDED_TEAM_BLUEPRINTS.map((bp) => blueprintCoverage(fleetAgents, bp)), [fleetAgents]);
@@ -2328,6 +2335,7 @@ function TeamBuilder({
     if (isReservedName(targetTeam)) { setError(`“${targetTeam}” is a reserved word — choose another team name.`); return; }
     if (reserved.length) { setError(`Reserved agent name(s): ${reserved.join(', ')} — rename.`); return; }
     if (dupes.length) { setError(`Duplicate agent name(s): ${dupes.join(', ')}.`); return; }
+    if (missingRuntime) { setError('Choose an available Settings runtime for every new agent.'); return; }
     if (builderRelayBlocksDefault) { setError(`The ${PRIMARY_TEAM} team needs at least one outbound relay path for ${DEFAULT_LEAD} delegation and validator bounce-backs.`); return; }
     if (defaultLeadMissingForWire) { setError(`Default-team routing is locked to ${PRIMARY_TEAM}/${DEFAULT_LEAD}. Add a lead row, restore default/lead, or turn off Wire agentic routing for this build.`); return; }
     // Build only the agents that DON'T already exist in the team; the rest are shown as
@@ -2627,7 +2635,8 @@ function TeamBuilder({
                         onChange={(e) => updateRow(i, { name: e.target.value })}
                         onBlur={(e) => updateRow(i, { name: slugName(e.target.value) })}
                       />
-                      <select className="cell-select" style={{ fontSize: 12 }} disabled={locked} value={r.runtime} onChange={(e) => updateRow(i, { runtime: e.target.value, model: '' })}>
+                      <select className="cell-select" style={{ fontSize: 12 }} disabled={locked || !runtimes.length} value={r.runtime} onChange={(e) => updateRow(i, { runtime: e.target.value, model: '' })}>
+                        <option value="" disabled>{runtimes.length ? 'Choose runtime' : 'No Settings runtime available'}</option>
                         {runtimes.map((rt) => <option key={rt} value={rt}>{runtimeLabel(rt)}</option>)}
                       </select>
                       <select className="cell-select" style={{ fontSize: 12 }} disabled={locked} value={r.model} onChange={(e) => updateRow(i, { model: e.target.value })}>

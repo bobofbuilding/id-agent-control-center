@@ -474,6 +474,9 @@ Manager; this is the plumbing.)
   status-inspectable CLIs from TUI-owned account state, auto-detect installed binaries after a
   visible installer handoff, and keep TUI-owned CLIs such as Grok/Gemini/Copilot read-only in
   Settings instead of opening Terminal popups; metered API providers stay under Inference backends.
+  Agent Harness pickers only offer runtimes that Settings can currently prove through sign-in,
+  install, route-ready API backend, or synced local-backend evidence; existing assigned runtimes
+  remain visible as the current value for review.
 - **Local models (Ollama)**: parallel-inference cap (1–16), installed chips, **Download** by id
   (streamed progress), a searchable **catalog** with capability filters and hardware fit-warnings.
 - **Local image generator**: URL + API style (Automatic1111 / OpenAI-images), **Detect**, Save/Clear

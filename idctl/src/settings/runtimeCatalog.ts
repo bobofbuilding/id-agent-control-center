@@ -135,7 +135,24 @@ export function capabilityDenyReason(runtime: string | undefined, cap: RuntimeCa
 }
 
 /** Minimal provider shape needed to decide runtime availability. */
-type ProviderForRuntime = { kind: string; enabled?: boolean; keySource?: string; lastSync?: { status?: string } };
+type ProviderForRuntime = {
+  name?: string;
+  kind: string;
+  baseUrl?: string;
+  enabled?: boolean;
+  keySource?: string;
+  needsKey?: boolean;
+  lastSync?: { status?: string; modelCount?: number; models?: string[] };
+};
+
+/** Minimal managed-subscription shape needed to decide runtime availability. */
+export type ManagedRuntimeForOffer = {
+  provider?: string;
+  runtime?: string;
+  installed?: boolean;
+  loggedIn?: boolean;
+  statusSupported?: boolean;
+};
 
 /**
  * Is the Anthropic API backend usable — wired in (an enabled `anthropic`
@@ -154,13 +171,75 @@ export function anthropicApiReady(providers: ProviderForRuntime[]): boolean {
   );
 }
 
+function addRuntime(out: string[], runtime?: string): void {
+  if (runtime && RUNTIMES.includes(runtime) && !out.includes(runtime)) out.push(runtime);
+}
+
+function providerKeyReady(p: ProviderForRuntime): boolean {
+  const implicitKeyed = p.kind === 'anthropic' || p.kind === 'openai';
+  const needsKey = p.needsKey === true || (p.needsKey === undefined && implicitKeyed);
+  return !needsKey || p.keySource === 'config' || p.keySource === 'env';
+}
+
+function providerHasModels(p: ProviderForRuntime): boolean {
+  return p.lastSync?.status === 'preset' || (p.lastSync?.modelCount ?? p.lastSync?.models?.length ?? 0) > 0;
+}
+
+function providerRouteReady(p: ProviderForRuntime): boolean {
+  return p.enabled !== false && providerKeyReady(p) && (
+    p.lastSync?.status === 'live' ||
+    p.lastSync?.status === 'preset' ||
+    providerHasModels(p)
+  );
+}
+
+function providerIsLocalRoute(p: ProviderForRuntime): boolean {
+  if (p.kind === 'ollama' || p.kind === 'lmstudio') return true;
+  if (p.kind !== 'openai-compatible' || !p.baseUrl) return false;
+  try {
+    const host = new URL(p.baseUrl).hostname.toLowerCase();
+    return host === '127.0.0.1' || host === 'localhost' || host === '0.0.0.0' || host === '::1' || host.endsWith('.local');
+  } catch {
+    return false;
+  }
+}
+
+function managedRuntimeReady(s: ManagedRuntimeForOffer): boolean {
+  if (!s.runtime || s.installed === false) return false;
+  if (s.statusSupported === true) return s.loggedIn === true;
+  // These CLIs do not expose a safe non-interactive account status in Settings;
+  // binary presence is the strongest read-only availability signal we have.
+  return s.installed === true && ['grok', 'gemini', 'copilot'].includes(s.runtime);
+}
+
 /**
- * Managed runtime ids to offer in runtime pickers. Provider availability is
- * surfaced separately through neutral model lanes so the picker stays open while
- * each runtime remains responsible for its own manager harness/adapter support.
+ * Runtime ids to offer in runtime pickers. The list is intentionally Settings-led:
+ * installed/signed-in managed CLIs, configured live API backends with matching
+ * harnesses, and synced local model servers. `keep` preserves an agent's current
+ * runtime for visibility even when that runtime is no longer newly available.
  */
-export function offerableRuntimes(_providers: ProviderForRuntime[], keep?: string): string[] {
-  return Array.from(new Set([...(keep ? [keep] : []), ...RUNTIMES].filter(Boolean)));
+export function offerableRuntimes(
+  providers: ProviderForRuntime[],
+  keep?: string,
+  managed: ManagedRuntimeForOffer[] = [],
+): string[] {
+  const out: string[] = [];
+  addRuntime(out, keep);
+
+  for (const s of managed) {
+    if (!managedRuntimeReady(s)) continue;
+    addRuntime(out, s.runtime);
+    if (s.runtime === 'claude-code-cli') addRuntime(out, 'claude-code-local');
+  }
+
+  for (const p of providers) {
+    if (!providerRouteReady(p)) continue;
+    if (p.kind === 'anthropic') addRuntime(out, 'claude-agent-sdk');
+    else if (p.kind === 'openai') addRuntime(out, 'codex');
+    else if (providerIsLocalRoute(p)) addRuntime(out, 'ollama');
+  }
+
+  return out;
 }
 
 /**

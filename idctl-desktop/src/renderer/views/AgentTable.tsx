@@ -12,7 +12,8 @@ import { RUNTIMES, offerableRuntimes, effortOptions, runtimeHasEffort, speedOpti
  * own team. Extracted from the Dashboard so it can live in HR Manager.
  */
 
-type ProviderRow = { name?: string; kind: string; baseUrl?: string; enabled?: boolean; keySource?: string; lastSync?: { status?: string } };
+type ProviderRow = { name?: string; kind: string; baseUrl?: string; enabled?: boolean; keySource?: string; needsKey?: boolean; lastSync?: { status?: string; modelCount?: number; models?: string[] } };
+type ManagedRuntimeStatus = { runtime?: string; installed?: boolean; loggedIn?: boolean; statusSupported?: boolean };
 type RuntimeFreshness = {
   runtime: string;
   label?: string;
@@ -208,6 +209,7 @@ export function AgentTable({ store, onProbe, probeBusy, navigate }: { store: Fle
   const [busy, setBusy] = useState<string | null>(null);
   const [catalog, setCatalog] = useState<Record<string, string[]>>({});
   const [providers, setProviders] = useState<ProviderRow[]>([]);
+  const [managedRuntimes, setManagedRuntimes] = useState<Record<string, ManagedRuntimeStatus>>({});
   const [coords, setCoords] = useState<Record<string, string>>({}); // team → coordinator (lead) name
   const [showStopped, setShowStopped] = useState(false); // by default the grid shows only running agents
   const [freshness, setFreshness] = useState<RuntimeFreshness[]>([]);
@@ -244,6 +246,7 @@ export function AgentTable({ store, onProbe, probeBusy, navigate }: { store: Fle
   useEffect(() => {
     call<Record<string, string[]>>('runtime:models').then(setCatalog).catch(() => setCatalog({}));
     call<ProviderRow[]>('providers:list').then(setProviders).catch(() => setProviders([]));
+    call<Record<string, ManagedRuntimeStatus>>('subs:status').then(setManagedRuntimes).catch(() => setManagedRuntimes({}));
     call<{ coordinators?: Record<string, string> }>('coordinator:hierarchy').then((h) => setCoords(h.coordinators ?? {})).catch(() => {});
     call<RuntimeFreshness[]>('runtime:freshness').then(setFreshness).catch(() => setFreshness([]));
     call<RuntimeCooldown[]>('runtime:cooldowns').then(setRuntimeCooldowns).catch(() => setRuntimeCooldowns([]));
@@ -552,7 +555,7 @@ export function AgentTable({ store, onProbe, probeBusy, navigate }: { store: Fle
     const runtimeModels = catalog[displayRuntime ?? ''] ?? [];
     const modelOpts = Array.from(new Set([displayModel, ...runtimeModels].filter(Boolean))) as string[];
     const isLocal = (a.type ?? '') === 'claude' || RUNTIMES.includes(currentRuntime ?? '');
-    const runtimeOpts = Array.from(new Set([currentRuntime, ...offerableRuntimes(providers, currentRuntime)].filter(Boolean))) as string[];
+    const runtimeOpts = Array.from(new Set([currentRuntime, ...offerableRuntimes(providers, currentRuntime, Object.values(managedRuntimes))].filter(Boolean))) as string[];
     const mismatch = runtimeModelMismatch(displayRuntime, displayModel);
     const cooling = rateLimitActive(a, coolingRows);
     const cooldown = cooldownFor(a, coolingRows);
