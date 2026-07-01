@@ -14,7 +14,7 @@ import { SCOPE_PRESETS, TTL_PRESETS } from '../../../idctl/src/keys/types.ts';
 import type { AgentAccount, KeyAuthorityTarget, LegacyKeyAuthority, SessionKey } from '../../../idctl/src/keys/types.ts';
 import { defaultHeadroomPilotSettings, type HeadroomPilotSettings, type ProviderProfile, type McpServerProfile, type ProjectEntry } from '../../../idctl/src/settings/schema.ts';
 import { providerNeedsKey } from '../../../idctl/src/settings/providerCatalog.ts';
-import { buildRuntimeCatalog } from '../../../idctl/src/settings/runtimeCatalog.ts';
+import { buildProviderModelLanes, buildRuntimeCatalog, isLocalProvider, providerKindToRuntimes, RUNTIMES } from '../../../idctl/src/settings/runtimeCatalog.ts';
 import type { LibraryPluginInspection, LibrarySkillEntry, McpServerSpec, CreateSkillInput, ProjectPluginSkillResult } from '../../../idctl/src/api/client.ts';
 import { secp256k1 } from '@noble/curves/secp256k1.js';
 import { keccak_256 } from '@noble/hashes/sha3.js';
@@ -113,6 +113,42 @@ async function fetchWiki(): Promise<WikiPayload> {
 /** Enrich provider rows with key source (no env in the webview) + needsKey flag. */
 function enrichProviders(list: ProviderProfile[]) {
   return list.map((p) => ({ ...p, keySource: (p.apiKey ? 'config' : 'none') as 'config' | 'env' | 'none', needsKey: providerNeedsKey(p) }));
+}
+
+function runtimeFreshnessLocal() {
+  const providers = lsGet<ProviderProfile[]>('idctl.providers', []);
+  const cat = buildRuntimeCatalog(providers);
+  const providerFor = (rt: string): ProviderProfile | undefined =>
+    providers
+      .filter(
+        (p) =>
+          p.enabled !== false &&
+          (p.lastSync?.models?.length ?? 0) > 0 &&
+          providerKindToRuntimes(p.kind).includes(rt) &&
+          (rt !== 'ollama' || isLocalProvider(p)),
+      )
+      .sort((a, b) => (b.lastSync?.at ?? 0) - (a.lastSync?.at ?? 0))[0];
+  const harnessRows = RUNTIMES.map((rt) => {
+    const models = cat[rt] ?? [];
+    const p = providerFor(rt);
+    if (p) {
+      return { runtime: rt, kind: 'harness', models, count: models.length, source: 'provider', provider: p.name, lastCheckedMs: p.lastSync?.at ?? null, selectable: true };
+    }
+    return { runtime: rt, kind: 'harness', models, count: models.length, source: models.length ? 'curated' : 'none', lastCheckedMs: null, selectable: true };
+  });
+  const providerRows = buildProviderModelLanes(providers).map((lane) => ({
+    runtime: lane.id,
+    label: lane.label,
+    kind: lane.kind,
+    models: lane.models,
+    count: lane.models.length,
+    source: lane.source,
+    provider: lane.provider,
+    lastCheckedMs: lane.lastCheckedMs,
+    selectable: lane.selectable,
+    detail: lane.detail,
+  }));
+  return [...harnessRows, ...providerRows];
 }
 
 function headroomPilotState(): HeadroomPilotSettings {
@@ -786,6 +822,7 @@ const M: Record<string, (...a: any[]) => Promise<unknown>> = {
     return (teamName ? client.withTeam(teamName) : client).remote(`/agent ${name} wallet provision`);
   },
   'runtime:models': async () => buildRuntimeCatalog(lsGet<ProviderProfile[]>('idctl.providers', [])),
+  'runtime:freshness': async () => runtimeFreshnessLocal(),
   'runtime:probe': async () => {
     const list = lsGet<ProviderProfile[]>('idctl.providers', []);
     await Promise.all(

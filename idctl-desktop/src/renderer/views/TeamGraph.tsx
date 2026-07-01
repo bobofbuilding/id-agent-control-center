@@ -1,4 +1,5 @@
 import type { Agent } from '../../../../idctl/src/api/types.ts';
+import { runtimeDisplayLabel } from '../../../../idctl/src/settings/runtimeCatalog.ts';
 
 export interface GraphGroup { team: string; agents: Agent[] }
 export interface Hier { primary: { team: string; agent: string } | null; coordinators: Record<string, string> }
@@ -35,7 +36,7 @@ function statusColor(a: Agent): string {
   return 'var(--err)';
 }
 function runtimeShort(r?: string): string {
-  return (r ?? '?').replace('claude-code-', 'claude-').replace('claude-agent-sdk', 'claude-sdk').replace('-cli', '');
+  return runtimeDisplayLabel(r ?? '?');
 }
 
 /**

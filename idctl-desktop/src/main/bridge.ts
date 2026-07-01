@@ -48,7 +48,7 @@ import { ProviderClient } from '../../../idctl/src/settings/ProviderClient.ts';
 import { discoverLocalServers, type DiscoveredServer } from '../../../idctl/src/settings/localDiscovery.ts';
 import { type HeadroomPilotSettings, type ProviderProfile, type McpServerProfile, type ProjectEntry } from '../../../idctl/src/settings/schema.ts';
 import { providerNeedsKey } from '../../../idctl/src/settings/providerCatalog.ts';
-import { buildRuntimeCatalog, RUNTIMES, providerKindToRuntimes, isLocalProvider } from '../../../idctl/src/settings/runtimeCatalog.ts';
+import { buildProviderModelLanes, buildRuntimeCatalog, RUNTIMES, providerKindToRuntimes, isLocalProvider, type RuntimeModelLaneKind } from '../../../idctl/src/settings/runtimeCatalog.ts';
 import { testMcpServer } from './mcpTest.ts';
 import { headroomBackendContractAudit, headroomCoreAudit, headroomStatus } from './headroom.ts';
 import { headroomPluginPathAudit } from './headroomPlugin.ts';
@@ -390,11 +390,15 @@ function runtimeCatalogWithCodex(): Record<string, string[]> {
  */
 type RuntimeFreshness = {
   runtime: string;
+  label?: string;
+  kind?: 'harness' | RuntimeModelLaneKind;
   models: string[];
   count: number;
   source: 'codex-cache' | 'provider' | 'curated' | 'none';
   provider?: string;
   lastCheckedMs: number | null;
+  selectable?: boolean;
+  detail?: string;
 };
 function runtimeFreshness(): RuntimeFreshness[] {
   const providers = loadSettings().providers;
@@ -410,18 +414,31 @@ function runtimeFreshness(): RuntimeFreshness[] {
           (rt !== 'ollama' || isLocalProvider(p)),
       )
       .sort((a, b) => (b.lastSync?.at ?? 0) - (a.lastSync?.at ?? 0))[0];
-  return RUNTIMES.map((rt): RuntimeFreshness => {
+  const harnessRows = RUNTIMES.map((rt): RuntimeFreshness => {
     const models = cat[rt] ?? [];
     if (rt === 'codex') {
       let mt: number | null = null;
       try { mt = statSync(join(homedir(), '.codex', 'models_cache.json')).mtimeMs; } catch { mt = null; }
       const live = codexModelsFromCache().length > 0;
-      return { runtime: rt, models, count: models.length, source: live ? 'codex-cache' : 'curated', lastCheckedMs: live ? mt : null };
+      return { runtime: rt, kind: 'harness', models, count: models.length, source: live ? 'codex-cache' : 'curated', lastCheckedMs: live ? mt : null, selectable: true };
     }
     const p = providerFor(rt);
-    if (p) return { runtime: rt, models, count: models.length, source: 'provider', provider: p.name, lastCheckedMs: p.lastSync?.at ?? null };
-    return { runtime: rt, models, count: models.length, source: models.length ? 'curated' : 'none', lastCheckedMs: null };
+    if (p) return { runtime: rt, kind: 'harness', models, count: models.length, source: 'provider', provider: p.name, lastCheckedMs: p.lastSync?.at ?? null, selectable: true };
+    return { runtime: rt, kind: 'harness', models, count: models.length, source: models.length ? 'curated' : 'none', lastCheckedMs: null, selectable: true };
   });
+  const providerRows = buildProviderModelLanes(providers).map((lane): RuntimeFreshness => ({
+    runtime: lane.id,
+    label: lane.label,
+    kind: lane.kind,
+    models: lane.models,
+    count: lane.models.length,
+    source: lane.source,
+    provider: lane.provider,
+    lastCheckedMs: lane.lastCheckedMs,
+    selectable: lane.selectable,
+    detail: lane.detail,
+  }));
+  return [...harnessRows, ...providerRows];
 }
 
 /** Probe every enabled provider that backs a runtime, refresh its synced model list, and

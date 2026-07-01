@@ -16,6 +16,40 @@ import type { ProviderKind, ProviderProfile } from './schema.ts';
 /** Switchable agent runtimes (matches HarnessType minus the remote runtime). */
 export const RUNTIMES = ['claude-agent-sdk', 'claude-code-cli', 'claude-code-local', 'codex', 'cursor-cli', 'ollama'];
 
+export type RuntimeModelLaneKind = 'subscription' | 'local' | 'api';
+export type RuntimeModelLaneSource = 'provider' | 'none';
+
+export interface RuntimeModelLane {
+  /** Neutral provider/model lane id. Not a manager harness id. */
+  id: string;
+  label: string;
+  kind: RuntimeModelLaneKind;
+  provider: string;
+  providerKind: ProviderKind;
+  models: string[];
+  source: RuntimeModelLaneSource;
+  lastCheckedMs: number | null;
+  /** False until the manager exposes a provider-runtime execution contract. */
+  selectable: false;
+  detail: string;
+}
+
+const RUNTIME_LABELS: Record<string, string> = {
+  'claude-agent-sdk': 'Claude API',
+  'claude-code-cli': 'Claude Code',
+  'claude-code-local': 'Claude local',
+  codex: 'Codex',
+  'cursor-cli': 'Cursor',
+  ollama: 'Ollama / local',
+};
+
+export function runtimeDisplayLabel(runtime: string): string {
+  if (runtime.startsWith('provider:')) {
+    try { return decodeURIComponent(runtime.slice('provider:'.length)); } catch { return runtime.slice('provider:'.length); }
+  }
+  return RUNTIME_LABELS[runtime] ?? runtime.replace('claude-code-', 'claude-').replace('claude-agent-sdk', 'claude-sdk').replace('-cli', '');
+}
+
 /**
  * Native capability support an agent runtime may or may not be able to consume
  * directly. Capabilities assignment in IDACC is broader than this table: the
@@ -100,14 +134,12 @@ export function anthropicApiReady(providers: ProviderForRuntime[]): boolean {
 }
 
 /**
- * Runtimes to offer in the runtime picker given the configured providers. Today
- * the only conditional one is `claude-agent-sdk`, withheld until
- * anthropicApiReady(). Pass `keep` to always retain an agent's CURRENT runtime
- * even if it just became ineligible (so an existing SDK agent isn't broken).
+ * Manager-supported execution harnesses to offer in runtime pickers. Provider
+ * availability is surfaced separately through neutral model lanes so the picker
+ * stays open while writes still go only to manager-supported harness ids.
  */
-export function offerableRuntimes(providers: ProviderForRuntime[], keep?: string): string[] {
-  const sdkOk = anthropicApiReady(providers);
-  return RUNTIMES.filter((r) => r !== 'claude-agent-sdk' || sdkOk || r === keep);
+export function offerableRuntimes(_providers: ProviderForRuntime[], keep?: string): string[] {
+  return Array.from(new Set([...(keep ? [keep] : []), ...RUNTIMES].filter(Boolean)));
 }
 
 /**
@@ -198,6 +230,52 @@ export function isLocalProvider(p: ProviderProfile): boolean {
   } catch {
     return false;
   }
+}
+
+export function providerModelLaneId(p: Pick<ProviderProfile, 'name'>): string {
+  return `provider:${encodeURIComponent(p.name)}`;
+}
+
+export function providerModelLaneKind(p: ProviderProfile): RuntimeModelLaneKind {
+  if (p.kind === 'anthropic' || p.kind === 'openai') return 'subscription';
+  return isLocalProvider(p) ? 'local' : 'api';
+}
+
+export function providerModelLaneLabel(p: ProviderProfile): string {
+  const kind = providerModelLaneKind(p);
+  const prefix = kind === 'subscription' ? 'Subscription' : kind === 'local' ? 'Local' : 'API';
+  return `${prefix} · ${p.name}`;
+}
+
+/**
+ * Provider/model lanes are neutral catalog entries from Settings. They expose
+ * every configured subscription, local, and API backend in Health/Fleet without
+ * pretending the manager can execute a provider id directly as an agent harness.
+ */
+export function buildProviderModelLanes(providers: ProviderProfile[]): RuntimeModelLane[] {
+  return providers
+    .filter((p) => p.enabled !== false)
+    .map((p) => {
+      const models = p.lastSync?.models ?? [];
+      const kind = providerModelLaneKind(p);
+      const detail = kind === 'api'
+        ? 'Configured API provider/model lane. Agent assignment needs a manager provider-runtime adapter before this can be selected as an execution harness.'
+        : kind === 'local'
+          ? 'Configured local provider/model lane. Agent assignment needs the manager harness to be pointed at this server before this can be selected directly.'
+          : 'Configured subscription/API provider lane. Agent assignment uses the matching manager harness when available.';
+      return {
+        id: providerModelLaneId(p),
+        label: providerModelLaneLabel(p),
+        kind,
+        provider: p.name,
+        providerKind: p.kind,
+        models,
+        source: models.length ? 'provider' as const : 'none' as const,
+        lastCheckedMs: p.lastSync?.at ?? null,
+        selectable: false as const,
+        detail,
+      };
+    });
 }
 
 /**

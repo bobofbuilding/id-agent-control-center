@@ -3,7 +3,7 @@ import { call, agentsLeadFirst, type FleetStore, type TeamAgent } from '../store
 import { statusClass } from '../agentStatus.ts';
 import type { RuntimeCooldown } from '../../../../idctl/src/api/client.ts';
 import type { Agent } from '../../../../idctl/src/api/types.ts';
-import { RUNTIMES, offerableRuntimes, effortOptions, runtimeHasEffort, speedOptions, runtimeHasSpeed } from '../../../../idctl/src/settings/runtimeCatalog.ts';
+import { RUNTIMES, offerableRuntimes, effortOptions, runtimeHasEffort, speedOptions, runtimeHasSpeed, runtimeDisplayLabel, type RuntimeModelLaneKind } from '../../../../idctl/src/settings/runtimeCatalog.ts';
 
 /**
  * The fleet agent grid — per-agent runtime/model switching + lifecycle actions, with a
@@ -12,8 +12,18 @@ import { RUNTIMES, offerableRuntimes, effortOptions, runtimeHasEffort, speedOpti
  * own team. Extracted from the Dashboard so it can live in HR Manager.
  */
 
-type ProviderRow = { kind: string; enabled?: boolean; keySource?: string; lastSync?: { status?: string } };
-type RuntimeFreshness = { runtime: string; count: number; source: 'codex-cache' | 'provider' | 'curated' | 'none'; provider?: string; lastCheckedMs: number | null };
+type ProviderRow = { name?: string; kind: string; baseUrl?: string; enabled?: boolean; keySource?: string; lastSync?: { status?: string } };
+type RuntimeFreshness = {
+  runtime: string;
+  label?: string;
+  kind?: 'harness' | RuntimeModelLaneKind;
+  count: number;
+  source: 'codex-cache' | 'provider' | 'curated' | 'none';
+  provider?: string;
+  lastCheckedMs: number | null;
+  selectable?: boolean;
+  detail?: string;
+};
 type AgentConfigState = { runtime?: string; model?: string; effort: string; speed: string };
 type RuntimeRateLimitMeta = { laneId?: string; coolingUntilMs?: number; reason?: string; observedAtMs?: number; queryId?: string; resetText?: string; message?: string };
 type RuntimeFailoverMeta = { fromLaneId?: string; toLaneId?: string; queryId?: string; observedAtMs?: number };
@@ -30,6 +40,12 @@ const DEFAULT_BACKBONE_AGENTS = new Set(['lead', 'coder', 'researcher']);
 const SOURCE_LABEL: Record<RuntimeFreshness['source'], string> = {
   'codex-cache': 'codex CLI cache', provider: 'live provider sync', curated: 'curated fallback', none: 'no models',
 };
+const KIND_LABEL: Record<RuntimeModelLaneKind | 'harness', string> = {
+  harness: 'harness',
+  subscription: 'subscription',
+  local: 'local',
+  api: 'api',
+};
 function agoMs(ms: number | null): string {
   if (!ms) return 'never';
   const s = Math.max(0, Math.round((Date.now() - ms) / 1000));
@@ -40,7 +56,7 @@ function agoMs(ms: number | null): string {
 }
 
 function runtimeLabel(r: string): string {
-  return r.replace('claude-code-', 'claude-').replace('claude-agent-sdk', 'claude-sdk').replace('-cli', '');
+  return runtimeDisplayLabel(r);
 }
 function modelFamily(model: string): 'claude' | 'openai' | 'ollama' | 'other' {
   const m = model.toLowerCase();
@@ -551,7 +567,8 @@ export function AgentTable({ store, onProbe, probeBusy, navigate }: { store: Fle
         <td><span className={`dot ${statusClass(a.status)}`} /> {a.status}</td>
         <td onClick={(e) => e.stopPropagation()}>
           {isLocal ? (
-            <select className="cell-select" value={displayRuntime ?? ''} onChange={(e) => stageRuntime(a, e.target.value)}>
+            <select className="cell-select" value={displayRuntime ?? ''} onChange={(e) => stageRuntime(a, e.target.value)}
+              title="Execution harness. API/local provider model lanes are shown in Model lanes; direct provider assignment needs manager runtime support.">
               {runtimeOpts.map((r) => <option key={r} value={r}>{runtimeLabel(r)}</option>)}
             </select>
           ) : (
@@ -623,8 +640,8 @@ export function AgentTable({ store, onProbe, probeBusy, navigate }: { store: Fle
               runtime cooldowns {coolingRows.length}
             </span>
           ) : null}
-          <button className="btn small" onClick={() => setShowModels((v) => !v)} title="Show each runtime's model list, where it comes from, and when it was last refreshed">
-            {showModels ? 'Hide models' : `Models${freshness.length ? ` (${freshness.filter((f) => f.count).length})` : ''}`}
+          <button className="btn small" onClick={() => setShowModels((v) => !v)} title="Show each execution harness and configured provider model lane, where its model list comes from, and when it was last refreshed">
+            {showModels ? 'Hide model lanes' : `Model lanes${freshness.length ? ` (${freshness.filter((f) => f.count || f.source !== 'none').length})` : ''}`}
           </button>
           {navigate ? <button className="btn small" onClick={() => navigate('teams:route')} title="Change team coordinators and primary routing in HR Manager Route → Hierarchy & sync">Open HR Route</button> : null}
           <button className="btn" disabled={!!busy} onClick={() => void probeRuntimes()} title="Probe each runtime's backing inference provider for its newest available models (also auto-refreshes every 6h)">Probe runtimes</button>
@@ -632,14 +649,17 @@ export function AgentTable({ store, onProbe, probeBusy, navigate }: { store: Fle
         {showModels ? (
           <div className="card" style={{ background: 'var(--bg-2)', margin: '0 0 8px', padding: '6px 10px' }}>
             <div className="muted small" style={{ marginBottom: 4 }}>
-              Per-runtime models &amp; freshness — auto-refreshed on boot + every 6h, or hit <b>Probe runtimes</b> now.
+              Harness &amp; provider model lanes — auto-refreshed on boot + every 6h, or hit <b>Probe runtimes</b> now.
             </div>
             {freshness.filter((f) => f.count || f.source !== 'none').map((f) => (
               <div key={f.runtime} className="row-actions" style={{ gap: 8, alignItems: 'baseline', padding: '2px 0' }}>
-                <b style={{ minWidth: 130 }}>{runtimeLabel(f.runtime)}</b>
+                <b style={{ minWidth: 170 }}>{f.label ?? runtimeLabel(f.runtime)}</b>
+                <span className="chip" title={f.kind === 'harness' ? 'Manager-supported execution harness' : f.detail} style={{ minWidth: 72, textAlign: 'center' }}>
+                  {KIND_LABEL[f.kind ?? 'harness']}
+                </span>
                 <span className="muted small" style={{ minWidth: 64 }}>{f.count} model{f.count === 1 ? '' : 's'}</span>
                 <span className={`small ${f.source === 'curated' || f.source === 'none' ? 'warn-text' : 'ok-text'}`} style={{ minWidth: 140 }}
-                  title={f.source === 'curated' ? 'No live model API for this runtime — using a curated fallback list (subscription runtimes have no /models endpoint).' : SOURCE_LABEL[f.source]}>
+                  title={f.detail ?? (f.source === 'curated' ? 'No live model API for this runtime — using a curated fallback list (subscription runtimes have no /models endpoint).' : SOURCE_LABEL[f.source])}>
                   {SOURCE_LABEL[f.source]}{f.provider ? ` · ${f.provider}` : ''}
                 </span>
                 <span className="muted small">{f.lastCheckedMs ? `checked ${agoMs(f.lastCheckedMs)}` : ''}</span>
@@ -659,7 +679,7 @@ export function AgentTable({ store, onProbe, probeBusy, navigate }: { store: Fle
         ) : null}
         <table className="grid">
           <thead>
-            <tr><th>Agent</th><th>Status</th><th>Runtime</th><th>Model</th><th title="Reasoning effort — lower spends fewer subscription tokens (codex & Claude CLI only)">Effort</th><th title="Output speed — Claude Code runtimes only">Speed</th><th>Port</th><th>Actions</th>{onProbe ? <th>Probe</th> : null}</tr>
+            <tr><th>Agent</th><th>Status</th><th title="Manager-supported execution harness. Configured API/local providers appear under Model lanes until the manager exposes direct provider-runtime assignment.">Harness</th><th>Model</th><th title="Reasoning effort — lower spends fewer subscription tokens (codex & Claude CLI only)">Effort</th><th title="Output speed — Claude Code runtimes only">Speed</th><th>Port</th><th>Actions</th>{onProbe ? <th>Probe</th> : null}</tr>
           </thead>
           <tbody>
             {groups.flatMap((g) => {

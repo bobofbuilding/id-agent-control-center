@@ -1,6 +1,6 @@
 import { Fragment, useEffect, useMemo, useRef, useState } from 'react';
 import { call, agentsLeadFirst, resolveCoordinator, useSyncVersion, type FleetStore } from '../store.ts';
-import { offerableRuntimes } from '../../../../idctl/src/settings/runtimeCatalog.ts';
+import { offerableRuntimes, runtimeDisplayLabel } from '../../../../idctl/src/settings/runtimeCatalog.ts';
 import type { ConfigEntry, DeployPreflight, DesignedTeam, LibrarySkillEntry, McpServerSpec, TeamTemplate } from '../../../../idctl/src/api/client.ts';
 import type { OnboardPlan, OnboardResult } from '../../../../idctl/src/api/onboard.ts';
 import { MCP_CATALOG, buildFromCatalog } from '../../../../idctl/src/settings/mcpCatalog.ts';
@@ -132,7 +132,7 @@ const HB_INTERVALS = [
   { label: '24 hours', s: 86400 },
 ];
 function runtimeLabel(r: string): string {
-  return r.replace('claude-code-', 'claude-').replace('claude-agent-sdk', 'claude-sdk').replace('-cli', '');
+  return runtimeDisplayLabel(r);
 }
 
 function qArg(s: string): string { return `"${s.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`; }
