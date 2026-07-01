@@ -474,10 +474,10 @@ Manager; this is the plumbing.)
   stage newer builds, auto-upgrade applies a previously staged build on the next app launch, and
   stale/consumed staged zips are pruned from app storage.
 - **Managed subscription sign-ins**: CLI OAuth/device/browser flows (no API key) for `claude-*`,
-  `codex`, `cursor-cli`, `grok`, Antigravity `agy`, `copilot`, `kiro-cli`, and legacy `q`; Gemini
+  `codex`, `cursor-cli`, `grok`, Antigravity `agy`, `copilot`, `kiro-cli`, and legacy `q` only when installed; Gemini
   CLI is shown as an API-key/Vertex configuration path, not a consumer OAuth subscription path. Rows distinguish
   status-inspectable CLIs from TUI-owned account state, auto-detect installed binaries after a
-  visible installer handoff, and keep managed account launches inside the Settings row even when the
+  visible installer handoff, hide uninstalled legacy-only rows, auto-expire account-flow notices, and keep managed account launches inside the Settings row even when the
   vendor CLI owns the final TUI/device-flow prompt; metered API providers stay under Inference
   backends.
   Agent Harness pickers only offer runtimes that Settings can currently prove through sign-in,
@@ -513,7 +513,7 @@ concurrency running/queued figures are a snapshot; clipboard fallbacks fail sile
 
 - **Active-team scoping**: everything is scoped to `store.team`; switch via the status-bar selector.
 - **Runtimes**: `claude-*`, `codex`, `cursor-cli`, `grok`, `gemini`, `copilot`, `kiro-cli`, and
-  legacy `q` are managed CLI runtime lanes; Antigravity is a managed sign-in/install row until a
+  legacy `q` are managed CLI runtime lanes, with legacy `q` hidden from first-run Settings unless installed; Antigravity is a managed sign-in/install row until a
   manager harness exists; `ollama` / local servers and metered API providers are
   configured in Settings → Inference. MCP works where a runtime/tool harness supports it; skills and
   portable plugin packages are assigned as neutral metadata with Skill/MCP/native/direct-fallback

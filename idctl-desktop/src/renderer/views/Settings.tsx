@@ -15,6 +15,7 @@ import {
 
 const MODEL_CAPS: ModelCapability[] = ['general', 'tools', 'reasoning', 'coding', 'vision', 'embedding', 'fast'];
 const STARTER_LOCAL_MODEL_ID = 'qwen3:1.7b';
+const SUB_NOTICE_TTL_MS = 18_000;
 const LOCAL_FIRST_PROVIDER = findProvider('ollama');
 const DISCOVERY_MAX_AGE_MS = 2 * 60 * 1000;
 const STACK_BACKEND_PRESET_FILTER = 'backend-presets';
@@ -180,6 +181,7 @@ export function Settings({ store, navigate }: { store: FleetStore; navigate?: (v
   const [subsBusy, setSubsBusy] = useState(false);
   const [subBusy, setSubBusy] = useState<string | null>(null);
   const [subNotice, setSubNotice] = useState('');
+  const visibleManagedSubRows = managedSubRows.filter(({ key }) => key !== 'q' || subs?.q?.installed === true);
 
   async function reload() {
     setProviders(await call<ProviderRow[]>('providers:list').catch(() => []));
@@ -1290,6 +1292,12 @@ export function Settings({ store, navigate }: { store: FleetStore; navigate?: (v
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  useEffect(() => {
+    if (!subNotice) return;
+    const timer = window.setTimeout(() => setSubNotice(''), SUB_NOTICE_TTL_MS);
+    return () => window.clearTimeout(timer);
+  }, [subNotice]);
+
   function subStatusNode(s: Sub | undefined) {
     if (s?.loggedIn) {
       return (
@@ -1525,7 +1533,7 @@ export function Settings({ store, navigate }: { store: FleetStore; navigate?: (v
         <p className="muted small" style={{ marginTop: -4 }}>
           Local CLI sign-ins and subscription-backed runtimes are launched and tracked from IDACC. Some CLIs expose status/logout; others keep account state inside their own TUI after IDACC starts the flow. Metered API providers still live under <b>Inference backends</b>.
         </p>
-        {managedSubRows.map(({ key, label, runtime }) => {
+        {visibleManagedSubRows.map(({ key, label, runtime }) => {
           const s = subs?.[key];
           const canInstall = s?.installed === false && s.installSupported;
           const canLaunch = s?.installed !== false && s?.loginSupported;
@@ -1567,8 +1575,7 @@ export function Settings({ store, navigate }: { store: FleetStore; navigate?: (v
             </div>
           );
         })}
-        <div className="row-actions" style={{ marginTop: 6 }}>
-          <span className="muted small grow">Perplexity, xAI API, OpenRouter, NVIDIA, Groq API, and similar metered accounts stay in Inference backends. Gemini CLI Google OAuth is deprecated for consumer accounts; use API key/Vertex there or Antigravity CLI for subscription access. The <span className="mono">q</span> row is legacy; prefer <span className="mono">kiro-cli</span> for current Amazon Q/Kiro CLI installs.</span>
+        <div className="row-actions" style={{ marginTop: 6, justifyContent: 'flex-end' }}>
           <button className="btn" disabled={subsBusy} onClick={() => void recheckSubs()}>{subsBusy ? 'Checking…' : 'Re-check'}</button>
         </div>
         {subNotice ? <p className="muted small" style={{ marginTop: 8 }}>{subNotice}</p> : null}
