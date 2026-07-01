@@ -8,6 +8,9 @@ Every change pushed or merged to `main` carries its version number in the commit
 subject (`vX.Y.Z: …`), stamped automatically by the `commit-msg` hook — see
 [CONTRIBUTING.md](CONTRIBUTING.md).
 
+## [0.1.398] — 2026-07-01
+- Align local backend presets with Local LLM stacks
+
 ## [0.1.397] — 2026-07-01
 - Expose neutral provider model lanes in Health Fleet
 

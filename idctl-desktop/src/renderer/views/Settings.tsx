@@ -17,6 +17,15 @@ const MODEL_CAPS: ModelCapability[] = ['general', 'tools', 'reasoning', 'coding'
 const STARTER_LOCAL_MODEL_ID = 'qwen3:1.7b';
 const LOCAL_FIRST_PROVIDER = findProvider('ollama');
 const DISCOVERY_MAX_AGE_MS = 2 * 60 * 1000;
+const STACK_BACKEND_PRESET_FILTER = 'backend-presets';
+const LOCAL_PROVIDER_STACK_IDS: Record<string, string> = {
+  ollama: 'ollama',
+  lmstudio: 'lm-studio',
+  vllm: 'vllm',
+  llamacpp: 'llama-cpp',
+  localai: 'localai',
+  jan: 'jan',
+};
 
 /** Hardware of the machine the control center commands (the manager host; localhost here). */
 type HardwareInfo = { platform: string; arch: string; appleSilicon: boolean; cpu: string; cpuCores: number; gpu?: string; gpuCores?: number; totalRamGB: number; freeDiskGB: number | null; totalDiskGB: number | null };
@@ -633,7 +642,7 @@ export function Settings({ store, navigate }: { store: FleetStore; navigate?: (v
   const [modelQuery, setModelQuery] = useState('');
   const [modelCap, setModelCap] = useState<ModelCapability | 'all'>('all');
   const [showHeavy, setShowHeavy] = useState(false); // reveal models too heavy for this machine
-  const [stackTag, setStackTag] = useState<string>('start-here');
+  const [stackTag, setStackTag] = useState<string>(STACK_BACKEND_PRESET_FILTER);
   const [hardware, setHardware] = useState<HardwareInfo | null>(null);
   const [confirmRemove, setConfirmRemove] = useState<string | null>(null);
   const [removing, setRemoving] = useState<string | null>(null);
@@ -792,12 +801,22 @@ export function Settings({ store, navigate }: { store: FleetStore; navigate?: (v
     const bi = stackTagOrder.indexOf(b);
     return (ai === -1 ? 999 : ai) - (bi === -1 ? 999 : bi) || a.localeCompare(b);
   });
-  const filteredStacks = stackTag === 'all' ? TOP_LOCAL_STACKS : TOP_LOCAL_STACKS.filter((s) => (s.tags ?? []).includes(stackTag));
+  const localProviderStackIds = new Set(PROVIDER_CATALOG.filter((e) => e.local).map((e) => LOCAL_PROVIDER_STACK_IDS[e.id]).filter(Boolean));
+  const stackFilterChips = ['all', STACK_BACKEND_PRESET_FILTER, ...stackTags];
+  const filteredStacks = stackTag === 'all'
+    ? TOP_LOCAL_STACKS
+    : stackTag === STACK_BACKEND_PRESET_FILTER
+      ? TOP_LOCAL_STACKS.filter((s) => localProviderStackIds.has(s.id))
+      : TOP_LOCAL_STACKS.filter((s) => (s.tags ?? []).includes(stackTag));
   const discoveryStale = discoveredAt != null && Date.now() - discoveredAt > DISCOVERY_MAX_AGE_MS;
   const runningPorts = new Set((discovered ?? []).map((d) => d.port));
   const addProviderName = name.trim() || kind;
   const addProviderBaseUrl = baseUrl.trim() || defaultBaseUrl(kind);
   const selectedProviderEntry = findProvider(catalogId);
+  const selectedProviderStack = selectedProviderEntry?.local
+    ? TOP_LOCAL_STACKS.find((s) => s.id === LOCAL_PROVIDER_STACK_IDS[selectedProviderEntry.id])
+    : undefined;
+  const selectedProviderStackVisible = selectedProviderStack ? filteredStacks.some((s) => s.id === selectedProviderStack.id) : false;
   const addNeedsKey = providerNeedsKey({ name: addProviderName, kind, baseUrl: addProviderBaseUrl });
   const replaceCandidate = findProviderRow(providers, addProviderName);
   const defaultProvider = providers.find((p) => p.default);
@@ -973,6 +992,9 @@ export function Settings({ store, navigate }: { store: FleetStore; navigate?: (v
     if (s.installEase === 'advanced') return 'advanced';
     if (s.installEase === 'expert') return 'expert';
     return '';
+  }
+  function stackFilterLabel(t: string): string {
+    return t === STACK_BACKEND_PRESET_FILTER ? 'backend presets' : t;
   }
   function stackPrimaryAction(s: LocalStackEntry): boolean {
     return s.installEase === 'start-here' || s.installEase === 'easy';
@@ -1450,15 +1472,20 @@ export function Settings({ store, navigate }: { store: FleetStore; navigate?: (v
       <section className="card">
         <h3>Local LLM stacks</h3>
         <p className="muted small" style={{ marginTop: -4 }}>
-          Self-hostable inference servers you can run <b>next to Ollama</b> — starter-friendly paths first, then advanced serving stacks from <a className="ext-link" href="https://github.com/av/awesome-llm-services" target="_blank" rel="noreferrer">awesome-llm-services</a>. <b>Install</b> opens the reviewed command in your Terminal (visible and abortable — nothing runs silently); app-only stacks show <b>Get ↗</b>. After installing + starting one, hit <b>⟳ Scan running</b> then add it under <b>Inference backends</b> below.
+          Self-hostable inference servers you can run <b>next to Ollama</b>. <b>Backend presets</b> matches the local choices under <b>Inference backends</b>; <b>start-here</b> narrows to Ollama and LM Studio. <b>Install</b> opens the reviewed command in your Terminal (visible and abortable — nothing runs silently). After installing + starting one, hit <b>⟳ Scan running</b> then add it below.
         </p>
         <div className="row-actions" style={{ flexWrap: 'wrap', gap: 6 }}>
           <span className="chips grow">
-            {(['all', ...stackTags]).map((t) => (
+            {stackFilterChips.map((t) => (
               <button key={t} className={`chip${stackTag === t ? ' on' : ''}`} onClick={() => setStackTag(t)}>
-                {stackTag === t ? '✓ ' : ''}{t}
+                {stackTag === t ? '✓ ' : ''}{stackFilterLabel(t)}
               </button>
             ))}
+          </span>
+          <span className="muted small">
+            {stackTag === STACK_BACKEND_PRESET_FILTER
+              ? `${filteredStacks.length} backend presets`
+              : `showing ${filteredStacks.length}/${TOP_LOCAL_STACKS.length}`}
           </span>
           <button className="btn small" disabled={discovering} onClick={() => void runDiscover()}>{discovering ? 'Scanning…' : '⟳ Scan running'}</button>
           {discoveredAt ? (
@@ -1698,8 +1725,21 @@ export function Settings({ store, navigate }: { store: FleetStore; navigate?: (v
             <span className="muted small">After: {providerEndpoint({ name: addProviderName, kind, baseUrl: addProviderBaseUrl, needsKey: addNeedsKey, enabled: true })}</span>
           </div>
         ) : null}
-        {selectedProviderEntry && (selectedProviderEntry.notes || selectedProviderEntry.models?.length) ? (
+        {selectedProviderEntry && (selectedProviderEntry.local || selectedProviderEntry.notes || selectedProviderEntry.models?.length) ? (
           <div className="provider-catalog-note">
+            {selectedProviderEntry.local ? (
+              <>
+                <span className="muted small">
+                  <b>Local backend preset.</b>{' '}
+                  {selectedProviderStack
+                    ? <>Install card: <b>{selectedProviderStack.name}</b>{stackEaseLabel(selectedProviderStack) ? ` · ${stackEaseLabel(selectedProviderStack)}` : ''}.</>
+                    : <>Start it separately or use Custom if it is not a normal local stack.</>}
+                </span>
+                {selectedProviderStack && !selectedProviderStackVisible ? (
+                  <button className="btn small" onClick={() => setStackTag(STACK_BACKEND_PRESET_FILTER)}>Show backend presets</button>
+                ) : null}
+              </>
+            ) : null}
             {selectedProviderEntry.notes ? <span className="muted small">{selectedProviderEntry.notes}</span> : null}
             {selectedProviderEntry.models?.length ? (
               <span className="chips">
