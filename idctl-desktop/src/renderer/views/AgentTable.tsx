@@ -79,6 +79,18 @@ function runtimeModelMismatch(runtime?: string, model?: string): string | null {
   if (fam === 'other') return null;
   return runtimeAccepts(runtime).has(fam) ? null : `${runtimeLabel(runtime)} runtime expects a ${[...runtimeAccepts(runtime)][0]} model, but "${model}" looks like ${fam}`;
 }
+function runtimeCatalogModels(catalog: Record<string, string[]>, runtime?: string): string[] {
+  return runtime ? (catalog[runtime] ?? []) : [];
+}
+function modelInRuntimeCatalog(catalog: Record<string, string[]>, runtime?: string, model?: string): boolean {
+  const models = runtimeCatalogModels(catalog, runtime);
+  return !model || !models.length || models.includes(model);
+}
+function syncedModelForRuntime(catalog: Record<string, string[]>, runtime?: string, model?: string): string | undefined {
+  const models = runtimeCatalogModels(catalog, runtime);
+  if (!models.length) return model;
+  return model && models.includes(model) ? model : models[0];
+}
 function short(s?: string): string {
   if (!s) return '—';
   return s.replace('claude-code-cli', 'claude').replace(/^claude-/, '').replace(/-cli$/, '');
@@ -341,8 +353,7 @@ export function AgentTable({ store, onProbe, probeBusy, navigate }: { store: Fle
     setConfigDrafts((prev) => {
       const baseline = prev[key]?.baseline ?? configOf(a);
       const current = prev[key]?.next ?? baseline;
-      const models = catalog[runtime] ?? [];
-      const model = !current.model || runtimeModelMismatch(runtime, current.model) ? models[0] ?? current.model : current.model;
+      const model = syncedModelForRuntime(catalog, runtime, current.model);
       const effort = !runtimeHasEffort(runtime)
         ? baseline.effort
         : current.effort && !effortOptions(runtime).includes(current.effort) ? '' : current.effort;
@@ -556,14 +567,20 @@ export function AgentTable({ store, onProbe, probeBusy, navigate }: { store: Fle
     const currentRuntime = runtimeOf(a);
     const draft = configDrafts[draftKeyFor(a)];
     const displayRuntime = draft?.next.runtime ?? currentRuntime;
-    const displayModel = draft?.next.model ?? a.model;
+    const displayModelRaw = draft?.next.model ?? a.model;
     const displayEffort = draft?.next.effort ?? effortOf(a);
     const displaySpeed = draft?.next.speed ?? speedOf(a);
-    const runtimeModels = catalog[displayRuntime ?? ''] ?? [];
-    const modelOpts = Array.from(new Set([displayModel, ...runtimeModels].filter(Boolean))) as string[];
+    const runtimeModels = runtimeCatalogModels(catalog, displayRuntime);
+    const modelDrift = !modelInRuntimeCatalog(catalog, displayRuntime, displayModelRaw);
+    const displayModel = modelDrift ? '' : displayModelRaw;
+    const modelOpts = runtimeModels.length
+      ? runtimeModels
+      : Array.from(new Set([displayModelRaw].filter(Boolean))) as string[];
     const isLocal = (a.type ?? '') === 'claude' || RUNTIMES.includes(currentRuntime ?? '');
     const runtimeOpts = Array.from(new Set([currentRuntime, ...offerableRuntimes(providers, currentRuntime, Object.values(managedRuntimes))].filter(Boolean))) as string[];
-    const mismatch = runtimeModelMismatch(displayRuntime, displayModel);
+    const mismatch = modelDrift
+      ? `${runtimeLabel(displayRuntime ?? '')} model list does not include "${displayModelRaw}". Choose one of this harness's current model options.`
+      : runtimeModelMismatch(displayRuntime, displayModel);
     const cooling = rateLimitActive(a, coolingRows);
     const cooldown = cooldownFor(a, coolingRows);
     return (
@@ -588,6 +605,7 @@ export function AgentTable({ store, onProbe, probeBusy, navigate }: { store: Fle
         </td>
         <td onClick={(e) => e.stopPropagation()}>
           <select className={`cell-select${mismatch ? ' mismatch' : ''}`} value={displayModel ?? ''} onChange={(e) => stageConfig(a, { model: e.target.value })} title={mismatch ?? undefined}>
+            {!displayModel ? <option value="" disabled={modelDrift}>{modelDrift ? 'choose model' : '(default model)'}</option> : null}
             {modelOpts.map((m) => <option key={m} value={m}>{short(m)}</option>)}
           </select>
           {mismatch ? <span className="warn-text" title={mismatch} style={{ marginLeft: 4, cursor: 'help' }}>⚠</span> : null}

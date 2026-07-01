@@ -293,8 +293,10 @@ and errors.
 invoices; stale last-turn samples remain visible but no longer drive the live gauge. The model-lanes
 panel uses the same Settings availability gate as the per-agent Harness dropdown: unavailable curated
 fallback harnesses are hidden unless already assigned, while configured API/provider lanes stay
-read-only until a manager provider-runtime adapter exists. "Running" is a status-string regex
-(non-matching healthy statuses show red).
+read-only until a manager provider-runtime adapter exists. The per-agent Model dropdown follows the
+effective staged Harness catalog: changing Harness resets the staged model to a valid option for that
+harness, and stale saved cross-harness model values show as drift instead of selectable options.
+"Running" is a status-string regex (non-matching healthy statuses show red).
 
 ---
 
@@ -481,11 +483,14 @@ Manager; this is the plumbing.)
   backends.
   Agent Harness pickers only offer runtimes that Settings can currently prove through sign-in,
   install, route-ready API backend, or synced local-backend evidence; existing assigned runtimes
-  remain visible as the current value for review. Gemini CLI `oauth-personal` evidence is not part
-  of managed sign-in availability because consumer Gemini Code Assist / Google AI Pro / Ultra OAuth
-  is deprecated in Gemini CLI; use the Google Gemini API preset under Inference backends instead.
-  Antigravity CLI is managed from Settings as the consumer subscription successor,
-  but is not offered as an agent harness until the manager exposes an Antigravity adapter.
+  remain visible as the current value for review. Agent Model pickers are keyed to the currently
+  staged harness model catalog, so switching to Kiro, Codex, Claude Code, or a local harness cannot
+  carry a stale model from the previous harness forward as a valid choice. Gemini CLI
+  `oauth-personal` evidence is not part of managed sign-in availability because consumer Gemini Code
+  Assist / Google AI Pro / Ultra OAuth is deprecated in Gemini CLI; use the Google Gemini API preset
+  under Inference backends instead. Antigravity CLI is managed from Settings as the consumer
+  subscription successor, but is not offered as an agent harness until the manager exposes an
+  Antigravity adapter.
 - **Local models (Ollama)**: parallel-inference cap (1–16), installed chips, **Download** by id
   (streamed progress), a searchable **catalog** with capability filters and hardware fit-warnings.
 - **Local image generator**: URL + API style (Automatic1111 / OpenAI-images), **Detect**, Save/Clear
