@@ -289,6 +289,10 @@ export function Settings({ store, navigate }: { store: FleetStore; navigate?: (v
       enabled: true,
     };
     const renderedExisting = findProviderRow(providers, p.name);
+    if (providerReplaceIsNoop(renderedExisting, p)) {
+      setProviderMsg(`"${p.name}" is already configured.`);
+      return;
+    }
     if (renderedExisting && !replaceProviderArmed) {
       setProviderMsg(`Review replacement for "${p.name}" before adding.`);
       return;
@@ -819,6 +823,22 @@ export function Settings({ store, navigate }: { store: FleetStore; navigate?: (v
   const selectedProviderStackVisible = selectedProviderStack ? filteredStacks.some((s) => s.id === selectedProviderStack.id) : false;
   const addNeedsKey = providerNeedsKey({ name: addProviderName, kind, baseUrl: addProviderBaseUrl });
   const replaceCandidate = findProviderRow(providers, addProviderName);
+  const providerDraft: ProviderProfile = {
+    name: addProviderName,
+    kind,
+    baseUrl: addProviderBaseUrl,
+    apiKey: apiKey.trim() || undefined,
+    needsKey: addNeedsKey,
+    enabled: true,
+  };
+  const replaceProviderNoop = providerReplaceIsNoop(replaceCandidate, providerDraft);
+  const replaceProviderNeedsReview = !!replaceCandidate && !replaceProviderNoop;
+  const showLocalInstallHandoff = !!(selectedProviderEntry?.local && selectedProviderStack && !selectedProviderStackVisible);
+  const showProviderCatalogNote = !!selectedProviderEntry && (
+    showLocalInstallHandoff ||
+    (!selectedProviderEntry.local && !!(selectedProviderEntry.notes || selectedProviderEntry.models?.length))
+  );
+  const showProviderKeyHint = addNeedsKey && !selectedProviderEntry?.local;
   const defaultProvider = providers.find((p) => p.default);
   const enabledProviders = providers.filter((p) => p.enabled !== false);
   const localProviders = providers.filter(isLocalProvider);
@@ -951,6 +971,13 @@ export function Settings({ store, navigate }: { store: FleetStore; navigate?: (v
   }
   function providerStatus(p: ProviderRow): string | undefined {
     return probe[p.name]?.status ?? p.lastSync?.status;
+  }
+  function providerReplaceIsNoop(existing: ProviderRow | undefined, draft: ProviderProfile): boolean {
+    return !!existing &&
+      existing.enabled !== false &&
+      existing.kind === draft.kind &&
+      normUrl(existing.baseUrl) === normUrl(draft.baseUrl) &&
+      !draft.apiKey;
   }
   function providerKeyReady(p: ProviderRow): boolean {
     return !providerNeedsKey(p) || p.keySource === 'config' || p.keySource === 'env';
@@ -1809,47 +1836,44 @@ export function Settings({ store, navigate }: { store: FleetStore; navigate?: (v
             onChange={(e) => { resetProviderAddReview(); setApiKey(e.target.value); }}
             type="password"
           />
-          <button className="btn primary" disabled={busy || (!!replaceCandidate && !replaceProviderArmed)} onClick={() => void addProvider()}>
-            {replaceCandidate ? 'Replace' : 'Add'}
+          <button className="btn primary" disabled={busy || replaceProviderNoop || (replaceProviderNeedsReview && !replaceProviderArmed)} onClick={() => void addProvider()}>
+            {replaceProviderNoop ? 'Configured' : replaceProviderNeedsReview ? 'Replace' : 'Add'}
           </button>
         </div>
-        {replaceCandidate ? (
+        {replaceProviderNeedsReview ? (
           <div className="provider-replace-review">
             <label className="small" style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
               <input type="checkbox" checked={replaceProviderArmed} onChange={(e) => { setReplaceProviderArmed(e.target.checked); setProviderMsg(''); }} />
-              Replace existing backend
+              Replace {addProviderName}
             </label>
-            <span className="muted small">Before: {providerEndpoint(replaceCandidate)}</span>
-            <span className="muted small">After: {providerEndpoint({ name: addProviderName, kind, baseUrl: addProviderBaseUrl, needsKey: addNeedsKey, enabled: true })}</span>
+            <span className="muted small">{providerEndpoint(replaceCandidate)} → {providerEndpoint(providerDraft)}</span>
+            {providerDraft.apiKey ? <span className="muted small">key update included</span> : null}
           </div>
         ) : null}
-        {selectedProviderEntry && (selectedProviderEntry.local || selectedProviderEntry.notes || selectedProviderEntry.models?.length) ? (
+        {selectedProviderEntry && showProviderCatalogNote ? (
           <div className="provider-catalog-note">
-            {selectedProviderEntry.local ? (
+            {showLocalInstallHandoff && selectedProviderStack ? (
               <>
                 <span className="muted small">
-                  <b>Local backend preset.</b>{' '}
-                  {selectedProviderStack
-                    ? <>Install card: <b>{selectedProviderStack.name}</b>{stackEaseLabel(selectedProviderStack) ? ` · ${stackEaseLabel(selectedProviderStack)}` : ''}.</>
-                    : <>Start it separately or use Custom if it is not a normal local stack.</>}
+                  Install card: <b>{selectedProviderStack.name}</b>{stackEaseLabel(selectedProviderStack) ? ` · ${stackEaseLabel(selectedProviderStack)}` : ''}.
                 </span>
-                {selectedProviderStack && !selectedProviderStackVisible ? (
-                  <button className="btn small" onClick={() => setStackTag(STACK_BACKEND_PRESET_FILTER)}>Show backend presets</button>
-                ) : null}
+                <button className="btn small" onClick={() => setStackTag(STACK_BACKEND_PRESET_FILTER)}>Show backend presets</button>
               </>
             ) : null}
-            {selectedProviderEntry.notes ? <span className="muted small">{selectedProviderEntry.notes}</span> : null}
-            {selectedProviderEntry.models?.length ? (
+            {!selectedProviderEntry.local && selectedProviderEntry.notes ? <span className="muted small">{selectedProviderEntry.notes}</span> : null}
+            {!selectedProviderEntry.local && selectedProviderEntry.models?.length ? (
               <span className="chips">
                 {selectedProviderEntry.models.map((m) => <span className="chip tag mono" key={m}>{m}</span>)}
               </span>
             ) : null}
           </div>
         ) : null}
-        {providerMsg ? <div className={`small ${/added|replaced/.test(providerMsg) ? 'ok-text' : 'warn-text'}`} style={{ marginTop: 6 }}>{providerMsg}</div> : null}
-        <p className="muted small" style={{ marginTop: 8 }}>
-          Cloud backends authenticate with an API key — paste it above or set a provider env var such as <span className="mono">IDCTL_NVIDIA_API_KEY</span>, <span className="mono">NVIDIA_API_KEY</span>, <span className="mono">ANTHROPIC_API_KEY</span>, or <span className="mono">OPENAI_API_KEY</span>. Connect &amp; sync validates it live and pulls the model list. Subscription runtimes such as <span className="mono">claude-code-cli</span> keep using their logged-in sessions.
-        </p>
+        {providerMsg ? <div className={`small ${/added|replaced|already configured/.test(providerMsg) ? 'ok-text' : 'warn-text'}`} style={{ marginTop: 6 }}>{providerMsg}</div> : null}
+        {showProviderKeyHint ? (
+          <p className="muted small" style={{ marginTop: 8 }}>
+            API key can be pasted here or provided by env; Connect &amp; sync validates the backend and model list.
+          </p>
+        ) : null}
       </section>
     </div>
   );
