@@ -12,7 +12,8 @@
 #
 # Steps: bump version → CHANGELOG entry → typecheck → commit (hook stamps the version)
 #        → tag vX.Y.Z → push origin main --tags → build the macOS app → zip → publish
-#        the GitHub release asset (via ../release-publish.py, which reuses the deployer PAT).
+#        the GitHub release asset (via ../release-publish.py, which reuses the deployer PAT)
+#        → delete local release zips after upload verification.
 set -euo pipefail
 
 NOTE="${1:-}"
@@ -121,4 +122,26 @@ ditto -c -k --sequesterRsrc --keepParent "$APP" "$ZIP"
 # --- 5) publish the GitHub release (creates the v$VER release + uploads + verifies the asset) ---
 export DESK
 python3 "$PUB" "$VER"
+
+# Local zips are upload scratch space only; GitHub releases are the durable archive.
+node -e '
+const fs = require("fs");
+const path = require("path");
+const dir = path.join(process.env.DESK, "release");
+let count = 0;
+let bytes = 0;
+if (fs.existsSync(dir)) {
+  for (const name of fs.readdirSync(dir)) {
+    if (!/^ID-Agents-Control-Center-\d+\.\d+\.\d+-arm64\.zip$/.test(name)) continue;
+    const file = path.join(dir, name);
+    const st = fs.statSync(file);
+    if (!st.isFile()) continue;
+    count += 1;
+    bytes += st.size;
+    fs.unlinkSync(file);
+  }
+}
+const gib = (bytes / 1024 / 1024 / 1024).toFixed(2);
+console.log(count ? `✓ cleaned ${count} local release zip(s), freed ${gib} GiB` : "✓ no local release zips to clean");
+'
 echo "✓ released v$VER"

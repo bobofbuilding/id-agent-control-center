@@ -1,6 +1,6 @@
 # ID Agents Control Center — Product Spec
 
-_Updated 2026-07-01 · reflects app **v0.1.394**. This is a page-by-page specification of
+_Updated 2026-07-01 · reflects app **v0.1.395**. This is a page-by-page specification of
 the desktop app as it actually ships today, produced by reviewing every page._
 
 ---
@@ -508,7 +508,8 @@ Bump `idctl-desktop/package.json` + lockfile → CHANGELOG `## [X.Y.Z]` → comm
 push (SSH) → `cd idctl-desktop && CSC_IDENTITY_AUTO_DISCOVERY=false npm run dist` → ditto-zip the
 arm64 asset → publish **directly** with the deployer PAT and assign an ops-lead follow-up task
 (local tool `.iacc-publish/release-publish.py X.Y.Z`). The app self-updates from GitHub
-`releases/latest`.
+`releases/latest`; local release zips are deleted after upload verification because GitHub releases
+are the durable archive.
 
 ---
 

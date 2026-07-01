@@ -4361,6 +4361,11 @@
         "Settings first-run readiness: the action row is now contextual instead of always rendering scan, manager recheck, report copy, local starter, sync, and default controls at once.",
         "Settings ready-state simplification: when manager compatibility and routing are green, the strip becomes status text only unless a default is still unpinned; detailed scan/report controls stay in their owning sections.",
         "Settings blocker actions: manager recheck/report only appear while manager compatibility is not green, scan/starter actions only appear when no backend exists, and sync only appears for the route blocker that can actually be fixed from the checkpoint."
+      ],
+      "implementedOneHundredSeventyFourthPass": [
+        "Release hygiene: scripts/release.sh now deletes local ID-Agents-Control-Center-*-arm64.zip files after release-publish.py has uploaded and verified the GitHub release asset.",
+        "Disk-space guardrail: local release zips are treated as upload scratch space only, so repeated patch releases no longer consume roughly 98 MB per pass.",
+        "Docs: product spec now records GitHub releases as the durable archive and local zips as post-publish cleanup artifacts."
       ]
     },
     {
@@ -4424,5 +4429,5 @@
       "body": "# Wiki\n\nWiki is both the human documentation page and the editable schematic for the Control Center UI. Each article explains the operator purpose of a page; the structured sections below preserve tabs, tiles, fields, controls, displays, routes, and source files for implementation detail.\n\n## Use it for\n\n- Search pages, controls, routes, source files, and notes from inside the desktop app.\n- Confirm how a UI surface is intended to behave before editing code or filing follow-up work.\n- Keep app navigation metadata and human documentation in one reviewed JSON artifact.\n\n## Editing rule\n\nThe desktop app hot-reload polls CONTROL_CENTER_WIKI.json through the main-process wiki bridge. Sidebar labels, icons, order, and visibility still come from pages[].nav for implemented routes, so documentation edits must preserve that metadata and keep every page.body non-empty."
     }
   ],
-  "appVersion": "0.1.394"
+  "appVersion": "0.1.395"
 }
