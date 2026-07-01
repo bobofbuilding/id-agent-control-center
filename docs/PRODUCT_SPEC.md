@@ -489,9 +489,9 @@ Manager; this is the plumbing.)
   (streamed progress), a searchable **catalog** with capability filters and hardware fit-warnings.
 - **Local image generator**: URL + API style (Automatic1111 / OpenAI-images), **Detect**, Save/Clear
   (used first for in-chat images; cloud is fallback).
-- **Local LLM stacks**: starter-first curated list, **⟳ Scan running**, reviewed Install/Run-in-Terminal/
-  Uninstall actions, setup notes, docs ↗, and row-level **Add backend** once a scanned local server is
-  live.
+- **Local LLM stacks**: starter-first curated list with compact primary filters, an optional tag
+  dropdown for advanced filters, **Scan running**, reviewed Install/Run-in-Terminal/Uninstall
+  actions, setup notes, docs ↗, and row-level **Add backend** once a scanned local server is live.
 - **Inference backends**: **⟳ Discover local servers** (+ Add / Add all), provider table (★ default,
   enable, key badge, status, model list, **Connect & sync**, ✕), **Add a backend** (catalog or custom;
   provider-specific key requirements, NVIDIA API Catalog preset models, and cloud keys auto-detected

@@ -18,6 +18,7 @@ const STARTER_LOCAL_MODEL_ID = 'qwen3:1.7b';
 const LOCAL_FIRST_PROVIDER = findProvider('ollama');
 const DISCOVERY_MAX_AGE_MS = 2 * 60 * 1000;
 const STACK_BACKEND_PRESET_FILTER = 'backend-presets';
+const STACK_PRIMARY_FILTERS = ['all', STACK_BACKEND_PRESET_FILTER, 'start-here', 'easy', 'guided', 'advanced'];
 const LOCAL_PROVIDER_STACK_IDS: Record<string, string> = {
   ollama: 'ollama',
   lmstudio: 'lm-studio',
@@ -123,6 +124,7 @@ export function Settings({ store, navigate }: { store: FleetStore; navigate?: (v
   const [discoveredAt, setDiscoveredAt] = useState<number | null>(null);
   const [stackInstallStatus, setStackInstallStatus] = useState<Record<string, LocalStackInstallStatus>>({});
   const [stackInstallChecking, setStackInstallChecking] = useState(false);
+  const [showStackMoreFilters, setShowStackMoreFilters] = useState(false);
   function resetProviderAddReview() {
     setReplaceProviderArmed(false);
     setProviderMsg('');
@@ -895,12 +897,19 @@ export function Settings({ store, navigate }: { store: FleetStore; navigate?: (v
     return (ai === -1 ? 999 : ai) - (bi === -1 ? 999 : bi) || a.localeCompare(b);
   });
   const localProviderStackIds = new Set(PROVIDER_CATALOG.filter((e) => e.local).map((e) => LOCAL_PROVIDER_STACK_IDS[e.id]).filter(Boolean));
-  const stackFilterChips = ['all', STACK_BACKEND_PRESET_FILTER, ...stackTags];
+  const stackPrimaryFilters = STACK_PRIMARY_FILTERS.filter((t) => t === 'all' || t === STACK_BACKEND_PRESET_FILTER || stackTags.includes(t));
+  const stackMoreFilters = stackTags.filter((t) => !stackPrimaryFilters.includes(t));
+  const stackMoreActive = !stackPrimaryFilters.includes(stackTag);
   const filteredStacks = stackTag === 'all'
     ? TOP_LOCAL_STACKS
     : stackTag === STACK_BACKEND_PRESET_FILTER
       ? TOP_LOCAL_STACKS.filter((s) => localProviderStackIds.has(s.id))
       : TOP_LOCAL_STACKS.filter((s) => (s.tags ?? []).includes(stackTag));
+  const stackFilterCount = stackTag === 'all'
+    ? `${TOP_LOCAL_STACKS.length} stacks`
+    : stackTag === STACK_BACKEND_PRESET_FILTER
+      ? `${filteredStacks.length} backend presets`
+      : `${filteredStacks.length}/${TOP_LOCAL_STACKS.length}`;
   const discoveryStale = discoveredAt != null && Date.now() - discoveredAt > DISCOVERY_MAX_AGE_MS;
   const runningPorts = new Set((discovered ?? []).map((d) => d.port));
   const addProviderName = name.trim() || kind;
@@ -1744,27 +1753,40 @@ export function Settings({ store, navigate }: { store: FleetStore; navigate?: (v
         <p className="muted small" style={{ marginTop: -4 }}>
           Self-hostable inference servers you can run <b>next to Ollama</b>. <b>Install</b> only installs the app/server; <b>running</b> means a local API answered a scan; <b>backend added</b> means IDACC can route agents to it.
         </p>
-        <div className="row-actions" style={{ flexWrap: 'wrap', gap: 6 }}>
-          <span className="chips grow">
-            {stackFilterChips.map((t) => (
-              <button key={t} className={`chip${stackTag === t ? ' on' : ''}`} onClick={() => setStackTag(t)}>
-                {stackTag === t ? '✓ ' : ''}{stackFilterLabel(t)}
+        <div className="stack-toolbar">
+          <div className="stack-toolbar-main">
+            <div className="stack-filter-primary" role="group" aria-label="Local stack filters">
+              {stackPrimaryFilters.map((t) => (
+                <button key={t} className={`chip${stackTag === t ? ' on' : ''}`} onClick={() => setStackTag(t)}>
+                  {stackTag === t ? '✓ ' : ''}{stackFilterLabel(t)}
+                </button>
+              ))}
+              <button className={`chip${stackMoreActive ? ' on' : ''}`} onClick={() => setShowStackMoreFilters((v) => !v)}>
+                {stackMoreActive ? '✓ ' : ''}more filters
               </button>
-            ))}
-          </span>
-          <span className="muted small">
-            {stackTag === STACK_BACKEND_PRESET_FILTER
-              ? `${filteredStacks.length} backend presets`
-              : `showing ${filteredStacks.length}/${TOP_LOCAL_STACKS.length}`}
-          </span>
-          <button className="btn small" disabled={discovering} onClick={() => void runDiscover()}>{discovering ? 'Scanning…' : '⟳ Scan running'}</button>
-          {discoveredAt ? (
-            <span className={`small ${discoveryStale ? 'warn-text' : 'muted'}`}>
-              scan: {timeAgo(discoveredAt)}{discoveryStale ? ' · refresh before add/routing decisions' : ''}
-            </span>
+            </div>
+            <span className="muted small">{stackFilterCount}</span>
+          </div>
+          <div className="stack-toolbar-actions">
+            <button className="btn small" disabled={discovering} onClick={() => void runDiscover()}>{discovering ? 'Scanning…' : 'Scan running'}</button>
+            {discoveredAt ? (
+              <span className={`small ${discoveryStale ? 'warn-text' : 'muted'}`}>
+                scan {timeAgo(discoveredAt)}{discoveryStale ? ' · refresh before routing' : ''}
+              </span>
+            ) : null}
+            {stackInstallChecking ? <span className="muted small">checking installs…</span> : null}
+          </div>
+          {(showStackMoreFilters || stackMoreActive) && stackMoreFilters.length ? (
+            <div className="stack-filter-more">
+              <label className="muted small" htmlFor="stack-more-filter">tag</label>
+              <select id="stack-more-filter" className="cell-select" value={stackMoreActive ? stackTag : ''} onChange={(e) => e.target.value && setStackTag(e.target.value)}>
+                <option value="">choose a tag</option>
+                {stackMoreFilters.map((t) => <option key={t} value={t}>{stackFilterLabel(t)}</option>)}
+              </select>
+              {stackMoreActive ? <button className="btn small" onClick={() => setStackTag(STACK_BACKEND_PRESET_FILTER)}>Back to presets</button> : null}
+            </div>
           ) : null}
-          {stackInstallChecking ? <span className="muted small">checking installs…</span> : null}
-          {stackMsg ? <span className="muted small">{stackMsg}</span> : null}
+          {stackMsg ? <div className="muted small stack-toolbar-msg">{stackMsg}</div> : null}
         </div>
         <div className="stack-list">
           {filteredStacks.map((s) => {

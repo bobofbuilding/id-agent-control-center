@@ -8,6 +8,9 @@ Every change pushed or merged to `main` carries its version number in the commit
 subject (`vX.Y.Z: …`), stamped automatically by the `commit-msg` hook — see
 [CONTRIBUTING.md](CONTRIBUTING.md).
 
+## [0.1.413] — 2026-07-01
+- Simplify Local LLM stack filters
+
 ## [0.1.412] — 2026-07-01
 - Sync Health model lanes with Settings runtime availability
 
