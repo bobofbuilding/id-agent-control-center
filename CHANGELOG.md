@@ -8,6 +8,9 @@ Every change pushed or merged to `main` carries its version number in the commit
 subject (`vX.Y.Z: …`), stamped automatically by the `commit-msg` hook — see
 [CONTRIBUTING.md](CONTRIBUTING.md).
 
+## [0.1.419] — 2026-07-01
+- Show managed subscription account labels
+
 ## [0.1.418] — 2026-07-01
 - Sync Health model options with harness runtime
 

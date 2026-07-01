@@ -478,9 +478,11 @@ Manager; this is the plumbing.)
 - **Managed subscription sign-ins**: CLI OAuth/device/browser flows (no API key) for `claude-*`,
   `codex`, `cursor-cli`, `grok`, Antigravity `agy`, `copilot`, `kiro-cli`, and legacy `q` only when installed. Rows distinguish
   status-inspectable CLIs from TUI-owned account state, auto-detect installed binaries after a
-  visible installer handoff, hide uninstalled legacy-only rows, auto-expire account-flow notices, and keep managed account launches inside the Settings row even when the
-  vendor CLI owns the final TUI/device-flow prompt; metered API providers stay under Inference
-  backends.
+  visible installer handoff, show safe account labels from provider status/cache metadata when
+  available, hide uninstalled legacy-only rows, auto-expire account-flow notices, and keep managed
+  account launches inside the Settings row even when the vendor CLI owns the final TUI/device-flow
+  prompt. Sign out is shown only for installed/linked providers with a reviewed logout command;
+  metered API providers stay under Inference backends.
   Agent Harness pickers only offer runtimes that Settings can currently prove through sign-in,
   install, route-ready API backend, or synced local-backend evidence; existing assigned runtimes
   remain visible as the current value for review. Agent Model pickers are keyed to the currently

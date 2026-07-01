@@ -152,6 +152,9 @@ export function Settings({ store, navigate }: { store: FleetStore; navigate?: (v
     runtime: string;
     label: string;
     loggedIn: boolean;
+    account?: string;
+    accountSource?: string;
+    linked?: boolean;
     installed?: boolean;
     installedSource?: string;
     statusSupported?: boolean;
@@ -270,7 +273,8 @@ export function Settings({ store, navigate }: { store: FleetStore; navigate?: (v
     if (!window.confirm(`Sign out of ${label}? Agents on that runtime will lose subscription access until you sign back in.`)) return;
     setSubBusy(provider);
     try {
-      await call('subs:signout', provider);
+      const r = await call<{ ok: boolean; error?: string }>('subs:signout', provider);
+      if (!r.ok) window.alert(`sign-out failed: ${r.error ?? 'unknown error'}`);
       await recheckSubs();
     } finally {
       setSubBusy(null);
@@ -1295,17 +1299,27 @@ export function Settings({ store, navigate }: { store: FleetStore; navigate?: (v
   }, [subNotice]);
 
   function subStatusNode(s: Sub | undefined) {
+    const account = s?.account || s?.email;
     if (s?.loggedIn) {
       return (
         <span className="ok-text">
           ● signed in
           {s.plan ? ` · ${s.plan}` : ''}
-          {s.email ? ` · ${s.email}` : ''}
-          {!s.email && s.detail ? ` · ${s.detail}` : ''}
+          {account ? ` · ${account}` : ''}
+          {!account && s.detail ? ` · ${s.detail}` : ''}
         </span>
       );
     }
     if (s?.installed === false) return <span className="warn-text" title={s.detail}>○ CLI not installed</span>;
+    if (s?.installed && s.linked && account) {
+      return (
+        <span title={s.detail || s.accountSource}>
+          <span className="ok-text">● linked</span>
+          <span className="muted"> · {account}</span>
+          <span className="muted"> · managed in IDACC</span>
+        </span>
+      );
+    }
     if (s?.installed && s.statusSupported === false) {
       return (
         <span title={s.detail}>
@@ -1532,7 +1546,7 @@ export function Settings({ store, navigate }: { store: FleetStore; navigate?: (v
           const canInstall = s?.installed === false && s.installSupported;
           const canLaunch = s?.installed !== false && s?.loginSupported;
           const showPrimary = canInstall || canLaunch;
-          const showSignOut = !!(s?.installed === true && (s?.loggedIn || s?.statusSupported === false) && s.logoutSupported);
+          const showSignOut = !!(s?.installed === true && (s?.loggedIn || s?.linked) && s.logoutSupported);
           return (
             <div className="kv" key={key} style={{ marginBottom: 8 }}>
               <span>{label}</span>

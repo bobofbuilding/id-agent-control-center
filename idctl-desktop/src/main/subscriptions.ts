@@ -40,6 +40,12 @@ export interface SubStatus {
   runtime: string;
   label: string;
   loggedIn: boolean;
+  /** Safe account label, such as an email or username. Never a token. */
+  account?: string;
+  /** Human-readable source for the account label. */
+  accountSource?: string;
+  /** True when local account evidence exists but the CLI has no safe status command. */
+  linked?: boolean;
   /** Whether the provider's CLI is installed at all. */
   installed?: boolean;
   /** Read-only evidence path/source for installed state. */
@@ -205,6 +211,40 @@ function truncateDetail(s: string): string {
   return s.replace(/\s+/g, ' ').trim().slice(0, 240);
 }
 
+function readJsonObject(file: string): Record<string, unknown> | null {
+  try {
+    if (!existsSync(file)) return null;
+    return JSON.parse(readFileSync(file, 'utf8')) as Record<string, unknown>;
+  } catch {
+    return null;
+  }
+}
+
+function readJsonWithLineComments(file: string): Record<string, unknown> | null {
+  try {
+    if (!existsSync(file)) return null;
+    const text = readFileSync(file, 'utf8')
+      .split('\n')
+      .filter((line) => !line.trimStart().startsWith('//'))
+      .join('\n');
+    return JSON.parse(text) as Record<string, unknown>;
+  } catch {
+    return null;
+  }
+}
+
+function safeAccount(value: unknown): string | undefined {
+  if (typeof value !== 'string') return undefined;
+  const s = value.trim();
+  if (!s || s.length > 120) return undefined;
+  if (/token|secret|bearer|gh[psuor]_|github_pat_|sk-[a-z0-9]/i.test(s)) return undefined;
+  return s;
+}
+
+function detailForAccount(prefix: string, account?: string): string | undefined {
+  return account ? `${prefix}: ${account}` : undefined;
+}
+
 function baseStatus(provider: SubProvider, patch: Partial<SubStatus>): SubStatus {
   const meta = SUB_META[provider];
   const evidence = installEvidence(meta);
@@ -236,7 +276,7 @@ async function claudeStatus(): Promise<SubStatus> {
   try {
     const { stdout } = await execFileP('claude', ['auth', 'status'], { env: cliEnv(), timeout: 8000 });
     const j = JSON.parse(stdout) as { loggedIn?: boolean; authMethod?: string; subscriptionType?: string; email?: string };
-    return baseStatus('claude', { loggedIn: !!j.loggedIn, installed: true, statusSupported: true, plan: j.subscriptionType, email: j.email, method: j.authMethod });
+    return baseStatus('claude', { loggedIn: !!j.loggedIn, installed: true, statusSupported: true, plan: j.subscriptionType, email: j.email, account: j.email, accountSource: 'claude auth status', method: j.authMethod });
   } catch (e: unknown) {
     return baseStatus('claude', { installed: true, statusSupported: true, detail: e instanceof Error ? truncateDetail(e.message) : truncateDetail(String(e)) });
   }
@@ -287,7 +327,7 @@ async function codexStatus(): Promise<SubStatus> {
     const out = `${stdout}${stderr}`.trim();
     const loggedIn = /logged in/i.test(out);
     const acct = loggedIn ? codexAccount() : {};
-    return baseStatus('chatgpt', { loggedIn, installed: true, statusSupported: true, plan: acct.plan, email: acct.email, detail: truncateDetail(out) });
+    return baseStatus('chatgpt', { loggedIn, installed: true, statusSupported: true, plan: acct.plan, email: acct.email, account: acct.email, accountSource: acct.email ? 'codex auth token identity claim' : undefined, detail: truncateDetail(out) });
   } catch (e: unknown) {
     const err = e as { stdout?: string; stderr?: string; message?: string };
     return baseStatus('chatgpt', { installed: true, statusSupported: true, detail: truncateDetail(err.stdout || err.stderr || err.message || '') });
@@ -302,11 +342,65 @@ async function cursorStatus(): Promise<SubStatus> {
     const out = `${stdout}${stderr}`.trim();
     const loggedIn = /logged in|authenticated|signed in/i.test(out) && !/not logged in|not authenticated|signed out/i.test(out);
     const email = out.match(/[\w.+-]+@[\w.-]+\.\w+/)?.[0];
-    return baseStatus('cursor', { loggedIn, installed: true, statusSupported: true, email, detail: truncateDetail(out) });
+    return baseStatus('cursor', { loggedIn, installed: true, statusSupported: true, email, account: email, accountSource: email ? 'cursor-agent status' : undefined, detail: truncateDetail(out) });
   } catch (e: unknown) {
     const err = e as { stdout?: string; stderr?: string; message?: string };
     return baseStatus('cursor', { installed: true, statusSupported: true, detail: truncateDetail(err.stdout || err.stderr || err.message || '') });
   }
+}
+
+function grokAccount(): Pick<SubStatus, 'account' | 'accountSource' | 'email' | 'method' | 'linked' | 'detail'> {
+  const auth = readJsonObject(join(homedir(), '.grok', 'auth.json'));
+  if (!auth) return {};
+  const candidates = Object.values(auth)
+    .filter((v): v is Record<string, unknown> => !!v && typeof v === 'object')
+    .map((v) => ({
+      email: safeAccount(v.email),
+      method: safeAccount(v.auth_mode),
+      createTime: typeof v.create_time === 'string' ? Date.parse(v.create_time) : 0,
+    }))
+    .filter((v) => v.email);
+  candidates.sort((a, b) => (b.createTime || 0) - (a.createTime || 0));
+  const hit = candidates[0];
+  if (!hit?.email) return {};
+  return {
+    account: hit.email,
+    accountSource: 'grok auth cache',
+    email: hit.email,
+    method: hit.method,
+    linked: true,
+    detail: detailForAccount('Grok linked account', hit.email),
+  };
+}
+
+function copilotAccount(): Pick<SubStatus, 'account' | 'accountSource' | 'linked' | 'detail'> {
+  const home = process.env.COPILOT_HOME || join(homedir(), '.copilot');
+  const cfg = readJsonWithLineComments(join(home, 'config.json'));
+  const last = cfg?.lastLoggedInUser;
+  const lastUser = last && typeof last === 'object' ? last as Record<string, unknown> : null;
+  const login = safeAccount(lastUser?.login);
+  const host = safeAccount(lastUser?.host);
+  if (!login) return {};
+  const account = host && !/^https:\/\/github\.com\/?$/i.test(host) ? `${login} @ ${host.replace(/^https?:\/\//, '')}` : login;
+  return {
+    account,
+    accountSource: 'copilot config',
+    linked: true,
+    detail: detailForAccount('Copilot linked account', account),
+  };
+}
+
+function googleAccountHint(): Pick<SubStatus, 'account' | 'accountSource' | 'email' | 'linked' | 'detail'> {
+  const cfg = readJsonObject(join(homedir(), '.gemini', 'google_accounts.json'));
+  const active = safeAccount(cfg?.active);
+  if (!active) return {};
+  return {
+    account: active,
+    accountSource: 'Google account cache',
+    email: active,
+    linked: true,
+    detail: `${active} from Google account cache; Antigravity CLI does not expose a safe non-interactive status/logout command.`,
+  };
 }
 
 async function whoamiStatus(provider: 'kiro-cli' | 'q', command: CommandSpec): Promise<SubStatus> {
@@ -327,7 +421,7 @@ async function whoamiStatus(provider: 'kiro-cli' | 'q', command: CommandSpec): P
     const out = `${stdout}${stderr}`.trim();
     const loggedIn = Boolean(out) && !/not logged in|not authenticated|signed out|no credentials|login required/i.test(out);
     const email = out.match(/[\w.+-]+@[\w.-]+\.\w+/)?.[0];
-    return baseStatus(provider, { loggedIn, installed: true, statusSupported: true, email, detail: truncateDetail(out) });
+    return baseStatus(provider, { loggedIn, installed: true, statusSupported: true, email, account: email, accountSource: email ? `${command[0]} ${command[1].join(' ')}` : undefined, detail: truncateDetail(out) });
   } catch (e: unknown) {
     const err = e as { stdout?: string; stderr?: string; message?: string };
     return baseStatus(provider, { installed: true, statusSupported: true, detail: truncateDetail(err.stdout || err.stderr || err.message || meta.statusNote || '') });
@@ -337,7 +431,17 @@ async function whoamiStatus(provider: 'kiro-cli' | 'q', command: CommandSpec): P
 async function cliPresenceStatus(provider: 'grok' | 'antigravity' | 'copilot'): Promise<SubStatus> {
   const meta = SUB_META[provider];
   if (!cliPath(meta.bin)) return notInstalled(provider);
-  return baseStatus(provider, { installed: true, statusSupported: false, detail: meta.statusNote });
+  const account =
+    provider === 'grok' ? grokAccount()
+    : provider === 'copilot' ? copilotAccount()
+    : googleAccountHint();
+  return baseStatus(provider, {
+    installed: true,
+    statusSupported: false,
+    loggedIn: false,
+    ...account,
+    detail: account.detail ?? meta.statusNote,
+  });
 }
 
 async function providerStatus(provider: SubProvider): Promise<SubStatus> {
