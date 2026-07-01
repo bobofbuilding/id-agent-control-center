@@ -45,6 +45,11 @@ const PRIMARY_TEAM = 'default';
 const DEFAULT_LEAD = 'lead';
 const DEFAULT_VALIDATORS = ['coder', 'researcher'];
 const DEFAULT_BACKBONE_AGENTS = [DEFAULT_LEAD, ...DEFAULT_VALIDATORS];
+function isReservedEmptyPublicTeam(team: { name: string; agentCount?: number }, groups: TeamAgentsGroup[]): boolean {
+  if (team.name.trim().toLowerCase() !== 'public') return false;
+  const rosterCount = groups.find((g) => g.team.trim().toLowerCase() === 'public')?.agents.length ?? 0;
+  return rosterCount === 0 && Number(team.agentCount ?? 0) === 0;
+}
 function isDefaultBackboneAgent(team: string, agent: string): boolean {
   return team === PRIMARY_TEAM && DEFAULT_BACKBONE_AGENTS.includes(slugName(agent));
 }
@@ -452,8 +457,8 @@ export function Teams({ store, focus, onFocusHandled }: { store: FleetStore; foc
   }, [store.teams]);
   const locallyDeletedTeamSet = useMemo(() => new Set(locallyDeletedTeams), [locallyDeletedTeams]);
   const visibleTeams = useMemo(
-    () => store.teams.filter((t) => !locallyDeletedTeamSet.has(t.name)),
-    [store.teams, locallyDeletedTeamSet],
+    () => store.teams.filter((t) => !locallyDeletedTeamSet.has(t.name) && !isReservedEmptyPublicTeam(t, graphGroups)),
+    [store.teams, locallyDeletedTeamSet, graphGroups],
   );
   // Teams with at least one RUNNING agent — used to keep team pickers to active teams only.
   const activeTeamNames = useMemo(
@@ -1523,7 +1528,7 @@ export function Teams({ store, focus, onFocusHandled }: { store: FleetStore; foc
             </button>
           </div>
           <p className="muted small" style={{ marginTop: -2 }}>
-            Structure of every known team, including offline or empty teams. Running state is shown as evidence; it no longer hides a team from HR.
+            Structure of every known configured team, including offline or empty teams. The reserved empty public-agent namespace is hidden until it has agents.
             Click an agent or team to inspect goals, instruction markdown, roster, and routing context.
           </p>
           <TeamGraph

@@ -8,6 +8,9 @@ Every change pushed or merged to `main` carries its version number in the commit
 subject (`vX.Y.Z: …`), stamped automatically by the `commit-msg` hook — see
 [CONTRIBUTING.md](CONTRIBUTING.md).
 
+## [0.1.388] — 2026-07-01
+- Hide reserved empty public team from HR Manager structure
+
 ## [0.1.387] — 2026-07-01
 - Fix HR Manager stale deleted-team display
 
