@@ -9,7 +9,7 @@
  * stale base URL is self-correcting rather than silent.
  */
 
-import type { ProviderKind } from './schema.ts';
+import { kindNeedsKey, type ProviderKind, type ProviderProfile } from './schema.ts';
 
 export interface ProviderCatalogEntry {
   /** Stable id, also the default profile name. */
@@ -20,7 +20,7 @@ export interface ProviderCatalogEntry {
   baseUrl: string;
   needsKey: boolean;
   local?: boolean;
-  /** Preset model ids for providers with NO GET /models endpoint (Perplexity). */
+  /** Preset model ids for providers with limited/no GET /models coverage. */
   models?: string[];
   notes?: string;
 }
@@ -51,9 +51,43 @@ export const PROVIDER_CATALOG: ProviderCatalogEntry[] = [
   { id: 'cerebras', name: 'Cerebras', kind: 'openai-compatible', baseUrl: 'https://api.cerebras.ai/v1', needsKey: true, notes: 'Very high tok/s on wafer-scale hardware.' },
   { id: 'deepinfra', name: 'DeepInfra', kind: 'openai-compatible', baseUrl: 'https://api.deepinfra.com/v1/openai', needsKey: true },
   { id: 'nebius', name: 'Nebius AI Studio', kind: 'openai-compatible', baseUrl: 'https://api.studio.nebius.com/v1', needsKey: true },
+  {
+    id: 'nvidia',
+    name: 'NVIDIA API Catalog',
+    kind: 'openai-compatible',
+    baseUrl: 'https://integrate.api.nvidia.com/v1',
+    needsKey: true,
+    models: [
+      'minimaxai/minimax-m3',
+      'qwen/qwen3.5-397b-a17b',
+      'moonshotai/kimi-k2.6',
+      'zhipuai/glm-5.1',
+      'deepseek/deepseek-v4-flash',
+    ],
+    notes: 'OpenAI-compatible NVAPI endpoint from build.nvidia.com.',
+  },
   { id: 'perplexity', name: 'Perplexity', kind: 'openai-compatible', baseUrl: 'https://api.perplexity.ai', needsKey: true, models: ['sonar', 'sonar-pro', 'sonar-reasoning', 'sonar-reasoning-pro', 'sonar-deep-research'], notes: 'Search-grounded; no /models list, so models are preset.' },
 ];
 
 export function findProvider(id: string): ProviderCatalogEntry | undefined {
   return PROVIDER_CATALOG.find((p) => p.id === id);
+}
+
+function normUrl(s: string): string {
+  return s.trim().toLowerCase().replace(/\/+$/, '');
+}
+
+export function findProviderForProfile(p: Pick<ProviderProfile, 'name' | 'baseUrl'>): ProviderCatalogEntry | undefined {
+  const name = p.name.trim().toLowerCase();
+  const base = normUrl(p.baseUrl);
+  return PROVIDER_CATALOG.find((entry) =>
+    entry.id.toLowerCase() === name ||
+    entry.name.toLowerCase() === name ||
+    normUrl(entry.baseUrl) === base
+  );
+}
+
+export function providerNeedsKey(p: Pick<ProviderProfile, 'name' | 'kind' | 'baseUrl' | 'needsKey'>): boolean {
+  if (typeof p.needsKey === 'boolean') return p.needsKey;
+  return findProviderForProfile(p)?.needsKey ?? kindNeedsKey(p.kind);
 }

@@ -12,7 +12,8 @@ import { ProviderClient } from '../../../idctl/src/settings/ProviderClient.ts';
 import { discoverLocalServers, type DiscoveredServer } from '../../../idctl/src/settings/localDiscovery.ts';
 import { SCOPE_PRESETS, TTL_PRESETS } from '../../../idctl/src/keys/types.ts';
 import type { AgentAccount, KeyAuthorityTarget, LegacyKeyAuthority, SessionKey } from '../../../idctl/src/keys/types.ts';
-import { defaultHeadroomPilotSettings, kindNeedsKey, type HeadroomPilotSettings, type ProviderProfile, type McpServerProfile, type ProjectEntry } from '../../../idctl/src/settings/schema.ts';
+import { defaultHeadroomPilotSettings, type HeadroomPilotSettings, type ProviderProfile, type McpServerProfile, type ProjectEntry } from '../../../idctl/src/settings/schema.ts';
+import { providerNeedsKey } from '../../../idctl/src/settings/providerCatalog.ts';
 import { buildRuntimeCatalog } from '../../../idctl/src/settings/runtimeCatalog.ts';
 import type { LibraryPluginInspection, LibrarySkillEntry, McpServerSpec, CreateSkillInput, ProjectPluginSkillResult } from '../../../idctl/src/api/client.ts';
 import { secp256k1 } from '@noble/curves/secp256k1.js';
@@ -111,7 +112,7 @@ async function fetchWiki(): Promise<WikiPayload> {
 
 /** Enrich provider rows with key source (no env in the webview) + needsKey flag. */
 function enrichProviders(list: ProviderProfile[]) {
-  return list.map((p) => ({ ...p, keySource: (p.apiKey ? 'config' : 'none') as 'config' | 'env' | 'none', needsKey: kindNeedsKey(p.kind) }));
+  return list.map((p) => ({ ...p, keySource: (p.apiKey ? 'config' : 'none') as 'config' | 'env' | 'none', needsKey: providerNeedsKey(p) }));
 }
 
 function headroomPilotState(): HeadroomPilotSettings {

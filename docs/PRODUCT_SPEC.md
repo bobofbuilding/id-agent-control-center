@@ -1,6 +1,6 @@
 # ID Agents Control Center — Product Spec
 
-_Updated 2026-07-01 · reflects app **v0.1.391**. This is a page-by-page specification of
+_Updated 2026-07-01 · reflects app **v0.1.392**. This is a page-by-page specification of
 the desktop app as it actually ships today, produced by reviewing every page._
 
 ---
@@ -476,7 +476,8 @@ Manager; this is the plumbing.)
   Uninstall actions, setup notes, docs ↗.
 - **Inference backends**: **⟳ Discover local servers** (+ Add / Add all), provider table (★ default,
   enable, key badge, status, model list, **Connect & sync**, ✕), **Add a backend** (catalog or custom;
-  cloud keys auto-detected from env).
+  provider-specific key requirements, NVIDIA API Catalog preset models, and cloud keys auto-detected
+  from env).
 
 **Data & actions:** `app:hardware`, `manager:capabilities`, `app:version`, `update:status/check/
 getSettings/setSettings`, `subs:status/signin/signout/install`, `manager:localConcurrency/

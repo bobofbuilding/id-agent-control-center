@@ -2576,6 +2576,9 @@
         "idctl-desktop/src/tauri/adapter.ts",
         "idctl/src/api/controlCenterContract.ts",
         "idctl/src/settings/store.ts",
+        "idctl/src/settings/schema.ts",
+        "idctl/src/settings/providerCatalog.ts",
+        "idctl/src/settings/providerCatalog.test.ts",
         "docs/HEADROOM_BACKEND_CONTRACT.md",
         "idctl-desktop/src/main/headroom.ts",
         "idctl-desktop/src/main/headroomPlugin.ts",
@@ -2665,7 +2668,7 @@
         {
           "id": "providers",
           "label": "Inference backends",
-          "description": "Provider catalog, local discovery, add/remove/default/toggle/connect/model sync.",
+          "description": "Provider catalog, NVIDIA API Catalog preset, local discovery, add/remove/default/toggle/connect/model sync, and provider-specific key readiness.",
           "routesInto": [
             "providers:*"
           ]
@@ -2729,7 +2732,7 @@
           "id": "provider-key",
           "label": "API key",
           "type": "password",
-          "description": "Optional key stored in local settings or resolved from env.",
+          "description": "Provider key stored in local settings or resolved from env; cloud OpenAI-compatible presets such as NVIDIA can be key-required while local OpenAI-compatible servers stay keyless.",
           "routesInto": [
             "providers:add",
             "providers:connect"
@@ -2748,7 +2751,7 @@
         {
           "id": "provider-catalog",
           "label": "Provider catalog",
-          "description": "Prefills kind/base URL for common backends."
+          "description": "Prefills kind/base URL, provider key requirement, notes, and preset model chips for common backends such as NVIDIA API Catalog."
         },
         {
           "id": "provider-kind",
@@ -2880,7 +2883,7 @@
         {
           "id": "provider-row",
           "label": "Provider row",
-          "description": "Default, enabled, key source, status, last sync, model count, expanded model list, connect/remove controls."
+          "description": "Default, enabled, provider-level key requirement/source, status, last sync, model count, expanded model list, connect/remove controls."
         },
         {
           "id": "subscription-row",
@@ -4335,6 +4338,11 @@
         "Work Plans UI: the organizer now separates search/sort/group/archive controls from filter chips, hides clear-filters until a filter is active, and keeps lifecycle counts in a quieter pill.",
         "Work Plans rows: live Brain plans now keep status/id/title on the left, note/timestamp in the middle, and Work/Continue/Resume plus guarded Status actions in a consistent right-side cluster.",
         "Work Plans drafts: draft rows now use the same compact scan rhythm, with tags and timestamps in metadata instead of crowding the title line."
+      ],
+      "implementedOneHundredSeventyFirstPass": [
+        "Settings Inference: adds NVIDIA API Catalog as an OpenAI-compatible cloud backend preset at https://integrate.api.nvidia.com/v1 with the requested starter model ids seeded as preset models.",
+        "Provider guardrails: ProviderProfile now persists provider-level needsKey so cloud OpenAI-compatible catalog rows require keys while custom local OpenAI-compatible servers remain keyless by default.",
+        "Settings key resolution: NVIDIA backends can resolve keys from pasted config, IDCTL_NVIDIA_API_KEY, NVIDIA_API_KEY, NVAPI_KEY, or NVIDIA_NIM_API_KEY, and the Settings form shows compact provider notes/model chips before add."
       ]
     },
     {
@@ -4398,5 +4406,5 @@
       "body": "# Wiki\n\nWiki is both the human documentation page and the editable schematic for the Control Center UI. Each article explains the operator purpose of a page; the structured sections below preserve tabs, tiles, fields, controls, displays, routes, and source files for implementation detail.\n\n## Use it for\n\n- Search pages, controls, routes, source files, and notes from inside the desktop app.\n- Confirm how a UI surface is intended to behave before editing code or filing follow-up work.\n- Keep app navigation metadata and human documentation in one reviewed JSON artifact.\n\n## Editing rule\n\nThe desktop app hot-reload polls CONTROL_CENTER_WIKI.json through the main-process wiki bridge. Sidebar labels, icons, order, and visibility still come from pages[].nav for implemented routes, so documentation edits must preserve that metadata and keep every page.body non-empty."
     }
   ],
-  "appVersion": "0.1.391"
+  "appVersion": "0.1.392"
 }

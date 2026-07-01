@@ -264,6 +264,8 @@ export interface ProviderProfile {
   baseUrl: string;
   /** API key — local providers usually need none; cloud requires it. Plaintext on disk. */
   apiKey?: string;
+  /** Provider-level key requirement. OpenAI-compatible can be local/keyless or cloud/keyed. */
+  needsKey?: boolean;
   /** Whether the provider is selectable/active. */
   enabled: boolean;
   /** Marks the default inference provider (at most one). */

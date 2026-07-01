@@ -46,7 +46,8 @@ import { realpathSync } from 'node:fs';
 import { createHash, randomBytes } from 'node:crypto';
 import { ProviderClient } from '../../../idctl/src/settings/ProviderClient.ts';
 import { discoverLocalServers, type DiscoveredServer } from '../../../idctl/src/settings/localDiscovery.ts';
-import { kindNeedsKey, type HeadroomPilotSettings, type ProviderProfile, type McpServerProfile, type ProjectEntry } from '../../../idctl/src/settings/schema.ts';
+import { type HeadroomPilotSettings, type ProviderProfile, type McpServerProfile, type ProjectEntry } from '../../../idctl/src/settings/schema.ts';
+import { providerNeedsKey } from '../../../idctl/src/settings/providerCatalog.ts';
 import { buildRuntimeCatalog, RUNTIMES, providerKindToRuntimes, isLocalProvider } from '../../../idctl/src/settings/runtimeCatalog.ts';
 import { testMcpServer } from './mcpTest.ts';
 import { headroomBackendContractAudit, headroomCoreAudit, headroomStatus } from './headroom.ts';
@@ -457,7 +458,7 @@ function keySourceOf(p: ProviderProfile): 'config' | 'env' | 'none' {
 }
 /** Provider list enriched with the (non-secret) key source for the UI. */
 function listProvidersEnriched(): (ProviderProfile & { keySource: 'config' | 'env' | 'none'; needsKey: boolean })[] {
-  return loadSettings().providers.map((p) => ({ ...p, keySource: keySourceOf(p), needsKey: kindNeedsKey(p.kind) }));
+  return loadSettings().providers.map((p) => ({ ...p, keySource: keySourceOf(p), needsKey: providerNeedsKey(p) }));
 }
 
 function providerBridgeStamp(p: ProviderProfile): string {
@@ -468,7 +469,7 @@ function providerBridgeStamp(p: ProviderProfile): string {
     enabled: p.enabled !== false,
     default: p.default === true,
     keySource: keySourceOf(p),
-    needsKey: kindNeedsKey(p.kind),
+    needsKey: providerNeedsKey(p),
   });
 }
 

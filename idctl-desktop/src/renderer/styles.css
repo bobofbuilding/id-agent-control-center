@@ -597,6 +597,8 @@ textarea.composer-input { resize: none; line-height: 1.4; min-height: 38px; max-
 .grid td.row-actions { text-align: right; }
 .issue-row, .add-provider { display: flex; gap: 8px; margin-top: 12px; flex-wrap: wrap; align-items: center; }
 .add-provider input { flex: 1; min-width: 120px; }
+.provider-catalog-note { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-top: 8px; padding: 7px 9px; border: 1px solid var(--line); border-radius: 8px; background: var(--bg-2); }
+.provider-catalog-note .chip { font-size: 10px; }
 .settings-readiness { display: flex; flex-direction: column; gap: 10px; }
 .settings-readiness-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
 .settings-readiness-head h3 { margin: 0; }

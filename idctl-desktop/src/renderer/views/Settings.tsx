@@ -1,9 +1,9 @@
 import { Fragment, useEffect, useState } from 'react';
 import { call, type FleetStore } from '../store.ts';
-import { defaultBaseUrl, kindNeedsKey, type EvmRpcKeySource, type EvmRpcProfile, type EvmRpcRequest, type ProviderKind, type ProviderProfile } from '../../../../idctl/src/settings/schema.ts';
+import { defaultBaseUrl, type EvmRpcKeySource, type EvmRpcProfile, type EvmRpcRequest, type ProviderKind, type ProviderProfile } from '../../../../idctl/src/settings/schema.ts';
 import type { ProbeOutcome } from '../../../../idctl/src/settings/ProviderClient.ts';
 import type { DiscoveredServer } from '../../../../idctl/src/settings/localDiscovery.ts';
-import { PROVIDER_CATALOG, findProvider } from '../../../../idctl/src/settings/providerCatalog.ts';
+import { PROVIDER_CATALOG, findProvider, providerNeedsKey } from '../../../../idctl/src/settings/providerCatalog.ts';
 import { TOP_LOCAL_MODEL_CATALOG, type ModelCapability, type LocalModelEntry } from '../../../../idctl/src/settings/modelCatalog.ts';
 import { TOP_LOCAL_STACKS, type LocalStackEntry } from '../../../../idctl/src/settings/localStacks.ts';
 import {
@@ -271,14 +271,21 @@ export function Settings({ store, navigate }: { store: FleetStore; navigate?: (v
   }
   async function addProvider() {
     const entry = findProvider(catalogId);
-    const p: ProviderProfile = { name: name.trim() || kind, kind, baseUrl: baseUrl.trim() || defaultBaseUrl(kind), apiKey: apiKey.trim() || undefined, enabled: true };
+    const p: ProviderProfile = {
+      name: name.trim() || kind,
+      kind,
+      baseUrl: baseUrl.trim() || defaultBaseUrl(kind),
+      apiKey: apiKey.trim() || undefined,
+      needsKey: entry?.needsKey ?? addNeedsKey,
+      enabled: true,
+    };
     const renderedExisting = findProviderRow(providers, p.name);
     if (renderedExisting && !replaceProviderArmed) {
       setProviderMsg(`Review replacement for "${p.name}" before adding.`);
       return;
     }
-    // Providers with no GET /models endpoint (Perplexity) ship a preset list so
-    // their models appear without a (failing) discovery probe.
+    // Providers with limited/no GET /models coverage ship a preset list so their
+    // models appear even before the first successful discovery probe.
     if (entry?.models?.length) {
       p.lastSync = { at: Date.now(), status: 'preset', modelCount: entry.models.length, models: entry.models };
     }
@@ -789,6 +796,9 @@ export function Settings({ store, navigate }: { store: FleetStore; navigate?: (v
   const discoveryStale = discoveredAt != null && Date.now() - discoveredAt > DISCOVERY_MAX_AGE_MS;
   const runningPorts = new Set((discovered ?? []).map((d) => d.port));
   const addProviderName = name.trim() || kind;
+  const addProviderBaseUrl = baseUrl.trim() || defaultBaseUrl(kind);
+  const selectedProviderEntry = findProvider(catalogId);
+  const addNeedsKey = providerNeedsKey({ name: addProviderName, kind, baseUrl: addProviderBaseUrl });
   const replaceCandidate = findProviderRow(providers, addProviderName);
   const defaultProvider = providers.find((p) => p.default);
   const enabledProviders = providers.filter((p) => p.enabled !== false);
@@ -825,7 +835,7 @@ export function Settings({ store, navigate }: { store: FleetStore; navigate?: (v
         : starterInstalled
           ? `${STARTER_LOCAL_MODEL_ID} is installed; add the Ollama backend so agents can route to it.`
           : `Download ${STARTER_LOCAL_MODEL_ID}; IDACC will add Ollama after the pull succeeds.`;
-  const providersNeedingKeys = enabledProviders.filter((p) => (p.needsKey ?? kindNeedsKey(p.kind)) && !providerKeyReady(p)).length;
+  const providersNeedingKeys = enabledProviders.filter((p) => providerNeedsKey(p) && !providerKeyReady(p)).length;
   const syncCandidate = defaultProvider && !defaultRouteReady ? defaultProvider : enabledProviders.find((p) => providerKeyReady(p) && !providerRouteReady(p));
   const textRuntimeReady = store.connection === 'online' && (defaultRouteReady || routeReadyProviders.length > 0);
   const managerFeatureSet = new Set(managerCaps?.features ?? []);
@@ -907,7 +917,7 @@ export function Settings({ store, navigate }: { store: FleetStore; navigate?: (v
     return probe[p.name]?.status ?? p.lastSync?.status;
   }
   function providerKeyReady(p: ProviderRow): boolean {
-    return !(p.needsKey ?? kindNeedsKey(p.kind)) || p.keySource === 'config' || p.keySource === 'env';
+    return !providerNeedsKey(p) || p.keySource === 'config' || p.keySource === 'env';
   }
   function providerModelReady(p: ProviderRow): boolean {
     return (probe[p.name]?.models?.length ?? p.lastSync?.modelCount ?? 0) > 0 || p.lastSync?.status === 'preset';
@@ -1654,7 +1664,7 @@ export function Settings({ store, navigate }: { store: FleetStore; navigate?: (v
           <input placeholder="name" value={name} onChange={(e) => { resetProviderAddReview(); setName(e.target.value); }} />
           <input placeholder="base URL" value={baseUrl} onChange={(e) => { resetProviderAddReview(); setBaseUrl(e.target.value); }} />
           <input
-            placeholder={kindNeedsKey(kind) ? 'API key (or leave blank to use env)' : 'API key (not needed)'}
+            placeholder={addNeedsKey ? 'API key (or leave blank to use env)' : 'API key (not needed)'}
             value={apiKey}
             onChange={(e) => { resetProviderAddReview(); setApiKey(e.target.value); }}
             type="password"
@@ -1670,12 +1680,22 @@ export function Settings({ store, navigate }: { store: FleetStore; navigate?: (v
               Replace existing backend
             </label>
             <span className="muted small">Before: {providerEndpoint(replaceCandidate)}</span>
-            <span className="muted small">After: {providerEndpoint({ name: addProviderName, kind, baseUrl: baseUrl.trim() || defaultBaseUrl(kind), enabled: true })}</span>
+            <span className="muted small">After: {providerEndpoint({ name: addProviderName, kind, baseUrl: addProviderBaseUrl, needsKey: addNeedsKey, enabled: true })}</span>
+          </div>
+        ) : null}
+        {selectedProviderEntry && (selectedProviderEntry.notes || selectedProviderEntry.models?.length) ? (
+          <div className="provider-catalog-note">
+            {selectedProviderEntry.notes ? <span className="muted small">{selectedProviderEntry.notes}</span> : null}
+            {selectedProviderEntry.models?.length ? (
+              <span className="chips">
+                {selectedProviderEntry.models.map((m) => <span className="chip tag mono" key={m}>{m}</span>)}
+              </span>
+            ) : null}
           </div>
         ) : null}
         {providerMsg ? <div className={`small ${/added|replaced/.test(providerMsg) ? 'ok-text' : 'warn-text'}`} style={{ marginTop: 6 }}>{providerMsg}</div> : null}
         <p className="muted small" style={{ marginTop: 8 }}>
-          Cloud backends (OpenAI, Anthropic) authenticate with an API key — paste it above or set <span className="mono">ANTHROPIC_API_KEY</span>/<span className="mono">OPENAI_API_KEY</span> and it's auto-detected. Connect &amp; sync validates it live and pulls the model list. (Neither offers OAuth for API access; the <span className="mono">claude-code-cli</span> runtime uses your logged-in Claude session instead.)
+          Cloud backends authenticate with an API key — paste it above or set a provider env var such as <span className="mono">IDCTL_NVIDIA_API_KEY</span>, <span className="mono">NVIDIA_API_KEY</span>, <span className="mono">ANTHROPIC_API_KEY</span>, or <span className="mono">OPENAI_API_KEY</span>. Connect &amp; sync validates it live and pulls the model list. Subscription runtimes such as <span className="mono">claude-code-cli</span> keep using their logged-in sessions.
         </p>
       </section>
     </div>
