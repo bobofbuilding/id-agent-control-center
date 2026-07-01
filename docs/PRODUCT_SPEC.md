@@ -75,8 +75,8 @@ active team when one is selected in the status bar. Per-agent actions route to t
 - **Agent grid**, grouped by team in All-teams mode (lead pinned first within each group): name,
   status (colored dot), runtime, model, port, actions.
   Click a row to select it (populates the detail panel).
-- **Runtime dropdown** (local agents only): switch runtime → auto-picks a compatible model →
-  rebuilds. Remote agents show a static runtime label.
+- **Runtime dropdown** (local agents only): switch runtime or a synced API provider lane →
+  auto-picks a compatible model → rebuilds. Remote agents show a static runtime label.
 - **Model dropdown**: pick from the runtime's models (+ current); selecting rebuilds immediately. A
   model/runtime mismatch is flagged `⚠` with a tooltip.
 - **Actions** (⋯) per agent: Start, Stop, Rebuild, Probe, Delete (Delete confirms; working files
@@ -293,10 +293,9 @@ and errors.
 invoices; stale last-turn samples remain visible but no longer drive the live gauge. The model-lanes
 panel uses aligned runtime/type/models/source/checked columns plus the same Settings availability gate
 as the per-agent Harness dropdown: unavailable curated fallback harnesses are hidden unless already
-assigned, while configured API/provider lanes stay visible but read-only until a manager
-provider-runtime adapter exists. The Harness dropdown shows API/cloud lanes in a disabled model-lane
-group so Settings-backed providers such as NVIDIA or OpenRouter are discoverable without becoming
-writeable runtime ids. The per-agent Model dropdown follows the effective staged Harness catalog: changing Harness
+assigned, synced API/provider lanes are selectable through the manager `provider-api` harness, and
+unsynced API lanes stay visible but disabled until **Connect & sync** succeeds. The per-agent Model
+dropdown follows the effective staged Harness catalog: changing Harness
 resets the staged model to a valid option for that harness, and stale saved cross-harness model values
 show as drift instead of selectable options.
 "Running" is a status-string regex (non-matching healthy statuses show red).
@@ -505,8 +504,9 @@ Manager; this is the plumbing.)
   **Inference backends** rather than the subscription sign-in card.
   Agent Harness pickers only offer runtimes that Settings can currently prove through sign-in,
   install, route-ready API backend, or synced local-backend evidence; existing assigned runtimes
-  remain visible as the current value for review. API/cloud provider lanes remain visible in Health
-  as disabled model-lane entries until the manager supports direct provider-runtime assignment.
+  remain visible as the current value for review. Synced API/cloud provider lanes such as
+  OpenRouter and NVIDIA are selectable in Health via the manager `provider-api` harness; unsynced
+  API lanes remain disabled until their model list is refreshed.
   Agent Model pickers are keyed to the currently
   staged harness model catalog, so switching to Kiro, Codex, Claude Code, or a local harness cannot
   carry a stale model from the previous harness forward as a valid choice. Gemini CLI

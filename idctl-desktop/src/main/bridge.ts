@@ -403,9 +403,10 @@ type RuntimeFreshness = {
 };
 async function runtimeFreshness(): Promise<RuntimeFreshness[]> {
   const providers = loadSettings().providers;
+  const enrichedProviders = listProvidersEnriched();
   const cat = runtimeCatalogWithCodex();
   const managed = await subsStatus().then((rows) => Object.values(rows)).catch(() => []);
-  const available = settingsAvailableRuntimeSet(listProvidersEnriched(), managed);
+  const available = settingsAvailableRuntimeSet(enrichedProviders, managed);
   // Newest enabled provider that has synced models AND backs this runtime.
   const providerFor = (rt: string): ProviderProfile | undefined =>
     providers
@@ -431,7 +432,7 @@ async function runtimeFreshness(): Promise<RuntimeFreshness[]> {
     if (p) return { runtime: rt, kind: 'harness', models, count: models.length, source: 'provider', provider: p.name, lastCheckedMs: p.lastSync?.at ?? null, selectable, detail: unavailableDetail };
     return { runtime: rt, kind: 'harness', models, count: models.length, source: models.length ? 'curated' : 'none', lastCheckedMs: null, selectable, detail: unavailableDetail };
   });
-  const providerRows = buildProviderModelLanes(providers).map((lane): RuntimeFreshness => ({
+  const providerRows = buildProviderModelLanes(enrichedProviders).map((lane): RuntimeFreshness => ({
     runtime: lane.id,
     label: lane.label,
     kind: lane.kind,
@@ -492,6 +493,43 @@ function providerBridgeStamp(p: ProviderProfile): string {
     default: p.default === true,
     keySource: keySourceOf(p),
     needsKey: providerNeedsKey(p),
+  });
+}
+
+function providerLaneName(runtime: string): string | null {
+  if (!runtime.startsWith('provider:')) return null;
+  try {
+    return decodeURIComponent(runtime.slice('provider:'.length));
+  } catch {
+    return runtime.slice('provider:'.length);
+  }
+}
+
+function providerLaneEnvName(name: string): string {
+  return `IDCTL_${name.toUpperCase().replace(/[^A-Z0-9]+/g, '_')}_API_KEY`;
+}
+
+function providerRouteReadyForAssignment(p: ProviderProfile): boolean {
+  const keyReady = !providerNeedsKey(p) || Boolean(resolveProviderKey(p));
+  const modelCount = p.lastSync?.models?.length ?? p.lastSync?.modelCount ?? 0;
+  return p.enabled !== false && keyReady && modelCount > 0 && (p.lastSync?.status === 'live' || p.lastSync?.status === 'preset' || modelCount > 0);
+}
+
+async function setAgentRuntimeFromSettings(agentId: string, runtime: string, team?: string) {
+  const providerName = providerLaneName(runtime);
+  const scoped = team ? client.withTeam(String(team)) : client;
+  if (!providerName) return scoped.setAgentRuntime(String(agentId), String(runtime));
+  const p = loadSettings().providers.find((x) => x.name === providerName);
+  if (!p) throw new Error(`provider lane "${providerName}" is no longer configured in Settings`);
+  if (!providerRouteReadyForAssignment(p)) throw new Error(`provider lane "${providerName}" is not ready; Connect & sync it in Settings first`);
+  const apiKey = resolveProviderKey(p);
+  if (providerNeedsKey(p) && !apiKey) throw new Error(`provider lane "${providerName}" is missing an API key`);
+  return scoped.setAgentProviderRuntime(String(agentId), String(runtime), {
+    name: p.name,
+    kind: p.kind,
+    baseUrl: p.baseUrl,
+    ...(apiKey ? { apiKey } : {}),
+    keyEnv: providerLaneEnvName(p.name),
   });
 }
 
@@ -1015,7 +1053,7 @@ const METHODS: Record<string, (...a: any[]) => Promise<unknown>> = {
 
   // dashboard: switch runtime (rebuild required to apply)
   setAgentRuntime: (id: string, runtime: string, team?: string) =>
-    (team ? client.withTeam(String(team)) : client).setAgentRuntime(String(id), String(runtime)),
+    setAgentRuntimeFromSettings(String(id), String(runtime), team ? String(team) : undefined),
   setAgentEffort: (id: string, effort: string, team?: string) =>
     (team ? client.withTeam(String(team)) : client).setAgentEffort(String(id), String(effort ?? '')),
   setAgentSpeed: (id: string, speed: string, team?: string) =>

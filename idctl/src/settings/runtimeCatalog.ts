@@ -43,8 +43,8 @@ export interface RuntimeModelLane {
   models: string[];
   source: RuntimeModelLaneSource;
   lastCheckedMs: number | null;
-  /** False until the manager exposes a provider-runtime execution contract. */
-  selectable: false;
+  /** True when IDACC can hand this lane to the manager provider-api harness. */
+  selectable: boolean;
   detail: string;
 }
 
@@ -216,9 +216,9 @@ function managedRuntimeReady(s: ManagedRuntimeForOffer): boolean {
 }
 
 /**
- * Runtime ids that Settings can prove are currently assignable. This intentionally
- * excludes provider:model reference lanes, because the manager cannot execute a
- * provider id directly until a provider-runtime adapter exists.
+ * Runtime ids that Settings can prove are currently assignable. This includes
+ * concrete manager harnesses; provider lane ids are offered separately by
+ * buildProviderModelLanes() because they need provider metadata at write time.
  */
 export function settingsAvailableRuntimeSet(
   providers: ProviderForRuntime[],
@@ -373,14 +373,18 @@ export function providerModelLaneLabel(p: ProviderProfile): string {
  * every configured subscription, local, and API backend in Health/Fleet without
  * pretending the manager can execute a provider id directly as an agent harness.
  */
-export function buildProviderModelLanes(providers: ProviderProfile[]): RuntimeModelLane[] {
+export function buildProviderModelLanes(providers: Array<ProviderProfile & { keySource?: string; needsKey?: boolean }>): RuntimeModelLane[] {
   return providers
     .filter((p) => p.enabled !== false)
     .map((p) => {
       const models = p.lastSync?.models ?? [];
       const kind = providerModelLaneKind(p);
+      const routeReady = providerRouteReady(p);
+      const selectable = kind === 'api' && routeReady && models.length > 0;
       const detail = kind === 'api'
-        ? 'Configured API provider/model lane. Agent assignment needs a manager provider-runtime adapter before this can be selected as an execution harness.'
+        ? selectable
+          ? 'Configured API provider lane. IDACC can assign this through the manager provider-api harness.'
+          : 'Configured API provider lane. Connect & sync this backend before assigning it to an agent.'
         : kind === 'local'
           ? 'Configured local provider/model lane. Agent assignment needs the manager harness to be pointed at this server before this can be selected directly.'
           : 'Configured subscription/API provider lane. Agent assignment uses the matching manager harness when available.';
@@ -393,7 +397,7 @@ export function buildProviderModelLanes(providers: ProviderProfile[]): RuntimeMo
         models,
         source: models.length ? 'provider' as const : 'none' as const,
         lastCheckedMs: p.lastSync?.at ?? null,
-        selectable: false as const,
+        selectable,
         detail,
       };
     });
@@ -412,6 +416,8 @@ export function buildRuntimeCatalog(providers: ProviderProfile[]): Record<string
     if (p.enabled === false) continue;
     const models = p.lastSync?.models ?? [];
     if (!models.length) continue;
+    const lane = providerModelLaneId(p);
+    cat[lane] = Array.from(new Set([...(cat[lane] ?? []), ...models]));
     for (const rt of providerKindToRuntimes(p.kind)) {
       // The ollama runtime can only serve models from a LOCAL server — never let
       // a cloud openai-compatible provider's models into its picker.

@@ -590,6 +590,21 @@ export class ManagerClient {
   }
 
   /**
+   * Switch an agent to a Settings-backed provider API lane. The manager stores
+   * only safe lane metadata and keeps the supplied API key process-local for the
+   * immediate rebuild.
+   */
+  async setAgentProviderRuntime(
+    agentId: string,
+    runtime: string,
+    provider: { name: string; kind?: string; baseUrl: string; apiKey?: string; keyEnv?: string },
+    signal?: AbortSignal,
+  ): Promise<{ runtime?: string; executionRuntime?: string; needsRebuild?: boolean; message?: string }> {
+    return this.requireRoute('Switch agent provider runtime', () =>
+      this.post(`/agents/${encodeURIComponent(agentId)}/runtime`, { runtime, provider }, signal));
+  }
+
+  /**
    * Reassign a local agent to a different team. Ports are global so no re-port is
    * needed; the manager updates the agent's team_id and rebuilds it under the new
    * team. Rejects on name collision in the target team (409) or same team (400).

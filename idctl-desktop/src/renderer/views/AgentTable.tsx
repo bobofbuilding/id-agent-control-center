@@ -268,6 +268,7 @@ export function AgentTable({ store, onProbe, probeBusy, navigate }: { store: Fle
   const apiModelLaneOpts = visibleFreshness
     .filter((f) => f.kind === 'api')
     .sort((a, b) => (a.label ?? a.runtime).localeCompare(b.label ?? b.runtime));
+  const selectableApiLaneOpts = apiModelLaneOpts.filter((f) => f.selectable !== false);
 
   useEffect(() => {
     call<Record<string, string[]>>('runtime:models').then(setCatalog).catch(() => setCatalog({}));
@@ -587,7 +588,8 @@ export function AgentTable({ store, onProbe, probeBusy, navigate }: { store: Fle
     const currentProviderLane = currentRuntime?.startsWith('provider:') ? currentRuntime : undefined;
     const currentHarness = currentProviderLane ? undefined : currentRuntime;
     const runtimeOpts = Array.from(new Set([currentHarness, ...offerableRuntimes(providers, currentHarness, Object.values(managedRuntimes))].filter(Boolean))) as string[];
-    const readonlyApiLaneOpts = apiModelLaneOpts.filter((f) => f.runtime !== currentProviderLane && !runtimeOpts.includes(f.runtime));
+    const providerLaneOpts = selectableApiLaneOpts.filter((f) => f.runtime !== currentProviderLane);
+    const readonlyApiLaneOpts = apiModelLaneOpts.filter((f) => f.runtime !== currentProviderLane && f.selectable === false);
     const mismatch = modelDrift
       ? `${runtimeLabel(displayRuntime ?? '')} model list does not include "${displayModelRaw}". Choose one of this harness's current model options.`
       : runtimeModelMismatch(displayRuntime, displayModel);
@@ -605,13 +607,20 @@ export function AgentTable({ store, onProbe, probeBusy, navigate }: { store: Fle
         <td onClick={(e) => e.stopPropagation()}>
           {isLocal ? (
             <select className="cell-select" value={displayRuntime ?? ''} onChange={(e) => stageRuntime(a, e.target.value)}
-              title="Settings-available execution harnesses are selectable. API/cloud provider model lanes are visible below as read-only until the manager supports direct provider-runtime assignment.">
+              title="Settings-available harnesses and synced API provider lanes are selectable. Unsynced API lanes stay read-only until Connect & sync succeeds.">
               <optgroup label="Assignable harnesses">
                 {currentProviderLane ? <option value={currentProviderLane}>{runtimeLabel(currentProviderLane)} (current model lane)</option> : null}
                 {runtimeOpts.map((r) => <option key={r} value={r}>{runtimeLabel(r)}</option>)}
               </optgroup>
+              {providerLaneOpts.length ? (
+                <optgroup label="API provider lanes">
+                  {providerLaneOpts.map((f) => (
+                    <option key={f.runtime} value={f.runtime}>{modelLaneOptionLabel(f)}</option>
+                  ))}
+                </optgroup>
+              ) : null}
               {readonlyApiLaneOpts.length ? (
-                <optgroup label="API / Cloud model lanes (read only)">
+                <optgroup label="API provider lanes (sync needed)">
                   {readonlyApiLaneOpts.map((f) => (
                     <option key={f.runtime} value={`readonly:${f.runtime}`} disabled>{modelLaneOptionLabel(f)}</option>
                   ))}
@@ -740,7 +749,7 @@ export function AgentTable({ store, onProbe, probeBusy, navigate }: { store: Fle
         ) : null}
         <table className="grid">
           <thead>
-            <tr><th>Agent</th><th>Status</th><th title="Settings-available manager execution harness. Configured API/cloud provider model lanes are visible in the picker as read-only entries until the manager exposes direct provider-runtime assignment.">Harness</th><th>Model</th><th title="Reasoning effort — lower spends fewer subscription tokens (codex & Claude CLI only)">Effort</th><th title="Output speed — Claude Code runtimes only">Speed</th><th>Port</th><th>Actions</th>{onProbe ? <th>Probe</th> : null}</tr>
+            <tr><th>Agent</th><th>Status</th><th title="Settings-available manager execution harness or synced API provider lane. API keys are resolved by IDACC and passed process-local during rebuild.">Harness</th><th>Model</th><th title="Reasoning effort — lower spends fewer subscription tokens (codex & Claude CLI only)">Effort</th><th title="Output speed — Claude Code runtimes only">Speed</th><th>Port</th><th>Actions</th>{onProbe ? <th>Probe</th> : null}</tr>
           </thead>
           <tbody>
             {groups.flatMap((g) => {

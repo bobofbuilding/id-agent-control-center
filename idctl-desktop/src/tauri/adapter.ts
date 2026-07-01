@@ -115,10 +115,45 @@ function enrichProviders(list: ProviderProfile[]) {
   return list.map((p) => ({ ...p, keySource: (p.apiKey ? 'config' : 'none') as 'config' | 'env' | 'none', needsKey: providerNeedsKey(p) }));
 }
 
+function providerLaneName(runtime: string): string | null {
+  if (!runtime.startsWith('provider:')) return null;
+  try {
+    return decodeURIComponent(runtime.slice('provider:'.length));
+  } catch {
+    return runtime.slice('provider:'.length);
+  }
+}
+
+function providerRouteReadyForAssignment(p: ProviderProfile): boolean {
+  const modelCount = p.lastSync?.models?.length ?? p.lastSync?.modelCount ?? 0;
+  return p.enabled !== false && (!providerNeedsKey(p) || Boolean(p.apiKey)) && modelCount > 0 && (
+    p.lastSync?.status === 'live' ||
+    p.lastSync?.status === 'preset' ||
+    modelCount > 0
+  );
+}
+
+async function setAgentRuntimeFromSettings(agentId: string, runtime: string, selectedTeam?: string) {
+  const providerName = providerLaneName(runtime);
+  const scoped = clientFor(selectedTeam);
+  if (!providerName) return scoped.setAgentRuntime(String(agentId), String(runtime));
+  const p = lsGet<ProviderProfile[]>('idctl.providers', []).find((x) => x.name === providerName);
+  if (!p) throw new Error(`provider lane "${providerName}" is no longer configured in Settings`);
+  if (!providerRouteReadyForAssignment(p)) throw new Error(`provider lane "${providerName}" is not ready; Connect & sync it in Settings first`);
+  if (providerNeedsKey(p) && !p.apiKey) throw new Error(`provider lane "${providerName}" is missing an API key`);
+  return scoped.setAgentProviderRuntime(String(agentId), String(runtime), {
+    name: p.name,
+    kind: p.kind,
+    baseUrl: p.baseUrl,
+    ...(p.apiKey ? { apiKey: p.apiKey } : {}),
+  });
+}
+
 function runtimeFreshnessLocal() {
   const providers = lsGet<ProviderProfile[]>('idctl.providers', []);
+  const enrichedProviders = enrichProviders(providers);
   const cat = buildRuntimeCatalog(providers);
-  const available = settingsAvailableRuntimeSet(enrichProviders(providers), []);
+  const available = settingsAvailableRuntimeSet(enrichedProviders, []);
   const providerFor = (rt: string): ProviderProfile | undefined =>
     providers
       .filter(
@@ -139,7 +174,7 @@ function runtimeFreshnessLocal() {
     }
     return { runtime: rt, kind: 'harness', models, count: models.length, source: models.length ? 'curated' : 'none', lastCheckedMs: null, selectable, detail: unavailableDetail };
   });
-  const providerRows = buildProviderModelLanes(providers).map((lane) => ({
+  const providerRows = buildProviderModelLanes(enrichedProviders).map((lane) => ({
     runtime: lane.id,
     label: lane.label,
     kind: lane.kind,
@@ -805,7 +840,8 @@ const M: Record<string, (...a: any[]) => Promise<unknown>> = {
   teamConfig: (n: string) => client.teamConfig(String(n)),
   setTeamDelegates: (n: string, delegates: string[] | null) => client.setTeamDelegates(String(n), delegates ?? null),
   setAgentDelegates: (id: string, delegates: string[] | null) => client.setAgentDelegates(String(id), delegates ?? null),
-  setAgentRuntime: (id: string, runtime: string, selectedTeam?: string) => clientFor(selectedTeam).setAgentRuntime(String(id), String(runtime)),
+  setAgentRuntime: (id: string, runtime: string, selectedTeam?: string) =>
+    setAgentRuntimeFromSettings(String(id), String(runtime), selectedTeam ? String(selectedTeam) : undefined),
   setAgentEffort: (id: string, effort: string, selectedTeam?: string) => clientFor(selectedTeam).setAgentEffort(String(id), String(effort ?? '')),
   setAgentSpeed: (id: string, speed: string, selectedTeam?: string) => clientFor(selectedTeam).setAgentSpeed(String(id), String(speed ?? '')),
   spawnAgent: (spec: Parameters<ManagerClient['spawnAgent']>[0]) => client.spawnAgent(spec),
