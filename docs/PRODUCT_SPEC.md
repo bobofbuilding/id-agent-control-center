@@ -308,17 +308,19 @@ show as drift instead of selectable options.
 **Purpose:** Manage each agent's onchain identity (ENS/ID-chain domain + OWS/provider wallet) and
 its ERC-4337 smart account, including time-boxed, scope-limited **session keys**. Today it can run
 against a mock provider ("Base Sepolia (mock)") while keeping the same UI contract for a real
-Safe4337 + bundler path.
+Safe4337 + bundler path. The page also shows the enabled agent chain RPCs from Settings as the
+chain allowlist a granted key can use once a live signing provider is wired.
 
 **What you can do:** pick an agent; see identity (domain/wallet), **Register identity**, **Provision
 wallet**; review Brain controller sync; review onchain metadata standard coverage for ENSIP-24,
-ERC-8004, ERC-8048 / ERC-721T, ERC-8049, and B20 `extraMetadata`; see the Safe account (deployed
-vs counterfactual, address, owner), **Create account**, **Deploy**; list **session keys** (scope,
+ERC-8004, ERC-8048 / ERC-721T, ERC-8049, and B20 `extraMetadata`; review **Operational Chain
+Access** from Settings RPCs without exposing RPC keys; see the Safe account (deployed vs
+counterfactual, address, owner), **Create account**, **Deploy**; list **session keys** (scope,
 address, time-remaining / revoked / expired), **Revoke**; **Issue a session key** by scope preset
 (registry-write / skill-publish / payments / full) + TTL preset (1h / 24h / 7d / 30d / until revoked).
 
-**Data & actions:** `keys:caps/presets/list/ensure/deploy/issue/revoke`, `identity:register`,
-`wallet:provision`.
+**Data & actions:** `keys:caps/presets/list/ensure/deploy/issue/revoke`, `evmRpc:list`,
+`identity:register`, `wallet:provision`.
 
 **Guardrails:** controller-wallet precedence is OWS address, generic provider-wallet metadata,
 legacy SkillMesh provider metadata, then address-shaped OWS wallet. The standards panel is read-only
@@ -327,6 +329,10 @@ registry/agentURI/agentWallet evidence, ERC-8048/ERC-721T token-level context/en
 contract-level metadata, and B20 `extraMetadata` without dumping raw resolver bytes, contract bytes,
 or issuer-defined metadata blobs into the UI. Live resolver/contract reads and manifest/runtime
 signature verification remain pending checks.
+Operational Chain Access is read-only: it mirrors enabled Settings RPC networks, key-source labels,
+last probe status/block, and mock-vs-live signing mode. RPC secrets remain encrypted in the main
+process and a mock key provider still means no IDACC transaction broadcast, even when chain RPCs are
+configured.
 
 **Polish:** Register has no idempotency guard; standards coverage currently reads manager metadata
 and controller evidence only, so live chain reads still need a backend contract before the page can
@@ -512,6 +518,9 @@ Manager; this is the plumbing.)
 - **Local models (Ollama)**: compact model/backend status, one **Scan running** action, guarded
   next-step setup, local concurrency (1–16), installed chips, **Download** by id (streamed
   progress), and a searchable **catalog** with capability filters and hardware fit-warnings.
+- **Agent chain RPCs**: EVM JSON-RPC endpoints agents may use when they hold an active granted key;
+  keys are encrypted and the Identity page mirrors the enabled chain allowlist without exposing
+  secrets.
 - **Local image generator**: URL + API style (Stable Diffusion WebUI / OpenAI Images API),
   **Scan local**, Save/Clear (local first for in-chat images; image-capable API backend fallback).
 - **Local LLM stacks**: starter-first curated list with compact primary filters, an optional tag
@@ -528,7 +537,8 @@ Manager; this is the plumbing.)
 
 **Data & actions:** `app:hardware`, `manager:capabilities`, `app:version`, `update:status/check/
 getSettings/setSettings`, `subs:status/signin/signout/install`, `manager:localConcurrency/
-setLocalConcurrency`, `ollama:tags/pull/remove`, `image:getServer/setServer/detectServer`,
+setLocalConcurrency`, `ollama:tags/pull/remove`, `evmRpc:list/save/remove/probe`,
+`image:getServer/setServer/detectServer`,
 `app:runInTerminal`, `providers:list/add/remove/setDefault/toggle/connect/discover`.
 
 **Polish:** signin success is assumed after a 4s recheck (slow OAuth leaves the card stale);

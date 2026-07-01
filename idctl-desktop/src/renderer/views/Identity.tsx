@@ -2,9 +2,11 @@ import { useEffect, useMemo, useState } from 'react';
 import { call, type FleetStore, type TeamAgent } from '../store.ts';
 import type { Agent } from '../../../../idctl/src/api/types.ts';
 import type { AgentAccount, KeyAuthorityTarget, KeyCapabilities, LegacyKeyAuthority, SessionKey, SessionScope } from '../../../../idctl/src/keys/types.ts';
+import type { EvmRpcKeySource, EvmRpcProfile } from '../../../../idctl/src/settings/schema.ts';
 
 type EvidenceState = 'verified' | 'warn' | 'missing' | 'self';
 type IdentityAgent = TeamAgent;
+type EvmRpcRow = Omit<EvmRpcProfile, 'apiKey' | 'apiKeyEncrypted'> & { keySource: EvmRpcKeySource };
 
 interface ControllerProof {
   agent: string;
@@ -69,6 +71,30 @@ function remaining(validUntil: number): string {
   if (ms <= 0) return 'expired';
   const h = Math.round(ms / 3600_000);
   return h < 24 ? `${h}h left` : `${Math.round(h / 24)}d left`;
+}
+
+function timeAgo(ms: number | undefined): string {
+  if (!ms) return 'never';
+  const s = Math.max(0, Math.round((Date.now() - ms) / 1000));
+  if (s < 60) return `${s}s ago`;
+  const m = Math.round(s / 60);
+  if (m < 60) return `${m}m ago`;
+  const h = Math.round(m / 60);
+  return h < 24 ? `${h}h ago` : `${Math.round(h / 24)}d ago`;
+}
+
+function rpcStatusClass(status?: string): string {
+  if (status === 'available') return 'ok-text';
+  if (status === 'auth-error' || status === 'unreachable') return 'warn-text';
+  if (status === 'error') return 'status-error';
+  return 'muted';
+}
+
+function rpcKeyLabel(source: EvmRpcKeySource): string {
+  if (source === 'encrypted') return 'linked';
+  if (source === 'config') return 'configured';
+  if (source === 'env') return 'env';
+  return 'none';
 }
 
 function identityValue(
@@ -481,6 +507,7 @@ export function Identity({ store }: { store: FleetStore }) {
   const [proofs, setProofs] = useState<Record<string, ControllerProof>>({});
   const [legacyKeys, setLegacyKeys] = useState<LegacyKeyAuthority[]>([]);
   const [brainControllers, setBrainControllers] = useState<BrainControllerReport>(null);
+  const [evmRpcs, setEvmRpcs] = useState<EvmRpcRow[]>([]);
 
   const identityAgents = useMemo(() => {
     const all = store.allAgents.length ? store.allAgents : store.agents.map((a) => ({ ...a, team: store.team ?? 'default' }));
@@ -505,6 +532,7 @@ export function Identity({ store }: { store: FleetStore }) {
   const proof = selectedKey ? proofs[selectedKey] : undefined;
   const controllerVerified = proofMatchesWallet(proof, wallet);
   const activeSessions = useMemo(() => [...(acct?.sessions ?? [])].sort(activeSessionSort), [acct]);
+  const activeSessionCount = activeSessions.filter((s) => s.status === 'active').length;
   const safeScopes = useMemo(
     () => (presets?.scopes ?? []).map((scope, idx) => ({ scope, idx })).filter(({ scope }) => !isUnsafeScope(scope)),
     [presets],
@@ -519,6 +547,9 @@ export function Identity({ store }: { store: FleetStore }) {
   const review = useMemo(() => reviewRows(selAgent, acct, domain, wallet, controllerVerified), [selAgent, acct, domain, wallet, controllerVerified]);
   const standardCoverage = useMemo(() => identityStandardRows(selAgent, domain, wallet, acct), [selAgent, domain, wallet, acct]);
   const standardCovered = standardCoverage.filter((r) => r.state === 'verified' || r.state === 'self').length;
+  const enabledRpcs = useMemo(() => evmRpcs.filter((rpc) => rpc.enabled !== false), [evmRpcs]);
+  const availableRpcs = enabledRpcs.filter((rpc) => rpc.lastRequest?.status === 'available');
+  const keyOperational = Boolean(caps?.live && acct?.deployed && activeSessionCount > 0);
   const readyCount = review.filter((r) => r.state === 'verified').length;
   const brainSelectedController = useMemo(() => brainControllerForAgent(brainControllers, selAgent, duplicateNames), [brainControllers, selAgent, duplicateNames]);
   const brainControllerMatches = useMemo(
@@ -605,6 +636,20 @@ export function Identity({ store }: { store: FleetStore }) {
     call<KeyCapabilities>('keys:caps').then(setCaps).catch((err) => setError(err instanceof Error ? err.message : 'Failed to load key capabilities'));
     call<{ scopes: SessionScope[]; ttls: { label: string; ms: number }[] }>('keys:presets').then(setPresets).catch((err) => setError(err instanceof Error ? err.message : 'Failed to load key presets'));
   }, []);
+
+  useEffect(() => {
+    let live = true;
+    call<EvmRpcRow[]>('evmRpc:list')
+      .then((rows) => {
+        if (live) setEvmRpcs(rows);
+      })
+      .catch(() => {
+        if (live) setEvmRpcs([]);
+      });
+    return () => {
+      live = false;
+    };
+  }, [store.lastUpdated]);
 
   useEffect(() => {
     let live = true;
@@ -929,7 +974,8 @@ export function Identity({ store }: { store: FleetStore }) {
                 <div className="identity-metrics">
                   <div><b>{readyCount}/{review.length}</b><span>ready checks</span></div>
                   <div><b>{standardCovered}/{standardCoverage.length}</b><span>standards</span></div>
-                  <div><b>{activeSessions.filter((s) => s.status === 'active').length}</b><span>active keys</span></div>
+                  <div><b>{enabledRpcs.length}</b><span>chains</span></div>
+                  <div><b>{activeSessionCount}</b><span>active keys</span></div>
                   <div><b>{acct.deployed ? 'live' : 'draft'}</b><span>Safe account</span></div>
                 </div>
               </section>
@@ -1031,6 +1077,50 @@ export function Identity({ store }: { store: FleetStore }) {
                       <span className={statusTone(row.state)}>{row.note}</span>
                     </div>
                   ))}
+                </div>
+              </section>
+
+              <section className="card identity-chain-access" role="status">
+                <div className="identity-legacy-head">
+                  <h3>Operational Chain Access</h3>
+                  <StatusPill state={keyOperational && availableRpcs.length ? 'verified' : enabledRpcs.length ? 'warn' : 'missing'} />
+                </div>
+                <p className="muted small">
+                  Active granted keys use the enabled EVM RPCs from Settings as the chain allowlist. RPC secrets stay encrypted in the main process and are never shown here.
+                </p>
+                <div className="risk-list">
+                  <div className="risk-row">
+                    <span className={`dot ${caps?.live ? 'ok' : 'warn'}`} />
+                    <b>Signing mode</b>
+                    <span className={caps?.live ? 'ok-text' : 'warn-text'}>
+                      {caps?.live ? 'Live key provider can broadcast through configured chains.' : 'Mock key provider only; configured chains are visible but transactions are not broadcast from IDACC yet.'}
+                    </span>
+                  </div>
+                  <div className="risk-row">
+                    <span className={`dot ${activeSessionCount > 0 ? 'ok' : 'warn'}`} />
+                    <b>Granted key</b>
+                    <span className={activeSessionCount > 0 ? 'ok-text' : 'warn-text'}>
+                      {activeSessionCount > 0 ? `${activeSessionCount} active scoped key${activeSessionCount === 1 ? '' : 's'}` : 'Issue a scoped key before this agent can operate autonomously.'}
+                    </span>
+                  </div>
+                  {enabledRpcs.map((rpc) => (
+                    <div key={rpc.id} className="risk-row">
+                      <span className={`dot ${rpc.lastRequest?.status === 'available' ? 'ok' : rpc.lastRequest ? 'warn' : 'warn'}`} />
+                      <b>{rpc.network}</b>
+                      <span className={rpcStatusClass(rpc.lastRequest?.status)}>
+                        {rpc.lastRequest
+                          ? `${rpc.lastRequest.status}${rpc.lastRequest.blockNumber != null ? ` · block ${rpc.lastRequest.blockNumber.toLocaleString()}` : ''} · checked ${timeAgo(rpc.lastRequest.at)}`
+                          : 'configured; not checked'} · key {rpcKeyLabel(rpc.keySource)}
+                      </span>
+                    </div>
+                  ))}
+                  {enabledRpcs.length === 0 ? (
+                    <div className="risk-row">
+                      <span className="dot err" />
+                      <b>No chain RPCs</b>
+                      <span className="status-error">Add agent chain RPCs in Settings before granted keys have any chain route.</span>
+                    </div>
+                  ) : null}
                 </div>
               </section>
 

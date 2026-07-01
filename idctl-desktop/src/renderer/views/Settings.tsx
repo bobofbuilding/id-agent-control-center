@@ -1547,9 +1547,9 @@ export function Settings({ store, navigate }: { store: FleetStore; navigate?: (v
       </section>
 
       <section className="card">
-        <h3>EVM data RPCs</h3>
+        <h3>Agent chain RPCs</h3>
         <p className="muted small" style={{ marginTop: -4 }}>
-          JSON-RPC endpoints for chain data availability checks. Public RPCs can leave the key blank; Alchemy/Infura-style URLs can use <span className="mono">{'{API_KEY}'}</span>. Linked keys are encrypted by the desktop app and never shown back here.
+          JSON-RPC endpoints agents may use when they hold an active granted key. Public RPCs can leave the key blank; Alchemy/Infura-style URLs can use <span className="mono">{'{API_KEY}'}</span>. Linked keys are encrypted by the desktop app and never shown back here.
         </p>
         <div className="row-actions" style={{ gap: 8, flexWrap: 'wrap', alignItems: 'center', marginTop: 8 }}>
           <input style={{ flex: '1 1 190px' }} placeholder="network, e.g. Base mainnet" value={rpcNetwork} disabled={rpcBusy === 'save'} onChange={(e) => setRpcNetwork(e.target.value)} />
@@ -1575,7 +1575,7 @@ export function Settings({ store, navigate }: { store: FleetStore; navigate?: (v
               <button className="btn small icon-danger" disabled={!!rpcBusy} onClick={() => void removeRpc(rpc.id)}>Remove</button>
             </div>
           ))}
-          {evmRpcs.length === 0 ? <p className="muted small center pad">No EVM data RPCs configured.</p> : null}
+          {evmRpcs.length === 0 ? <p className="muted small center pad">No agent chain RPCs configured.</p> : null}
         </div>
       </section>
 
