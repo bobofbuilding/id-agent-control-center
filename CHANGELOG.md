@@ -8,6 +8,9 @@ Every change pushed or merged to `main` carries its version number in the commit
 subject (`vX.Y.Z: …`), stamped automatically by the `commit-msg` hook — see
 [CONTRIBUTING.md](CONTRIBUTING.md).
 
+## [0.1.442] — 2026-07-01
+- Simplify Health token telemetry
+
 ## [0.1.441] — 2026-07-01
 - Fill HR team maintenance manager move route
 

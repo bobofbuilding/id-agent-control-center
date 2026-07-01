@@ -39,9 +39,6 @@ function totalTokens(row: UsageRow): number {
 function rowName(row: UsageRow): string {
   return 'model' in row ? row.model : row.agent;
 }
-function topUsage<T extends UsageRow>(rows?: T[]): T | undefined {
-  return [...(rows ?? [])].sort((a, b) => totalTokens(b) - totalTokens(a))[0];
-}
 function sortedUsage<T extends UsageRow>(rows?: T[]): T[] {
   return [...(rows ?? [])].sort((a, b) => totalTokens(b) - totalTokens(a));
 }
@@ -117,12 +114,6 @@ function UsageSection({
   const gaugeMax = usage ? niceMax(Math.max(gaugeVal, usage.day.avgTps, usage.week.avgTps)) : 100;
   const localAgents = usage?.day.agents ?? [];
   const localModels = usage?.day.models ?? [];
-  const topAgent = topUsage(localAgents);
-  const topModel = topUsage(localModels);
-  const throughputLabel = recentFresh ? 'Fresh sample' : '24h average';
-  const sourceLabel = usage?.recent
-    ? `${recentFresh ? '' : 'last turn · '}${usage.recent.agent} · ${usage.recent.model}${recentAt ? ` · ${ageLabel(recentAt)}` : ''}${recentFresh ? '' : ` · ${fmtTps(usage.recent.tps ?? 0)} tok/s`}`
-    : 'fallback from 24h average';
 
   return (
     <section className="card health-section">
@@ -133,7 +124,7 @@ function UsageSection({
         <button className="btn small" onClick={onRefresh}>Refresh</button>
       </div>
       {usage === undefined ? (
-        <p className="muted small">Loading local-model usage...</p>
+        <p className="muted small">Loading usage telemetry...</p>
       ) : usage === null ? (
         <p className="muted small">
           {error
@@ -146,33 +137,6 @@ function UsageSection({
         </p>
       ) : (
         <>
-          <div className="health-metrics">
-            <div className="health-metric primary">
-              <span>{throughputLabel}</span>
-              <b>{fmtTps(gaugeVal)} tok/s</b>
-              <small>{sourceLabel}</small>
-            </div>
-            <div className="health-metric">
-              <span>24h tokens</span>
-              <b>{fmt(usage.day.total)}</b>
-              <small>{usage.day.count} turns · {fmt(usage.day.avgPerQuery)}/turn</small>
-            </div>
-            <div className="health-metric">
-              <span>7d tokens</span>
-              <b>{fmt(usage.week.total)}</b>
-              <small>{usage.week.count} turns · {fmtTps(usage.week.avgTps)} tok/s avg</small>
-            </div>
-            <div className="health-metric">
-              <span>Top spender</span>
-              <b>{topAgent ? rowName(topAgent) : 'none'}</b>
-              <small>{topAgent ? `${fmt(totalTokens(topAgent))} tokens` : 'no 24h agent data'}</small>
-            </div>
-            <div className="health-metric">
-              <span>Top model</span>
-              <b>{topModel ? rowName(topModel) : 'none'}</b>
-              <small>{topModel ? `${fmt(totalTokens(topModel))} tokens` : 'no 24h model data'}</small>
-            </div>
-          </div>
           <div className="usage-grid">
             <div className="gauge-wrap">
               <Gauge value={gaugeVal} max={gaugeMax} />

@@ -422,12 +422,6 @@ button.chip.incompat:hover { border-color: var(--line); }
 /* Health -> token throughput */
 .health-section { display: flex; flex-direction: column; gap: 12px; }
 .health-section-head { align-items: baseline; flex-wrap: wrap; }
-.health-metrics { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; }
-.health-metric { border: 1px solid var(--line); border-radius: 8px; padding: 9px 11px; background: var(--bg-2); min-width: 0; display: flex; flex-direction: column; gap: 3px; }
-.health-metric.primary { border-color: color-mix(in srgb, var(--accent) 45%, var(--line)); background: color-mix(in srgb, var(--accent) 8%, var(--bg-2)); }
-.health-metric span { color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: .04em; }
-.health-metric b { font-size: 18px; color: var(--text); overflow-wrap: anywhere; }
-.health-metric small { color: var(--muted); font-size: 11px; overflow-wrap: anywhere; }
 .usage-grid { display: flex; flex-wrap: wrap; gap: 14px; align-items: stretch; margin-top: 0; }
 .usage-breakdown { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 10px; }
 .gauge-wrap { display: flex; flex-direction: column; align-items: center; gap: 2px; min-width: 190px; }
