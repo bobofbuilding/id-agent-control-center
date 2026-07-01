@@ -503,11 +503,12 @@ Manager; this is the plumbing.)
   (used first for in-chat images; cloud is fallback).
 - **Local LLM stacks**: starter-first curated list with compact primary filters, an optional tag
   dropdown for advanced filters, **Scan running**, reviewed Install/Run-in-Terminal/Uninstall
-  actions, setup notes, docs ↗, and row-level **Add backend** once a scanned local server is live.
-- **Inference backends**: **⟳ Discover local servers** (+ Add / Add all), provider table (★ default,
-  enable, key badge, status, model list, **Connect & sync**, ✕), **Add a backend** (catalog or custom;
+  actions, setup notes, docs ↗, automatic backend add for matching live backend presets after a
+  scan, and row-level **Add backend** as a fallback once a scanned local server is live.
+- **Inference backends**: provider table (★ default, enable, key badge, status, model list,
+  **Connect & sync**, ✕), API/cloud-focused **Add a backend** catalog or custom API endpoint,
   provider-specific key requirements, NVIDIA API Catalog preset models, and cloud keys auto-detected
-  from env).
+  from env. Local server setup belongs to Local LLM stacks above.
 
 **Data & actions:** `app:hardware`, `manager:capabilities`, `app:version`, `update:status/check/
 getSettings/setSettings`, `subs:status/signin/signout/install`, `manager:localConcurrency/

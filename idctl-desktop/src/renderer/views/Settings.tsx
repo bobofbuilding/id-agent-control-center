@@ -17,7 +17,7 @@ const MODEL_CAPS: ModelCapability[] = ['general', 'tools', 'reasoning', 'coding'
 const STARTER_LOCAL_MODEL_ID = 'qwen3:1.7b';
 const SUB_NOTICE_TTL_MS = 18_000;
 const SUB_AUTO_REFRESH_MS = 5 * 60 * 1000;
-const LOCAL_FIRST_PROVIDER = findProvider('ollama');
+const API_FIRST_PROVIDER = PROVIDER_CATALOG.find((e) => !e.local) ?? findProvider('openai');
 const DISCOVERY_MAX_AGE_MS = 2 * 60 * 1000;
 const STACK_BACKEND_PRESET_FILTER = 'backend-presets';
 const STACK_PRIMARY_FILTERS = ['all', STACK_BACKEND_PRESET_FILTER, 'start-here', 'easy', 'guided', 'advanced'];
@@ -37,7 +37,7 @@ type HardwareInfo = { platform: string; arch: string; appleSilicon: boolean; cpu
 type Discovered = DiscoveredServer & { alreadyAdded: boolean };
 type LocalStackInstallStatus = { id: string; installed: boolean; source?: string; detail?: string; checkedAt: number };
 
-const KINDS: ProviderKind[] = ['ollama', 'lmstudio', 'openai-compatible', 'anthropic', 'openai'];
+const API_KINDS: ProviderKind[] = ['openai-compatible', 'openai', 'anthropic'];
 
 /** Provider profile enriched by the bridge with where its key resolves from. */
 type ProviderRow = ProviderProfile & { keySource?: 'config' | 'env' | 'none'; needsKey?: boolean };
@@ -113,10 +113,10 @@ export function Settings({ store, navigate }: { store: FleetStore; navigate?: (v
   const [expanded, setExpanded] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   // add-provider form
-  const [catalogId, setCatalogId] = useState<string>(LOCAL_FIRST_PROVIDER?.id ?? 'ollama');
-  const [kind, setKind] = useState<ProviderKind>(LOCAL_FIRST_PROVIDER?.kind ?? 'ollama');
-  const [name, setName] = useState(LOCAL_FIRST_PROVIDER?.id ?? 'ollama');
-  const [baseUrl, setBaseUrl] = useState(LOCAL_FIRST_PROVIDER?.baseUrl ?? defaultBaseUrl('ollama'));
+  const [catalogId, setCatalogId] = useState<string>(API_FIRST_PROVIDER?.id ?? 'openai');
+  const [kind, setKind] = useState<ProviderKind>(API_FIRST_PROVIDER?.kind ?? 'openai');
+  const [name, setName] = useState(API_FIRST_PROVIDER?.id ?? 'openai');
+  const [baseUrl, setBaseUrl] = useState(API_FIRST_PROVIDER?.baseUrl ?? defaultBaseUrl('openai'));
   const [apiKey, setApiKey] = useState('');
   const [replaceProviderArmed, setReplaceProviderArmed] = useState(false);
   const [providerMsg, setProviderMsg] = useState('');
@@ -134,7 +134,12 @@ export function Settings({ store, navigate }: { store: FleetStore; navigate?: (v
   function pickProvider(id: string) {
     resetProviderAddReview();
     setCatalogId(id);
-    if (id === 'custom') { setKind('openai-compatible'); setBaseUrl(defaultBaseUrl('openai-compatible')); return; }
+    if (id === 'custom') {
+      setKind('openai-compatible');
+      setName('');
+      setBaseUrl(defaultBaseUrl('openai-compatible'));
+      return;
+    }
     const e = findProvider(id);
     if (!e) return;
     setKind(e.kind);
@@ -633,16 +638,20 @@ export function Settings({ store, navigate }: { store: FleetStore; navigate?: (v
       setStackInstallChecking(false);
     }
   }
-  async function runDiscover(): Promise<Discovered[]> {
+  async function runDiscover(opts: { autoAddKnownStacks?: boolean } = {}): Promise<Discovered[]> {
     setDiscovering(true);
     try {
       const [found] = await Promise.all([
         call<Discovered[]>('providers:discover').catch(() => []),
         checkStackInstalls(),
       ]);
-      setDiscovered(found);
+      const autoAddedUrls = opts.autoAddKnownStacks ? await autoAddKnownStackBackends(found) : new Set<string>();
+      const displayed = autoAddedUrls.size
+        ? found.map((s) => autoAddedUrls.has(normUrl(s.baseUrl)) ? { ...s, alreadyAdded: true } : s)
+        : found;
+      setDiscovered(displayed);
       setDiscoveredAt(Date.now());
-      return found;
+      return displayed;
     } finally {
       setDiscovering(false);
     }
@@ -650,10 +659,6 @@ export function Settings({ store, navigate }: { store: FleetStore; navigate?: (v
   /** Normalize a baseUrl for matching a discovered server against existing providers. */
   function normUrl(u: string): string {
     return u.trim().toLowerCase().replace('://localhost', '://127.0.0.1').replace(/\/+$/, '');
-  }
-  /** "Already a backend?" recomputed against the LIVE providers (not the frozen scan flag). */
-  function isAdded(s: Discovered): boolean {
-    return providers.some((p) => normUrl(p.baseUrl) === normUrl(s.baseUrl)) || s.alreadyAdded;
   }
   /** A provider name that won't overwrite an existing, differently-pointed provider. */
   function uniqueProviderName(base: string, taken: Set<string>): string {
@@ -676,6 +681,38 @@ export function Settings({ store, navigate }: { store: FleetStore; navigate?: (v
   }
   function findDiscoveredMatch(list: Discovered[], s: Discovered): Discovered | undefined {
     return list.find((x) => x.id === s.id && x.kind === s.kind && normUrl(x.baseUrl) === normUrl(s.baseUrl));
+  }
+  async function autoAddKnownStackBackends(found: Discovered[]): Promise<Set<string>> {
+    const stackBases = new Set(TOP_LOCAL_STACKS.map((s) => s.apiBase).filter((u): u is string => Boolean(u)).map(normUrl));
+    const liveKnown = found.filter((s) => s.status === 'live' && stackBases.has(normUrl(s.baseUrl)));
+    if (!liveKnown.length) return new Set();
+    const latest = await freshProviders();
+    const existingUrls = new Set(latest.map((p) => normUrl(p.baseUrl)));
+    const pending = liveKnown.filter((s) => !existingUrls.has(normUrl(s.baseUrl)));
+    if (!pending.length) {
+      setProviders(latest);
+      return new Set();
+    }
+    setBusy(true);
+    const addedUrls = new Set<string>();
+    const addedNames: string[] = [];
+    try {
+      const taken = new Set(latest.map((p) => p.name));
+      let nextProviders: ProviderRow[] | null = null;
+      for (const server of pending) {
+        const providerName = uniqueProviderName(server.id, taken);
+        taken.add(providerName);
+        nextProviders = await call<ProviderRow[]>('providers:add', discoveredToProfile(server, providerName));
+        addedUrls.add(normUrl(server.baseUrl));
+        addedNames.push(providerName);
+      }
+      setProviders(nextProviders ?? latest);
+      setProviderMsg(`auto-added local backend${addedNames.length === 1 ? '' : 's'}: ${addedNames.join(', ')}`);
+      setStackMsg(`auto-added backend${addedNames.length === 1 ? '' : 's'}: ${addedNames.join(', ')}`);
+      return addedUrls;
+    } finally {
+      setBusy(false);
+    }
   }
   async function freshDiscoveredBeforeAdd(s: Discovered): Promise<Discovered | null> {
     const fresh = await runDiscover();
@@ -735,52 +772,6 @@ export function Settings({ store, navigate }: { store: FleetStore; navigate?: (v
     await addDiscovered(match);
     setStackMsg(`${s.name} added as an inference backend.`);
   }
-  async function addAllDiscovered() {
-    setBusy(true);
-    try {
-      const latest = await freshProviders();
-      const latestByUrl = new Set(latest.map((p) => normUrl(p.baseUrl)));
-      const freshDiscovered = await runDiscover();
-      const list = freshDiscovered.filter((s) => s.status === 'live' && !latestByUrl.has(normUrl(s.baseUrl)));
-      if (!list.length) {
-        setProviders(latest);
-        window.alert('No new live local servers to add. Refreshed the discovered server list.');
-        return;
-      }
-      if (!window.confirm(`Add ${list.length} live local inference backend${list.length === 1 ? '' : 's'}?\n\n${list.map((s) => `${s.name} · ${s.baseUrl}`).join('\n')}`)) return;
-      const afterConfirm = await freshProviders();
-      const afterScan = await runDiscover();
-      const verified: Discovered[] = [];
-      for (const before of list) {
-        const current = findDiscoveredMatch(afterScan, before);
-        if (!current || current.status !== 'live' || discoveredStamp(current) !== discoveredStamp(before)) {
-          setProviders(afterConfirm);
-          window.alert('Discovered backends changed during confirmation. Refreshed; review the live server list and try again.');
-          return;
-        }
-        verified.push(current);
-      }
-      const afterByUrl = new Set(afterConfirm.map((p) => normUrl(p.baseUrl)));
-      const stillNew = verified.filter((s) => !afterByUrl.has(normUrl(s.baseUrl)));
-      if (stillNew.length !== list.length) {
-        setProviders(afterConfirm);
-        await runDiscover();
-        window.alert('Discovered backends changed during confirmation. Refreshed; review the list and try again.');
-        return;
-      }
-      const taken = new Set(afterConfirm.map((p) => p.name));
-      for (const s of stillNew) {
-        const providerName = uniqueProviderName(s.id, taken);
-        taken.add(providerName);
-        await call('providers:add', discoveredToProfile(s, providerName));
-      }
-      await reload();
-      await runDiscover();
-    } finally {
-      setBusy(false);
-    }
-  }
-
   // Local models (Ollama): list installed + download a new one (streamed progress).
   const POPULAR = TOP_LOCAL_MODEL_CATALOG.map((m) => m.id);
   const [ollamaModels, setOllamaModels] = useState<{ name: string; size?: number; parameterSize?: string }[]>([]);
@@ -969,10 +960,6 @@ export function Settings({ store, navigate }: { store: FleetStore; navigate?: (v
   const addProviderName = name.trim() || kind;
   const addProviderBaseUrl = baseUrl.trim() || defaultBaseUrl(kind);
   const selectedProviderEntry = findProvider(catalogId);
-  const selectedProviderStack = selectedProviderEntry?.local
-    ? TOP_LOCAL_STACKS.find((s) => s.id === LOCAL_PROVIDER_STACK_IDS[selectedProviderEntry.id])
-    : undefined;
-  const selectedProviderStackVisible = selectedProviderStack ? filteredStacks.some((s) => s.id === selectedProviderStack.id) : false;
   const addNeedsKey = providerNeedsKey({ name: addProviderName, kind, baseUrl: addProviderBaseUrl });
   const replaceCandidate = findProviderRow(providers, addProviderName);
   const providerDraft: ProviderProfile = {
@@ -985,11 +972,7 @@ export function Settings({ store, navigate }: { store: FleetStore; navigate?: (v
   };
   const replaceProviderNoop = providerReplaceIsNoop(replaceCandidate, providerDraft);
   const replaceProviderNeedsReview = !!replaceCandidate && !replaceProviderNoop;
-  const showLocalInstallHandoff = !!(selectedProviderEntry?.local && selectedProviderStack && !selectedProviderStackVisible);
-  const showProviderCatalogNote = !!selectedProviderEntry && (
-    showLocalInstallHandoff ||
-    (!selectedProviderEntry.local && !!(selectedProviderEntry.notes || selectedProviderEntry.models?.length))
-  );
+  const showProviderCatalogNote = !!(selectedProviderEntry && !selectedProviderEntry.local && (selectedProviderEntry.notes || selectedProviderEntry.models?.length));
   const showProviderKeyHint = addNeedsKey && !selectedProviderEntry?.local;
   const defaultProvider = providers.find((p) => p.default);
   const enabledProviders = providers.filter((p) => p.enabled !== false);
@@ -1839,7 +1822,7 @@ export function Settings({ store, navigate }: { store: FleetStore; navigate?: (v
             <span className="muted small">{stackFilterCount}</span>
           </div>
           <div className="stack-toolbar-actions">
-            <button className="btn small" disabled={discovering} onClick={() => void runDiscover()}>{discovering ? 'Scanning…' : 'Scan running'}</button>
+            <button className="btn small" disabled={discovering} title="Scan local APIs and auto-add live backend presets" onClick={() => void runDiscover({ autoAddKnownStacks: true })}>{discovering ? 'Scanning…' : 'Scan running'}</button>
             {discoveredAt ? (
               <span className={`small ${discoveryStale ? 'warn-text' : 'muted'}`}>
                 scan {timeAgo(discoveredAt)}{discoveryStale ? ' · refresh before routing' : ''}
@@ -1934,54 +1917,6 @@ export function Settings({ store, navigate }: { store: FleetStore; navigate?: (v
       <section className="card grow">
         <h3>Inference backends</h3>
 
-        <div className="discover-local">
-          <div className="row-actions" style={{ alignItems: 'baseline' }}>
-            <span className="muted small grow">Auto-detect local LLM servers running on this machine (Ollama, LM Studio, llama.cpp, vLLM…) and add them in one click.</span>
-            <button className="btn" disabled={discovering} onClick={() => void runDiscover()}>
-              {discovering ? 'Scanning…' : '⟳ Discover local servers'}
-            </button>
-          </div>
-          {discoveredAt ? (
-            <p className={`small ${discoveryStale ? 'warn-text' : 'muted'}`} style={{ marginTop: 6 }}>
-              Scan snapshot: {timeAgo(discoveredAt)}. Add re-checks the server before writing a backend; refresh before making routing decisions from this list.
-            </p>
-          ) : null}
-          {discovered ? (
-            discovered.length === 0 ? (
-              <p className="muted small" style={{ marginTop: 6 }}>
-                No local servers found on the usual ports. Start one (e.g. <span className="mono">ollama serve</span> or LM Studio's server) and scan again.
-              </p>
-            ) : (
-              <div className="discovered-list">
-                {discovered.map((s) => (
-                  <div className="discovered-row" key={s.id}>
-                    <span className="b">{s.name}</span>
-                    <span className="muted small mono grow" title={s.sharesPortWith?.length ? `also possibly: ${s.sharesPortWith.join(', ')}` : undefined}>
-                      {s.kind} · {s.baseUrl}
-                    </span>
-                    {s.status === 'auth-error' ? (
-                      <span className="warn-text small" title="Server is up but its API needs a key">up · needs key</span>
-                    ) : (
-                      <span className="ok-text small">{s.modelCount} model{s.modelCount === 1 ? '' : 's'}</span>
-                    )}
-                    {isAdded(s) ? (
-                      <span className="muted small">added ✓</span>
-                    ) : (
-                      <button className="btn small primary" disabled={busy} onClick={() => void addDiscovered(s)}>Add</button>
-                    )}
-                  </div>
-                ))}
-                {discovered.some((s) => !isAdded(s) && s.status === 'live') ? (
-                  <div className="row-actions" style={{ marginTop: 6 }}>
-                    <span className="grow" />
-                    <button className="btn small" disabled={busy} onClick={() => void addAllDiscovered()}>Add all new</button>
-                  </div>
-                ) : null}
-              </div>
-            )
-          ) : null}
-        </div>
-
         <table className="grid">
           <thead>
             <tr>
@@ -2070,7 +2005,7 @@ export function Settings({ store, navigate }: { store: FleetStore; navigate?: (v
             {providers.length === 0 ? (
               <tr>
                 <td colSpan={6} className="muted center pad">
-                  No backends yet — add one below (e.g. Ollama at http://127.0.0.1:11434), then Connect &amp; sync.
+                  No backends yet — add an API backend below, or scan a local stack above.
                 </td>
               </tr>
             ) : null}
@@ -2079,9 +2014,6 @@ export function Settings({ store, navigate }: { store: FleetStore; navigate?: (v
 
         <div className="add-provider">
           <select value={catalogId} onChange={(e) => pickProvider(e.target.value)} title="Pick a provider to fill its endpoint">
-            <optgroup label="Local">
-              {PROVIDER_CATALOG.filter((e) => e.local).map((e) => <option key={e.id} value={e.id}>{e.name}</option>)}
-            </optgroup>
             <optgroup label="API / Cloud">
               {PROVIDER_CATALOG.filter((e) => !e.local).map((e) => <option key={e.id} value={e.id}>{e.name}</option>)}
             </optgroup>
@@ -2089,7 +2021,7 @@ export function Settings({ store, navigate }: { store: FleetStore; navigate?: (v
           </select>
           {catalogId === 'custom' ? (
             <select value={kind} onChange={(e) => { const k = e.target.value as ProviderKind; resetProviderAddReview(); setKind(k); setBaseUrl(defaultBaseUrl(k)); }}>
-              {KINDS.map((k) => <option key={k} value={k}>{k}</option>)}
+              {API_KINDS.map((k) => <option key={k} value={k}>{k}</option>)}
             </select>
           ) : null}
           <input placeholder="name" value={name} onChange={(e) => { resetProviderAddReview(); setName(e.target.value); }} />
@@ -2116,16 +2048,8 @@ export function Settings({ store, navigate }: { store: FleetStore; navigate?: (v
         ) : null}
         {selectedProviderEntry && showProviderCatalogNote ? (
           <div className="provider-catalog-note">
-            {showLocalInstallHandoff && selectedProviderStack ? (
-              <>
-                <span className="muted small">
-                  Install card: <b>{selectedProviderStack.name}</b>{stackEaseLabel(selectedProviderStack) ? ` · ${stackEaseLabel(selectedProviderStack)}` : ''}.
-                </span>
-                <button className="btn small" onClick={() => setStackTag(STACK_BACKEND_PRESET_FILTER)}>Show backend presets</button>
-              </>
-            ) : null}
-            {!selectedProviderEntry.local && selectedProviderEntry.notes ? <span className="muted small">{selectedProviderEntry.notes}</span> : null}
-            {!selectedProviderEntry.local && selectedProviderEntry.models?.length ? (
+            {selectedProviderEntry.notes ? <span className="muted small">{selectedProviderEntry.notes}</span> : null}
+            {selectedProviderEntry.models?.length ? (
               <span className="chips">
                 {selectedProviderEntry.models.map((m) => <span className="chip tag mono" key={m}>{m}</span>)}
               </span>
