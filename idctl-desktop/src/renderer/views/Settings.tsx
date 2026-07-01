@@ -982,9 +982,11 @@ export function Settings({ store, navigate }: { store: FleetStore; navigate?: (v
       if (r.ok) await loadOllama();
     } finally { setRemoving(null); setConfirmRemove(null); }
   }
-  // Stack install commands: runnable (open Terminal) vs app-download (link out).
+  // Stack install/uninstall commands: runnable (open Terminal) vs app-download (link out).
   const RUNNABLE_RE = /^(brew|pip|pipx|uv|cargo|curl|docker|conda|npm|npx)\b/;
-  function stackCmd(s: LocalStackEntry): string { return (s.install ?? '').split('#')[0].trim(); }
+  function stackCommand(command?: string): string {
+    return (command ?? '').split('#')[0].trim();
+  }
   function stackEaseLabel(s: LocalStackEntry): string {
     if (s.installEase === 'start-here') return 'start here';
     if (s.installEase === 'easy') return 'easy';
@@ -999,20 +1001,46 @@ export function Settings({ store, navigate }: { store: FleetStore; navigate?: (v
   function stackPrimaryAction(s: LocalStackEntry): boolean {
     return s.installEase === 'start-here' || s.installEase === 'easy';
   }
-  function stackActionLabel(s: LocalStackEntry): string {
+  function stackInstallLabel(s: LocalStackEntry): string {
     if (stackPrimaryAction(s)) return 'Install';
     if (s.installEase === 'guided') return 'Review steps';
     return 'Review command';
   }
-  function stackInstallCmd(s: LocalStackEntry): string | null { const c = stackCmd(s); return c && RUNNABLE_RE.test(c) ? c : null; }
-  async function runStackCmd(cmd: string) {
+  function stackInstallCmd(s: LocalStackEntry): string | null {
+    const c = stackCommand(s.install);
+    return c && RUNNABLE_RE.test(c) ? c : null;
+  }
+  function stackUninstallCmd(s: LocalStackEntry): string | null {
+    const c = stackCommand(s.uninstall);
+    return c && RUNNABLE_RE.test(c) ? c : null;
+  }
+  function stackConfiguredProviders(s: LocalStackEntry): ProviderRow[] {
+    const apiBase = s.apiBase ? normUrl(s.apiBase) : null;
+    return providers.filter((p) => apiBase && normUrl(p.baseUrl) === apiBase);
+  }
+  function reviewStackUninstall(s: LocalStackEntry, running: boolean, configuredProviders: ProviderRow[]) {
+    const warnings = [
+      running ? `A server is currently detected on port ${s.defaultPort}; stop it before uninstalling.` : '',
+      configuredProviders.length ? `A matching inference backend is configured (${configuredProviders.map((p) => p.name).join(', ')}); remove or disable it before relying on routing again.` : '',
+      s.uninstallNote ?? '',
+    ].filter(Boolean);
+    if (warnings.length && !window.confirm([
+      `Review uninstall for ${s.name}?`,
+      '',
+      ...warnings.map((w) => `- ${w}`),
+      '',
+      'The command will open visibly in Terminal and can be cancelled there.',
+    ].join('\n'))) return;
+    setStackConfirm(`u:${s.id}`);
+  }
+  async function runStackCmd(cmd: string, action: 'install' | 'uninstall' = 'install') {
     setStackConfirm(null);
     const r = await call<{ ran: boolean }>('app:runInTerminal', cmd).catch(() => ({ ran: false }));
     if (r.ran) {
-      setStackMsg('opened Terminal — review and stop it there if anything looks wrong');
+      setStackMsg(`opened Terminal for ${action} — review and stop it there if anything looks wrong`);
     } else {
       await copyText(cmd);
-      setStackMsg('Terminal automation was blocked — command copied to clipboard');
+      setStackMsg(`Terminal automation was blocked — ${action} command copied to clipboard`);
     }
   }
   /** Real port conflict only: this stack's default port is ACTUALLY in use right now (a
@@ -1028,10 +1056,6 @@ export function Settings({ store, navigate }: { store: FleetStore; navigate?: (v
       return { level: 'warn', msg: `backend configured on port ${s.defaultPort}; scan running servers before reusing it` };
     }
     return null;
-  }
-  function stackConfigured(s: LocalStackEntry): boolean {
-    const apiBase = s.apiBase ? normUrl(s.apiBase) : null;
-    return providers.some((p) => apiBase && normUrl(p.baseUrl) === apiBase);
   }
   useEffect(() => {
     void loadOllama();
@@ -1472,7 +1496,7 @@ export function Settings({ store, navigate }: { store: FleetStore; navigate?: (v
       <section className="card">
         <h3>Local LLM stacks</h3>
         <p className="muted small" style={{ marginTop: -4 }}>
-          Self-hostable inference servers you can run <b>next to Ollama</b>. <b>Backend presets</b> matches the local choices under <b>Inference backends</b>; <b>start-here</b> narrows to Ollama and LM Studio. <b>Install</b> opens the reviewed command in your Terminal (visible and abortable — nothing runs silently). After installing + starting one, hit <b>⟳ Scan running</b> then add it below.
+          Self-hostable inference servers you can run <b>next to Ollama</b>. <b>Backend presets</b> matches the local choices under <b>Inference backends</b>; <b>start-here</b> narrows to Ollama and LM Studio. <b>Install</b> and <b>Uninstall</b> review the command first, then open Terminal visibly so nothing runs silently. After installing + starting one, hit <b>⟳ Scan running</b> then add it below.
         </p>
         <div className="row-actions" style={{ flexWrap: 'wrap', gap: 6 }}>
           <span className="chips grow">
@@ -1500,7 +1524,11 @@ export function Settings({ store, navigate }: { store: FleetStore; navigate?: (v
             const running = s.defaultPort != null && runningPorts.has(s.defaultPort);
             const pw = stackPortWarn(s);
             const ic = stackInstallCmd(s);
-            const configured = stackConfigured(s);
+            const uc = stackUninstallCmd(s);
+            const configuredProviders = stackConfiguredProviders(s);
+            const configured = configuredProviders.length > 0;
+            const confirmInstall = stackConfirm === `i:${s.id}`;
+            const confirmUninstall = stackConfirm === `u:${s.id}`;
             return (
               <div className="stack-row" key={s.id}>
                 <div className="stack-head">
@@ -1522,18 +1550,32 @@ export function Settings({ store, navigate }: { store: FleetStore; navigate?: (v
                 <p className="muted small stack-blurb">{s.blurb}</p>
                 {s.installNote ? <p className="muted small stack-blurb">{s.installNote}</p> : null}
                 <div className="stack-install">
-                  {ic ? (
-                    stackConfirm === `i:${s.id}` ? (
-                      <>
-                        <code className="mono">{ic}</code>
-                        <button className={`btn small${stackPrimaryAction(s) ? ' primary' : ''}`} title="Runs in your Terminal — visible and abortable" onClick={() => void runStackCmd(ic)}>Run in Terminal</button>
-                        <button className="btn small" onClick={() => setStackConfirm(null)}>Cancel</button>
-                      </>
-                    ) : (
-                      <button className={`btn small${stackPrimaryAction(s) ? ' primary' : ''}`} title={ic} onClick={() => setStackConfirm(`i:${s.id}`)}>{stackActionLabel(s)}</button>
-                    )
+                  {confirmInstall && ic ? (
+                    <>
+                      <code className="mono">{ic}</code>
+                      <button className={`btn small${stackPrimaryAction(s) ? ' primary' : ''}`} title="Runs in your Terminal — visible and abortable" onClick={() => void runStackCmd(ic, 'install')}>Run install</button>
+                      <button className="btn small" onClick={() => setStackConfirm(null)}>Cancel</button>
+                    </>
+                  ) : confirmUninstall && uc ? (
+                    <>
+                      <code className="mono">{uc}</code>
+                      <button className="btn small" title="Runs in your Terminal — visible and abortable" onClick={() => void runStackCmd(uc, 'uninstall')}>Run uninstall</button>
+                      <button className="btn small" onClick={() => setStackConfirm(null)}>Cancel</button>
+                    </>
                   ) : (
-                    <a className="btn small" href={s.homepage} target="_blank" rel="noreferrer" title="No CLI install — opens the download page">Get ↗</a>
+                    <>
+                      {ic ? (
+                        <button className={`btn small${stackPrimaryAction(s) ? ' primary' : ''}`} title={ic} onClick={() => setStackConfirm(`i:${s.id}`)}>{stackInstallLabel(s)}</button>
+                      ) : (
+                        <a className="btn small" href={s.homepage} target="_blank" rel="noreferrer" title="No CLI install — opens the download page">Get ↗</a>
+                      )}
+                      {configuredProviders.length === 1 ? (
+                        <button className="btn small" title={`Remove inference backend ${configuredProviders[0].name}; does not uninstall the app/server`} onClick={() => void removeProviderProfile(configuredProviders[0].name)}>Remove backend</button>
+                      ) : null}
+                      {uc ? (
+                        <button className="btn small" title={s.uninstallNote ?? uc} onClick={() => reviewStackUninstall(s, running, configuredProviders)}>Uninstall</button>
+                      ) : null}
+                    </>
                   )}
                 </div>
               </div>
