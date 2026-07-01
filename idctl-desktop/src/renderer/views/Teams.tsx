@@ -1414,6 +1414,16 @@ export function Teams({ store, focus, onFocusHandled }: { store: FleetStore; foc
     && (maintMode === 'rename' || allKnownTeamNames.includes(maintTarget))
     && maintCollisions.length === 0
     && maintSourceAgents.length > 0;
+  const maintWarnings = [
+    maintFrom === PRIMARY_TEAM ? `${PRIMARY_TEAM} cannot be renamed or merged away` : '',
+    maintTarget && isReservedName(maintTarget) ? `"${maintTarget}" is reserved` : '',
+    maintFrom && maintTarget && maintFrom === maintTarget ? 'source and target are the same' : '',
+    maintCollisions.length ? `name collision: ${maintCollisions.join(', ')}` : '',
+    maintTarget && maintMode === 'rename' && allKnownTeamNames.includes(maintTarget) && maintTargetAgents.length ? 'target has agents; use Merge' : '',
+  ].filter(Boolean);
+  const maintSummary = maintFrom
+    ? `${maintSourceAgents.length} agent${maintSourceAgents.length === 1 ? '' : 's'} will move; routing and instructions sync after review.`
+    : 'Choose a source team to rename or merge.';
   async function runTeamMaintenance() {
     const source = maintFrom;
     const target = maintTarget;
@@ -1727,46 +1737,41 @@ export function Teams({ store, focus, onFocusHandled }: { store: FleetStore; foc
             onDone={(createdTeam) => { if (createdTeam) void store.setTeam(createdTeam); store.refresh(); }}
           />
           <section className="card" style={{ marginTop: 12 }}>
-            <div className="row-actions" style={{ justifyContent: 'space-between', alignItems: 'center', gap: 8 }}>
+            <div className="row-actions" style={{ justifyContent: 'space-between', alignItems: 'center', gap: 8, marginBottom: 8 }}>
               <h3 style={{ margin: 0 }}>Team maintenance</h3>
               {maintMsg ? <span className={`small ${/failed|blocked/.test(maintMsg) ? 'status-error' : 'ok-text'}`}>{maintMsg}</span> : null}
             </div>
-            <p className="muted small" style={{ marginTop: 4 }}>
-              Rename and merge are guarded move sequences: HR rechecks the source roster, moves each agent, preserves coordinator/secondary mappings where possible, syncs org instructions, then optionally deletes the empty source team.
-            </p>
-            <div className="kv" style={{ gridTemplateColumns: '90px 1fr 90px 1fr', gap: '8px 10px', alignItems: 'center' }}>
-              <span>mode</span>
-              <select className="cell-select" disabled={maintBusy} value={maintMode} onChange={(e) => setMaintMode(e.target.value as 'rename' | 'merge')}>
+            <div className="row-actions" style={{ justifyContent: 'flex-start', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+              <select className="cell-select" disabled={maintBusy} value={maintMode} onChange={(e) => { setMaintMode(e.target.value as 'rename' | 'merge'); setMaintTo(''); }}>
                 <option value="rename">Rename team</option>
                 <option value="merge">Merge into team</option>
               </select>
-              <span>source</span>
               <select className="cell-select" disabled={maintBusy} value={maintFrom} onChange={(e) => setMaintFrom(e.target.value)}>
-                <option value="">choose source…</option>
+                <option value="">source team…</option>
                 {allKnownTeamNames.filter((t) => t !== PRIMARY_TEAM).map((t) => <option key={t} value={t}>{t}</option>)}
               </select>
-              <span>{maintMode === 'rename' ? 'new name' : 'target'}</span>
+              <span className="muted small">→</span>
               {maintMode === 'rename' ? (
                 <input value={maintTo} disabled={maintBusy} placeholder="new-team-name" onChange={(e) => setMaintTo(e.target.value)} onBlur={() => setMaintTo(cleanTeamName(maintTo))} />
               ) : (
                 <select className="cell-select" disabled={maintBusy} value={maintTo} onChange={(e) => setMaintTo(e.target.value)}>
-                  <option value="">choose target…</option>
+                  <option value="">target team…</option>
                   {allKnownTeamNames.filter((t) => t !== maintFrom).map((t) => <option key={t} value={t}>{t}</option>)}
                 </select>
               )}
-              <span>after move</span>
-              <label className="muted small"><input type="checkbox" checked={maintDeleteSource} disabled={maintBusy} onChange={(e) => setMaintDeleteSource(e.target.checked)} /> delete empty source team</label>
-            </div>
-            <div className="row-actions" style={{ marginTop: 10, alignItems: 'center' }}>
-              <span className="muted small grow">
-                {maintFrom ? `${maintSourceAgents.length} source agent(s)` : 'choose a source'}
-                {maintCollisions.length ? <span className="warn-text"> · name collision: {maintCollisions.join(', ')}</span> : null}
-                {maintFrom === PRIMARY_TEAM ? <span className="warn-text"> · default cannot be renamed or merged away</span> : null}
-                {maintTarget && maintMode === 'rename' && allKnownTeamNames.includes(maintTarget) && maintTargetAgents.length ? <span className="warn-text"> · target has agents; use Merge</span> : null}
-              </span>
+              <label className="muted small" title="After all agents move, remove the source team if it is empty.">
+                <input type="checkbox" checked={maintDeleteSource} disabled={maintBusy} onChange={(e) => setMaintDeleteSource(e.target.checked)} /> delete empty source
+              </label>
+              <span className="grow" />
               <button className="btn primary" disabled={maintBusy || !maintCanRun} onClick={() => void runTeamMaintenance()}>
-                {maintBusy ? 'Working…' : maintMode === 'rename' ? 'Rename team' : 'Merge team'}
+                {maintBusy ? 'Working…' : maintMode === 'rename' ? 'Rename' : 'Merge'}
               </button>
+            </div>
+            <div className="row-actions" style={{ marginTop: 8, justifyContent: 'flex-start', alignItems: 'center' }}>
+              <span className="muted small grow">
+                {maintSummary}
+                {maintWarnings.length ? <span className="warn-text"> {maintWarnings.join(' · ')}</span> : null}
+              </span>
             </div>
           </section>
         </>
