@@ -473,8 +473,9 @@ Manager; this is the plumbing.)
 - **Managed subscription sign-ins**: CLI OAuth/device/browser flows (no API key) for `claude-*`,
   `codex`, `cursor-cli`, `grok`, `gemini`, `copilot`, `kiro-cli`, and legacy `q`. Rows distinguish
   status-inspectable CLIs from TUI-owned account state, auto-detect installed binaries after a
-  visible installer handoff, and keep TUI-owned CLIs such as Grok/Gemini/Copilot read-only in
-  Settings instead of opening Terminal popups; metered API providers stay under Inference backends.
+  visible installer handoff, and keep managed account launches inside the Settings row even when the
+  vendor CLI owns the final TUI/device-flow prompt; metered API providers stay under Inference
+  backends.
   Agent Harness pickers only offer runtimes that Settings can currently prove through sign-in,
   install, route-ready API backend, or synced local-backend evidence; existing assigned runtimes
   remain visible as the current value for review.

@@ -213,7 +213,8 @@ export function Settings({ store, navigate }: { store: FleetStore; navigate?: (v
           window.alert(`sign-in failed: ${r.error}`);
         }
       }
-      // The OAuth flow runs in your browser; re-check status shortly after.
+      const label = managedSubRows.find((row) => row.key === provider)?.label ?? provider;
+      setSubNotice(`${label} account flow started from IDACC. Finish the vendor prompt/browser flow, then Re-check if the row does not update automatically.`);
       setTimeout(() => void recheckSubs(), 4000);
     } finally {
       setSubBusy(null);
@@ -249,7 +250,7 @@ export function Settings({ store, navigate }: { store: FleetStore; navigate?: (v
         setSubs(next);
         const current = next[provider];
         if (current?.installed) {
-          setSubNotice(`${label} detected. It is now available in IDACC; open the CLI only when you want to sign in or switch accounts.`);
+          setSubNotice(`${label} detected. It is now available in IDACC; use Manage account here when you want to sign in or switch accounts.`);
         } else if (idx === arr.length - 1) {
           setSubNotice(`${label} was not detected yet. Finish the installer, make sure the CLI is on PATH, then Re-check.`);
         }
@@ -1288,7 +1289,7 @@ export function Settings({ store, navigate }: { store: FleetStore; navigate?: (v
       return (
         <span title={s.detail}>
           <span className="ok-text">● installed</span>
-          <span className="muted"> · account managed outside IDACC</span>
+          <span className="muted"> · managed in IDACC</span>
         </span>
       );
     }
@@ -1297,13 +1298,13 @@ export function Settings({ store, navigate }: { store: FleetStore; navigate?: (v
   function subPrimaryLabel(s: Sub | undefined): string {
     if (s?.installed === false) return s.installSupported ? 'Install' : 'Install unavailable';
     if (s?.loggedIn && s.loginSupported) return 'Switch account';
-    if (s?.statusSupported === false) return 'Managed outside IDACC';
+    if (s?.statusSupported === false && s?.loginSupported) return 'Manage account';
+    if (s?.statusSupported === false) return 'Installed';
     return s?.loginSupported ? 'Sign in' : 'Managed in CLI';
   }
   function subPrimaryDisabled(key: SubKey, s: Sub | undefined): boolean {
     if (subBusy === key) return true;
     if (s?.installed === false) return !s.installSupported;
-    if (s?.statusSupported === false) return true;
     return !s?.loginSupported;
   }
 
@@ -1503,14 +1504,14 @@ export function Settings({ store, navigate }: { store: FleetStore; navigate?: (v
       <section className="card">
         <h3>Managed subscription sign-ins</h3>
         <p className="muted small" style={{ marginTop: -4 }}>
-          Local CLI sign-ins and subscription-backed runtimes. Some CLIs expose status/logout; others keep account state inside their own TUI. Metered API providers still live under <b>Inference backends</b>.
+          Local CLI sign-ins and subscription-backed runtimes are launched and tracked from IDACC. Some CLIs expose status/logout; others keep account state inside their own TUI after IDACC starts the flow. Metered API providers still live under <b>Inference backends</b>.
         </p>
         {managedSubRows.map(({ key, label, runtime }) => {
           const s = subs?.[key];
           const canInstall = s?.installed === false && s.installSupported;
-          const canLaunch = s?.installed !== false && s?.loginSupported && s.statusSupported !== false;
+          const canLaunch = s?.installed !== false && s?.loginSupported;
           const showPrimary = canInstall || canLaunch;
-          const showSignOut = !!(s?.loggedIn && s.logoutSupported);
+          const showSignOut = !!((s?.loggedIn || s?.statusSupported === false) && s.logoutSupported);
           return (
             <div className="kv" key={key} style={{ marginBottom: 8 }}>
               <span>{label}</span>
@@ -1548,7 +1549,7 @@ export function Settings({ store, navigate }: { store: FleetStore; navigate?: (v
           );
         })}
         <div className="row-actions" style={{ marginTop: 6 }}>
-          <span className="muted small grow">Perplexity, xAI API, OpenRouter, NVIDIA, Groq, and similar metered accounts stay in Inference backends. The <span className="mono">q</span> row is legacy; prefer <span className="mono">kiro-cli</span> for current Amazon Q/Kiro CLI installs.</span>
+          <span className="muted small grow">Perplexity, xAI API, OpenRouter, NVIDIA, Groq API, and similar metered accounts stay in Inference backends. The <span className="mono">q</span> row is legacy; prefer <span className="mono">kiro-cli</span> for current Amazon Q/Kiro CLI installs.</span>
           <button className="btn" disabled={subsBusy} onClick={() => void recheckSubs()}>{subsBusy ? 'Checking…' : 'Re-check'}</button>
         </div>
         {subNotice ? <p className="muted small" style={{ marginTop: 8 }}>{subNotice}</p> : null}
