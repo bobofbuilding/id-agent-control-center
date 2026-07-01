@@ -349,10 +349,11 @@ questions through `legal/general-counsel`.
 - **AI Team Builder** (describe/paste a spec → live deterministic parse → **✦ Build with AI**
   (`team:designAI`, constrained to valid runtimes/models/skills) → editable roster (per-agent ★lead,
   name, runtime, model, role, persona/instructions, skill chips) → fleet-wide options (MCP server,
-  heartbeat, OWS wallet, probe-after) → coordination preset + cross-team relay → **Build** for a
-  new team or **Build + merge** for an existing target (sequential `onboard:run` with duplicate
-  names skipped, a live checklist, then auto-wires coordinator + instructions + relay) → per-agent
-  **↻ retry**).
+  heartbeat, OWS wallet, probe-after) → opt-in coordination preset (off by default, with an extra
+  primary-route warning for default-team wiring) + cross-team relay → **Build** for a new team or
+  **Build + merge** for an existing target (sequential `onboard:run` with duplicate names skipped,
+  a live checklist, then optional coordinator/default-primary + instructions + relay wiring) →
+  per-agent **↻ retry**).
 - **Create team from template/config** (+ From template): pick source (default template / library
   template / saved config), name it, debounced **Preflight** preview, create.
 - **Structure**: live **team graph** (lead-on-top, click to select/switch), **⭑ make primary lead**,

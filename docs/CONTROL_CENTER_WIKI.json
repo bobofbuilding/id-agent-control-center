@@ -1906,7 +1906,7 @@
           "id": "build-team",
           "label": "Build",
           "type": "button",
-          "description": "Fresh-reads the target team roster before onboarding, then rechecks hierarchy and relay stamps before post-build coordinator, default-primary, and relay writes. When the target team already exists, Build becomes Build + merge: duplicate names are skipped and reviewed new agent rows are onboarded directly into the target without requiring a separate Team maintenance merge. Building the default leadership blueprint can promote default/lead to primary and installs a default-primary validation preset whose ready route examples match the first-run starter team leads; building a non-default team while the default return path is incomplete adds an explicit confirmation.",
+          "description": "Fresh-reads the target team roster before onboarding, then rechecks hierarchy and relay stamps before post-build coordinator, default-primary, and relay writes. Wire agentic routing is off by default, resets when the target team changes, and requires an immediate confirmation before it can be enabled; default-team wiring also adds a primary-route guard showing the current and requested primary before any primary write can occur. When the target team already exists, Build becomes Build + merge: duplicate names are skipped and reviewed new agent rows are onboarded directly into the target without requiring a separate Team maintenance merge. Building the default leadership blueprint can promote default/lead to primary and installs a default-primary validation preset whose ready route examples match the first-run starter team leads; building a non-default team while the default return path is incomplete adds an explicit confirmation.",
           "routesInto": [
             "onboard:run",
             "coordinator:set",
@@ -4546,6 +4546,12 @@
         "The builder preflight records whether the target team already exists and includes the current roster count in the confirmation copy.",
         "Existing agent names remain skipped before onboarding, while new reviewed rows are built directly into the target team in one click.",
         "Product spec and wiki now document that Team maintenance merge is reserved for moving an already-created source team."
+      ],
+      "implementedTwoHundredFourthPass": [
+        "HR Manager Build Wire agentic routing now starts unchecked instead of being selected by default.",
+        "Changing the target team resets the routing wiring checkbox so intent cannot carry across teams.",
+        "Turning on routing wiring now requires an immediate confirmation, with stronger copy for default-team primary-route changes.",
+        "The build confirmation now includes a primary-route guard with current and requested primary when default/lead wiring is requested."
       ]
     },
     {
@@ -4609,5 +4615,5 @@
       "body": "# Wiki\n\nWiki is both the human documentation page and the editable schematic for the Control Center UI. Each article explains the operator purpose of a page; the structured sections below preserve tabs, tiles, fields, controls, displays, routes, and source files for implementation detail.\n\n## Use it for\n\n- Search pages, controls, routes, source files, and notes from inside the desktop app.\n- Confirm how a UI surface is intended to behave before editing code or filing follow-up work.\n- Keep app navigation metadata and human documentation in one reviewed JSON artifact.\n\n## Editing rule\n\nThe desktop app hot-reload polls CONTROL_CENTER_WIKI.json through the main-process wiki bridge. Sidebar labels, icons, order, and visibility still come from pages[].nav for implemented routes, so documentation edits must preserve that metadata and keep every page.body non-empty."
     }
   ],
-  "appVersion": "0.1.427"
+  "appVersion": "0.1.428"
 }

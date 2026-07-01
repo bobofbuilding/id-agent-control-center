@@ -2142,7 +2142,8 @@ function TeamBuilder({
   const [probeAfter, setProbeAfter] = useState(true);
 
   // ---- coordination + relay ----
-  const [coordinate, setCoordinate] = useState(true);
+  const [coordinate, setCoordinate] = useState(false);
+  const coordinateTargetRef = useRef(targetTeam);
   const [relayMode, setRelayMode] = useState<RelayMode>('permissive');
   const [relaySel, setRelaySel] = useState<string[]>([]);
   const relayTargets = existingTeams.filter((n) => n !== targetTeam);
@@ -2174,6 +2175,23 @@ function TeamBuilder({
   const leadershipIssues = leadershipBackboneIssues(leadershipBackbone);
   const blueprintCoverages = useMemo(() => RECOMMENDED_TEAM_BLUEPRINTS.map((bp) => blueprintCoverage(fleetAgents, bp)), [fleetAgents]);
   const targetNeedsBackbone = Boolean(targetTeam) && targetTeam !== PRIMARY_TEAM && !leadershipBackbone.ready;
+
+  useEffect(() => {
+    if (coordinateTargetRef.current === targetTeam) return;
+    coordinateTargetRef.current = targetTeam;
+    setCoordinate(false);
+  }, [targetTeam]);
+
+  function toggleCoordinate(next: boolean) {
+    if (!next) { setCoordinate(false); return; }
+    const leadRow = named.find((r) => r.lead) ?? named[0];
+    const leadName = targetTeam === PRIMARY_TEAM ? DEFAULT_LEAD : leadRow?.slug || 'the starred lead';
+    const message = targetTeam === PRIMARY_TEAM
+      ? `Enable primary routing wiring for ${PRIMARY_TEAM}?\n\nThis can change the fleet primary route by setting ${PRIMARY_TEAM}/${DEFAULT_LEAD} as primary, writing the default-primary validation preset, and rebuilding ${PRIMARY_TEAM}/${DEFAULT_LEAD} after the build.\n\nUse this only when you are intentionally repairing or installing the default leadership backbone.`
+      : `Enable coordinator routing wiring for ${targetTeam || 'this team'}?\n\nThis will make ${targetTeam || 'team'}/${leadName} the team coordinator, write the delegate-to-teammates preset, and rebuild that lead after the build.\n\nUse this only when the lead and roster have been reviewed.`;
+    if (!window.confirm(message)) return;
+    setCoordinate(true);
+  }
 
   // Live deterministic parse as the user types a spec — until they hand-edit or AI runs.
   useEffect(() => {
@@ -2365,7 +2383,11 @@ function TeamBuilder({
     const mergeNote = mergeIntoExisting
       ? `\n\nExisting ${targetTeam} roster stays in place (${preflight.existingAgentCount} current). Duplicate names are skipped before build${alreadyThere.length ? ` (${alreadyThere.length} already there)` : ''}.`
       : '';
-    if (!window.confirm(`${mergeIntoExisting ? 'Build + merge' : 'Build'} ${batch.length} agent${batch.length === 1 ? '' : 's'} ${mergeIntoExisting ? `into existing ${targetTeam}` : `in ${targetTeam}`}?\n\nThis onboards and starts new agents${heartbeat ? ', adds heartbeats' : ''}${probeAfter ? ', and probes them' : ''}.${mergeNote}${postSteps.length ? `\n\nAfter build it will also ${postSteps.join('; ')}.` : ''}${backboneWarning}`)) return;
+    const primaryBefore = preflight.hierarchy.primary ? `${preflight.hierarchy.primary.team}/${preflight.hierarchy.primary.agent}` : 'unset';
+    const primaryGuard = coordinate && targetTeam === PRIMARY_TEAM
+      ? `\n\nPrimary-route guard:\n- Current primary: ${primaryBefore}\n- Requested primary: ${PRIMARY_TEAM}/${DEFAULT_LEAD}\n- The primary write still rechecks hierarchy and roster after onboarding before it applies.`
+      : '';
+    if (!window.confirm(`${mergeIntoExisting ? 'Build + merge' : 'Build'} ${batch.length} agent${batch.length === 1 ? '' : 's'} ${mergeIntoExisting ? `into existing ${targetTeam}` : `in ${targetTeam}`}?\n\nThis onboards and starts new agents${heartbeat ? ', adds heartbeats' : ''}${probeAfter ? ', and probes them' : ''}.${mergeNote}${postSteps.length ? `\n\nAfter build it will also ${postSteps.join('; ')}.` : ''}${primaryGuard}${backboneWarning}`)) return;
     setBuilding(true); onBusy(true); setError(''); setPost({});
     onMessage(`${mergeIntoExisting ? 'merging' : 'adding'} ${batch.length} new agent(s) ${mergeIntoExisting ? 'into' : 'to'} ${targetTeam}${alreadyThere.length ? ` (${alreadyThere.length} already there)` : ''}…`);
     // Freeze a plan per agent so a later "retry" re-runs the exact same spec.
@@ -2550,13 +2572,13 @@ function TeamBuilder({
 
             <div className="muted small" style={{ margin: '14px 0 4px' }}>coordination &amp; routing</div>
             <label className="muted small" style={{ display: 'block' }}>
-              <input type="checkbox" checked={coordinate} disabled={locked} onChange={(e) => setCoordinate(e.target.checked)} />{' '}
+              <input type="checkbox" checked={coordinate} disabled={locked} onChange={(e) => toggleCoordinate(e.target.checked)} />{' '}
               Wire agentic routing — {targetTeam === PRIMARY_TEAM ? `make ${PRIMARY_TEAM}/${DEFAULT_LEAD} the default primary` : "make the ★ lead this team's coordinator"} and apply the {targetTeam === PRIMARY_TEAM ? 'default-primary validation preset' : 'delegate-to-teammates preset'}
             </label>
             <p className="muted small" style={{ marginTop: 4, marginBottom: 0 }}>
-              With this on, new work is handed to the <b>lead</b>, which checks what's already done, decomposes only the
+              Off by default. Turn this on only after reviewing the lead/roster. With it on, new work is handed to the <b>lead</b>, which checks what's already done, decomposes only the
               <b> remaining</b> work, and delegates to its teammates (and other teams via the relay below) — rather than every
-              agent acting on its own. Leave it on so this team plugs into the fleet's lead-driven routing.
+              agent acting on its own.
             </p>
 
             <div className="muted small" style={{ margin: '14px 0 4px' }}>cross-team relay for <span className="mono">{targetTeam || '…'}</span></div>
