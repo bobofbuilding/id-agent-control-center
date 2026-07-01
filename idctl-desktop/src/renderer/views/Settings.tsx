@@ -107,6 +107,7 @@ export function Settings({ store, navigate }: { store: FleetStore; navigate?: (v
   const [apiKey, setApiKey] = useState('');
   const [replaceProviderArmed, setReplaceProviderArmed] = useState(false);
   const [providerMsg, setProviderMsg] = useState('');
+  const [readinessDefaultChoice, setReadinessDefaultChoice] = useState('');
   // local LLM discovery (scan localhost for running servers)
   const [discovering, setDiscovering] = useState(false);
   const [discovered, setDiscovered] = useState<Discovered[] | null>(null);
@@ -806,8 +807,10 @@ export function Settings({ store, navigate }: { store: FleetStore; navigate?: (v
   const syncedProviders = providers.filter(providerModelReady);
   const routeReadyProviders = enabledProviders.filter(providerRouteReady);
   const defaultRouteReady = defaultProvider ? providerRouteReady(defaultProvider) : false;
-  const routeCandidate = defaultRouteReady ? defaultProvider : routeReadyProviders[0];
-  const explicitDefaultNeeded = Boolean(routeCandidate && (!defaultProvider || defaultProvider.name !== routeCandidate.name));
+  const explicitDefaultNeeded = !defaultRouteReady && routeReadyProviders.length > 0;
+  const routeDefaultChoice = readinessDefaultChoice && routeReadyProviders.some((p) => p.name === readinessDefaultChoice)
+    ? readinessDefaultChoice
+    : routeReadyProviders[0]?.name ?? '';
   const starterModel = TOP_LOCAL_MODEL_CATALOG.find((m) => m.id === STARTER_LOCAL_MODEL_ID) ?? TOP_LOCAL_MODEL_CATALOG[0];
   const starterInstalled = modelInstalled(STARTER_LOCAL_MODEL_ID);
   const localBackendConfigured = localProviders.some((p) => p.enabled !== false);
@@ -1039,8 +1042,16 @@ export function Settings({ store, navigate }: { store: FleetStore; navigate?: (v
           </div>
           <div className={`readiness-check ${defaultRouteReady ? 'ok' : routeReadyProviders.length ? 'warn' : 'err'}`}>
             <span>Routing</span>
-            <b>{defaultProvider ? defaultProvider.name : routeCandidate ? `auto: ${routeCandidate.name}` : 'no backend'}</b>
-            <small>{defaultRouteReady ? 'explicit default' : routeCandidate ? 'make default to prevent drift' : providers.length ? 'sync or enable a backend' : 'add a backend'}</small>
+            <b>{defaultRouteReady ? defaultProvider?.name : routeReadyProviders.length ? 'default not pinned' : 'no ready backend'}</b>
+            <small>
+              {defaultRouteReady
+                ? 'explicit default'
+                : routeReadyProviders.length
+                  ? `${routeReadyProviders.length} ready backend${routeReadyProviders.length === 1 ? '' : 's'}; choose one`
+                  : providers.length
+                    ? 'sync or enable a backend'
+                    : 'add a backend'}
+            </small>
           </div>
           <div className={`readiness-check ${localBackendReady ? 'ok' : localBackendConfigured || starterInstalled ? 'warn' : 'err'}`}>
             <span>Local runtime</span>
@@ -1070,10 +1081,18 @@ export function Settings({ store, navigate }: { store: FleetStore; navigate?: (v
               Sync {syncCandidate.name}
             </button>
           ) : null}
-          {explicitDefaultNeeded && routeCandidate ? (
-            <button className="btn small" disabled={busy} onClick={() => void setDefault(routeCandidate.name)}>
-              Make {routeCandidate.name} default
-            </button>
+          {explicitDefaultNeeded ? (
+            <>
+              <label className="readiness-default-picker muted small">
+                <span>Default backend</span>
+                <select className="cell-select small" value={routeDefaultChoice} disabled={busy || !routeDefaultChoice} onChange={(e) => setReadinessDefaultChoice(e.target.value)}>
+                  {routeReadyProviders.map((p) => <option key={p.name} value={p.name}>{p.name}</option>)}
+                </select>
+              </label>
+              <button className="btn small" disabled={busy || !routeDefaultChoice} onClick={() => void setDefault(routeDefaultChoice)}>
+                Set default
+              </button>
+            </>
           ) : null}
           <button className="btn small" disabled={discovering} onClick={() => void runDiscover()}>
             {discovering ? 'Scanning...' : 'Scan running'}

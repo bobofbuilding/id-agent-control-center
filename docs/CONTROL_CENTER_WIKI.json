@@ -2760,6 +2760,14 @@
           "routesInto": [
             "providers:add"
           ]
+        },
+        {
+          "id": "readiness-default-backend",
+          "label": "Default backend",
+          "description": "First-run readiness picker listing every route-ready backend so operators can pin NVIDIA, Ollama, or any other synced provider without the app suggesting the first backend automatically.",
+          "routesInto": [
+            "providers:setDefault"
+          ]
         }
       ],
       "controls": [
@@ -2868,7 +2876,7 @@
         {
           "id": "readiness-summary",
           "label": "Readiness summary",
-          "description": "Shows manager online/offline, Control Center manager-extension /capabilities feature/route readiness with a copyable compatibility report, routing default versus auto fallback, synced local backend readiness, ready backend count, synced count, and missing key count before the deeper Settings controls."
+          "description": "Shows manager online/offline, Control Center manager-extension /capabilities feature/route readiness with a copyable compatibility report, explicit default state or unpinned route-ready choices, synced local backend readiness, ready backend count, synced count, and missing key count before the deeper Settings controls."
         },
         {
           "id": "local-driving-path",
@@ -4343,6 +4351,11 @@
         "Settings Inference: adds NVIDIA API Catalog as an OpenAI-compatible cloud backend preset at https://integrate.api.nvidia.com/v1 with the requested starter model ids seeded as preset models.",
         "Provider guardrails: ProviderProfile now persists provider-level needsKey so cloud OpenAI-compatible catalog rows require keys while custom local OpenAI-compatible servers remain keyless by default.",
         "Settings key resolution: NVIDIA backends can resolve keys from pasted config, IDCTL_NVIDIA_API_KEY, NVIDIA_API_KEY, NVAPI_KEY, or NVIDIA_NIM_API_KEY, and the Settings form shows compact provider notes/model chips before add."
+      ],
+      "implementedOneHundredSeventySecondPass": [
+        "Settings first-run readiness: the Routing tile no longer displays auto-selected backend names such as auto: ollama when no explicit default is pinned.",
+        "Settings default routing: first-run readiness now shows a neutral Default backend picker populated from all route-ready providers, so NVIDIA, Ollama, Nebius, and custom synced backends can be selected through the same guarded providers:setDefault path.",
+        "Docs: product spec and wiki now describe the readiness route shortcut as provider-neutral and route-ready rather than local-first."
       ]
     },
     {
@@ -4406,5 +4419,5 @@
       "body": "# Wiki\n\nWiki is both the human documentation page and the editable schematic for the Control Center UI. Each article explains the operator purpose of a page; the structured sections below preserve tabs, tiles, fields, controls, displays, routes, and source files for implementation detail.\n\n## Use it for\n\n- Search pages, controls, routes, source files, and notes from inside the desktop app.\n- Confirm how a UI surface is intended to behave before editing code or filing follow-up work.\n- Keep app navigation metadata and human documentation in one reviewed JSON artifact.\n\n## Editing rule\n\nThe desktop app hot-reload polls CONTROL_CENTER_WIKI.json through the main-process wiki bridge. Sidebar labels, icons, order, and visibility still come from pages[].nav for implemented routes, so documentation edits must preserve that metadata and keep every page.body non-empty."
     }
   ],
-  "appVersion": "0.1.392"
+  "appVersion": "0.1.393"
 }
