@@ -592,6 +592,15 @@ function listProvidersEnriched(): (ProviderProfile & { keySource: 'config' | 'en
   return loadSettings().providers.map((p) => ({ ...p, keySource: keySourceOf(p), needsKey: providerNeedsKey(p) }));
 }
 
+function isLoopbackProvider(p: ProviderProfile): boolean {
+  try {
+    const host = new URL(p.baseUrl).hostname.toLowerCase();
+    return host === '127.0.0.1' || host === 'localhost' || host === '::1';
+  } catch {
+    return false;
+  }
+}
+
 function providerBridgeStamp(p: ProviderProfile): string {
   return JSON.stringify({
     name: p.name,
@@ -1516,6 +1525,9 @@ const METHODS: Record<string, (...a: any[]) => Promise<unknown>> = {
     const latest = loadSettings().providers.find((x) => x.name === name);
     if (!latest) throw new Error('provider removed before sync completed');
     if (expected && providerBridgeStamp(latest) !== expected) throw new Error('provider changed before sync completed');
+    if (outcome.status === 'live' && latest.enabled === false && isLoopbackProvider(latest) && !providerNeedsKey(latest)) {
+      upsertProvider({ ...latest, enabled: true });
+    }
     recordProviderSync(String(name), {
       at: Date.now(),
       status: outcome.status,

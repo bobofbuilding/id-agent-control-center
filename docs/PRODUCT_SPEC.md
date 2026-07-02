@@ -546,14 +546,16 @@ Manager; this is the plumbing.)
   actions and mapped-host-port detection for existing stopped containers such as LocalAI,
   live/configured/shared-default port warnings with alternate-port hints, local backend presets for
   shared-port stacks such as LocalAI, MLX, and TGI, automatic conflict-safe install command rewrites
-  for Docker `-p`, `--port`, and `--tcp` port flags, automatic backend add for matching live backend
-  presets after a scan or after an Install/Start follow-up scan, and row-level **Add backend** as a
-  fallback once a scanned local server is live.
+  for Docker `-p`, `--port`, and `--tcp` port flags, automatic pending backend rows for installed
+  local provider stacks even before their API server is running, automatic backend add/upgrade for
+  matching live backend presets after a scan or after an Install/Start follow-up scan, and row-level
+  **Add backend** as a fallback once a scanned local server is live.
 - **Inference backends**: provider table (★ default, enable, key badge, status, model list,
   **Connect & sync**, searchable Health model selection, ✕), API/cloud-focused **Add a backend**
   catalog or custom API endpoint, provider-specific key requirements, NVIDIA API Catalog preset
-  models, and cloud keys auto-detected from env, including `PERPLEXITY_API_KEY` for Perplexity.
-  Local server setup belongs to Local LLM stacks above.
+  models, pending installed local stack rows, successful local Connect & sync promotion to enabled,
+  and cloud keys auto-detected from env, including `PERPLEXITY_API_KEY` for Perplexity. Local server
+  setup belongs to Local LLM stacks above.
 
 **Data & actions:** `app:hardware`, `manager:capabilities`, `app:version`, `update:status/check/
 getSettings/setSettings`, `subs:status/signin/signout/install`, `manager:localConcurrency/
