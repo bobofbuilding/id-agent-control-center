@@ -9,7 +9,7 @@ import { inspectLibraryPluginMetadata, ManagerClient } from '../../../idctl/src/
 import type { Agent } from '../../../idctl/src/api/types.ts';
 import { brain } from '../../../idctl/src/api/brain.ts';
 import type { BrainAgentsReport, BrainControllerReport, BrainCoreHealthReport, BrainFleetReport, BrainGraphReport, BrainSkillIndex, BrainSkillNode } from '../../../idctl/src/api/brain.ts';
-import { runOnboarding, type OnboardPlan } from '../../../idctl/src/api/onboard.ts';
+import { runOnboarding, type OnboardPlan, type PreparedRuntime } from '../../../idctl/src/api/onboard.ts';
 import { slugName } from '../../../idctl/src/api/teamSpec.ts';
 import { loadConfig, type Config } from '../../../idctl/src/config.ts';
 import { getKeyProvider, legacyMockAuthorityReport } from '../../../idctl/src/keys/mockProvider.ts';
@@ -537,6 +537,26 @@ function providerLaneEnvName(name: string): string {
   return `IDCTL_${name.toUpperCase().replace(/[^A-Z0-9]+/g, '_')}_API_KEY`;
 }
 
+function resolveProviderLaneAssignment(runtime: string): { providerName: string; provider: { name: string; kind?: string; baseUrl: string; apiKey?: string; keyEnv?: string } } | null {
+  const providerName = providerLaneName(runtime);
+  if (!providerName) return null;
+  const p = loadSettings().providers.find((x) => x.name === providerName);
+  if (!p) throw new Error(`provider lane "${providerName}" is no longer configured in Settings`);
+  if (!providerRouteReadyForAssignment(p)) throw new Error(`provider lane "${providerName}" is not ready; Connect & sync it in Settings first`);
+  const apiKey = resolveProviderKey(p);
+  if (providerNeedsKey(p) && !apiKey) throw new Error(`provider lane "${providerName}" is missing an API key`);
+  return {
+    providerName,
+    provider: {
+      name: p.name,
+      kind: p.kind,
+      baseUrl: p.baseUrl,
+      ...(apiKey ? { apiKey } : {}),
+      keyEnv: providerLaneEnvName(p.name),
+    },
+  };
+}
+
 function providerRouteReadyForAssignment(p: ProviderProfile): boolean {
   const keyReady = !providerNeedsKey(p) || Boolean(resolveProviderKey(p));
   const modelCount = p.lastSync?.models?.length ?? p.lastSync?.modelCount ?? 0;
@@ -544,21 +564,27 @@ function providerRouteReadyForAssignment(p: ProviderProfile): boolean {
 }
 
 async function setAgentRuntimeFromSettings(agentId: string, runtime: string, team?: string) {
-  const providerName = providerLaneName(runtime);
   const scoped = team ? client.withTeam(String(team)) : client;
-  if (!providerName) return scoped.setAgentRuntime(String(agentId), String(runtime));
-  const p = loadSettings().providers.find((x) => x.name === providerName);
-  if (!p) throw new Error(`provider lane "${providerName}" is no longer configured in Settings`);
-  if (!providerRouteReadyForAssignment(p)) throw new Error(`provider lane "${providerName}" is not ready; Connect & sync it in Settings first`);
-  const apiKey = resolveProviderKey(p);
-  if (providerNeedsKey(p) && !apiKey) throw new Error(`provider lane "${providerName}" is missing an API key`);
-  return scoped.setAgentProviderRuntime(String(agentId), String(runtime), {
-    name: p.name,
-    kind: p.kind,
-    baseUrl: p.baseUrl,
-    ...(apiKey ? { apiKey } : {}),
-    keyEnv: providerLaneEnvName(p.name),
-  });
+  const assignment = resolveProviderLaneAssignment(runtime);
+  if (!assignment) return scoped.setAgentRuntime(String(agentId), String(runtime));
+  return scoped.setAgentProviderRuntime(String(agentId), String(runtime), assignment.provider);
+}
+
+async function prepareOnboardRuntime(plan: OnboardPlan): Promise<PreparedRuntime | undefined> {
+  const runtime = String(plan.runtime ?? '');
+  const assignment = resolveProviderLaneAssignment(runtime);
+  if (!assignment) return undefined;
+  return {
+    label: `Assign API lane ${assignment.providerName}`,
+    rebuildLabel: 'Rebuild to apply API lane',
+    assignAfterSpawn: async (agentId, scopedClient, scopedPlan) => {
+      await scopedClient.setAgentProviderRuntime(String(agentId), runtime, assignment.provider);
+      if (scopedPlan.model?.trim()) await scopedClient.setAgentModel(String(agentId), scopedPlan.model.trim());
+      return scopedPlan.model?.trim()
+        ? `${assignment.providerName} - ${scopedPlan.model.trim()}`
+        : assignment.providerName;
+    },
+  };
 }
 
 function skillGraphId(name: string): number {
@@ -1117,7 +1143,7 @@ const METHODS: Record<string, (...a: any[]) => Promise<unknown>> = {
     await requireControllerProofIfWalletExists(name, teamName);
     return (teamName ? client.withTeam(teamName) : client).remote(`/agent ${name} wallet provision`);
   },
-  'onboard:run': (plan: OnboardPlan) => runOnboarding(client, plan),
+  'onboard:run': (plan: OnboardPlan) => runOnboarding(client, plan, { prepareRuntime: prepareOnboardRuntime }),
 
   // dashboard: per-runtime model catalog (synced providers + codex cache + curated)
   'runtime:models': async () => runtimeCatalogWithCodex(),

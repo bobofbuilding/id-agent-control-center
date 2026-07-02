@@ -38,6 +38,18 @@ export interface OnboardPlan {
 
 export interface OnboardHooks {
   onStep?: (step: StepState, steps: StepState[]) => void;
+  prepareRuntime?: (plan: OnboardPlan, client: ManagerClient) => Promise<PreparedRuntime | undefined>;
+}
+
+export interface PreparedRuntime {
+  /** Runtime used for the initial spawn. Undefined means spawn with the manager default. */
+  spawnRuntime?: string;
+  /** Model used for the initial spawn. Undefined means spawn with the manager default. */
+  spawnModel?: string;
+  /** Optional post-spawn runtime/model assignment, run before MCP/rebuild/probe. */
+  assignAfterSpawn?: (agentId: string, client: ManagerClient, plan: OnboardPlan) => Promise<string | void>;
+  label?: string;
+  rebuildLabel?: string;
 }
 
 export interface OnboardResult {
@@ -47,7 +59,7 @@ export interface OnboardResult {
   ok: boolean;
 }
 
-type StepKey = 'preflight' | 'spawn' | 'mcp' | 'rebuild' | 'probe';
+type StepKey = 'preflight' | 'spawn' | 'runtime' | 'mcp' | 'rebuild' | 'probe';
 
 export async function runOnboarding(
   baseClient: ManagerClient,
@@ -60,6 +72,7 @@ export async function runOnboarding(
   const steps: StepState[] = [];
   let agentId = plan.retry?.agentId;
   let needsRebuild = false;
+  let preparedRuntime: PreparedRuntime | undefined;
 
   const emit = (step: StepState) => hooks.onStep?.({ ...step }, steps.map((s) => ({ ...s })));
 
@@ -101,14 +114,15 @@ export async function runOnboarding(
       if (!name) throw new Error('Agent name is required.');
       const taken = (await client.agents()).some((a) => a.name === name);
       if (taken) throw new Error(`An agent named "${name}" already exists in this team.`);
+      preparedRuntime = await hooks.prepareRuntime?.(plan, client);
     });
     if (preflight.status === 'failed') return finish();
 
     const spawn = await run('spawn', `Spawn ${plan.name}`, async () => {
       const res = await client.spawnAgent({
         name: plan.name.trim(),
-        runtime: emptyToUndefined(plan.runtime),
-        model: emptyToUndefined(plan.model),
+        runtime: emptyToUndefined(preparedRuntime ? preparedRuntime.spawnRuntime : plan.runtime),
+        model: emptyToUndefined(preparedRuntime ? preparedRuntime.spawnModel : plan.model),
         role: emptyToUndefined(plan.role),
         description: emptyToUndefined(plan.description),
         expertise: nonEmpty(plan.expertise),
@@ -131,6 +145,23 @@ export async function runOnboarding(
     });
   }
 
+  if (preparedRuntime?.assignAfterSpawn || (retrying && retryKeys.has('runtime'))) {
+    const shouldRunRuntime = !retrying || retryKeys.has('runtime');
+    const runtime = await run(
+      'runtime',
+      preparedRuntime?.label ?? 'Assign runtime',
+      async () => {
+        preparedRuntime = preparedRuntime ?? await hooks.prepareRuntime?.(plan, client);
+        if (!preparedRuntime?.assignAfterSpawn) return 'not needed';
+        const detail = await preparedRuntime.assignAfterSpawn(agentId!, client, plan);
+        needsRebuild = true;
+        return detail;
+      },
+      shouldRunRuntime ? {} : { skip: true, skipDetail: 'not selected for retry' },
+    );
+    if (runtime.status === 'failed') return finish();
+  }
+
   if (plan.mcpServers?.length) {
     const shouldRunMcp = !retrying || retryKeys.has('mcp');
     const mcp = await run(
@@ -138,23 +169,24 @@ export async function runOnboarding(
       'Attach MCP servers',
       async () => {
         const res = await client.setAgentMcp(agentId!, plan.mcpServers!);
-        needsRebuild = Boolean(res.needsRebuild);
+        needsRebuild = needsRebuild || Boolean(res.needsRebuild);
         return `${res.mcpServers.length} server${res.mcpServers.length === 1 ? '' : 's'}`;
       },
       shouldRunMcp
         ? { failSoft: true }
         : { skip: true, skipDetail: 'not selected for retry' },
     );
-    if (mcp.status === 'failed') needsRebuild = false;
+    if (mcp.status === 'failed' && !preparedRuntime?.assignAfterSpawn) needsRebuild = false;
   } else if (!retrying) {
     await run('mcp', 'Attach MCP servers', async () => {}, { skip: true, skipDetail: 'none selected' });
   }
 
   const shouldRunRebuild = needsRebuild || (retrying && retryKeys.has('rebuild'));
+  const rebuildLabel = preparedRuntime?.rebuildLabel ?? 'Rebuild to apply MCP';
   if (shouldRunRebuild) {
-    await run('rebuild', 'Rebuild to apply MCP', () => client.restartAgent(plan.name), { failSoft: true });
+    await run('rebuild', rebuildLabel, () => client.restartAgent(plan.name), { failSoft: true });
   } else if (!retrying || retryKeys.has('mcp')) {
-    await run('rebuild', 'Rebuild to apply MCP', async () => {}, {
+    await run('rebuild', rebuildLabel, async () => {}, {
       skip: true,
       skipDetail: needsRebuild ? undefined : 'not needed',
     });
@@ -220,5 +252,5 @@ function emptyToUndefined(value: string | undefined): string | undefined {
 }
 
 function isStepKey(key: string): key is StepKey {
-  return key === 'preflight' || key === 'spawn' || key === 'mcp' || key === 'rebuild' || key === 'probe';
+  return key === 'preflight' || key === 'spawn' || key === 'runtime' || key === 'mcp' || key === 'rebuild' || key === 'probe';
 }

@@ -1,15 +1,16 @@
 import { Fragment, useEffect, useMemo, useRef, useState } from 'react';
 import { call, agentsLeadFirst, resolveCoordinator, useSyncVersion, type FleetStore } from '../store.ts';
-import { offerableRuntimes, runtimeDisplayLabel } from '../../../../idctl/src/settings/runtimeCatalog.ts';
+import { buildProviderModelLanes, offerableRuntimes, runtimeDisplayLabel, type RuntimeModelLane } from '../../../../idctl/src/settings/runtimeCatalog.ts';
 import type { ConfigEntry, DeployPreflight, DesignedTeam, LibrarySkillEntry, McpServerSpec, TeamTemplate } from '../../../../idctl/src/api/client.ts';
 import type { OnboardPlan, OnboardResult } from '../../../../idctl/src/api/onboard.ts';
 import { MCP_CATALOG, buildFromCatalog } from '../../../../idctl/src/settings/mcpCatalog.ts';
 import { parseTeamSpec, slugName, isReservedName } from '../../../../idctl/src/api/teamSpec.ts';
 import type { Agent } from '../../../../idctl/src/api/types.ts';
+import type { ProviderProfile } from '../../../../idctl/src/settings/schema.ts';
 import { TeamGraph, type GraphSelection } from './TeamGraph.tsx';
 import { Health } from './Health.tsx';
 
-type ProviderRow = { kind: string; baseUrl?: string; enabled?: boolean; keySource?: string; needsKey?: boolean; lastSync?: { status?: string; modelCount?: number; models?: string[] } };
+type ProviderRow = ProviderProfile & { keySource?: string; needsKey?: boolean };
 type ManagedRuntimeStatus = { runtime?: string; installed?: boolean; loggedIn?: boolean; statusSupported?: boolean };
 
 type GoalStatus = 'draft' | 'active' | 'done' | 'archived';
@@ -164,6 +165,10 @@ const HB_INTERVALS = [
 ];
 function runtimeLabel(r: string): string {
   return runtimeDisplayLabel(r);
+}
+function providerLaneBuildLabel(lane: RuntimeModelLane): string {
+  const count = lane.models.length === 1 ? '1 model' : `${lane.models.length} models`;
+  return `${lane.label} - ${count}`;
 }
 
 function qArg(s: string): string { return `"${s.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`; }
@@ -2236,7 +2241,15 @@ function TeamBuilder({
   onMessage: (m: string) => void;
   onDone: (createdTeam?: string) => void;
 }) {
-  const runtimes = useMemo(() => offerableRuntimes(providers, undefined, managedRuntimes), [providers, managedRuntimes]);
+  const harnessRuntimes = useMemo(() => offerableRuntimes(providers, undefined, managedRuntimes), [providers, managedRuntimes]);
+  const apiProviderLanes = useMemo(
+    () => buildProviderModelLanes(providers).filter((lane) => lane.kind === 'api' && lane.selectable),
+    [providers],
+  );
+  const runtimes = useMemo(
+    () => Array.from(new Set([...harnessRuntimes, ...apiProviderLanes.map((lane) => lane.id)])),
+    [harnessRuntimes, apiProviderLanes],
+  );
   const initialRuntime = runtimes[0] ?? '';
   type Row = { name: string; runtime: string; model: string; role: string; description: string; skills: string[]; lead: boolean; open: boolean };
   const blankRow = (): Row => ({ name: '', runtime: initialRuntime, model: '', role: '', description: '', skills: [], lead: false, open: false });
@@ -2326,7 +2339,7 @@ function TeamBuilder({
   const existingInTeam = useMemo(() => new Set((existingAgents[targetTeam] ?? []).map((n) => slugName(n))), [existingAgents, targetTeam]);
   const alreadyThere = named.filter((r) => existingInTeam.has(r.slug));
   const toCreate = named.filter((r) => !existingInTeam.has(r.slug));
-  const missingRuntime = toCreate.some((r) => !r.runtime);
+  const missingRuntime = toCreate.some((r) => !r.runtime || !runtimes.includes(r.runtime));
   const relayPayload: string[] | null =
     relayMode === 'all' ? ['*'] : relayMode === 'none' ? [] : relayMode === 'select' ? relaySel : null;
   const builderRelayBlocksDefault = targetTeam === PRIMARY_TEAM && relayBlocksAll(relayPayload);
@@ -2898,9 +2911,25 @@ function TeamBuilder({
                         onChange={(e) => updateRow(i, { name: e.target.value })}
                         onBlur={(e) => updateRow(i, { name: slugName(e.target.value) })}
                       />
-                      <select className="cell-select" style={{ fontSize: 12 }} disabled={locked || !runtimes.length} value={r.runtime} onChange={(e) => updateRow(i, { runtime: e.target.value, model: '' })}>
+                      <select
+                        className="cell-select"
+                        style={{ fontSize: 12 }}
+                        disabled={locked || !runtimes.length}
+                        value={r.runtime}
+                        title="Settings-available manager harnesses and synced API provider lanes are selectable for new agents."
+                        onChange={(e) => updateRow(i, { runtime: e.target.value, model: '' })}
+                      >
                         <option value="" disabled>{runtimes.length ? 'Choose runtime' : 'No Settings runtime available'}</option>
-                        {runtimes.map((rt) => <option key={rt} value={rt}>{runtimeLabel(rt)}</option>)}
+                        {harnessRuntimes.length ? (
+                          <optgroup label="Assignable harnesses">
+                            {harnessRuntimes.map((rt) => <option key={rt} value={rt}>{runtimeLabel(rt)}</option>)}
+                          </optgroup>
+                        ) : null}
+                        {apiProviderLanes.length ? (
+                          <optgroup label="API provider lanes">
+                            {apiProviderLanes.map((lane) => <option key={lane.id} value={lane.id}>{providerLaneBuildLabel(lane)}</option>)}
+                          </optgroup>
+                        ) : null}
                       </select>
                       <select className="cell-select" style={{ fontSize: 12 }} disabled={locked} value={r.model} onChange={(e) => updateRow(i, { model: e.target.value })}>
                         <option value="">(default model)</option>

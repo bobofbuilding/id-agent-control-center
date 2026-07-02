@@ -353,7 +353,7 @@ questions through `legal/general-counsel`.
 **What you can do** — four top-level tabs: **Structure · Health · Build · Manage**, plus header
 **+ From template** and **✦ Build a team**.
 - **AI Team Builder** (describe/paste a spec → live deterministic parse → **✦ Build with AI**
-  (`team:designAI`, constrained to valid runtimes/models/skills) → editable roster (per-agent ★lead,
+  (`team:designAI`, constrained to Settings-available harnesses, synced API provider lanes, models, and skills) → editable roster (per-agent ★lead,
   name, runtime, model, role, persona/instructions, skill chips) → fleet-wide options (multiple
   MCP servers, shared skills, heartbeat, OWS wallet, probe-after) → opt-in coordination preset (off by default, with an extra
   primary-route warning for default-team wiring) + cross-team relay → **Build** for a new team or
@@ -515,8 +515,8 @@ Manager; this is the plumbing.)
   runtimes remain visible as the current value for review. Linked managed subscription CLIs without
   a manager adapter, such as Grok Build, Antigravity, Copilot, Kiro, and legacy Q, show in Health as
   adapter-needed read-only lanes instead of selectable harnesses. Synced API/cloud provider lanes
-  such as OpenRouter and NVIDIA are selectable in Health via the manager `provider-api` harness;
-  unsynced API lanes remain disabled until their model list is refreshed.
+  such as OpenRouter and NVIDIA are selectable in Health and HR Manager Build via the manager
+  `provider-api` harness; unsynced API lanes remain disabled until their model list is refreshed.
   Agent Model pickers are keyed to the currently
   staged harness model catalog, so switching to Kiro, Codex, Claude Code, or a local harness cannot
   carry a stale model from the previous harness forward as a valid choice. Gemini CLI

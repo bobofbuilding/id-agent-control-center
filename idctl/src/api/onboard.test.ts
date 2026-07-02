@@ -37,6 +37,16 @@ class FakeClient {
     return { id: 'agent-1', name: 'builder', port: 4444 };
   }
 
+  async setAgentProviderRuntime(agentId: string, runtime: string, provider: unknown): Promise<{ runtime: string; needsRebuild: boolean }> {
+    this.calls.push({ method: 'setAgentProviderRuntime', args: [agentId, runtime, provider] });
+    return { runtime, needsRebuild: true };
+  }
+
+  async setAgentModel(agentId: string, model: string): Promise<{ status: string }> {
+    this.calls.push({ method: 'setAgentModel', args: [agentId, model] });
+    return { status: 'ok' };
+  }
+
   async setAgentMcp(agentId: string, servers: McpServerSpec[]): Promise<{ agent: string; mcpServers: McpServerSpec[]; needsRebuild: boolean }> {
     this.calls.push({ method: 'setAgentMcp', args: [agentId, servers] });
     if (this.opts.mcpFails) throw new Error('mcp unavailable');
@@ -100,6 +110,45 @@ async function testFailSoftPostSpawn() {
   assert.equal(client.calls.some((c) => c.method === 'restartAgent'), false);
 }
 
+async function testProviderLaneAssignment() {
+  const client = new FakeClient({ needsRebuild: false });
+  const result = await runOnboarding(client as unknown as ManagerClient, { ...plan, runtime: 'provider:openrouter', model: 'x-ai/grok-4' }, {
+    prepareRuntime: async () => ({
+      label: 'Assign API lane openrouter',
+      rebuildLabel: 'Rebuild to apply API lane',
+      assignAfterSpawn: async (agentId, scopedClient, scopedPlan) => {
+        await scopedClient.setAgentProviderRuntime(agentId, 'provider:openrouter', { name: 'openrouter', kind: 'openai-compatible', baseUrl: 'https://openrouter.ai/api/v1' });
+        await scopedClient.setAgentModel(agentId, scopedPlan.model ?? '');
+        return 'openrouter';
+      },
+    }),
+  });
+
+  assert.equal(result.ok, true);
+  assert.deepEqual(result.steps.map((s) => [s.key, s.status]), [
+    ['preflight', 'ok'],
+    ['spawn', 'ok'],
+    ['runtime', 'ok'],
+    ['mcp', 'ok'],
+    ['rebuild', 'ok'],
+    ['probe', 'ok'],
+  ]);
+  const spawn = client.calls.find((c) => c.method === 'spawnAgent')?.args[0] as { runtime?: string; model?: string };
+  assert.equal(spawn.runtime, undefined);
+  assert.equal(spawn.model, undefined);
+  assert.deepEqual(client.calls.map((c) => c.method), [
+    'withTeam',
+    'agents',
+    'spawnAgent',
+    'setAgentProviderRuntime',
+    'setAgentModel',
+    'setAgentMcp',
+    'restartAgent',
+    'probeOne',
+  ]);
+}
+
 await testHappyPath();
 await testFailSoftPostSpawn();
+await testProviderLaneAssignment();
 console.log('onboard orchestration tests passed');
