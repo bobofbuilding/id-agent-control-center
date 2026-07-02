@@ -1239,8 +1239,36 @@ export function Settings({ store, navigate }: { store: FleetStore; navigate?: (v
   }
   // Stack install/uninstall commands: runnable (open Terminal) vs app-download (link out).
   const RUNNABLE_RE = /^(brew|pip|pipx|uv|cargo|curl|docker|conda|npm|npx)\b/;
+  const PLACEHOLDER_CMD_RE = /<[^>\s][^>]*>/;
   function stackCommand(command?: string): string {
     return (command ?? '').split('#')[0].trim();
+  }
+  function hostStackPlatform(): LocalStackEntry['platforms'][number] | null {
+    if (!hardware?.platform) return null;
+    if (hardware.platform === 'darwin') return 'macos';
+    if (hardware.platform === 'win32') return 'windows';
+    if (hardware.platform === 'linux') return 'linux';
+    return null;
+  }
+  function stackPlatformSupported(s: LocalStackEntry): boolean {
+    const host = hostStackPlatform();
+    return !host || s.platforms.includes(host);
+  }
+  function platformLabel(p: LocalStackEntry['platforms'][number]): string {
+    if (p === 'macos') return 'macOS';
+    if (p === 'windows') return 'Windows';
+    return 'Linux';
+  }
+  function stackInstallUnavailableReason(s: LocalStackEntry): string | null {
+    const command = stackCommand(s.install);
+    const host = hostStackPlatform();
+    if (host && !s.platforms.includes(host)) {
+      return `${s.name} is listed for ${s.platforms.map(platformLabel).join('/')} hosts; this machine is ${platformLabel(host)}. Open the docs or run it on a compatible host, then add its API backend here.`;
+    }
+    if (!command) return 'No safe one-click install command is registered; open the project docs.';
+    if (PLACEHOLDER_CMD_RE.test(command)) return 'This command is a template and needs values such as a model id before it can run safely; open the docs and add the running API as a backend afterward.';
+    if (!RUNNABLE_RE.test(command)) return 'No safe one-click install command is registered; open the project docs.';
+    return null;
   }
   function stackEaseLabel(s: LocalStackEntry): string {
     if (s.installEase === 'start-here') return 'start here';
@@ -1263,6 +1291,7 @@ export function Settings({ store, navigate }: { store: FleetStore; navigate?: (v
   }
   function stackInstallCmd(s: LocalStackEntry): string | null {
     const c = stackCommand(s.install);
+    if (!c || stackInstallUnavailableReason(s)) return null;
     return c && RUNNABLE_RE.test(c) ? c : null;
   }
   function stackUninstallCmd(s: LocalStackEntry): string | null {
@@ -1446,7 +1475,10 @@ export function Settings({ store, navigate }: { store: FleetStore; navigate?: (v
   }
   function reviewStackInstall(s: LocalStackEntry) {
     const command = stackInstallCmd(s);
-    if (!command) return;
+    if (!command) {
+      setStackMsg(stackInstallUnavailableReason(s) ?? `${s.name} does not have a safe one-click install command.`);
+      return;
+    }
     const conflicts = stackPortConflicts(s);
     const shared = stackSharedPorts(s);
     const hardPorts = [...new Set([...conflicts.live, ...conflicts.configured.map((hit) => hit.port)])];
@@ -2089,6 +2121,7 @@ export function Settings({ store, navigate }: { store: FleetStore; navigate?: (v
             const uc = stackUninstallCmd(s);
             const installStatus = stackInstallStatus[s.id];
             const stackInstalled = installStatus?.installed === true;
+            const installUnavailable = !ic && !stackInstalled ? stackInstallUnavailableReason(s) : null;
             const effectiveApiBase = stackApiBase(s);
             const configuredProviders = stackConfiguredProviders(s);
             const configured = configuredProviders.length > 0;
@@ -2103,6 +2136,7 @@ export function Settings({ store, navigate }: { store: FleetStore; navigate?: (v
                   <span className="muted small">{s.openaiCompatible ? 'OpenAI-compatible' : s.apiKind}</span>
                   {stackEaseLabel(s) ? <span className="chip tag" title={s.installNote}>{stackEaseLabel(s)}</span> : null}
                   {s.appleSilicon ? <span className="chip tag" title="Apple-Silicon native">Apple Silicon</span> : null}
+                  {!stackPlatformSupported(s) ? <span className="chip tag" title={installUnavailable ?? undefined}>{s.platforms.map(platformLabel).join('/')}</span> : null}
                   {stackInstalled ? <span className="chip tag" title={installStatus?.detail ?? 'Detected installed package/container'}>installed</span> : null}
                   {running ? (
                     <span className={`small ${discoveryStale ? 'warn-text' : 'ok-text'}`} title={`Detected by scan ${discoveredAt ? timeAgo(discoveredAt) : 'recently'}`}>
@@ -2135,8 +2169,9 @@ export function Settings({ store, navigate }: { store: FleetStore; navigate?: (v
                       {!stackInstalled && ic ? (
                         <button className={`btn small${stackPrimaryAction(s) ? ' primary' : ''}`} title={ic} onClick={() => reviewStackInstall(s)}>{stackInstallLabel(s)}</button>
                       ) : !stackInstalled ? (
-                        <a className="btn small" href={s.homepage} target="_blank" rel="noreferrer" title="No CLI install — opens the download page">Get ↗</a>
+                        <a className="btn small" href={s.homepage} target="_blank" rel="noreferrer" title={installUnavailable ?? 'No CLI install — opens the download page'}>Docs ↗</a>
                       ) : null}
+                      {installUnavailable ? <span className="muted small" title={installUnavailable}>guided setup required</span> : null}
                       {running && !configured && effectiveApiBase ? (
                         <button className="btn small primary" title={`Add ${effectiveApiBase} as an inference backend after a fresh scan`} onClick={() => void addStackBackend(s)}>Add backend</button>
                       ) : null}

@@ -538,9 +538,10 @@ Manager; this is the plumbing.)
 - **Local LLM stacks**: starter-first curated list with compact primary filters, an optional tag
   dropdown for advanced filters, **Scan running**, primary **Install** actions for command-backed
   start-here/easy/guided/advanced stacks, reviewed Run-in-Terminal/Uninstall actions, setup notes,
-  docs ↗, live/configured/shared-default port warnings with alternate-port hints, local backend
-  presets for shared-port stacks such as LocalAI, MLX, and TGI, automatic conflict-safe install
-  command rewrites for Docker `-p`, `--port`, and `--tcp` port flags, automatic backend add for
+  docs ↗, host-platform and unresolved-template guards for advanced stacks such as TGI,
+  live/configured/shared-default port warnings with alternate-port hints, local backend presets
+  for shared-port stacks such as LocalAI, MLX, and TGI, automatic conflict-safe install command
+  rewrites for Docker `-p`, `--port`, and `--tcp` port flags, automatic backend add for
   matching live backend presets after a scan, and row-level **Add backend** as a fallback once a
   scanned local server is live.
 - **Inference backends**: provider table (★ default, enable, key badge, status, model list,
