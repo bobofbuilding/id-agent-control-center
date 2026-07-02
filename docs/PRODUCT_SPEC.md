@@ -550,6 +550,10 @@ Manager; this is the plumbing.)
   local provider stacks even before their API server is running, automatic backend add/upgrade for
   matching live backend presets after a scan or after an Install/Start follow-up scan, and row-level
   **Add backend** as a fallback once a scanned local server is live.
+- **Ollama catalog checks**: Settings performs a read-only public Ollama library scan on startup
+  and every six hours while mounted. It compares installed `/api/tags` digests with public tag
+  digests, surfaces explicit **Update** actions for changed installed tags, and lists newly
+  discovered public tags outside the curated local catalog without automatically pulling them.
 - **Inference backends**: provider table (★ default, enable, key badge, status, model list,
   **Connect & sync**, searchable Health model selection, ✕), API/cloud-focused **Add a backend**
   catalog or custom API endpoint, provider-specific key requirements, NVIDIA API Catalog preset
@@ -559,7 +563,7 @@ Manager; this is the plumbing.)
 
 **Data & actions:** `app:hardware`, `manager:capabilities`, `app:version`, `update:status/check/
 getSettings/setSettings`, `subs:status/signin/signout/install`, `manager:localConcurrency/
-setLocalConcurrency`, `ollama:tags/pull/remove`, `evmRpc:list/save/remove/probe`,
+setLocalConcurrency`, `ollama:tags/catalogCheck/pull/remove`, `evmRpc:list/save/remove/probe`,
 `image:getServer/setServer/detectServer`,
 `app:runInTerminal`, `providers:list/add/remove/setDefault/toggle/connect/discover`.
 

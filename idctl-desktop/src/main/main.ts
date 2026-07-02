@@ -10,7 +10,7 @@ import { call as bridgeCall, startGoalDriver, startOrgSync, startModelRefreshLoo
 import { recordControlAction } from './controlLog.ts';
 import { startUpdater, stopUpdater, checkForUpdate, getStatus, applyStagedAndRelaunch } from './updater.ts';
 import { subsStatus, subsSignin, subsSignout, subsInstall, type SubProvider } from './subscriptions.ts';
-import { ollamaTags, ollamaPull, ollamaRemove } from './ollama.ts';
+import { ollamaTags, ollamaPull, ollamaRemove, ollamaCatalogCheck, type InstalledModelInput } from './ollama.ts';
 import { dockerStatus, getHardware, localStackInstallStatus, runInTerminal } from './system.ts';
 import { pickProjectFolder, openProjectFolder, projectReadme, projectGit, projectGitRun, githubMeta, cloneGithub, projectDiff, createGithubRepo, linkGithubRepo, forkGithub, commitProject, detectProjectsRoot, scanProjectsRoot } from './projects.ts';
 import { pickChatFiles, saveChatFiles, savePastedFile } from './chatfiles.ts';
@@ -515,6 +515,8 @@ async function appCall(method: string, args: unknown[]): Promise<unknown> {
       return ollamaPull(args[0] as string);
     case 'ollama:remove':
       return ollamaRemove(args[0] as string);
+    case 'ollama:catalogCheck':
+      return ollamaCatalogCheck(Array.isArray(args[0]) ? args[0] as InstalledModelInput[] : [], Array.isArray(args[1]) ? args[1] as string[] : []);
     case 'app:hardware':
       return getHardware();
     case 'stack:installStatus':

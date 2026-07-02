@@ -4,7 +4,7 @@ import { defaultBaseUrl, type EvmRpcKeySource, type EvmRpcProfile, type EvmRpcRe
 import type { ProbeOutcome } from '../../../../idctl/src/settings/ProviderClient.ts';
 import type { DiscoveredServer, LocalServerCandidate } from '../../../../idctl/src/settings/localDiscovery.ts';
 import { PROVIDER_CATALOG, findProvider, providerNeedsKey } from '../../../../idctl/src/settings/providerCatalog.ts';
-import { TOP_LOCAL_MODEL_CATALOG, type ModelCapability, type LocalModelEntry } from '../../../../idctl/src/settings/modelCatalog.ts';
+import { LOCAL_MODEL_CATALOG, TOP_LOCAL_MODEL_CATALOG, type ModelCapability, type LocalModelEntry } from '../../../../idctl/src/settings/modelCatalog.ts';
 import { TOP_LOCAL_STACKS, type LocalStackEntry } from '../../../../idctl/src/settings/localStacks.ts';
 import {
   CONTROL_CENTER_API_VERSION,
@@ -17,6 +17,7 @@ const MODEL_CAPS: ModelCapability[] = ['general', 'tools', 'reasoning', 'coding'
 const STARTER_LOCAL_MODEL_ID = 'qwen3:1.7b';
 const SUB_NOTICE_TTL_MS = 18_000;
 const SUB_AUTO_REFRESH_MS = 5 * 60 * 1000;
+const OLLAMA_CATALOG_REFRESH_MS = 6 * 60 * 60 * 1000;
 const API_FIRST_PROVIDER = PROVIDER_CATALOG.find((e) => !e.local) ?? findProvider('openai');
 const DISCOVERY_MAX_AGE_MS = 2 * 60 * 1000;
 const STACK_BACKEND_PRESET_FILTER = 'backend-presets';
@@ -41,6 +42,27 @@ type Discovered = DiscoveredServer & { alreadyAdded: boolean };
 type LocalStackInstallStatus = { id: string; installed: boolean; source?: string; detail?: string; port?: number; checkedAt: number };
 type StackInstallDraft = { command: string; port?: number; originalPort?: number; baseUrl?: string; autoFixed?: boolean; note?: string };
 type DockerStatus = { installed: boolean; serverRunning: boolean; version?: string; serverVersion?: string; error?: string };
+type OllamaModel = { name: string; size?: number; parameterSize?: string; digest?: string; modifiedAt?: string };
+type OllamaCatalogModel = {
+  name: string;
+  family: string;
+  digest?: string;
+  sizeLabel?: string;
+  contextLabel?: string;
+  inputLabel?: string;
+  updatedLabel?: string;
+  isMlx?: boolean;
+};
+type OllamaCatalogCheck = {
+  ok: boolean;
+  checkedAt: number;
+  source: 'ollama-library';
+  watchedFamilies: string[];
+  models: OllamaCatalogModel[];
+  newModels: OllamaCatalogModel[];
+  installedUpdates: Array<OllamaCatalogModel & { localDigest?: string }>;
+  error?: string;
+};
 
 const API_KINDS: ProviderKind[] = ['openai-compatible', 'openai', 'anthropic'];
 
@@ -854,7 +876,10 @@ export function Settings({ store, navigate }: { store: FleetStore; navigate?: (v
   }
   // Local models & backends: list installed Ollama models, pull/re-pull models, and reflect local stack API readiness.
   const POPULAR = TOP_LOCAL_MODEL_CATALOG.map((m) => m.id);
-  const [ollamaModels, setOllamaModels] = useState<{ name: string; size?: number; parameterSize?: string }[]>([]);
+  const [ollamaModels, setOllamaModels] = useState<OllamaModel[]>([]);
+  const [ollamaCatalog, setOllamaCatalog] = useState<OllamaCatalogCheck | null>(null);
+  const [ollamaCatalogChecking, setOllamaCatalogChecking] = useState(false);
+  const [ollamaCatalogMsg, setOllamaCatalogMsg] = useState('');
   const [pullName, setPullName] = useState(STARTER_LOCAL_MODEL_ID);
   const [pulling, setPulling] = useState(false);
   const [pullMsg, setPullMsg] = useState('');
@@ -957,9 +982,30 @@ export function Settings({ store, navigate }: { store: FleetStore; navigate?: (v
   }
 
   async function loadOllama() {
-    const r = await call<{ ok: boolean; models: { name: string; size?: number; parameterSize?: string }[] }>('ollama:tags').catch(() => ({ ok: false, models: [] as { name: string }[] }));
+    const r = await call<{ ok: boolean; models: OllamaModel[] }>('ollama:tags').catch(() => ({ ok: false, models: [] as OllamaModel[] }));
     setOllamaModels(r.models ?? []);
     return r.models ?? [];
+  }
+  async function checkOllamaCatalog(options: { silent?: boolean; models?: OllamaModel[] } = {}) {
+    const models = options.models ?? ollamaModels;
+    if (!options.silent) setOllamaCatalogMsg('checking Ollama library…');
+    setOllamaCatalogChecking(true);
+    try {
+      const r = await call<OllamaCatalogCheck>(
+        'ollama:catalogCheck',
+        models,
+        LOCAL_MODEL_CATALOG.map((m) => m.id),
+      );
+      setOllamaCatalog(r);
+      const msg = r.ok
+        ? `${r.installedUpdates.length} update${r.installedUpdates.length === 1 ? '' : 's'} · ${r.newModels.length} new tag${r.newModels.length === 1 ? '' : 's'}`
+        : `catalog check failed${r.error ? `: ${r.error}` : ''}`;
+      setOllamaCatalogMsg(r.error && r.ok ? `${msg} · partial check` : msg);
+    } catch (e) {
+      setOllamaCatalogMsg(`catalog check failed: ${e instanceof Error ? e.message : String(e)}`);
+    } finally {
+      setOllamaCatalogChecking(false);
+    }
   }
   async function ensureOllamaBackend(models?: { name: string }[]) {
     const base = 'http://127.0.0.1:11434';
@@ -992,6 +1038,7 @@ export function Settings({ store, navigate }: { store: FleetStore; navigate?: (v
       else {
         const models = await loadOllama();
         await ensureOllamaBackend(models);
+        void checkOllamaCatalog({ silent: true, models });
         setPullMsg(`downloaded/refreshed ${m} ✓ · Ollama connected`);
       }
     } finally {
@@ -1008,6 +1055,11 @@ export function Settings({ store, navigate }: { store: FleetStore; navigate?: (v
   function modelInstalled(id: string): boolean {
     if (ollamaModels.some((m) => m.name === id)) return true;
     return !id.includes(':') && ollamaModels.some((m) => m.name.split(':')[0] === id);
+  }
+  function catalogModelMeta(m: OllamaCatalogModel): string {
+    return [m.sizeLabel, m.contextLabel ? `${m.contextLabel} ctx` : '', m.inputLabel, m.updatedLabel ? `updated ${m.updatedLabel}` : '']
+      .filter(Boolean)
+      .join(' · ');
   }
   async function copyText(text: string) {
     try { await navigator.clipboard.writeText(text); } catch { /* clipboard blocked */ }
@@ -1064,6 +1116,13 @@ export function Settings({ store, navigate }: { store: FleetStore; navigate?: (v
   const defaultRouteReady = defaultProvider ? providerRouteReady(defaultProvider) : false;
   const starterModel = TOP_LOCAL_MODEL_CATALOG.find((m) => m.id === STARTER_LOCAL_MODEL_ID) ?? TOP_LOCAL_MODEL_CATALOG[0];
   const starterInstalled = modelInstalled(STARTER_LOCAL_MODEL_ID);
+  const catalogUpdateRows = ollamaCatalog?.installedUpdates.slice(0, 8) ?? [];
+  const catalogNewRows = ollamaCatalog?.newModels.slice(0, 10) ?? [];
+  const ollamaCatalogStatus = ollamaCatalog
+    ? `catalog ${timeAgo(ollamaCatalog.checkedAt)} · ${ollamaCatalog.installedUpdates.length} update${ollamaCatalog.installedUpdates.length === 1 ? '' : 's'} · ${ollamaCatalog.newModels.length} new`
+    : ollamaCatalogChecking
+      ? 'checking catalog…'
+      : 'catalog unchecked';
   const localBackendConfigured = localProviders.some((p) => p.enabled !== false);
   const localRouteReadyProviders = localProviders.filter(providerRouteReady);
   const installedLocalStackRows = TOP_LOCAL_STACKS
@@ -1737,7 +1796,7 @@ export function Settings({ store, navigate }: { store: FleetStore; navigate?: (v
     return null;
   }
   useEffect(() => {
-    void loadOllama();
+    void loadOllama().then((models) => { void checkOllamaCatalog({ silent: true, models }); });
     void checkStackInstalls();
     void loadConc();
     void loadImgServer();
@@ -1760,6 +1819,15 @@ export function Settings({ store, navigate }: { store: FleetStore; navigate?: (v
       window.removeEventListener('focus', refreshLocal);
       window.clearInterval(timer);
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  useEffect(() => {
+    const refreshCatalog = () => {
+      void loadOllama().then((models) => { void checkOllamaCatalog({ silent: true, models }); });
+    };
+    const timer = window.setInterval(refreshCatalog, OLLAMA_CATALOG_REFRESH_MS);
+    return () => window.clearInterval(timer);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -2075,6 +2143,12 @@ export function Settings({ store, navigate }: { store: FleetStore; navigate?: (v
           <span className={localBackendReady ? 'ok-text small' : 'warn-text small'}>
             {localBackendReady ? 'backend ready' : localBackendConfigured ? 'sync needed' : 'backend not added'}
           </span>
+          <span className={catalogUpdateRows.length ? 'warn-text small' : 'muted small'} title={ollamaCatalogMsg || undefined}>
+            {ollamaCatalogStatus}
+          </span>
+          <button className="btn small" disabled={ollamaCatalogChecking} onClick={() => void checkOllamaCatalog()}>
+            {ollamaCatalogChecking ? 'Checking…' : 'Check catalog'}
+          </button>
           <button className="btn small" disabled={discovering} onClick={() => void runDiscover()}>
             {discovering ? 'Scanning…' : 'Scan running'}
           </button>
@@ -2172,6 +2246,41 @@ export function Settings({ store, navigate }: { store: FleetStore; navigate?: (v
           )}
           <button className="btn small" title="Refresh installed list" onClick={() => void loadOllama()}>↻</button>
         </div>
+        {catalogUpdateRows.length ? (
+          <div className="local-driving-strip warn" style={{ marginTop: 8 }}>
+            <div className="grow">
+              <b>Installed Ollama updates available</b>
+              <span>Remote digests changed. Re-pull to pick up rebuilt weights or engine-specific artifacts.</span>
+            </div>
+            <div className="row-actions" style={{ flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+              {catalogUpdateRows.map((m) => (
+                <button key={m.name} className="btn small" disabled={pulling} title={`${m.digest ?? ''}${m.updatedLabel ? ` · updated ${m.updatedLabel}` : ''}`} onClick={() => void pull(m.name)}>
+                  Update {m.name}
+                </button>
+              ))}
+            </div>
+          </div>
+        ) : null}
+        {catalogNewRows.length ? (
+          <div className="local-driving-strip ok" style={{ marginTop: 8 }}>
+            <div className="grow">
+              <b>New Ollama tags found</b>
+              <span>Public Ollama catalog tags not yet in IDACC's curated list. Download only what you want to test.</span>
+            </div>
+            <div className="row-actions" style={{ flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+              {catalogNewRows.map((m) => (
+                <button key={m.name} className="btn small" disabled={pulling} title={catalogModelMeta(m)} onClick={() => void pull(m.name)}>
+                  {m.name}
+                </button>
+              ))}
+            </div>
+          </div>
+        ) : null}
+        {ollamaCatalogMsg && !catalogUpdateRows.length && !catalogNewRows.length ? (
+          <p className={`small ${/fail/.test(ollamaCatalogMsg) ? 'status-error' : 'muted'}`} style={{ margin: '6px 0 0' }}>
+            {ollamaCatalogMsg}
+          </p>
+        ) : null}
         <div className="row-actions" style={{ marginTop: 10 }}>
           <input list="ollama-popular" style={{ width: 240 }} placeholder="model, e.g. llama3.2:1b" value={pullName} disabled={pulling} onChange={(e) => setPullName(e.target.value)} />
           <datalist id="ollama-popular">{POPULAR.map((m) => <option key={m} value={m} />)}</datalist>
