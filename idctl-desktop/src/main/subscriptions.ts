@@ -119,7 +119,7 @@ const SUB_META: Record<SubProvider, SubProviderMeta> = {
     install: 'curl -fsSL https://antigravity.google/cli/install.sh | bash',
     installHint: 'agy CLI not installed',
     postInstall: 'After install, IDACC will detect the agy binary. Use Manage account in IDACC to open Antigravity login.',
-    statusNote: 'Installed. IDACC can launch Antigravity login, but agent assignment stays disabled until the manager exposes an Antigravity harness.',
+    statusNote: 'Installed. IDACC checks Antigravity sign-in and model availability with `agy models`.',
   },
   copilot: {
     provider: 'copilot',
@@ -430,6 +430,33 @@ function googleAccountHint(): Pick<SubStatus, 'account' | 'accountSource' | 'ema
   };
 }
 
+async function antigravityStatus(): Promise<SubStatus> {
+  if (!cliPath(SUB_META.antigravity.bin)) return notInstalled('antigravity');
+  const account = googleAccountHint();
+  try {
+    const { stdout, stderr } = await execFileP('agy', ['models'], { env: cliEnv(), timeout: 15000 });
+    const out = `${stdout}${stderr}`.trim();
+    const loggedIn = Boolean(out) && !/not authenticated|not logged in|signed out|login required/i.test(out);
+    return baseStatus('antigravity', {
+      loggedIn,
+      installed: true,
+      statusSupported: true,
+      ...account,
+      linked: account.linked && !loggedIn ? true : undefined,
+      detail: truncateDetail(out),
+    });
+  } catch (e: unknown) {
+    const err = e as { stdout?: string; stderr?: string; message?: string };
+    return baseStatus('antigravity', {
+      installed: true,
+      statusSupported: true,
+      ...account,
+      loggedIn: false,
+      detail: truncateDetail(err.stdout || err.stderr || err.message || SUB_META.antigravity.statusNote || ''),
+    });
+  }
+}
+
 async function whoamiStatus(provider: 'kiro-cli' | 'q', command: CommandSpec): Promise<SubStatus> {
   const meta = SUB_META[provider];
   const evidence = installEvidence(meta);
@@ -455,12 +482,10 @@ async function whoamiStatus(provider: 'kiro-cli' | 'q', command: CommandSpec): P
   }
 }
 
-async function cliPresenceStatus(provider: 'antigravity' | 'copilot'): Promise<SubStatus> {
+async function cliPresenceStatus(provider: 'copilot'): Promise<SubStatus> {
   const meta = SUB_META[provider];
   if (!cliPath(meta.bin)) return notInstalled(provider);
-  const account =
-    provider === 'copilot' ? copilotAccount()
-    : googleAccountHint();
+  const account = copilotAccount();
   return baseStatus(provider, {
     installed: true,
     statusSupported: false,
@@ -476,9 +501,9 @@ async function providerStatus(provider: SubProvider): Promise<SubStatus> {
     case 'chatgpt': return codexStatus();
     case 'cursor': return cursorStatus();
     case 'grok': return grokStatus();
+    case 'antigravity': return antigravityStatus();
     case 'kiro-cli': return whoamiStatus('kiro-cli', ['kiro-cli', ['whoami']]);
     case 'q': return whoamiStatus('q', ['q', ['whoami']]);
-    case 'antigravity':
     case 'copilot':
       return cliPresenceStatus(provider);
   }

@@ -8,6 +8,9 @@ Every change pushed or merged to `main` carries its version number in the commit
 subject (`vX.Y.Z: …`), stamped automatically by the `commit-msg` hook — see
 [CONTRIBUTING.md](CONTRIBUTING.md).
 
+## [0.1.483] — 2026-07-02
+- Enable Antigravity runtime adapter gate
+
 ## [0.1.482] — 2026-07-02
 - Enable Grok Build runtime adapter gate
 

@@ -13,7 +13,7 @@ const managed = [
   { runtime: 'codex', installed: true, loggedIn: true, statusSupported: true },
   { runtime: 'cursor-cli', installed: true, loggedIn: false, statusSupported: true },
   { runtime: 'grok', installed: true, loggedIn: true, statusSupported: true },
-  { runtime: 'antigravity', installed: true, loggedIn: false, statusSupported: false },
+  { runtime: 'antigravity', installed: true, loggedIn: true, statusSupported: true },
   { runtime: 'copilot', installed: true, loggedIn: false, statusSupported: false },
   { runtime: 'kiro-cli', installed: true, loggedIn: true, statusSupported: true },
   { runtime: 'gemini', installed: true, loggedIn: false, statusSupported: true },
@@ -22,7 +22,7 @@ const managed = [
 
 assert.deepEqual(
   offerableRuntimes(providers, undefined, managed),
-  ['codex', 'grok', 'copilot', 'kiro-cli', 'claude-code-cli', 'claude-code-local', 'claude-agent-sdk', 'ollama'],
+  ['codex', 'grok', 'antigravity', 'copilot', 'kiro-cli', 'claude-code-cli', 'claude-code-local', 'claude-agent-sdk', 'ollama'],
   'runtime pickers should list Settings-proven manager harnesses, with linked subscription CLIs only after adapters ship',
 );
 
@@ -99,7 +99,13 @@ assert.deepEqual(
 assert.deepEqual(
   offerableRuntimes([], undefined, [{ runtime: 'antigravity', installed: true, loggedIn: false, statusSupported: false }]),
   [],
-  'Antigravity CLI should not become assignable until the manager exposes an Antigravity harness',
+  'Antigravity CLI should require signed-in model-probe evidence before assignment',
+);
+
+assert.deepEqual(
+  offerableRuntimes([], undefined, [{ runtime: 'antigravity', installed: true, loggedIn: true, statusSupported: true }]),
+  ['antigravity'],
+  'Antigravity CLI should become assignable once the manager exposes the Antigravity harness and Settings confirms sign-in',
 );
 
 assert.deepEqual(

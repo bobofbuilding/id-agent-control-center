@@ -5,9 +5,10 @@
  *   claude-* runtimes         ← anthropic provider (GET /v1/models with a key)
  *   codex runtime             ← openai provider
  *   cursor-cli runtime        ← (no public model API) curated only
- *   antigravity/q              ← managed subscription CLIs; linked in Settings,
- *                                 assignable only after id-agents exposes a harness
  *   grok                       ← managed Grok Build CLI harness
+ *   antigravity                ← managed Google Antigravity CLI harness
+ *   q                          ← managed subscription CLI; linked in Settings,
+ *                                 assignable only after id-agents exposes a harness
  *   copilot                    ← managed GitHub Copilot CLI harness
  *   kiro-cli                   ← managed Kiro CLI harness
  *   gemini                     ← legacy/current-only CLI id; API setup lives in providers
@@ -48,6 +49,7 @@ export const MANAGER_EXECUTION_RUNTIMES = [
   'codex',
   'cursor-cli',
   'grok',
+  'antigravity',
   'copilot',
   'kiro-cli',
   'ollama',
@@ -246,12 +248,12 @@ function managedRuntimeReady(s: ManagedRuntimeForOffer): boolean {
   // These CLIs do not expose a safe non-interactive account status in Settings;
   // binary presence is the strongest read-only availability signal we have.
   // The manager-harness gate is applied separately before a runtime is offered
-  // for assignment. Grok exposes `grok models`, so it should arrive here with
-  // statusSupported=true and loggedIn=true rather than using installed-only
-  // evidence. Gemini CLI is excluded from managed sign-ins; use Google Gemini
-  // API under Inference backends. Existing gemini assignments remain
-  // current-only via keep.
-  return s.installed === true && ['antigravity', 'copilot'].includes(s.runtime);
+  // for assignment. Grok and Antigravity expose model probes, so they should
+  // arrive here with statusSupported=true and loggedIn=true rather than using
+  // installed-only evidence. Gemini CLI is excluded from managed sign-ins; use
+  // Google Gemini API under Inference backends. Existing gemini assignments
+  // remain current-only via keep.
+  return s.installed === true && ['copilot'].includes(s.runtime);
 }
 
 /**
@@ -355,8 +357,8 @@ export const RUNTIME_CURATED: Record<string, string[]> = {
   codex: ['gpt-5.5', 'gpt-5.4', 'gpt-5.4-mini', 'gpt-5.3-codex-spark', 'gpt-5.3-codex'],
   'cursor-cli': ['sonnet-4', 'composer-2'],
   grok: ['grok-composer-2.5-fast', 'grok-build'],
+  antigravity: ['Gemini 3.5 Flash (Medium)', 'Gemini 3.5 Flash (High)', 'Gemini 3.5 Flash (Low)', 'Gemini 3.1 Pro (Low)', 'Gemini 3.1 Pro (High)', 'Claude Sonnet 4.6 (Thinking)', 'Claude Opus 4.6 (Thinking)', 'GPT-OSS 120B (Medium)'],
   // These managed CLIs own model/account selection; keep fallback catalogs minimal.
-  antigravity: ['default'],
   gemini: ['default'],
   copilot: ['default'],
   'kiro-cli': ['auto', 'claude-sonnet-4.5', 'claude-sonnet-4', 'claude-haiku-4.5', 'deepseek-3.2', 'minimax-m2.5', 'minimax-m2.1', 'glm-5', 'qwen3-coder-next'],

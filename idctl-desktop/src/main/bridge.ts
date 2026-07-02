@@ -404,6 +404,23 @@ function grokModelsFromCli(): string[] {
   }
 }
 
+function antigravityModelsFromCli(): string[] {
+  try {
+    const stdout = execFileSync('agy', ['models'], {
+      encoding: 'utf8',
+      stdio: ['pipe', 'pipe', 'pipe'],
+      timeout: 15000,
+    });
+    if (!stdout.trim() || /not authenticated|not logged in|signed out|login required/i.test(stdout)) return [];
+    return stdout
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .filter((line) => line && line.length <= 120 && !/token|secret|bearer|api[_-]?key/i.test(line));
+  } catch {
+    return [];
+  }
+}
+
 /** Catalog with subscription CLI live model lists merged into curated/runtime providers. */
 function runtimeCatalogWithLiveCliModels(): Record<string, string[]> {
   const cat = buildRuntimeCatalog(loadSettings().providers);
@@ -411,6 +428,8 @@ function runtimeCatalogWithLiveCliModels(): Record<string, string[]> {
   if (codex.length) cat.codex = Array.from(new Set([...codex, ...(cat.codex ?? [])]));
   const grok = grokModelsFromCli();
   if (grok.length) cat.grok = Array.from(new Set([...grok, ...(cat.grok ?? [])]));
+  const antigravity = antigravityModelsFromCli();
+  if (antigravity.length) cat.antigravity = Array.from(new Set([...antigravity, ...(cat.antigravity ?? [])]));
   return cat;
 }
 
@@ -427,7 +446,7 @@ type RuntimeFreshness = {
   kind?: 'harness' | RuntimeModelLaneKind;
   models: string[];
   count: number;
-  source: 'codex-cache' | 'grok-cli' | 'provider' | 'curated' | 'none';
+  source: 'codex-cache' | 'grok-cli' | 'antigravity-cli' | 'provider' | 'curated' | 'none';
   provider?: string;
   lastCheckedMs: number | null;
   selectable?: boolean;
@@ -469,6 +488,10 @@ async function runtimeFreshness(): Promise<RuntimeFreshness[]> {
     if (rt === 'grok') {
       const live = grokModelsFromCli().length > 0;
       return { runtime: rt, kind: 'harness', models, count: models.length, source: live ? 'grok-cli' : 'curated', lastCheckedMs: live ? Date.now() : null, selectable, detail: unavailableDetail };
+    }
+    if (rt === 'antigravity') {
+      const live = antigravityModelsFromCli().length > 0;
+      return { runtime: rt, kind: 'harness', models, count: models.length, source: live ? 'antigravity-cli' : 'curated', lastCheckedMs: live ? Date.now() : null, selectable, detail: unavailableDetail };
     }
     const p = providerFor(rt);
     if (p) return { runtime: rt, kind: 'harness', models, count: models.length, source: 'provider', provider: p.name, lastCheckedMs: p.lastSync?.at ?? null, selectable, detail: unavailableDetail };
