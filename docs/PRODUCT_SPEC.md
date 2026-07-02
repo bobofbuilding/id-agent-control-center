@@ -452,7 +452,9 @@ default; gated on macOS Screen Recording + Accessibility; per-action approval, p
 Screen Recording and Accessibility stay strict hard gates. Input Monitoring and Automation are
 best-effort macOS TCC readbacks: when macOS blocks inspection or Automation has not recorded a
 target app yet, the permissions card shows an amber manual-verification state instead of a red
-denial.
+denial. If the operator verifies the IDACC app directly in macOS Settings, the row can be marked
+verified locally; that is a UI readback override only and does not weaken the Screen Recording or
+Accessibility gates.
 
 **What you can do:** **Arm/Disarm** (Arm blesses the currently-attached agents); **Pause/Resume**;
 **PANIC** (■, never blocked, global hotkey ⌘⌥⇧P); watch the **live view** of the primary display;

@@ -28,6 +28,7 @@ type AttachedAgent = { id: string; name: string; team?: string; authority?: stri
 type ComputerUseTarget = Agent & { team?: string };
 type TeamAgentsGroup = { team: string; agents: Agent[] };
 interface LegacyComputerUseAuthority { agent: string; currentAuthorities: string[]; tokenCount: number; source: string; note: string }
+interface ManualPermissionReview { inputMonitoring?: boolean; automation?: boolean; updatedAt?: number }
 type ComputerUseEventApi = {
   onComputerFrame?: (cb: (frame: unknown) => void) => () => void;
   onComputerPending?: (cb: (evt: unknown) => void) => () => void;
@@ -35,6 +36,7 @@ type ComputerUseEventApi = {
 };
 
 const ACT_ICON: Record<string, string> = { screenshot: '📷', mouse_move: '➜', left_click: '🖱', right_click: '🖱', middle_click: '🖱', double_click: '🖱', left_click_drag: '✣', type: '⌨', key: '⌨', scroll: '↕' };
+const MANUAL_PERMISSION_KEY = 'idacc.cu.manual-permissions.v1';
 
 function agentRuntime(a: { runtime?: string; metadata?: { runtime?: string } }): string {
   return a.runtime ?? a.metadata?.runtime ?? '';
@@ -79,6 +81,13 @@ function permissionTone(status: PermissionState | undefined): PermissionTone {
   if (status === 'granted') return 'ok';
   if (status === 'unknown') return 'warn';
   return 'bad';
+}
+
+function loadManualPermissionReview(): ManualPermissionReview {
+  try {
+    const raw = localStorage.getItem(MANUAL_PERMISSION_KEY);
+    return raw ? JSON.parse(raw) as ManualPermissionReview : {};
+  } catch { return {}; }
 }
 
 function PermissionRow({
@@ -134,6 +143,7 @@ export function ComputerUse({ store }: { store: FleetStore }) {
   const [legacyAuthority, setLegacyAuthority] = useState<LegacyComputerUseAuthority[]>([]);
   const [panicFlash, setPanicFlash] = useState(false);
   const [allowEmptyArm, setAllowEmptyArm] = useState(false);
+  const [manualPerms, setManualPerms] = useState<ManualPermissionReview>(() => loadManualPermissionReview());
   const lastFrameAt = useRef(0);
   const resolvedRef = useRef<Set<string>>(new Set()); // approval ids the user already answered → never resurrect via a stale snapshot
 
@@ -157,18 +167,24 @@ export function ComputerUse({ store }: { store: FleetStore }) {
   const axGranted = perms?.accessibility === true;
   const imGranted = perms?.inputMonitoring === 'granted';
   const automationGranted = perms?.automation?.status === 'granted';
+  const imManuallyVerified = !imGranted && perms?.platform === 'darwin' && perms?.inputMonitoring === 'unknown' && manualPerms.inputMonitoring === true;
+  const automationManuallyVerified = !automationGranted && perms?.platform === 'darwin' && perms?.automation?.status === 'unknown' && manualPerms.automation === true;
   const recentlyActed = auditLog.length > 0 && Date.now() - auditLog[auditLog.length - 1].ts < 3500;
   const tccUnreadable = perms?.platform === 'darwin' && perms?.tcc?.readable === false
-    && (perms.inputMonitoring === 'unknown' || perms.automation.status === 'unknown');
+    && ((perms.inputMonitoring === 'unknown' && !manualPerms.inputMonitoring) || (perms.automation.status === 'unknown' && !manualPerms.automation));
   const imNeedsManualReview = perms?.platform === 'darwin' && perms?.inputMonitoring === 'unknown';
   const automationNeedsManualReview = perms?.platform === 'darwin' && perms?.automation?.status === 'unknown';
   const inputMonitoringDetail = imGranted
     ? 'Granted'
+    : imManuallyVerified
+      ? 'Verified in macOS Settings (manual)'
     : imNeedsManualReview
       ? 'Needs verification - macOS does not expose a reliable readback here. If IDACC is enabled in Privacy & Security > Input Monitoring, this is okay.'
       : permissionText(perms?.inputMonitoring);
   const automationDetail = automationGranted
     ? `Granted${perms?.automation.targets.length ? ` for ${perms.automation.targets.join(', ')}` : ''}`
+    : automationManuallyVerified
+      ? 'Verified in macOS Settings (manual; Automation is still per target app)'
     : automationNeedsManualReview
       ? 'Needs verification - Automation is granted per target app and may stay unknown until IDACC first controls that app.'
       : permissionText(perms?.automation?.status);
@@ -193,6 +209,15 @@ export function ComputerUse({ store }: { store: FleetStore }) {
     } catch {
       setMsg(`Copy failed. Scoped authority: ${authority}`);
     }
+  }
+  function setManualPermission(key: 'inputMonitoring' | 'automation', value: boolean) {
+    const next = { ...manualPerms, [key]: value, updatedAt: Date.now() };
+    if (!value) delete next[key];
+    setManualPerms(next);
+    try { localStorage.setItem(MANUAL_PERMISSION_KEY, JSON.stringify(next)); } catch { /* local-only display hint */ }
+    setMsg(value
+      ? `${key === 'inputMonitoring' ? 'Input Monitoring' : 'Automation'} marked verified from macOS Settings.`
+      : `${key === 'inputMonitoring' ? 'Input Monitoring' : 'Automation'} manual verification cleared.`);
   }
 
   async function refresh() {
@@ -370,6 +395,9 @@ export function ComputerUse({ store }: { store: FleetStore }) {
       }
       await call('cu:arm', activeTeam, beforeStamp);
       setAllowEmptyArm(false);
+      await refresh();
+    } catch (e) {
+      setMsg(`✗ couldn't arm Computer Use: ${e instanceof Error ? e.message : e}`);
       await refresh();
     } finally { setBusy(false); }
   }
@@ -627,21 +655,37 @@ export function ComputerUse({ store }: { store: FleetStore }) {
               {status && !status.driverOk ? <div className="cu-msg small">⚠ native input module unavailable in this build</div> : null}
             </PermissionRow>
             <PermissionRow
-              tone={permissionTone(perms?.inputMonitoring)}
+              tone={imGranted || imManuallyVerified ? 'ok' : permissionTone(perms?.inputMonitoring)}
               title="Input Monitoring"
               subtitle="tracks keyboard-input authority prompts"
               detail={inputMonitoringDetail}
               pane="input-monitoring"
               onRefresh={() => void refresh()}
-            />
+            >
+              {imNeedsManualReview ? (
+                <div className="cu-perm-actions">
+                  <button className="btn" onClick={() => setManualPermission('inputMonitoring', !manualPerms.inputMonitoring)}>
+                    {manualPerms.inputMonitoring ? 'Clear manual verification' : 'I verified this in macOS'}
+                  </button>
+                </div>
+              ) : null}
+            </PermissionRow>
             <PermissionRow
-              tone={permissionTone(perms?.automation?.status)}
+              tone={automationGranted || automationManuallyVerified ? 'ok' : permissionTone(perms?.automation?.status)}
               title="Automation"
               subtitle="lets IDACC control allowed apps when needed"
               detail={automationDetail}
               pane="automation"
               onRefresh={() => void refresh()}
-            />
+            >
+              {automationNeedsManualReview ? (
+                <div className="cu-perm-actions">
+                  <button className="btn" onClick={() => setManualPermission('automation', !manualPerms.automation)}>
+                    {manualPerms.automation ? 'Clear manual verification' : 'I verified this in macOS'}
+                  </button>
+                </div>
+              ) : null}
+            </PermissionRow>
             {tccUnreadable ? (
               <div className="cu-msg small">
                 macOS blocked direct inspection for Input Monitoring/Automation. Verify ID Agents Control Center in System Settings; Re-check may remain in review until macOS records a readable grant.

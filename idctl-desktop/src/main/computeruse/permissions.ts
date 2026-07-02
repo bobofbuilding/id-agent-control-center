@@ -54,6 +54,8 @@ const TCC_SERVICES = {
 
 const APP_CLIENTS = [
   'world.idchain.idagents-control',
+  'world.idchain.idagents-control.helper',
+  'com.electron.idagents-control-center',
   'ID Agents Control Center',
   'idagents-control-center',
 ];
@@ -78,7 +80,22 @@ function appClients(): string[] {
   try { clients.add(app.getName()); } catch { /* */ }
   try { clients.add(app.getPath('exe')); } catch { /* */ }
   try { clients.add(process.execPath); } catch { /* */ }
+  for (const p of [...clients]) {
+    const marker = '.app/Contents/MacOS/';
+    const idx = p.indexOf(marker);
+    if (idx >= 0) clients.add(p.slice(0, idx + '.app'.length));
+  }
   return [...clients].filter(Boolean);
+}
+
+function appClientPredicates(): string {
+  const exact = appClients().map((c) => `client = ${sqlString(c)}`);
+  const fuzzy = [
+    'ID Agents Control Center',
+    'idagents-control',
+    'world.idchain.idagents-control',
+  ].map((c) => `client like ${sqlString(`%${c}%`)}`);
+  return [...exact, ...fuzzy].join(' OR ');
 }
 
 function tccDatabases(): { path: string; userScoped: boolean }[] {
@@ -90,7 +107,7 @@ function tccDatabases(): { path: string; userScoped: boolean }[] {
 
 async function readTccRows(): Promise<{ rows: TccRow[]; readable: boolean; error?: string }> {
   const services = Object.values(TCC_SERVICES).map(sqlString).join(',');
-  const clientPredicates = appClients().map((c) => `client = ${sqlString(c)}`).join(' OR ');
+  const clientPredicates = appClientPredicates();
   const sql = [
     'select service, client, auth_value, indirect_object_identifier',
     'from access',

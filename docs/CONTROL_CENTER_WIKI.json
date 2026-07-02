@@ -4656,6 +4656,12 @@
         "HR Manager Build now exposes a One new agent shortcut for existing teams, clearing the reviewed batch to a single blank row instead of making operators prune preloaded existing roster rows manually.",
         "Existing Build + merge semantics remain unchanged: already-present agent names are skipped and only new rows are sent through onboard:run after target team, roster, hierarchy, and relay preflight.",
         "Validation: npm run typecheck in idctl-desktop and diff check passed before release validation."
+      ],
+      "implementedTwoHundredTwentySecondPass": [
+        "Computer Use macOS TCC detection now matches packaged bundle/helper ids, executable and bundle paths, plus fuzzy IDACC client rows for Input Monitoring and Automation.",
+        "Input Monitoring and Automation rows now support local manual verification when macOS blocks reliable readback, while Screen Recording and Accessibility remain the strict hard gates.",
+        "Computer Use Arm failures now surface as page messages and refresh state instead of looking like a silent no-op.",
+        "Validation: npm run typecheck in idctl-desktop and diff check passed before release validation."
       ]
     },
     {
