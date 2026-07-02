@@ -703,7 +703,7 @@ export function Settings({ store, navigate }: { store: FleetStore; navigate?: (v
     return list.find((x) => x.id === s.id && x.kind === s.kind && normUrl(x.baseUrl) === normUrl(s.baseUrl));
   }
   async function autoAddKnownStackBackends(found: Discovered[]): Promise<Set<string>> {
-    const stackBases = new Set(TOP_LOCAL_STACKS.map((s) => s.apiBase).filter((u): u is string => Boolean(u)).map(normUrl));
+    const stackBases = new Set(TOP_LOCAL_STACKS.flatMap((s) => [s.apiBase, stackApiBase(s)]).filter((u): u is string => Boolean(u)).map(normUrl));
     const liveKnown = found.filter((s) => s.status === 'live' && stackBases.has(normUrl(s.baseUrl)));
     if (!liveKnown.length) return new Set();
     const latest = await freshProviders();
@@ -793,7 +793,7 @@ export function Settings({ store, navigate }: { store: FleetStore; navigate?: (v
     await addDiscovered(match);
     setStackMsg(`${s.name} added as an inference backend.`);
   }
-  // Local models (Ollama): list installed + download a new one (streamed progress).
+  // Local models & backends: list installed Ollama models, pull/re-pull models, and reflect local stack API readiness.
   const POPULAR = TOP_LOCAL_MODEL_CATALOG.map((m) => m.id);
   const [ollamaModels, setOllamaModels] = useState<{ name: string; size?: number; parameterSize?: string }[]>([]);
   const [pullName, setPullName] = useState(STARTER_LOCAL_MODEL_ID);
@@ -933,7 +933,7 @@ export function Settings({ store, navigate }: { store: FleetStore; navigate?: (v
       else {
         const models = await loadOllama();
         await ensureOllamaBackend(models);
-        setPullMsg(`downloaded ${m} ✓ · Ollama connected`);
+        setPullMsg(`downloaded/refreshed ${m} ✓ · Ollama connected`);
       }
     } finally {
       setPulling(false);
@@ -1007,6 +1007,9 @@ export function Settings({ store, navigate }: { store: FleetStore; navigate?: (v
   const starterInstalled = modelInstalled(STARTER_LOCAL_MODEL_ID);
   const localBackendConfigured = localProviders.some((p) => p.enabled !== false);
   const localRouteReadyProviders = localProviders.filter(providerRouteReady);
+  const installedLocalStacks = TOP_LOCAL_STACKS
+    .filter((s) => stackInstallStatus[s.id]?.installed)
+    .map((s) => s.name);
   const localBackendReady = localRouteReadyProviders.length > 0;
   const localSyncCandidate = localProviders.find((p) => p.enabled !== false && providerKeyReady(p) && !providerRouteReady(p));
   const localDrivingTone = localBackendReady ? 'ok' : localBackendConfigured || starterInstalled ? 'warn' : 'err';
@@ -1246,7 +1249,7 @@ export function Settings({ store, navigate }: { store: FleetStore; navigate?: (v
     } finally { setRemoving(null); setConfirmRemove(null); }
   }
   // Stack install/uninstall commands: runnable (open Terminal) vs app-download (link out).
-  const RUNNABLE_RE = /^(brew|pip|pipx|uv|cargo|curl|docker|conda|npm|npx)\b/;
+  const RUNNABLE_RE = /^(brew|python3?|pip3?|pipx|uv|cargo|curl|docker|conda|npm|npx)\b/;
   const PLACEHOLDER_CMD_RE = /<[^>\s][^>]*>/;
   function stackCommand(command?: string): string {
     return (command ?? '').split('#')[0].trim();
@@ -1589,6 +1592,12 @@ export function Settings({ store, navigate }: { store: FleetStore; navigate?: (v
       }, delay);
     });
   }
+  function scheduleStackDiscoverScans(s: LocalStackEntry) {
+    if (!stackApiBase(s)) return;
+    [8000, 22000, 46000].forEach((delay) => {
+      setTimeout(() => void runDiscover({ autoAddKnownStacks: true }), delay);
+    });
+  }
   async function runStackCmd(s: LocalStackEntry, action: 'install' | 'uninstall' | 'start' = 'install') {
     const draft = action === 'install' ? stackInstallDrafts[s.id] : undefined;
     const cmd = action === 'install'
@@ -1618,13 +1627,14 @@ export function Settings({ store, navigate }: { store: FleetStore; navigate?: (v
     }
     if (r.ran) {
       setStackMsg(action === 'install'
-        ? `opened Terminal to install ${s.name}${draft?.port ? ` on port ${draft.port}` : ''}. Install only adds the app/server; start it before adding a backend.`
+        ? `opened Terminal to install ${s.name}${draft?.port ? ` on port ${draft.port}` : ''}. IDACC will rescan and add the backend automatically if the server starts.`
         : action === 'start'
-          ? `opened Terminal to start ${s.name}. After it answers locally, Scan running to add or refresh the backend.`
+          ? `opened Terminal to start ${s.name}. IDACC will rescan and add or refresh the backend when it answers locally.`
           : `opened Terminal to uninstall ${s.name}. Review and stop it there if anything looks wrong.`);
-      if (action === 'start') {
-        setTimeout(() => void runDiscover({ autoAddKnownStacks: true }), 8000);
-      } else {
+      if (action === 'install' || action === 'start') {
+        scheduleStackDiscoverScans(s);
+      }
+      if (action !== 'start') {
         scheduleStackInstallChecks(s, action);
       }
     } else {
@@ -1663,6 +1673,17 @@ export function Settings({ store, navigate }: { store: FleetStore; navigate?: (v
       else setPullMsg(`${o.model}: ${o.status ?? 'pulling'}${o.pct != null ? ` · ${o.pct}%` : ''}`);
     });
     return () => off?.();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  useEffect(() => {
+    const refreshLocal = () => { void loadOllama(); void runDiscover({ autoAddKnownStacks: true }); };
+    window.addEventListener('focus', refreshLocal);
+    const timer = window.setInterval(refreshLocal, 5 * 60 * 1000);
+    return () => {
+      window.removeEventListener('focus', refreshLocal);
+      window.clearInterval(timer);
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -1967,7 +1988,7 @@ export function Settings({ store, navigate }: { store: FleetStore; navigate?: (v
 
       <section className="card">
         <div className="row-actions" style={{ alignItems: 'center', gap: 8, marginBottom: 8 }}>
-          <h3 style={{ margin: 0 }}>Local models (Ollama)</h3>
+          <h3 style={{ margin: 0 }}>Local models & backends</h3>
           <span className="grow" />
           <span className={ollamaModels.length ? 'ok-text small' : 'warn-text small'}>
             {ollamaModels.length ? `${ollamaModels.length} models` : 'no models'}
@@ -1978,6 +1999,21 @@ export function Settings({ store, navigate }: { store: FleetStore; navigate?: (v
           <button className="btn small" disabled={discovering} onClick={() => void runDiscover()}>
             {discovering ? 'Scanning…' : 'Scan running'}
           </button>
+        </div>
+        <div className="row-actions" style={{ flexWrap: 'wrap', gap: 6, marginBottom: 8 }}>
+          <span className="muted small">local APIs:</span>
+          {localRouteReadyProviders.length ? (
+            <span className="chips grow">
+              {localRouteReadyProviders.map((p) => <span className="chip" key={p.name}>{p.name}</span>)}
+            </span>
+          ) : (
+            <span className="muted small grow">none live yet</span>
+          )}
+          {installedLocalStacks.length ? (
+            <span className="muted small" title={installedLocalStacks.join(', ')}>
+              installed stacks: {installedLocalStacks.slice(0, 3).join(', ')}{installedLocalStacks.length > 3 ? ` +${installedLocalStacks.length - 3}` : ''}
+            </span>
+          ) : null}
         </div>
         <div className={`local-driving-strip ${localDrivingTone}`}>
           <div className="grow">
@@ -2028,8 +2064,12 @@ export function Settings({ store, navigate }: { store: FleetStore; navigate?: (v
                       <button title="Cancel" onClick={() => setConfirmRemove(null)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--muted, #888)', padding: 0 }}>×</button>
                     </>
                   ) : (
-                    <button title={`Uninstall ${m.name}`} onClick={() => setConfirmRemove(m.name)}
-                      style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--muted, #888)', padding: 0, fontSize: 11, lineHeight: 1 }}>✕</button>
+                    <>
+                      <button title={`Re-pull ${m.name} to pick up updated weights or engine-specific artifacts`} disabled={pulling} onClick={() => void pull(m.name)}
+                        style={{ background: 'none', border: 'none', cursor: pulling ? 'default' : 'pointer', color: 'var(--accent, #45b7ff)', padding: 0, fontSize: 11, lineHeight: 1 }}>update</button>
+                      <button title={`Uninstall ${m.name}`} onClick={() => setConfirmRemove(m.name)}
+                        style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--muted, #888)', padding: 0, fontSize: 11, lineHeight: 1 }}>✕</button>
+                    </>
                   )}
                 </span>
               ))}
@@ -2079,6 +2119,7 @@ export function Settings({ store, navigate }: { store: FleetStore; navigate?: (v
                     ) : (
                       <>
                         <span className="ok-text small">installed ✓</span>
+                        <button className="btn small" disabled={pulling} title="Re-pull this model to pick up updated weights or Ollama engine artifacts" onClick={() => void pull(m.id)}>Update</button>
                         <button className="btn small icon-danger" title="Uninstall this model" onClick={() => setConfirmRemove(m.id)}>✕</button>
                       </>
                     )

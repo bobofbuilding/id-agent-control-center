@@ -35,7 +35,7 @@ and drives, it never owns the runtime.
 
 ### 2.1 Sidebar navigation
 Ten destinations: **Dashboard** ▦, **Inbox** ✉ (badge = pending messages), **Work** ☑,
-**Projects** ◆, **Identity & Keys** ⬡, **HR Manager** ⛌, **Capabilities** ◫,
+**Projects** ◆, **HR Manager** ⛌, **Capabilities** ◫, **Identity & Keys** ⬡,
 **Computer Use** 🖥, **Settings** ⚙, and **Wiki** ▤. Health now lives inside HR Manager as
 the **Health** tab, while the legacy `health` route still opens that tab for compatibility.
 The last-open view is remembered across launches (and self-update relaunches).
@@ -527,9 +527,11 @@ Manager; this is the plumbing.)
   under Inference backends instead. Antigravity CLI is managed from Settings as the consumer
   subscription successor, but is not offered as an agent harness until the manager exposes an
   Antigravity adapter.
-- **Local models (Ollama)**: compact model/backend status, one **Scan running** action, guarded
-  next-step setup, local concurrency (1–16), installed chips, **Download** by id (streamed
-  progress), and a searchable **catalog** with capability filters and hardware fit-warnings.
+- **Local models & backends**: compact model/backend status, live local API chips, installed stack
+  evidence, one **Scan running** action, guarded next-step setup, local concurrency (1–16), Ollama
+  installed chips with reviewed **Update** re-pull actions, **Download** by id (streamed progress),
+  and a searchable **catalog** with capability filters, Gemma 4 MLX entries, and hardware
+  fit-warnings.
 - **Agent chain RPCs**: EVM JSON-RPC endpoints agents may use when they hold an active granted key;
   keys are encrypted and the Identity page mirrors the enabled chain allowlist without exposing
   secrets.
@@ -539,12 +541,13 @@ Manager; this is the plumbing.)
   dropdown for advanced filters, **Scan running**, primary **Install** actions for command-backed
   start-here/easy/guided/advanced stacks, reviewed Run-in-Terminal/Uninstall actions, setup notes,
   docs ↗, host-platform and unresolved-template guards for advanced stacks such as vLLM and TGI,
-  Docker readiness checks before container commands, Start actions for existing stopped containers
-  such as LocalAI, live/configured/shared-default port warnings with alternate-port hints, local
-  backend presets for shared-port stacks such as LocalAI, MLX, and TGI, automatic conflict-safe
-  install command rewrites for Docker `-p`, `--port`, and `--tcp` port flags, automatic backend add
-  for matching live backend presets after a scan, and row-level **Add backend** as a fallback once a
-  scanned local server is live.
+  Docker readiness checks before container commands, `python3 -m pip` Python stack commands, Start
+  actions and mapped-host-port detection for existing stopped containers such as LocalAI,
+  live/configured/shared-default port warnings with alternate-port hints, local backend presets for
+  shared-port stacks such as LocalAI, MLX, and TGI, automatic conflict-safe install command rewrites
+  for Docker `-p`, `--port`, and `--tcp` port flags, automatic backend add for matching live backend
+  presets after a scan or after an Install/Start follow-up scan, and row-level **Add backend** as a
+  fallback once a scanned local server is live.
 - **Inference backends**: provider table (★ default, enable, key badge, status, model list,
   **Connect & sync**, searchable Health model selection, ✕), API/cloud-focused **Add a backend**
   catalog or custom API endpoint, provider-specific key requirements, NVIDIA API Catalog preset

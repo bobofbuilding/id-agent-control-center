@@ -204,9 +204,15 @@ export async function localStackInstallStatus(ids: string[]): Promise<Record<str
     } else if (id === 'jan') {
       installed = await brewCaskInstalled('jan');
       source = installed ? 'homebrew cask' : undefined;
+    } else if (id === 'gpt4all') {
+      installed = await brewCaskInstalled('gpt4all');
+      source = installed ? 'homebrew cask' : undefined;
     } else if (id === 'llama-cpp') {
       installed = await brewFormulaInstalled('llama.cpp');
       source = installed ? 'homebrew formula' : undefined;
+    } else if (id === 'mlx-lm-server') {
+      installed = await pipPackageInstalled('mlx-lm');
+      source = installed ? 'pip package' : undefined;
     } else if (id === 'vllm') {
       installed = await pipPackageInstalled('vllm');
       source = installed ? 'pip package' : undefined;
