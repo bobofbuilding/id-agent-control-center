@@ -561,6 +561,10 @@ Manager; this is the plumbing.)
   models, pending installed local stack rows, successful local Connect & sync promotion to enabled,
   and cloud keys auto-detected from env, including `PERPLEXITY_API_KEY` for Perplexity. Local server
   setup belongs to Local LLM stacks above.
+- **Local backend readiness**: a local provider that answers but returns no model list is displayed as
+  `live · no models` and is not route-ready until a probe/sync produces at least one model. Local
+  stack port warnings suppress a stack's own configured/discovered port so an installed LocalAI-style
+  backend does not warn against itself.
 
 **Data & actions:** `app:hardware`, `manager:capabilities`, `app:version`, `update:status/check/
 getSettings/setSettings`, `subs:status/signin/signout/install`, `manager:localConcurrency/

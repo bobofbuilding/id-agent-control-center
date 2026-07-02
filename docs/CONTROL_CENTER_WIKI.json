@@ -2678,7 +2678,7 @@
         {
           "id": "local-stacks",
           "label": "Local LLM stacks",
-          "description": "Local inference stack catalog. It opens on a compact backend-presets filter, keeps common filters visible, moves advanced stack tags behind a tag dropdown, reviews install commands before visible Terminal runs, shows unavailable one-click installs with concrete reason labels such as Linux host required, choose model first, or manual setup, shows uninstall only after matching package/container install evidence, derives claimed ports from default/API/command host mappings, warns when a claimed port is running or configured, can auto-rewrite Docker -p, --port, and --tcp install commands to a free loopback port, separates package install from backend add, includes shared-port backend presets such as LocalAI, MLX, and TGI, auto-adds pending Inference backend rows for installed local provider stacks, auto-upgrades matching live backend presets after Scan running, and keeps row-level Add backend as a fresh-scan fallback.",
+          "description": "Local inference stack catalog. It opens on a compact backend-presets filter, keeps common filters visible, moves advanced stack tags behind a tag dropdown, reviews install commands before visible Terminal runs, shows unavailable one-click installs with concrete reason labels such as Linux host required, choose model first, or manual setup, shows uninstall only after matching package/container install evidence, derives claimed ports from default/API/command host mappings, suppresses self-conflict warnings for a stack's own configured/discovered backend port, warns when another claimed port is running or configured, can auto-rewrite Docker -p, --port, and --tcp install commands to a free loopback port, separates package install from backend add, includes shared-port backend presets such as LocalAI, MLX, and TGI, auto-adds pending Inference backend rows for installed local provider stacks, auto-upgrades matching live backend presets after Scan running, and keeps row-level Add backend as a fresh-scan fallback.",
           "routesInto": [
             "app:runInTerminal",
             "providers:discover"
@@ -2687,7 +2687,7 @@
         {
           "id": "providers",
           "label": "Inference backends",
-          "description": "API/cloud-focused provider catalog, custom API endpoint add, NVIDIA API Catalog preset, Perplexity API key support through PERPLEXITY_API_KEY/PPLX_API_KEY or pasted key, add/remove/default/toggle/connect/model sync, provider-specific key readiness, pending installed local stack rows, successful local Connect & sync promotion to enabled, quiet already-configured no-op state, and guarded same-name replacement when the endpoint or hidden key actually changes. Local server creation is owned by Local LLM stacks.",
+          "description": "API/cloud-focused provider catalog, custom API endpoint add, NVIDIA API Catalog preset, Perplexity API key support through PERPLEXITY_API_KEY/PPLX_API_KEY or pasted key, add/remove/default/toggle/connect/model sync, provider-specific key readiness, pending installed local stack rows, successful local Connect & sync promotion to enabled, live no-model probes rendered as warning/not route-ready, quiet already-configured no-op state, and guarded same-name replacement when the endpoint or hidden key actually changes. Local server creation is owned by Local LLM stacks.",
           "routesInto": [
             "providers:*"
           ]
@@ -4781,6 +4781,12 @@
         "Local LLM stack rows no longer collapse unsupported or templated installs into the vague guided setup required label.",
         "Unavailable install rows now render concrete short labels such as Linux host required, choose model first, or manual setup while retaining the full explanation in the tooltip.",
         "Validation: npm run typecheck in idctl-desktop, wiki JSON parse, and npm run build passed before release validation."
+      ],
+      "implementedTwoHundredThirtyFourthPass": [
+        "Local LLM stack port warnings now suppress self-conflicts when the live/configured port belongs to that same stack's configured backend or exact discovered server.",
+        "Stack claimed-port display no longer keeps parsing stale default install command ports after an installed stack has a detected/operator-selected alternate port.",
+        "Inference backend rows now render live no-model probes as warnings and no longer treat them as route-ready until a synced/probed model list exists.",
+        "Validation: npm run typecheck in idctl-desktop, wiki JSON parse, and npm run build passed before release validation."
       ]
     },
     {
@@ -4844,5 +4850,5 @@
       "body": "# Wiki\n\nWiki is both the human documentation page and the editable schematic for the Control Center UI. Each article explains the operator purpose of a page; the structured sections below preserve tabs, tiles, fields, controls, displays, routes, and source files for implementation detail.\n\n## Use it for\n\n- Search pages, controls, routes, source files, and notes from inside the desktop app.\n- Confirm how a UI surface is intended to behave before editing code or filing follow-up work.\n- Keep app navigation metadata and human documentation in one reviewed JSON artifact.\n\n## Editing rule\n\nThe desktop app hot-reload polls CONTROL_CENTER_WIKI.json through the main-process wiki bridge. Sidebar labels, icons, order, and visibility still come from pages[].nav for implemented routes, so documentation edits must preserve that metadata and keep every page.body non-empty."
     }
   ],
-  "appVersion": "0.1.473"
+  "appVersion": "0.1.474"
 }

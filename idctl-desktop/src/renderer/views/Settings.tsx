@@ -1274,14 +1274,17 @@ export function Settings({ store, navigate }: { store: FleetStore; navigate?: (v
     return !providerNeedsKey(p) || p.keySource === 'config' || p.keySource === 'env';
   }
   function providerModelReady(p: ProviderRow): boolean {
-    return (probe[p.name]?.models?.length ?? p.lastSync?.modelCount ?? 0) > 0 || p.lastSync?.status === 'preset';
+    const liveProbe = probe[p.name];
+    if (liveProbe?.status === 'live') return liveProbe.models.length > 0;
+    return (p.lastSync?.modelCount ?? 0) > 0 || p.lastSync?.status === 'preset';
   }
   function providerRouteReady(p: ProviderRow): boolean {
-    return p.enabled !== false && providerKeyReady(p) && (providerStatus(p) === 'live' || p.lastSync?.status === 'preset' || providerModelReady(p));
+    return p.enabled !== false && providerKeyReady(p) && providerModelReady(p);
   }
   function providerDefaultBlockReason(p: ProviderRow): string {
     if (p.enabled === false) return 'The backend is disabled.';
     if (!providerKeyReady(p)) return 'The backend is missing a required API key.';
+    if (providerStatus(p) === 'live' && !providerModelReady(p)) return 'The backend answered but returned no models.';
     if (!providerModelReady(p)) return 'The backend has no synced/preset model list yet.';
     return `Current status is ${providerStatus(p) ?? 'not synced'}.`;
   }
@@ -1597,11 +1600,14 @@ export function Settings({ store, navigate }: { store: FleetStore; navigate?: (v
       const n = typeof value === 'number' ? value : Number(value);
       if (Number.isInteger(n) && n > 0 && n < 65536) ports.add(n);
     };
-    addPort(stackPortOverride(s) ?? s.defaultPort);
+    const override = stackPortOverride(s);
+    addPort(override ?? s.defaultPort);
     addPort(portFromBaseUrl(stackApiBase(s)));
-    const install = stackInstallEffectiveCmd(s) ?? stackCommand(s.install);
-    for (const match of install.matchAll(/\s-p\s+(?:(?:\d{1,3}\.){3}\d{1,3}:)?(\d+):\d+/g)) addPort(match[1]);
-    for (const match of install.matchAll(/(?:--port|--tcp)\s+(\d+)/g)) addPort(match[1]);
+    if (!override || stackInstallDrafts[s.id]) {
+      const install = stackInstallEffectiveCmd(s) ?? stackCommand(s.install);
+      for (const match of install.matchAll(/\s-p\s+(?:(?:\d{1,3}\.){3}\d{1,3}:)?(\d+):\d+/g)) addPort(match[1]);
+      for (const match of install.matchAll(/(?:--port|--tcp)\s+(\d+)/g)) addPort(match[1]);
+    }
     return [...ports].sort((a, b) => a - b);
   }
   function stackPortLabel(s: LocalStackEntry): string | null {
@@ -1610,13 +1616,30 @@ export function Settings({ store, navigate }: { store: FleetStore; navigate?: (v
     return ports.length === 1 ? `:${ports[0]}` : `ports ${ports.join('/')}`;
   }
   type SharedStackPort = { port: number; names: string[]; suggested?: number };
+  function stackOwnPorts(s: LocalStackEntry): Set<number> {
+    const ports = new Set<number>();
+    const apiBase = stackApiBase(s);
+    const normalizedApiBase = apiBase ? normUrl(apiBase) : null;
+    for (const p of stackConfiguredProviders(s)) {
+      const port = providerPort(p);
+      if (port) ports.add(port);
+    }
+    for (const d of discovered ?? []) {
+      if (normalizedApiBase && normUrl(d.baseUrl) === normalizedApiBase) ports.add(d.port);
+    }
+    return ports;
+  }
   function stackPortConflicts(s: LocalStackEntry): { live: number[]; configured: { port: number; names: string[] }[] } {
     const ports = stackClaimedPorts(s);
-    const live = ports.filter((p) => runningPorts.has(p));
+    const ownPorts = stackOwnPorts(s);
+    const ownApiBase = stackApiBase(s) ? normUrl(stackApiBase(s) ?? '') : null;
+    const live = ports.filter((p) => runningPorts.has(p) && !ownPorts.has(p));
     const configured = ports
       .map((port) => ({
         port,
-        names: providers.filter((p) => providerPort(p) === port).map((p) => p.name),
+        names: providers
+          .filter((p) => providerPort(p) === port && (!ownApiBase || normUrl(p.baseUrl) !== ownApiBase))
+          .map((p) => p.name),
       }))
       .filter((hit) => hit.names.length > 0);
     return { live, configured };
@@ -2539,14 +2562,16 @@ export function Settings({ store, navigate }: { store: FleetStore; navigate?: (v
                 ? 'installed · start server + connect'
                 : o
                 ? o.status === 'live'
-                  ? `live · ${o.models.length} models`
+                  ? o.models.length
+                    ? `live · ${o.models.length} models`
+                    : 'live · no models'
                   : o.status
                 : sync
-                  ? `${sync.status === 'live' ? `synced · ${sync.modelCount} models` : sync.status} · ${timeAgo(sync.at)}`
+                  ? `${sync.status === 'live' ? sync.modelCount ? `synced · ${sync.modelCount} models` : 'synced · no models' : sync.status} · ${timeAgo(sync.at)}`
                   : 'not synced';
               const readyForDefault = providerRouteReady(p);
               const statusOk = readyForDefault;
-              const statusWarn = (o?.status ?? sync?.status) === 'auth-error';
+              const statusWarn = (o?.status ?? sync?.status) === 'auth-error' || (providerStatus(p) === 'live' && !providerModelReady(p));
               const keyBadge = !p.needsKey
                 ? null
                 : p.keySource === 'config'
