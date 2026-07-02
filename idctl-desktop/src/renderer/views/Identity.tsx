@@ -24,6 +24,11 @@ interface ReviewRow {
   note: string;
 }
 
+interface ProcessStep extends ReviewRow {
+  id: string;
+  action?: 'provision' | 'challenge' | 'verify' | 'create-account' | 'deploy' | 'issue-key' | 'review-chains' | 'review-standards' | 'refresh';
+}
+
 interface MetadataHit {
   path: string;
   value: unknown;
@@ -503,6 +508,7 @@ export function Identity({ store }: { store: FleetStore }) {
   const [ttlIdx, setTtlIdx] = useState(1);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [processMsg, setProcessMsg] = useState<string | null>(null);
   const [legacyMsg, setLegacyMsg] = useState<string | null>(null);
   const [proofs, setProofs] = useState<Record<string, ControllerProof>>({});
   const [legacyKeys, setLegacyKeys] = useState<LegacyKeyAuthority[]>([]);
@@ -550,7 +556,6 @@ export function Identity({ store }: { store: FleetStore }) {
   const enabledRpcs = useMemo(() => evmRpcs.filter((rpc) => rpc.enabled !== false), [evmRpcs]);
   const availableRpcs = enabledRpcs.filter((rpc) => rpc.lastRequest?.status === 'available');
   const keyOperational = Boolean(caps?.live && acct?.deployed && activeSessionCount > 0);
-  const readyCount = review.filter((r) => r.state === 'verified').length;
   const brainSelectedController = useMemo(() => brainControllerForAgent(brainControllers, selAgent, duplicateNames), [brainControllers, selAgent, duplicateNames]);
   const brainControllerMatches = useMemo(
     () => identityAgents.map((agent) => brainControllerForAgent(brainControllers, agent, duplicateNames)),
@@ -559,6 +564,58 @@ export function Identity({ store }: { store: FleetStore }) {
   const brainLinkedAgents = brainControllerMatches.filter((match) => match.state === 'verified' || match.state === 'self').length;
   const brainAmbiguousLinks = brainControllerMatches.filter((match) => match.ambiguous).length;
   const brainControllerNeedsReview = !brainControllers || (brainControllers.activeLinks ?? 0) === 0 || brainSelectedController.state === 'warn' || brainAmbiguousLinks > 0;
+  const identityProcess = useMemo<ProcessStep[]>(() => {
+    const chainState: EvidenceState = enabledRpcs.length === 0 ? 'missing' : availableRpcs.length === enabledRpcs.length ? 'verified' : 'warn';
+    const standardsState: EvidenceState = standardCovered === standardCoverage.length ? 'verified' : standardCovered > 0 ? 'warn' : 'missing';
+    return [
+      {
+        id: 'wallet',
+        label: 'Controller wallet',
+        state: wallet ? 'verified' : 'missing',
+        note: wallet ? shortAddr(wallet) : 'Provision a scoped controller wallet for this agent.',
+        action: wallet ? undefined : 'provision',
+      },
+      {
+        id: 'proof',
+        label: 'Controller proof',
+        state: controllerVerified ? 'verified' : wallet ? 'warn' : 'missing',
+        note: controllerVerified ? `Verified until ${new Date(proof!.expiresAt).toLocaleTimeString()}` : wallet ? (proof?.signature ? 'Verify the pasted wallet signature.' : 'Start a challenge and sign it with the controller wallet.') : 'Controller wallet required first.',
+        action: controllerVerified || !wallet ? undefined : proof?.signature ? 'verify' : 'challenge',
+      },
+      {
+        id: 'account',
+        label: 'Safe account',
+        state: acct?.deployed ? 'verified' : acct?.smartAccount ? 'warn' : 'missing',
+        note: acct?.smartAccount ? `${shortAddr(acct.smartAccount)} ${acct.deployed ? 'deployed' : 'ready to deploy'}` : 'Create the smart-account record after controller proof.',
+        action: !controllerVerified ? undefined : acct?.smartAccount ? (acct.deployed ? undefined : 'deploy') : 'create-account',
+      },
+      {
+        id: 'key',
+        label: 'Scoped key',
+        state: activeSessionCount > 0 ? 'verified' : acct?.deployed ? 'warn' : 'missing',
+        note: activeSessionCount > 0 ? `${activeSessionCount} active finite grant${activeSessionCount === 1 ? '' : 's'}` : 'Issue a finite, spend-capped key after account deployment.',
+        action: controllerVerified && acct?.deployed && activeSessionCount === 0 ? 'issue-key' : undefined,
+      },
+      {
+        id: 'chains',
+        label: 'Chain routes',
+        state: chainState,
+        note: enabledRpcs.length === 0 ? 'Add Agent chain RPCs in Settings.' : `${availableRpcs.length}/${enabledRpcs.length} enabled chain route${enabledRpcs.length === 1 ? '' : 's'} checked available.`,
+        action: chainState === 'verified' ? undefined : 'review-chains',
+      },
+      {
+        id: 'metadata',
+        label: 'Public metadata',
+        state: standardsState,
+        note: `${standardCovered}/${standardCoverage.length} metadata standard${standardCoverage.length === 1 ? '' : 's'} covered.`,
+        action: standardsState === 'verified' ? undefined : 'review-standards',
+      },
+    ];
+  }, [acct, activeSessionCount, availableRpcs.length, controllerVerified, enabledRpcs.length, proof, standardCoverage.length, standardCovered, wallet]);
+  const nextProcessStep = identityProcess.find((step) => step.action && step.state !== 'verified') ?? identityProcess.find((step) => step.action);
+  const processReadyCount = identityProcess.filter((step) => step.state === 'verified').length;
+  const processReviewCount = identityProcess.filter((step) => step.state === 'warn').length;
+  const processState: EvidenceState = processReadyCount === identityProcess.length ? 'verified' : processReviewCount ? 'warn' : 'missing';
   const brainControllerLabel = brainControllers
     ? `Brain controllers ${brainLinkedAgents}/${identityAgents.length}`
     : 'Brain controllers --';
@@ -926,6 +983,62 @@ export function Identity({ store }: { store: FleetStore }) {
     }
   }
 
+  async function refreshIdentityProcess() {
+    setError(null);
+    setProcessMsg('Refreshing identity checks...');
+    setBusy(true);
+    try {
+      await Promise.allSettled([
+        reload(),
+        call<KeyCapabilities>('keys:caps').then(setCaps),
+        call<{ scopes: SessionScope[]; ttls: { label: string; ms: number }[] }>('keys:presets').then(setPresets),
+        call<EvmRpcRow[]>('evmRpc:list').then(setEvmRpcs),
+        call<BrainControllerReport>('brain:controllerReport').then(setBrainControllers),
+        authorityTargets.length
+          ? call<LegacyKeyAuthority[]>('keys:legacyAuthority', authorityTargets).then(setLegacyKeys)
+          : Promise.resolve(setLegacyKeys([])),
+      ]);
+      store.refresh();
+      setProcessMsg('Readiness checks refreshed.');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function runProcessAction(action = nextProcessStep?.action) {
+    switch (action) {
+      case 'provision':
+        await identityAction('provision');
+        break;
+      case 'challenge':
+        await startChallenge();
+        break;
+      case 'verify':
+        await verifyControllerProof();
+        break;
+      case 'create-account':
+        await createAccount();
+        break;
+      case 'deploy':
+        await deployAccount();
+        break;
+      case 'issue-key':
+        await issueSession();
+        break;
+      case 'review-chains':
+        document.getElementById('identity-chain-access')?.scrollIntoView({ block: 'start', behavior: 'smooth' });
+        setProcessMsg('Review chain routes below. Add or probe Agent RPCs from Settings if routes are missing.');
+        break;
+      case 'review-standards':
+        document.getElementById('identity-standards')?.scrollIntoView({ block: 'start', behavior: 'smooth' });
+        setProcessMsg('Review metadata standards below. Missing standards need manager metadata or future guarded onchain reads.');
+        break;
+      default:
+        await refreshIdentityProcess();
+        break;
+    }
+  }
+
   return (
     <div className="view identity-view">
       <header className="view-head">
@@ -972,7 +1085,7 @@ export function Identity({ store }: { store: FleetStore }) {
                   </div>
                 </div>
                 <div className="identity-metrics">
-                  <div><b>{readyCount}/{review.length}</b><span>ready checks</span></div>
+                  <div><b>{processReadyCount}/{identityProcess.length}</b><span>process</span></div>
                   <div><b>{standardCovered}/{standardCoverage.length}</b><span>standards</span></div>
                   <div><b>{enabledRpcs.length}</b><span>chains</span></div>
                   <div><b>{activeSessionCount}</b><span>active keys</span></div>
@@ -988,99 +1101,148 @@ export function Identity({ store }: { store: FleetStore }) {
                 </div>
               ) : null}
 
-              {legacyKeys.length ? (
-                <section className="card identity-legacy" role="status">
-                  <div className="identity-legacy-head">
-                    <h3>Legacy Authority Review</h3>
-                    <StatusPill state="warn" />
+              <section className="card identity-process" role="status">
+                <div className="identity-process-head">
+                  <div>
+                    <h3>Identity Setup Process</h3>
+                    <p className="muted small">
+                      Follow the next safe step. IDACC refreshes state before privileged actions and keeps wallet signatures/manual confirmations in place.
+                    </p>
                   </div>
-                  <p className="muted small">
-                    Older bare-name key records were found. They are not treated as current scoped authority, so choose a policy before copying, revoking, or deleting them.
-                  </p>
-                  <div className="risk-list">
-                    {legacyKeys.map((row) => {
-                      const firstAuthority = row.currentAuthorities[0] ?? '';
-                      const target = row.currentAuthorities.map((a) => legacyAuthorityTarget(a, identityAgents)).find(Boolean);
-                      return (
-                        <div key={`${row.source}:${row.agent}`} className="risk-row">
-                          <span className="dot warn" />
-                          <b>{row.agent}</b>
-                          <span>
-                            <span className="warn-text">
-                              {row.account ? 'account' : 'no account'}{row.deployed ? ' deployed' : ''}; {row.activeSessions}/{row.totalSessions} active sessions{row.nonExpiringSessions ? `, ${row.nonExpiringSessions} non-expiring` : ''}{' -> '}{row.currentAuthorities.join(', ')}
-                            </span>
-                            <span className="legacy-review-actions">
-                              {target ? (
-                                <button className="btn small" disabled={busy} onClick={() => { setSel(agentKey(target)); setLegacyMsg(`Selected ${agentKey(target)}. Recreate scoped account/session authority from the normal controls; legacy records stay blocked.`); }}>
-                                  Select scoped agent
-                                </button>
-                              ) : null}
-                              {firstAuthority ? (
-                                <button className="btn small" disabled={busy} onClick={() => void copyLegacyAuthority(firstAuthority)}>
-                                  Copy scoped authority
-                                </button>
-                              ) : null}
-                            </span>
-                          </span>
-                        </div>
-                      );
-                    })}
+                  <div className="row-actions">
+                    <StatusPill state={processState} />
+                    <button className="btn" disabled={busy} onClick={() => void refreshIdentityProcess()}>Run check</button>
+                    <button className="btn primary" disabled={busy || !nextProcessStep?.action} onClick={() => void runProcessAction()}>
+                      {nextProcessStep?.action === 'review-chains' || nextProcessStep?.action === 'review-standards' ? 'Review next' : nextProcessStep?.action ? 'Continue setup' : 'Ready'}
+                    </button>
                   </div>
-                  {legacyMsg ? <div className="muted small" style={{ marginTop: 8 }}>{legacyMsg}</div> : null}
-                </section>
-              ) : null}
-
-              <section className={`card ${brainControllerNeedsReview ? 'identity-legacy' : ''}`} role="status">
-                <div className="identity-legacy-head">
-                  <h3>Brain Controller Sync</h3>
-                  <StatusPill state={brainSelectedController.state} />
                 </div>
-                <p className="muted small">
-                  Read-only Brain <span className="mono">/controllers</span> evidence for accountable identity. It does not create, link, revoke, or promote controller records.
-                </p>
-                <div className="risk-list">
-                  <div className="risk-row">
-                    <span className={`dot ${dotTone(brainSelectedController.state)}`} />
-                    <b>Selected agent</b>
-                    <span className={statusTone(brainSelectedController.state)}>{brainSelectedController.note}</span>
-                  </div>
-                  <div className="risk-row">
-                    <span className={`dot ${brainControllers && (brainControllers.activeLinks ?? 0) > 0 ? 'ok' : 'warn'}`} />
-                    <b>Brain links</b>
-                    <span className={brainControllers && (brainControllers.activeLinks ?? 0) > 0 ? 'ok-text' : 'warn-text'}>
-                      {brainControllers ? `${brainControllers.activeLinks ?? 0} active links across ${brainControllers.total ?? 0} controllers; ${brainLinkedAgents}/${identityAgents.length} current agents matched` : 'route unavailable'}
-                    </span>
-                  </div>
-                  <div className="risk-row">
-                    <span className={`dot ${brainAmbiguousLinks ? 'warn' : 'ok'}`} />
-                    <b>Fallback safety</b>
-                    <span className={brainAmbiguousLinks ? 'warn-text' : 'muted'}>
-                      {brainAmbiguousLinks ? `${brainAmbiguousLinks} bare-name Brain link${brainAmbiguousLinks === 1 ? '' : 's'} ambiguous across duplicate agent names` : 'Scoped or unique matches only; bare duplicate links stay review-only.'}
-                    </span>
-	                  </div>
-	                </div>
-	              </section>
-
-              <section className="card identity-standards" role="status">
-                <div className="identity-legacy-head">
-                  <h3>Onchain Metadata Standards</h3>
-                  <StatusPill state={standardCovered === standardCoverage.length ? 'verified' : standardCovered ? 'warn' : 'missing'} />
-                </div>
-                <p className="muted small">
-                  Read-only coverage check for public identity metadata. Raw resolver bytes, contract bytes, and issuer extraMetadata are not displayed here.
-                </p>
-                <div className="risk-list">
-                  {standardCoverage.map((row) => (
-                    <div key={row.label} className="risk-row">
-                      <span className={`dot ${dotTone(row.state)}`} />
-                      <b>{row.label}</b>
-                      <span className={statusTone(row.state)}>{row.note}</span>
-                    </div>
+                <div className="identity-process-steps">
+                  {identityProcess.map((step) => (
+                    <button
+                      key={step.id}
+                      className={`identity-step ${step.state}${step.id === nextProcessStep?.id ? ' next' : ''}`}
+                      disabled={busy || !step.action}
+                      onClick={() => void runProcessAction(step.action)}
+                      title={step.action ? step.note : undefined}
+                    >
+                      <span className={`dot ${dotTone(step.state)}`} />
+                      <b>{step.label}</b>
+                      <span>{step.note}</span>
+                    </button>
                   ))}
                 </div>
+                {processMsg ? <div className="muted small">{processMsg}</div> : null}
               </section>
 
-              <section className="card identity-chain-access" role="status">
+              {legacyKeys.length ? (
+                <details className="card identity-review-details identity-legacy" role="status">
+                  <summary>
+                    <span>
+                      <b>Legacy authority</b>
+                      <span className="muted small">{legacyKeys.length} bare-name record{legacyKeys.length === 1 ? '' : 's'} blocked from scoped authority</span>
+                    </span>
+                    <StatusPill state="warn" />
+                  </summary>
+                  <div className="identity-review-body">
+                    <p className="muted small">
+                      Older bare-name key records are not treated as current scoped authority. Select the scoped agent to recreate authority through the normal guarded flow.
+                    </p>
+                    <div className="risk-list">
+                      {legacyKeys.map((row) => {
+                        const firstAuthority = row.currentAuthorities[0] ?? '';
+                        const target = row.currentAuthorities.map((a) => legacyAuthorityTarget(a, identityAgents)).find(Boolean);
+                        return (
+                          <div key={`${row.source}:${row.agent}`} className="risk-row">
+                            <span className="dot warn" />
+                            <b>{row.agent}</b>
+                            <span>
+                              <span className="warn-text">
+                                {row.account ? 'account' : 'no account'}{row.deployed ? ' deployed' : ''}; {row.activeSessions}/{row.totalSessions} active sessions{row.nonExpiringSessions ? `, ${row.nonExpiringSessions} non-expiring` : ''}{' -> '}{row.currentAuthorities.join(', ')}
+                              </span>
+                              <span className="legacy-review-actions">
+                                {target ? (
+                                  <button className="btn small" disabled={busy} onClick={() => { setSel(agentKey(target)); setLegacyMsg(`Selected ${agentKey(target)}. Recreate scoped account/session authority from the normal controls; legacy records stay blocked.`); }}>
+                                    Select scoped agent
+                                  </button>
+                                ) : null}
+                                {firstAuthority ? (
+                                  <button className="btn small" disabled={busy} onClick={() => void copyLegacyAuthority(firstAuthority)}>
+                                    Copy scoped authority
+                                  </button>
+                                ) : null}
+                              </span>
+                            </span>
+                          </div>
+                        );
+                      })}
+                    </div>
+                    {legacyMsg ? <div className="muted small" style={{ marginTop: 8 }}>{legacyMsg}</div> : null}
+                  </div>
+                </details>
+              ) : null}
+
+              <details className={`card identity-review-details ${brainControllerNeedsReview ? 'identity-legacy' : ''}`} role="status">
+                <summary>
+                  <span>
+                    <b>Brain controller sync</b>
+                    <span className="muted small">{brainSelectedController.note}</span>
+                  </span>
+                  <StatusPill state={brainSelectedController.state} />
+                </summary>
+                <div className="identity-review-body">
+                  <p className="muted small">
+                    Read-only Brain <span className="mono">/controllers</span> evidence for accountable identity. It does not create, link, revoke, or promote controller records.
+                  </p>
+                  <div className="risk-list">
+                    <div className="risk-row">
+                      <span className={`dot ${dotTone(brainSelectedController.state)}`} />
+                      <b>Selected agent</b>
+                      <span className={statusTone(brainSelectedController.state)}>{brainSelectedController.note}</span>
+                    </div>
+                    <div className="risk-row">
+                      <span className={`dot ${brainControllers && (brainControllers.activeLinks ?? 0) > 0 ? 'ok' : 'warn'}`} />
+                      <b>Brain links</b>
+                      <span className={brainControllers && (brainControllers.activeLinks ?? 0) > 0 ? 'ok-text' : 'warn-text'}>
+                        {brainControllers ? `${brainControllers.activeLinks ?? 0} active links across ${brainControllers.total ?? 0} controllers; ${brainLinkedAgents}/${identityAgents.length} current agents matched` : 'route unavailable'}
+                      </span>
+                    </div>
+                    <div className="risk-row">
+                      <span className={`dot ${brainAmbiguousLinks ? 'warn' : 'ok'}`} />
+                      <b>Fallback safety</b>
+                      <span className={brainAmbiguousLinks ? 'warn-text' : 'muted'}>
+                        {brainAmbiguousLinks ? `${brainAmbiguousLinks} bare-name Brain link${brainAmbiguousLinks === 1 ? '' : 's'} ambiguous across duplicate agent names` : 'Scoped or unique matches only; bare duplicate links stay review-only.'}
+                      </span>
+                    </div>
+                  </div>
+                </div>
+              </details>
+
+              <details id="identity-standards" className="card identity-review-details identity-standards" role="status">
+                <summary>
+                  <span>
+                    <b>Onchain metadata standards</b>
+                    <span className="muted small">{standardCovered}/{standardCoverage.length} standards covered</span>
+                  </span>
+                  <StatusPill state={standardCovered === standardCoverage.length ? 'verified' : standardCovered ? 'warn' : 'missing'} />
+                </summary>
+                <div className="identity-review-body">
+                  <p className="muted small">
+                    Read-only coverage check for public identity metadata. Raw resolver bytes, contract bytes, and issuer extraMetadata are not displayed here.
+                  </p>
+                  <div className="risk-list">
+                    {standardCoverage.map((row) => (
+                      <div key={row.label} className="risk-row">
+                        <span className={`dot ${dotTone(row.state)}`} />
+                        <b>{row.label}</b>
+                        <span className={statusTone(row.state)}>{row.note}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </details>
+
+              <section id="identity-chain-access" className="card identity-chain-access" role="status">
                 <div className="identity-legacy-head">
                   <h3>Operational Chain Access</h3>
                   <StatusPill state={keyOperational && availableRpcs.length ? 'verified' : enabledRpcs.length ? 'warn' : 'missing'} />

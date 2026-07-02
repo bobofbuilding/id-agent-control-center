@@ -1513,6 +1513,7 @@
       },
       "sourceFiles": [
         "idctl-desktop/src/renderer/views/Identity.tsx",
+        "idctl-desktop/src/renderer/styles.css",
         "idctl-desktop/src/main/main.ts",
         "idctl-desktop/src/main/bridge.ts",
         "idctl-desktop/src/tauri/adapter.ts",
@@ -1528,6 +1529,23 @@
           "id": "agent-list",
           "label": "Agents",
           "description": "Selects which all-team agent to inspect; agents with controller wallet addresses are prioritized."
+        },
+        {
+          "id": "identity-process",
+          "label": "Identity setup process",
+          "description": "Compact guided process for controller wallet, controller proof, Safe account, scoped key, chain routes, and public metadata. Run check refreshes read models; Continue setup promotes the next safe guarded action without bypassing wallet signature, confirmation, or fresh-read checks.",
+          "routesInto": [
+            "keys:caps",
+            "keys:list",
+            "evmRpc:list",
+            "brain:controllerReport",
+            "identity:controllerChallenge",
+            "identity:controllerVerify",
+            "wallet:provision",
+            "keys:ensure",
+            "keys:deploy",
+            "keys:issue"
+          ]
         },
         {
           "id": "onchain-identity",
@@ -1560,7 +1578,7 @@
         {
           "id": "brain-controller-sync",
           "label": "Brain Controller Sync",
-          "description": "Read-only Brain /controllers route evidence for accountable identity links. Shows selected-agent match state, active Brain controller links, current-agent coverage, and ambiguous bare-name fallbacks without creating or promoting controller records.",
+          "description": "Collapsed read-only Brain /controllers route evidence for accountable identity links. Summary shows selected-agent match state; details show active Brain controller links, current-agent coverage, and ambiguous bare-name fallbacks without creating or promoting controller records.",
           "routesInto": [
             "brain:controllerReport",
             "GET /controllers"
@@ -1582,6 +1600,35 @@
         }
       ],
       "controls": [
+        {
+          "id": "run-readiness-check",
+          "label": "Run check",
+          "type": "button",
+          "description": "Refreshes key capabilities, account/session rows, chain RPC read models, Brain controller evidence, legacy authority review rows, and the shared fleet snapshot without making identity writes.",
+          "routesInto": [
+            "keys:caps",
+            "keys:list",
+            "keys:presets",
+            "evmRpc:list",
+            "brain:controllerReport",
+            "keys:legacyAuthority",
+            "agents:allTeams"
+          ]
+        },
+        {
+          "id": "continue-setup",
+          "label": "Continue setup",
+          "type": "button",
+          "description": "Runs only the next valid guarded setup action: provision wallet, start/verify challenge, create account, deploy account, issue scoped key, or scroll to chain/metadata review.",
+          "routesInto": [
+            "wallet:provision",
+            "identity:controllerChallenge",
+            "identity:controllerVerify",
+            "keys:ensure",
+            "keys:deploy",
+            "keys:issue"
+          ]
+        },
         {
           "id": "register-identity",
           "label": "Register identity",
@@ -1663,7 +1710,7 @@
           "/agent <agent> wallet provision"
         ]
       },
-      "body": "# Identity & Keys\n\nIdentity & Keys is the review surface for agent identity, wallet posture, Safe-style account state, scoped session keys, Settings-backed operational chain access, Brain accountable-controller sync, and read-only onchain metadata standard coverage. It helps operators understand who can act and what account or key material is associated with that action.\n\n## Use it for\n\n- Select an agent from the all-team roster and inspect identity status, account details, session keys, and warnings.\n- Confirm wallet-bearing agents are visible even when they belong to a team other than the manager's active team.\n- Review delegated capability posture before relying on an agent for identity-sensitive work.\n- Check whether Brain /controllers has an accountable controller link for the selected agent before trusting Brain Agents controller fallback copy.\n- Review public metadata coverage for ENSIP-24, ERC-8004, ERC-8048 / ERC-721T, ERC-8049, and B20 extraMetadata without exposing raw metadata blobs.\n- See Operational Chain Access from enabled Settings RPCs, including last probe state and key-source labels, without exposing RPC secrets.\n- Keep onchain identity, wallet controller address, Safe account, session-key, and chain-allowlist concepts visible in one place.\n\n## Wallet source\n\nThe page treats a valid controller wallet address as active identity evidence when it appears in OWS address metadata, generic provider-wallet metadata, legacy SkillMesh provider metadata, or an address-form OWS wallet field. Brain Agents consumes the same wallet precedence through /fleet-report so controller-wallet cells and gas-spend attribution match Identity & Keys. Register and wallet-provision actions are routed through the selected agent's team so cross-team agents are resolved against the correct manager scope.\n\n## Operational chain access\n\nThe Operational Chain Access card is read-only and mirrors enabled Agent chain RPCs from Settings as the chain allowlist a granted key may use. It shows signing mode, active granted-key count, network names, last probe status/block, and non-secret key-source labels. RPC keys remain encrypted in the Electron main process and are never returned to the renderer. When the key provider reports mock mode, Identity makes clear that configured chains are visible for routing/readiness but IDACC is not broadcasting real transactions yet.\n\n## Standards coverage\n\nThe Onchain Metadata Standards card is read-only. It maps selected-agent manager metadata and controller evidence into five explicit standards lanes: ENS / ENSIP-24 arbitrary resolver data, ERC-8004 agent registry / agentURI / agentWallet evidence, ERC-8048 / ERC-721T token-level context and endpoint metadata, ERC-8049 contract-level onchain metadata, and B20 issuer extraMetadata. Declared metadata is marked as declared, not verified, until a live resolver or contract read is available. Raw resolver bytes, contract bytes, issuer extraMetadata values, keys, tokens, and raw manager metadata are not dumped into the UI.\n\n## Current guardrails\n\nRenderer selection, proof state, backend key-provider account IDs, Safe/session actions, and the Tauri local mock key store are keyed by team/name. A controller challenge also includes the team in the signed message and cache key, so same-named agents in different teams cannot share a privileged proof. New challenge and verify signature fresh-read the selected all-team agent row before acting. Provision wallet, register identity, create account, deploy account, issue session key, and revoke session key fresh-read the selected all-team agent row before the review prompt and again after confirmation before writing. Provision wallet also blocks if the fresh row already has a controller wallet before the prompt or gains one after confirmation, preventing a stale rendered button from rebinding wallet authority. Create account, register, deploy, issue, and revoke also recheck the controller proof after confirmation; register now requires that proof before showing the review prompt. Create/deploy/issue compare account state stamps, revoke compares the exact active session row before mutating key state, and Issue scoped key captures the reviewed capped scope plus finite TTL before confirmation and sends that reviewed preset to the bridge. The Electron bridge and Tauri fallback both require controller proof for keys:ensure, so the visible Create account button is not the only guard. The UI only issues finite, spend-capped session keys and blocks full, uncapped, or non-expiring grants. When old bare-name mock accounts or sessions match current agents, the page now shows a Legacy Authority Review card instead of silently promoting or hiding them; scoped-agent selection and copy helpers guide a manual recreation path without trusting the old record.\n\nBrain Controller Sync reads Brain /controllers through a typed, read-only bridge. It counts active controller links, compares those links with current IDACC agents, treats team/id or team/name links as strong, treats bare agent-name links as review-only when duplicate names exist, and never creates, links, revokes, or promotes Brain controller records.\n\n## Safety note\n\nExisting bare-name mock accounts are not automatically promoted into team-scoped accounts. The Legacy Authority Review card can select the matching scoped agent and copy the scoped authority target, but recreate, revoke, copy, or delete policy still stays explicit. Brain /controllers evidence is also observation-only; missing or ambiguous links mean Brain Agents controller fallback should not be trusted for authority decisions. Standards coverage is metadata-awareness, not live chain verification, until the manager exposes guarded resolver/contract read contracts. Some provider behavior still depends on the active manager backend. Treat this page as the UI contract and verify the live provider before documenting stronger guarantees about signing, custody, wallet replacement, non-expiring keys, production-grade authorization, or standards-level external verification."
+      "body": "# Identity & Keys\n\nIdentity & Keys is the review surface for agent identity, wallet posture, Safe-style account state, scoped session keys, Settings-backed operational chain access, Brain accountable-controller sync, and read-only onchain metadata standard coverage. It helps operators understand who can act and what account or key material is associated with that action.\n\n## Use it for\n\n- Select an agent from the all-team roster and inspect identity status, account details, session keys, and warnings.\n- Run the guided Identity setup process to move through wallet, proof, account, scoped key, chain route, and metadata checks.\n- Confirm wallet-bearing agents are visible even when they belong to a team other than the manager's active team.\n- Review delegated capability posture before relying on an agent for identity-sensitive work.\n- Check whether Brain /controllers has an accountable controller link for the selected agent before trusting Brain Agents controller fallback copy.\n- Review public metadata coverage for ENSIP-24, ERC-8004, ERC-8048 / ERC-721T, ERC-8049, and B20 extraMetadata without exposing raw metadata blobs.\n- See Operational Chain Access from enabled Settings RPCs, including last probe state and key-source labels, without exposing RPC secrets.\n- Keep onchain identity, wallet controller address, Safe account, session-key, and chain-allowlist concepts visible in one place.\n\n## Setup process\n\nThe Identity setup process is the primary operator flow. It condenses controller wallet, controller proof, Safe account, scoped key, chain routes, and public metadata into a six-step checklist. Run check refreshes the read-only evidence and fleet snapshot. Continue setup promotes only the next valid guarded action: provision wallet, start or verify a controller challenge, create account, deploy account, issue a finite scoped key, or scroll to chain/metadata review. It does not bypass wallet signatures, confirmation prompts, fresh agent reads, account stamp checks, or session-key safety rules.\n\n## Wallet source\n\nThe page treats a valid controller wallet address as active identity evidence when it appears in OWS address metadata, generic provider-wallet metadata, legacy SkillMesh provider metadata, or an address-form OWS wallet field. Brain Agents consumes the same wallet precedence through /fleet-report so controller-wallet cells and gas-spend attribution match Identity & Keys. Register and wallet-provision actions are routed through the selected agent's team so cross-team agents are resolved against the correct manager scope.\n\n## Operational chain access\n\nThe Operational Chain Access card is read-only and mirrors enabled Agent chain RPCs from Settings as the chain allowlist a granted key may use. It shows signing mode, active granted-key count, network names, last probe status/block, and non-secret key-source labels. RPC keys remain encrypted in the Electron main process and are never returned to the renderer. When the key provider reports mock mode, Identity makes clear that configured chains are visible for routing/readiness but IDACC is not broadcasting real transactions yet.\n\n## Standards coverage\n\nThe Onchain Metadata Standards panel is collapsed by default and read-only. It maps selected-agent manager metadata and controller evidence into five explicit standards lanes: ENS / ENSIP-24 arbitrary resolver data, ERC-8004 agent registry / agentURI / agentWallet evidence, ERC-8048 / ERC-721T token-level context and endpoint metadata, ERC-8049 contract-level onchain metadata, and B20 issuer extraMetadata. Declared metadata is marked as declared, not verified, until a live resolver or contract read is available. Raw resolver bytes, contract bytes, issuer extraMetadata values, keys, tokens, and raw manager metadata are not dumped into the UI.\n\n## Current guardrails\n\nRenderer selection, proof state, backend key-provider account IDs, Safe/session actions, and the Tauri local mock key store are keyed by team/name. A controller challenge also includes the team in the signed message and cache key, so same-named agents in different teams cannot share a privileged proof. New challenge and verify signature fresh-read the selected all-team agent row before acting. Provision wallet, register identity, create account, deploy account, issue session key, and revoke session key fresh-read the selected all-team agent row before the review prompt and again after confirmation before writing. Provision wallet also blocks if the fresh row already has a controller wallet before the prompt or gains one after confirmation, preventing a stale rendered button from rebinding wallet authority. Create account, register, deploy, issue, and revoke also recheck the controller proof after confirmation; register now requires that proof before showing the review prompt. Create/deploy/issue compare account state stamps, revoke compares the exact active session row before mutating key state, and Issue scoped key captures the reviewed capped scope plus finite TTL before confirmation and sends that reviewed preset to the bridge. The Electron bridge and Tauri fallback both require controller proof for keys:ensure, so the visible Create account button and the guided Continue setup button are not the only guards. The UI only issues finite, spend-capped session keys and blocks full, uncapped, or non-expiring grants. Old bare-name mock accounts or sessions now render as collapsed Legacy authority evidence instead of silently promoting or hiding them; scoped-agent selection and copy helpers guide a manual recreation path without trusting the old record.\n\nBrain Controller Sync reads Brain /controllers through a typed, read-only bridge. It counts active controller links, compares those links with current IDACC agents, treats team/id or team/name links as strong, treats bare agent-name links as review-only when duplicate names exist, and never creates, links, revokes, or promotes Brain controller records. The Brain sync panel is collapsed by default so the setup process stays primary.\n\n## Safety note\n\nExisting bare-name mock accounts are not automatically promoted into team-scoped accounts. The Legacy authority details can select the matching scoped agent and copy the scoped authority target, but recreate, revoke, copy, or delete policy still stays explicit. Brain /controllers evidence is also observation-only; missing or ambiguous links mean Brain Agents controller fallback should not be trusted for authority decisions. Standards coverage is metadata-awareness, not live chain verification, until the manager exposes guarded resolver/contract read contracts. Some provider behavior still depends on the active manager backend. Treat this page as the UI contract and verify the live provider before documenting stronger guarantees about signing, custody, wallet replacement, non-expiring keys, production-grade authorization, or standards-level external verification."
     },
     {
       "id": "teams",
@@ -4943,5 +4990,5 @@
       "body": "# Wiki\n\nWiki is both the human documentation page and the editable schematic for the Control Center UI. Each article explains the operator purpose of a page; the structured sections below preserve tabs, tiles, fields, controls, displays, routes, and source files for implementation detail.\n\n## Use it for\n\n- Search pages, controls, routes, source files, and notes from inside the desktop app.\n- Confirm how a UI surface is intended to behave before editing code or filing follow-up work.\n- Keep app navigation metadata and human documentation in one reviewed JSON artifact.\n\n## Editing rule\n\nThe desktop app hot-reload polls CONTROL_CENTER_WIKI.json through the main-process wiki bridge. Sidebar labels, icons, order, and visibility still come from pages[].nav for implemented routes, so documentation edits must preserve that metadata and keep every page.body non-empty."
     }
   ],
-  "appVersion": "0.1.488"
+  "appVersion": "0.1.489"
 }

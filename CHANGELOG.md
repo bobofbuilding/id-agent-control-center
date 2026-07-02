@@ -8,6 +8,9 @@ Every change pushed or merged to `main` carries its version number in the commit
 subject (`vX.Y.Z: …`), stamped automatically by the `commit-msg` hook — see
 [CONTRIBUTING.md](CONTRIBUTING.md).
 
+## [0.1.489] — 2026-07-02
+- Simplify Identity and Keys into a guided setup process
+
 ## [0.1.488] — 2026-07-02
 - Clarify local image generator reachability and fallback status
 
