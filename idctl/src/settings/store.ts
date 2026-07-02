@@ -9,7 +9,7 @@
 
 import { existsSync, mkdirSync, readFileSync, writeFileSync, statSync, chmodSync, renameSync, unlinkSync } from 'node:fs';
 import { resolveConfigPath, configDir } from './paths.ts';
-import { emptyConfig, defaultHeadroomPilotSettings, defaultUpdateSettings, DEFAULT_TEAM, type EvmRpcProfile, type EvmRpcRequest, type GoalDriverSettings, type HeadroomPilotSettings, type IdctlConfig, type ImageServerConfig, type ManagerProfile, type McpServerProfile, type ProjectEntry, type ProviderModelSelection, type ProviderProfile, type ProviderSync, type UpdateSettings } from './schema.ts';
+import { emptyConfig, defaultHeadroomPilotSettings, defaultUpdateSettings, DEFAULT_TEAM, type EvmRpcProfile, type EvmRpcRequest, type GoalDriverSettings, type HeadroomPilotSettings, type IdctlConfig, type ImageServerConfig, type LocalModelCatalogEntry, type ManagerProfile, type McpServerProfile, type ProjectEntry, type ProviderModelSelection, type ProviderProfile, type ProviderSync, type UpdateSettings } from './schema.ts';
 
 function normalizeGoalDriver(input: unknown): GoalDriverSettings | undefined {
   if (!input || typeof input !== 'object') return undefined;
@@ -30,6 +30,56 @@ function cleanStringList(value: unknown, fallback: string[]): string[] {
   if (!Array.isArray(value)) return fallback;
   const out = Array.from(new Set(value.map((v) => String(v).trim()).filter(Boolean)));
   return out.length ? out : fallback;
+}
+
+function cleanOptionalString(value: unknown, max = 240): string | undefined {
+  if (typeof value !== 'string') return undefined;
+  const s = value.replace(/[\u0000-\u001F\u007F-\u009F]/g, '').trim();
+  return s ? s.slice(0, max) : undefined;
+}
+
+function cleanPositiveNumber(value: unknown): number | undefined {
+  if (typeof value !== 'number' || !Number.isFinite(value) || value <= 0) return undefined;
+  return Math.round(value * 1000) / 1000;
+}
+
+function normalizeLocalModelCatalogEntry(raw: unknown): LocalModelCatalogEntry | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const row = raw as Partial<LocalModelCatalogEntry>;
+  const id = cleanOptionalString(row.id, 128);
+  if (!id || !/^[A-Za-z0-9][A-Za-z0-9._:@/-]*$/.test(id)) return null;
+  const family = cleanOptionalString(row.family, 80) ?? id.split(':')[0];
+  const params = cleanOptionalString(row.params, 40) ?? 'unknown';
+  const capabilities = Array.from(new Set((Array.isArray(row.capabilities) ? row.capabilities : ['general'])
+    .map((c) => cleanOptionalString(c, 32))
+    .filter((c): c is string => Boolean(c))))
+    .slice(0, 10);
+  return {
+    id,
+    family,
+    params,
+    approxSizeGB: cleanPositiveNumber(row.approxSizeGB),
+    contextTokens: cleanPositiveNumber(row.contextTokens),
+    contextLabel: cleanOptionalString(row.contextLabel, 24),
+    blurb: cleanOptionalString(row.blurb, 240),
+    capabilities: capabilities.length ? capabilities : ['general'],
+    license: cleanOptionalString(row.license, 80),
+    recommended: row.recommended === true,
+    source: row.source === 'manual' ? 'manual' : 'ollama-library',
+    discoveredAt: cleanPositiveNumber(row.discoveredAt),
+    updatedAt: cleanPositiveNumber(row.updatedAt),
+  };
+}
+
+function normalizeLocalModelCatalog(input: unknown): LocalModelCatalogEntry[] | undefined {
+  if (!Array.isArray(input)) return undefined;
+  const byId = new Map<string, LocalModelCatalogEntry>();
+  for (const raw of input) {
+    const row = normalizeLocalModelCatalogEntry(raw);
+    if (row) byId.set(row.id, row);
+  }
+  const rows = [...byId.values()].sort((a, b) => (b.updatedAt ?? b.discoveredAt ?? 0) - (a.updatedAt ?? a.discoveredAt ?? 0) || a.id.localeCompare(b.id));
+  return rows.length ? rows.slice(0, 500) : undefined;
 }
 
 export function normalizeHeadroomPilot(input: unknown): HeadroomPilotSettings {
@@ -102,6 +152,7 @@ export function loadSettings(file = resolveConfigPath()): IdctlConfig {
       localConcurrency: typeof raw.localConcurrency === 'number' && raw.localConcurrency >= 1
         ? Math.floor(raw.localConcurrency)
         : undefined,
+      localModelCatalog: normalizeLocalModelCatalog(raw.localModelCatalog),
       headroomPilot: normalizeHeadroomPilot(raw.headroomPilot),
     };
     // Validation: at most one default provider.
@@ -400,6 +451,34 @@ export function setImageServer(server: ImageServerConfig | null, file = resolveC
   } else {
     delete cfg.imageServer;
   }
+  saveSettings(cfg, file);
+  return cfg;
+}
+
+export function listLocalModelCatalog(file = resolveConfigPath()): LocalModelCatalogEntry[] {
+  return loadSettings(file).localModelCatalog ?? [];
+}
+
+/** Merge discovered local model metadata into the app-side catalog overlay. */
+export function mergeLocalModelCatalog(entries: LocalModelCatalogEntry[], file = resolveConfigPath()): IdctlConfig {
+  const cfg = loadSettings(file);
+  const byId = new Map<string, LocalModelCatalogEntry>();
+  for (const row of cfg.localModelCatalog ?? []) {
+    const clean = normalizeLocalModelCatalogEntry(row);
+    if (clean) byId.set(clean.id, clean);
+  }
+  for (const row of entries ?? []) {
+    const clean = normalizeLocalModelCatalogEntry(row);
+    if (!clean) continue;
+    const previous = byId.get(clean.id);
+    byId.set(clean.id, {
+      ...(previous ?? {}),
+      ...clean,
+      discoveredAt: previous?.discoveredAt ?? clean.discoveredAt ?? Date.now(),
+      updatedAt: clean.updatedAt ?? Date.now(),
+    });
+  }
+  cfg.localModelCatalog = normalizeLocalModelCatalog([...byId.values()]);
   saveSettings(cfg, file);
   return cfg;
 }

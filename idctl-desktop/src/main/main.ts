@@ -10,7 +10,7 @@ import { call as bridgeCall, startGoalDriver, startOrgSync, startModelRefreshLoo
 import { recordControlAction } from './controlLog.ts';
 import { startUpdater, stopUpdater, checkForUpdate, getStatus, applyStagedAndRelaunch } from './updater.ts';
 import { subsStatus, subsSignin, subsSignout, subsInstall, type SubProvider } from './subscriptions.ts';
-import { ollamaTags, ollamaPull, ollamaRemove, ollamaCatalogCheck, type InstalledModelInput } from './ollama.ts';
+import { ollamaTags, ollamaPull, ollamaRemove, ollamaCatalogCheck, catalogModelToLocalEntry, type InstalledModelInput } from './ollama.ts';
 import { dockerStatus, getHardware, localStackInstallStatus, runInTerminal } from './system.ts';
 import { pickProjectFolder, openProjectFolder, projectReadme, projectGit, projectGitRun, githubMeta, cloneGithub, projectDiff, createGithubRepo, linkGithubRepo, forkGithub, commitProject, detectProjectsRoot, scanProjectsRoot } from './projects.ts';
 import { pickChatFiles, saveChatFiles, savePastedFile } from './chatfiles.ts';
@@ -24,7 +24,7 @@ import { listQuestions, addQuestion, removeQuestion, type BlockerQuestion } from
 import { getMaterial, importMaterialFiles, listMaterials, markRecommendation, pickMaterialFiles, pickMaterialFolder, processMaterial, processNextMaterial, removeMaterial, saveMaterial, updateMaterialPriority, type CreateMaterialInput, type LearnMaterial, type LearnPriority, type LearnReviewState, type ProcessMaterialContext } from './materialstore.ts';
 import { generateImage, readImage, imageModels, getImageServer, detectImageServer } from './images.ts';
 import { readWiki } from './wiki.ts';
-import { loadSettings, removeEvmRpc, saveSettings, setUpdateSettings, setImageServer, upsertEvmRpc, recordEvmRpcRequest } from '../../../idctl/src/settings/store.ts';
+import { listLocalModelCatalog, loadSettings, mergeLocalModelCatalog, removeEvmRpc, saveSettings, setUpdateSettings, setImageServer, upsertEvmRpc, recordEvmRpcRequest } from '../../../idctl/src/settings/store.ts';
 import type { EvmRpcKeySource, EvmRpcProfile, EvmRpcRequest, ImageServerConfig } from '../../../idctl/src/settings/schema.ts';
 import { startBroker, armBroker, disarmBroker, setWatching, brokerStatus, auditTail, panicBroker, setSupervised, setPaused, confirmAction, pendingActions, setPanicHotkey, mintAgentToken, brokerUrl, stopBroker, legacyAgentTokenReport } from './computeruse/broker.ts';
 import { getPermissions, openPermissionSettings, relaunchApp, type CuPermissionPane } from './computeruse/permissions.ts';
@@ -516,7 +516,17 @@ async function appCall(method: string, args: unknown[]): Promise<unknown> {
     case 'ollama:remove':
       return ollamaRemove(args[0] as string);
     case 'ollama:catalogCheck':
-      return ollamaCatalogCheck(Array.isArray(args[0]) ? args[0] as InstalledModelInput[] : [], Array.isArray(args[1]) ? args[1] as string[] : []);
+      {
+        const result = await ollamaCatalogCheck(Array.isArray(args[0]) ? args[0] as InstalledModelInput[] : [], Array.isArray(args[1]) ? args[1] as string[] : []);
+        let savedModels = listLocalModelCatalog();
+        if (result.newModels.length) {
+          const now = Date.now();
+          savedModels = mergeLocalModelCatalog(result.newModels.map((m) => catalogModelToLocalEntry(m, now))).localModelCatalog ?? [];
+        }
+        return { ...result, savedModels, savedCount: result.newModels.length };
+      }
+    case 'ollama:localCatalog':
+      return listLocalModelCatalog();
     case 'app:hardware':
       return getHardware();
     case 'stack:installStatus':

@@ -6,6 +6,7 @@
  */
 
 import { BrowserWindow } from 'electron';
+import type { LocalModelCatalogEntry } from '../../../idctl/src/settings/schema.ts';
 
 const OLLAMA = (process.env.OLLAMA_HOST || 'http://127.0.0.1:11434').replace(/\/+$/, '');
 const PROGRESS_CHANNEL = 'ollama:pull-progress';
@@ -145,6 +146,78 @@ function parseLibraryTags(family: string, html: string): OllamaCatalogModel[] {
     });
   }
   return [...out.values()];
+}
+
+function familyLabel(family: string): string {
+  const f = family.toLowerCase();
+  if (f === 'gemma4') return 'Gemma 4';
+  if (f === 'gemma3') return 'Gemma 3';
+  if (f === 'qwen3') return 'Qwen3';
+  if (f === 'qwen2.5-coder') return 'Qwen2.5-Coder';
+  if (f === 'deepseek-r1') return 'DeepSeek-R1';
+  if (f === 'phi4-mini') return 'Phi-4-mini';
+  if (f === 'llama3.2') return 'Llama 3.2';
+  if (f === 'llama3.1') return 'Llama 3.1';
+  if (f === 'mistral-nemo') return 'Mistral-Nemo';
+  if (f === 'granite3.3') return 'Granite 3.3';
+  return family.split(/[-_.]/g).filter(Boolean).map((part) => part[0]?.toUpperCase() + part.slice(1)).join(' ') || family;
+}
+
+function paramsFromName(name: string): string {
+  const tag = name.split(':')[1] ?? name;
+  const param = tag.match(/(?:^|-)(e?\d+(?:\.\d+)?b)(?:-|$)/i)?.[1];
+  return param ? param.toUpperCase() : 'unknown';
+}
+
+function approxSizeGb(sizeLabel?: string): number | undefined {
+  const m = String(sizeLabel ?? '').match(/(\d+(?:\.\d+)?)\s*(GB|MB)\b/i);
+  if (!m) return undefined;
+  const n = Number(m[1]);
+  if (!Number.isFinite(n) || n <= 0) return undefined;
+  return m[2].toUpperCase() === 'MB' ? Math.round((n / 1024) * 1000) / 1000 : Math.round(n * 1000) / 1000;
+}
+
+function contextTokens(contextLabel?: string): number | undefined {
+  const m = String(contextLabel ?? '').match(/(\d+(?:\.\d+)?)(K|M)?/i);
+  if (!m) return undefined;
+  const n = Number(m[1]);
+  if (!Number.isFinite(n) || n <= 0) return undefined;
+  const unit = (m[2] ?? '').toUpperCase();
+  if (unit === 'M') return Math.round(n * 1_000_000);
+  if (unit === 'K') return Math.round(n * 1_000);
+  return Math.round(n);
+}
+
+function inferCapabilities(m: OllamaCatalogModel): string[] {
+  const s = `${m.name} ${m.family} ${m.inputLabel ?? ''}`.toLowerCase();
+  const caps = new Set<string>();
+  if (/embed/.test(s)) caps.add('embedding');
+  else caps.add('general');
+  if (/image|vision|vl|llava|moondream|gemma[34]/.test(s)) caps.add('vision');
+  if (/reason|deepseek-r1|qwen3|phi4|gemma4/.test(s)) caps.add('reasoning');
+  if (/code|coder|codellama|qwen2\.5-coder|gemma4/.test(s)) caps.add('coding');
+  if (/tool|qwen|llama|granite|mistral/.test(s)) caps.add('tools');
+  if (m.isMlx || /-mlx|mxfp8|nvfp4|e\d+b|0\.6b|1\.5b|1\.7b|3b|4b/.test(s)) caps.add('fast');
+  if ((contextTokens(m.contextLabel) ?? 0) >= 32768) caps.add('long-context');
+  return [...caps].slice(0, 8);
+}
+
+export function catalogModelToLocalEntry(m: OllamaCatalogModel, now = Date.now()): LocalModelCatalogEntry {
+  const ctxTokens = contextTokens(m.contextLabel);
+  return {
+    id: m.name,
+    family: familyLabel(m.family),
+    params: paramsFromName(m.name),
+    approxSizeGB: approxSizeGb(m.sizeLabel),
+    contextTokens: ctxTokens,
+    contextLabel: m.contextLabel,
+    capabilities: inferCapabilities(m),
+    license: m.family.startsWith('gemma') ? 'Gemma Terms of Use' : undefined,
+    blurb: `Discovered from the public Ollama catalog${m.updatedLabel ? `; updated ${m.updatedLabel}` : ''}. Download to test before assigning agents.`,
+    source: 'ollama-library',
+    discoveredAt: now,
+    updatedAt: now,
+  };
 }
 
 async function fetchLibraryFamily(family: string): Promise<OllamaCatalogModel[]> {

@@ -225,6 +225,13 @@ button.chip.incompat:hover { border-color: var(--line); }
 .catalog-row { display: flex; align-items: center; gap: 8px; padding: 5px 6px; border-radius: 6px; flex-wrap: wrap; }
 .catalog-row:hover { background: var(--bg-3); }
 .catalog-row .mono { min-width: 150px; }
+.local-backend-models { display: flex; flex-direction: column; gap: 5px; margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--line); }
+.local-backend-model-row { display: grid; grid-template-columns: minmax(150px, 220px) minmax(240px, 1fr) auto; align-items: center; gap: 8px; min-height: 30px; }
+.local-backend-model-title { display: flex; align-items: baseline; gap: 8px; min-width: 0; flex-wrap: wrap; }
+.local-backend-model-title b { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+@media (max-width: 780px) {
+  .local-backend-model-row { grid-template-columns: 1fr; align-items: start; }
+}
 .mcp-replace-review { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin-top: 8px; padding: 8px 10px; border: 1px solid var(--warn); border-radius: 6px; background: color-mix(in srgb, var(--warn) 8%, transparent); }
 
 /* Local LLM stacks catalog (self-hostable serving stacks). */

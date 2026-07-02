@@ -122,6 +122,13 @@ export interface IdctlConfig {
    */
   localConcurrency?: number;
   /**
+   * App-side local model catalog overlay. The bundled catalog is reviewed and
+   * versioned with the app; this overlay records public Ollama tags discovered
+   * by the catalog checker so they become searchable/downloadable without a
+   * software release. It stores model metadata only, never model files or keys.
+   */
+  localModelCatalog?: LocalModelCatalogEntry[];
+  /**
    * Optional Headroom pilot policy. This records operator intent and rollout
    * guardrails only; it does not install Headroom, start a proxy, mutate Brain,
    * or wrap agents by itself.
@@ -136,6 +143,22 @@ export interface ImageServerConfig {
   type: 'auto1111' | 'openai';
   /** Optional model/checkpoint name (openai-style image APIs). */
   model?: string;
+}
+
+export interface LocalModelCatalogEntry {
+  id: string;
+  family: string;
+  params: string;
+  approxSizeGB?: number;
+  contextTokens?: number;
+  contextLabel?: string;
+  blurb?: string;
+  capabilities: string[];
+  license?: string;
+  recommended?: boolean;
+  source?: 'ollama-library' | 'manual';
+  discoveredAt?: number;
+  updatedAt?: number;
 }
 
 export type ProjectStatus = 'active' | 'paused' | 'blocked' | 'done';
