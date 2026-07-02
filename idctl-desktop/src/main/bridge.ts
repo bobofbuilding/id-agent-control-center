@@ -22,6 +22,7 @@ import {
   resolveProviderKey,
   setDefaultProvider,
   toggleProviderEnabled,
+  setProviderModelSelection,
   recordProviderSync,
   setCoordinator,
   getCoordinator,
@@ -47,7 +48,7 @@ import { realpathSync } from 'node:fs';
 import { createHash, randomBytes } from 'node:crypto';
 import { ProviderClient } from '../../../idctl/src/settings/ProviderClient.ts';
 import { discoverLocalServers, mergeLocalDiscoveryCandidates, type DiscoveredServer } from '../../../idctl/src/settings/localDiscovery.ts';
-import { type HeadroomPilotSettings, type ProviderProfile, type McpServerProfile, type ProjectEntry } from '../../../idctl/src/settings/schema.ts';
+import { type HeadroomPilotSettings, type ProviderModelSelection, type ProviderProfile, type McpServerProfile, type ProjectEntry } from '../../../idctl/src/settings/schema.ts';
 import { providerNeedsKey } from '../../../idctl/src/settings/providerCatalog.ts';
 import { buildProviderModelLanes, buildRuntimeCatalog, RUNTIMES, providerKindToRuntimes, isLocalProvider, settingsAvailableRuntimeSet, type RuntimeModelLaneKind } from '../../../idctl/src/settings/runtimeCatalog.ts';
 import { subsStatus } from './subscriptions.ts';
@@ -505,7 +506,16 @@ function providerBridgeStamp(p: ProviderProfile): string {
     default: p.default === true,
     keySource: keySourceOf(p),
     needsKey: providerNeedsKey(p),
+    modelSelectionMode: p.modelSelection?.mode ?? 'all',
+    modelSelectionModels: [...new Set(p.modelSelection?.models ?? [])].sort(),
   });
+}
+
+function normalizeProviderModelSelection(input: ProviderModelSelection): ProviderModelSelection {
+  const models = Array.from(new Set((input?.models ?? []).map((m) => String(m).trim()).filter(Boolean)));
+  return input?.mode === 'selected' && models.length
+    ? { mode: 'selected', models, updatedAt: Date.now() }
+    : { mode: 'all', models: [], updatedAt: Date.now() };
 }
 
 function providerLaneName(runtime: string): string | null {
@@ -1352,6 +1362,15 @@ const METHODS: Record<string, (...a: any[]) => Promise<unknown>> = {
   },
   'providers:setDefault': async (name: string) => {
     setDefaultProvider(String(name));
+    return listProvidersEnriched();
+  },
+  'providers:setModelSelection': async (name: string, selection: ProviderModelSelection, expectedStamp?: string) => {
+    const providerName = String(name);
+    const p = loadSettings().providers.find((x) => x.name === providerName);
+    if (!p) throw new Error('provider not found');
+    const expected = typeof expectedStamp === 'string' ? expectedStamp : '';
+    if (expected && providerBridgeStamp(p) !== expected) throw new Error('provider changed before model selection save');
+    setProviderModelSelection(providerName, normalizeProviderModelSelection(selection));
     return listProvidersEnriched();
   },
   'providers:toggle': async (name: string) => {

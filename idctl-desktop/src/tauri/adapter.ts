@@ -12,7 +12,7 @@ import { ProviderClient } from '../../../idctl/src/settings/ProviderClient.ts';
 import { discoverLocalServers, mergeLocalDiscoveryCandidates, type DiscoveredServer } from '../../../idctl/src/settings/localDiscovery.ts';
 import { SCOPE_PRESETS, TTL_PRESETS } from '../../../idctl/src/keys/types.ts';
 import type { AgentAccount, KeyAuthorityTarget, LegacyKeyAuthority, SessionKey } from '../../../idctl/src/keys/types.ts';
-import { defaultHeadroomPilotSettings, type HeadroomPilotSettings, type ProviderProfile, type McpServerProfile, type ProjectEntry } from '../../../idctl/src/settings/schema.ts';
+import { defaultHeadroomPilotSettings, type HeadroomPilotSettings, type ProviderModelSelection, type ProviderProfile, type McpServerProfile, type ProjectEntry } from '../../../idctl/src/settings/schema.ts';
 import { providerNeedsKey } from '../../../idctl/src/settings/providerCatalog.ts';
 import { buildProviderModelLanes, buildRuntimeCatalog, isLocalProvider, providerKindToRuntimes, RUNTIMES, settingsAvailableRuntimeSet } from '../../../idctl/src/settings/runtimeCatalog.ts';
 import type { LibraryPluginInspection, LibrarySkillEntry, McpServerSpec, CreateSkillInput, ProjectPluginSkillResult } from '../../../idctl/src/api/client.ts';
@@ -113,6 +113,13 @@ async function fetchWiki(): Promise<WikiPayload> {
 /** Enrich provider rows with key source (no env in the webview) + needsKey flag. */
 function enrichProviders(list: ProviderProfile[]) {
   return list.map((p) => ({ ...p, keySource: (p.apiKey ? 'config' : 'none') as 'config' | 'env' | 'none', needsKey: providerNeedsKey(p) }));
+}
+
+function normalizeProviderModelSelection(input: ProviderModelSelection): ProviderModelSelection {
+  const models = Array.from(new Set((input?.models ?? []).map((m) => String(m).trim()).filter(Boolean)));
+  return input?.mode === 'selected' && models.length
+    ? { mode: 'selected', models, updatedAt: Date.now() }
+    : { mode: 'all', models: [], updatedAt: Date.now() };
 }
 
 function providerLaneName(runtime: string): string | null {
@@ -990,6 +997,14 @@ const M: Record<string, (...a: any[]) => Promise<unknown>> = {
   'providers:setDefault': async (name: string) => {
     const list = lsGet<ProviderProfile[]>('idctl.providers', []);
     for (const p of list) p.default = p.name === name;
+    lsSet('idctl.providers', list);
+    return enrichProviders(list);
+  },
+  'providers:setModelSelection': async (name: string, selection: ProviderModelSelection) => {
+    const list = lsGet<ProviderProfile[]>('idctl.providers', []);
+    const p = list.find((x) => x.name === name);
+    if (!p) throw new Error('provider not found');
+    p.modelSelection = normalizeProviderModelSelection(selection);
     lsSet('idctl.providers', list);
     return enrichProviders(list);
   },

@@ -46,6 +46,41 @@ assert.deepEqual(
   'provider lane model catalogs should be keyed by provider:<name> for the staged Harness dropdown',
 );
 
+const selectedProviderCatalog = buildRuntimeCatalog([
+  {
+    name: 'openrouter',
+    kind: 'openai-compatible',
+    baseUrl: 'https://openrouter.ai/api/v1',
+    enabled: true,
+    needsKey: true,
+    lastSync: { at: 1, status: 'live', modelCount: 3, models: ['openai/gpt-5.4', 'anthropic/claude-sonnet-4.6', 'x-ai/grok-4'] },
+    modelSelection: { mode: 'selected', models: ['x-ai/grok-4'] },
+  },
+] satisfies ProviderProfile[]);
+assert.deepEqual(
+  selectedProviderCatalog['provider:openrouter'],
+  ['x-ai/grok-4'],
+  'provider model selection should filter the Health provider lane without deleting the synced catalog',
+);
+
+const selectedProviderLanes = buildProviderModelLanes([
+  {
+    name: 'openrouter',
+    kind: 'openai-compatible',
+    baseUrl: 'https://openrouter.ai/api/v1',
+    enabled: true,
+    keySource: 'config',
+    needsKey: true,
+    lastSync: { at: 1, status: 'live', modelCount: 3, models: ['openai/gpt-5.4', 'anthropic/claude-sonnet-4.6', 'x-ai/grok-4'] },
+    modelSelection: { mode: 'selected', models: ['x-ai/grok-4'] },
+  },
+] satisfies Array<ProviderProfile & { keySource?: string; needsKey?: boolean }>);
+assert.deepEqual(
+  selectedProviderLanes.map((lane) => ({ id: lane.id, count: lane.models.length, models: lane.models })),
+  [{ id: 'provider:openrouter', count: 1, models: ['x-ai/grok-4'] }],
+  'provider model lanes should expose only selected Health models',
+);
+
 assert.deepEqual(
   offerableRuntimes([], 'cursor-cli', []),
   ['cursor-cli'],

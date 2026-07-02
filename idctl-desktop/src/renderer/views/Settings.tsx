@@ -1,6 +1,6 @@
 import { Fragment, useEffect, useState } from 'react';
 import { call, type FleetStore } from '../store.ts';
-import { defaultBaseUrl, type EvmRpcKeySource, type EvmRpcProfile, type EvmRpcRequest, type ProviderKind, type ProviderProfile } from '../../../../idctl/src/settings/schema.ts';
+import { defaultBaseUrl, type EvmRpcKeySource, type EvmRpcProfile, type EvmRpcRequest, type ProviderKind, type ProviderModelSelection, type ProviderProfile } from '../../../../idctl/src/settings/schema.ts';
 import type { ProbeOutcome } from '../../../../idctl/src/settings/ProviderClient.ts';
 import type { DiscoveredServer, LocalServerCandidate } from '../../../../idctl/src/settings/localDiscovery.ts';
 import { PROVIDER_CATALOG, findProvider, providerNeedsKey } from '../../../../idctl/src/settings/providerCatalog.ts';
@@ -73,6 +73,8 @@ function providerStamp(p: ProviderRow | ProviderProfile): string {
     default: p.default === true,
     keySource: row.keySource ?? '',
     needsKey: row.needsKey === true,
+    modelSelectionMode: p.modelSelection?.mode ?? 'all',
+    modelSelectionModels: [...new Set(p.modelSelection?.models ?? [])].sort(),
   });
 }
 function providerListStamp(list: ProviderRow[]): string {
@@ -128,6 +130,8 @@ export function Settings({ store, navigate }: { store: FleetStore; navigate?: (v
   const [apiKey, setApiKey] = useState('');
   const [replaceProviderArmed, setReplaceProviderArmed] = useState(false);
   const [providerMsg, setProviderMsg] = useState('');
+  const [providerModelSearch, setProviderModelSearch] = useState<Record<string, string>>({});
+  const [providerModelDrafts, setProviderModelDrafts] = useState<Record<string, string[]>>({});
   // local LLM discovery (scan localhost for running servers)
   const [discovering, setDiscovering] = useState(false);
   const [discovered, setDiscovered] = useState<Discovered[] | null>(null);
@@ -1140,6 +1144,78 @@ export function Settings({ store, navigate }: { store: FleetStore; navigate?: (v
     if (!providerModelReady(p)) return 'The backend has no synced/preset model list yet.';
     return `Current status is ${providerStatus(p) ?? 'not synced'}.`;
   }
+  function normalizeModels(models: string[] | undefined): string[] {
+    return Array.from(new Set((models ?? []).map((m) => String(m).trim()).filter(Boolean)));
+  }
+  function syncedProviderModels(p: ProviderRow): string[] {
+    return normalizeModels(p.lastSync?.models);
+  }
+  function savedProviderModels(p: ProviderRow): string[] {
+    const all = syncedProviderModels(p);
+    if (p.modelSelection?.mode !== 'selected') return all;
+    const allowed = new Set(normalizeModels(p.modelSelection.models));
+    const visible = all.filter((m) => allowed.has(m));
+    return visible.length ? visible : all;
+  }
+  function draftProviderModels(p: ProviderRow): string[] {
+    return providerModelDrafts[p.name] ?? savedProviderModels(p);
+  }
+  function providerModelSelectionChanged(p: ProviderRow): boolean {
+    return sortedKey(draftProviderModels(p)) !== sortedKey(savedProviderModels(p));
+  }
+  function providerModelQuery(p: ProviderRow): string {
+    return (providerModelSearch[p.name] ?? '').trim().toLowerCase();
+  }
+  function filteredProviderModels(p: ProviderRow): string[] {
+    const q = providerModelQuery(p);
+    const all = syncedProviderModels(p);
+    return (q ? all.filter((m) => m.toLowerCase().includes(q)) : all).slice(0, 80);
+  }
+  function updateProviderModelDraft(p: ProviderRow, models: string[]) {
+    const allowed = new Set(syncedProviderModels(p));
+    const nextModels = normalizeModels(models).filter((m) => allowed.has(m));
+    setProviderModelDrafts((prev) => ({ ...prev, [p.name]: nextModels }));
+  }
+  function toggleProviderModel(p: ProviderRow, model: string) {
+    const selected = new Set(draftProviderModels(p));
+    if (selected.has(model)) selected.delete(model);
+    else selected.add(model);
+    updateProviderModelDraft(p, [...selected]);
+  }
+  async function saveProviderModelsForHealth(p: ProviderRow, mode: 'all' | 'selected') {
+    const fresh = await ensureProviderFresh(p.name, 'Save Health models');
+    if (!fresh) return;
+    const current = fresh.current;
+    const all = syncedProviderModels(current);
+    const allowed = new Set(all);
+    const selected = mode === 'selected'
+      ? draftProviderModels(p).filter((m) => allowed.has(m))
+      : [];
+    if (mode === 'selected' && !selected.length) {
+      window.alert('Pick at least one model, or choose Show all.');
+      return;
+    }
+    const selection: ProviderModelSelection = mode === 'selected' && selected.length < all.length
+      ? { mode: 'selected', models: selected }
+      : { mode: 'all', models: [] };
+    setBusy(true);
+    try {
+      const next = await call<ProviderRow[]>('providers:setModelSelection', current.name, selection, providerStamp(current));
+      setProviders(next);
+      setProviderModelDrafts((prev) => {
+        const out = { ...prev };
+        delete out[current.name];
+        return out;
+      });
+      setProviderMsg(selection.mode === 'selected'
+        ? `"${current.name}" Health dropdown now shows ${selected.length} selected model${selected.length === 1 ? '' : 's'}`
+        : `"${current.name}" Health dropdown now shows all synced models`);
+      void call<Record<string, string[]>>('runtime:models').catch(() => null);
+      void call('runtime:freshness').catch(() => null);
+    } finally {
+      setBusy(false);
+    }
+  }
   function isLocalProvider(p: ProviderRow): boolean {
     return p.kind === 'ollama' || p.kind === 'lmstudio' || (p.baseUrl || '').includes('127.0.0.1') || (p.baseUrl || '').includes('localhost');
   }
@@ -2097,6 +2173,9 @@ export function Settings({ store, navigate }: { store: FleetStore; navigate?: (v
             {providers.map((p) => {
               const o = probe[p.name];
               const sync = p.lastSync;
+              const syncedModels = syncedProviderModels(p);
+              const offeredModels = savedProviderModels(p);
+              const apiModelFilterable = !isLocalProvider(p) && syncedModels.length > 0;
               const statusText = o
                 ? o.status === 'live'
                   ? `live · ${o.models.length} models`
@@ -2138,6 +2217,11 @@ export function Settings({ store, navigate }: { store: FleetStore; navigate?: (v
                     <td>{keyBadge}</td>
                     <td className={statusOk ? 'ok-text' : statusWarn ? 'warn-text' : sync || o ? 'status-error' : 'muted'}>
                       {statusText}
+                      {apiModelFilterable ? (
+                        <span className="chip" title="Models currently offered in the Health model dropdown" style={{ marginLeft: 6 }}>
+                          {p.modelSelection?.mode === 'selected' ? `Health ${offeredModels.length}/${syncedModels.length}` : 'Health all'}
+                        </span>
+                      ) : null}
                       {canExpand ? (
                         <button className="btn small" style={{ marginLeft: 6, padding: '1px 6px' }} onClick={() => setExpanded(expanded === p.name ? null : p.name)}>
                           {expanded === p.name ? 'hide' : 'models'}
@@ -2156,11 +2240,50 @@ export function Settings({ store, navigate }: { store: FleetStore; navigate?: (v
                   {expanded === p.name && sync?.models?.length ? (
                     <tr>
                       <td colSpan={6}>
-                        <div className="chips">
-                          {sync.models.map((m) => (
-                            <span className="chip" key={m}>{m}</span>
-                          ))}
-                        </div>
+                        {apiModelFilterable ? (() => {
+                          const selected = new Set(draftProviderModels(p));
+                          const shown = filteredProviderModels(p);
+                          const q = providerModelQuery(p);
+                          const totalFiltered = q ? syncedModels.filter((m) => m.toLowerCase().includes(q)).length : syncedModels.length;
+                          const dirty = providerModelSelectionChanged(p);
+                          return (
+                            <div className="provider-model-picker">
+                              <div className="provider-model-picker-head">
+                                <div>
+                                  <b>Health model dropdown</b>
+                                  <span className="muted small"> · {selected.size}/{syncedModels.length} selected from synced API models</span>
+                                </div>
+                                <span className="grow" />
+                                <button className="btn small" disabled={busy || shown.length === 0} onClick={() => updateProviderModelDraft(p, Array.from(new Set([...draftProviderModels(p), ...shown])))}>Select shown</button>
+                                <button className="btn small" disabled={busy || selected.size === 0} onClick={() => updateProviderModelDraft(p, [])}>Clear</button>
+                                <button className="btn small" disabled={busy} onClick={() => void saveProviderModelsForHealth(p, 'all')}>Show all</button>
+                                <button className="btn primary small" disabled={busy || selected.size === 0 || !dirty} onClick={() => void saveProviderModelsForHealth(p, 'selected')}>Save selected</button>
+                              </div>
+                              <input
+                                className="provider-model-search"
+                                value={providerModelSearch[p.name] ?? ''}
+                                placeholder="search synced models..."
+                                onChange={(e) => setProviderModelSearch((prev) => ({ ...prev, [p.name]: e.target.value }))}
+                              />
+                              <div className="provider-model-list">
+                                {shown.map((m) => (
+                                  <label className="provider-model-row" key={m} title={m}>
+                                    <input type="checkbox" checked={selected.has(m)} onChange={() => toggleProviderModel(p, m)} />
+                                    <span className="mono">{m}</span>
+                                  </label>
+                                ))}
+                                {shown.length === 0 ? <span className="muted small">No synced models match this search.</span> : null}
+                              </div>
+                              {totalFiltered > shown.length ? <div className="muted small">Showing first {shown.length} of {totalFiltered} matches.</div> : null}
+                            </div>
+                          );
+                        })() : (
+                          <div className="chips">
+                            {sync.models.map((m) => (
+                              <span className="chip" key={m}>{m}</span>
+                            ))}
+                          </div>
+                        )}
                       </td>
                     </tr>
                   ) : null}

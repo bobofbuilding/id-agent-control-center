@@ -534,10 +534,10 @@ Manager; this is the plumbing.)
   matching live backend presets after a scan, and row-level **Add backend** as a fallback once a
   scanned local server is live.
 - **Inference backends**: provider table (★ default, enable, key badge, status, model list,
-  **Connect & sync**, ✕), API/cloud-focused **Add a backend** catalog or custom API endpoint,
-  provider-specific key requirements, NVIDIA API Catalog preset models, and cloud keys auto-detected
-  from env, including `PERPLEXITY_API_KEY` for Perplexity. Local server setup belongs to Local LLM
-  stacks above.
+  **Connect & sync**, searchable Health model selection, ✕), API/cloud-focused **Add a backend**
+  catalog or custom API endpoint, provider-specific key requirements, NVIDIA API Catalog preset
+  models, and cloud keys auto-detected from env, including `PERPLEXITY_API_KEY` for Perplexity.
+  Local server setup belongs to Local LLM stacks above.
 
 **Data & actions:** `app:hardware`, `manager:capabilities`, `app:version`, `update:status/check/
 getSettings/setSettings`, `subs:status/signin/signout/install`, `manager:localConcurrency/

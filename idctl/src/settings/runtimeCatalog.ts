@@ -368,6 +368,20 @@ export function providerModelLaneLabel(p: ProviderProfile): string {
   return `${prefix} · ${p.name}`;
 }
 
+function uniqueModels(models: string[] | undefined): string[] {
+  return Array.from(new Set((models ?? []).map((m) => String(m).trim()).filter(Boolean)));
+}
+
+export function providerVisibleModels(p: Pick<ProviderProfile, 'lastSync' | 'modelSelection'>): string[] {
+  const synced = uniqueModels(p.lastSync?.models);
+  if (!synced.length || p.modelSelection?.mode !== 'selected') return synced;
+  const selected = new Set(uniqueModels(p.modelSelection.models));
+  const visible = synced.filter((m) => selected.has(m));
+  // If the saved selection went stale after a provider refresh, fail open so the
+  // Health dropdown never goes blank while Settings still shows the mismatch.
+  return visible.length ? visible : synced;
+}
+
 /**
  * Provider/model lanes are neutral catalog entries from Settings. They expose
  * every configured subscription, local, and API backend in Health/Fleet without
@@ -377,7 +391,7 @@ export function buildProviderModelLanes(providers: Array<ProviderProfile & { key
   return providers
     .filter((p) => p.enabled !== false)
     .map((p) => {
-      const models = p.lastSync?.models ?? [];
+      const models = providerVisibleModels(p);
       const kind = providerModelLaneKind(p);
       const routeReady = providerRouteReady(p);
       const selectable = kind === 'api' && routeReady && models.length > 0;
@@ -414,7 +428,7 @@ export function buildRuntimeCatalog(providers: ProviderProfile[]): Record<string
 
   for (const p of providers) {
     if (p.enabled === false) continue;
-    const models = p.lastSync?.models ?? [];
+    const models = providerVisibleModels(p);
     if (!models.length) continue;
     const lane = providerModelLaneId(p);
     cat[lane] = Array.from(new Set([...(cat[lane] ?? []), ...models]));

@@ -273,6 +273,17 @@ export interface ProviderProfile {
   default?: boolean;
   /** Last live connect/sync result (cached so models are discoverable offline). */
   lastSync?: ProviderSync;
+  /** Optional UI/runtime filter: keep full synced model list, but only offer selected models in Health. */
+  modelSelection?: ProviderModelSelection;
+}
+
+export interface ProviderModelSelection {
+  /** all = offer every synced model; selected = offer only the listed synced models. */
+  mode: 'all' | 'selected';
+  /** Model ids selected by the operator. Ignored when mode is all. */
+  models: string[];
+  /** ms epoch of the last preference update. */
+  updatedAt?: number;
 }
 
 /** Cached outcome of the most recent "Connect & sync" against a provider. */

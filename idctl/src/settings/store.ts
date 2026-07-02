@@ -9,7 +9,7 @@
 
 import { existsSync, mkdirSync, readFileSync, writeFileSync, statSync, chmodSync, renameSync, unlinkSync } from 'node:fs';
 import { resolveConfigPath, configDir } from './paths.ts';
-import { emptyConfig, defaultHeadroomPilotSettings, defaultUpdateSettings, DEFAULT_TEAM, type EvmRpcProfile, type EvmRpcRequest, type GoalDriverSettings, type HeadroomPilotSettings, type IdctlConfig, type ImageServerConfig, type ManagerProfile, type McpServerProfile, type ProjectEntry, type ProviderProfile, type ProviderSync, type UpdateSettings } from './schema.ts';
+import { emptyConfig, defaultHeadroomPilotSettings, defaultUpdateSettings, DEFAULT_TEAM, type EvmRpcProfile, type EvmRpcRequest, type GoalDriverSettings, type HeadroomPilotSettings, type IdctlConfig, type ImageServerConfig, type ManagerProfile, type McpServerProfile, type ProjectEntry, type ProviderModelSelection, type ProviderProfile, type ProviderSync, type UpdateSettings } from './schema.ts';
 
 function normalizeGoalDriver(input: unknown): GoalDriverSettings | undefined {
   if (!input || typeof input !== 'object') return undefined;
@@ -255,6 +255,20 @@ export function toggleProviderEnabled(name: string, file = resolveConfigPath()):
   const cfg = loadSettings(file);
   const p = cfg.providers.find((x) => x.name === name);
   if (p) p.enabled = !p.enabled;
+  saveSettings(cfg, file);
+  return cfg;
+}
+
+/** Save which synced provider models should be offered in Health/Fleet pickers. */
+export function setProviderModelSelection(name: string, selection: ProviderModelSelection, file = resolveConfigPath()): IdctlConfig {
+  const cfg = loadSettings(file);
+  const p = cfg.providers.find((x) => x.name === name);
+  if (p) {
+    const selected = Array.from(new Set((selection.models ?? []).map((m) => String(m).trim()).filter(Boolean)));
+    p.modelSelection = selection.mode === 'selected' && selected.length
+      ? { mode: 'selected', models: selected, updatedAt: selection.updatedAt ?? Date.now() }
+      : { mode: 'all', models: [], updatedAt: selection.updatedAt ?? Date.now() };
+  }
   saveSettings(cfg, file);
   return cfg;
 }

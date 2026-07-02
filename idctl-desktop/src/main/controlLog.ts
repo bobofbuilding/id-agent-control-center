@@ -54,6 +54,7 @@ const ACTIONS: Record<string, (args: unknown[], result: unknown) => Summary> = {
   'providers:add': (a) => ({ subject: `provider added: ${s(obj(a[0]).name)}`, data: obj(a[0]), tags: ['cc-config', 'provider'] }),
   'providers:remove': (a) => ({ subject: `provider removed: ${s(a[0])}`, data: { name: s(a[0]) }, tags: ['cc-config', 'provider'] }),
   'providers:setDefault': (a) => ({ subject: `default provider → ${s(a[0])}`, data: { name: s(a[0]) }, tags: ['cc-config', 'provider'] }),
+  'providers:setModelSelection': (a) => ({ subject: `provider Health models updated: ${s(a[0])}`, data: { name: s(a[0]), selection: obj(a[1]) }, tags: ['cc-config', 'provider'] }),
   'providers:toggle': (a) => ({ subject: `provider toggled: ${s(a[0])}`, data: { name: s(a[0]) }, tags: ['cc-config', 'provider'] }),
   'providers:connect': (a) => ({ subject: `provider connected: ${s(a[0])}`, data: { name: s(a[0]) }, tags: ['cc-config', 'provider'] }),
 
