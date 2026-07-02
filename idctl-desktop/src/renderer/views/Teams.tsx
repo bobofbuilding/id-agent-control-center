@@ -12,6 +12,24 @@ import { Health } from './Health.tsx';
 
 type ProviderRow = ProviderProfile & { keySource?: string; needsKey?: boolean };
 type ManagedRuntimeStatus = { runtime?: string; installed?: boolean; loggedIn?: boolean; statusSupported?: boolean };
+type RuntimeVerificationRow = {
+  name: string;
+  runtime: string;
+  label: string;
+  model?: string;
+  ok: boolean;
+  detail: string;
+  source: 'harness' | 'provider';
+  provider?: string;
+  modelCount?: number;
+};
+type RuntimeVerificationReport = {
+  ok: boolean;
+  checkedAt: number;
+  rows: RuntimeVerificationRow[];
+  refreshedCatalog: Record<string, string[]>;
+  providers: ProviderRow[];
+};
 
 type GoalStatus = 'draft' | 'active' | 'done' | 'archived';
 type GoalSummary = { id: string; title: string; status: GoalStatus; agent?: string; team: string; updatedAt: number; autopilot?: boolean };
@@ -1984,6 +2002,10 @@ export function Teams({ store, focus, onFocusHandled, navigate }: { store: Fleet
             managedRuntimes={Object.values(managedRuntimes)}
             modelCatalog={modelCatalog}
             skillCatalog={skillCatalog}
+            onRuntimeVerified={(report) => {
+              setModelCatalog(report.refreshedCatalog);
+              setProviders(report.providers);
+            }}
             onClose={() => { /* inline — nothing to close */ }}
             onBusy={setBusy}
             onMessage={setMsg}
@@ -2215,6 +2237,7 @@ function TeamBuilder({
   modelCatalog,
   skillCatalog,
   inline = false,
+  onRuntimeVerified,
   onClose,
   onBusy,
   onMessage,
@@ -2236,6 +2259,7 @@ function TeamBuilder({
   modelCatalog: Record<string, string[]>;
   skillCatalog: string[];
   inline?: boolean;
+  onRuntimeVerified?: (report: RuntimeVerificationReport) => void;
   onClose: () => void;
   onBusy: (b: boolean) => void;
   onMessage: (m: string) => void;
@@ -2325,6 +2349,8 @@ function TeamBuilder({
   // ---- build progress ----
   type ResultEntry = { name: string; team: string; plan: OnboardPlan; result?: OnboardResult; error?: string; running?: boolean; skipped?: boolean; merged?: boolean };
   const [building, setBuilding] = useState(false);
+  const [verifying, setVerifying] = useState(false);
+  const [verifyMsg, setVerifyMsg] = useState('');
   const [error, setError] = useState('');
   const [results, setResults] = useState<ResultEntry[]>([]);
   const [post, setPost] = useState<{ coord?: PostStat; coordErr?: string; leadName?: string; relay?: PostStat; relayErr?: string }>({});
@@ -2345,7 +2371,7 @@ function TeamBuilder({
   const builderRelayBlocksDefault = targetTeam === PRIMARY_TEAM && relayBlocksAll(relayPayload);
   const defaultLeadAvailableForWire = targetTeam !== PRIMARY_TEAM || existingInTeam.has(DEFAULT_LEAD) || named.some((r) => r.slug === DEFAULT_LEAD);
   const defaultLeadMissingForWire = coordinate && targetTeam === PRIMARY_TEAM && !defaultLeadAvailableForWire;
-  const locked = building || aiBusy;
+  const locked = building || aiBusy || verifying;
   const canBuild = !locked && Boolean(targetTeam) && !isReservedName(targetTeam) && toCreate.length > 0 && reserved.length === 0 && dupes.length === 0 && !builderRelayBlocksDefault && !defaultLeadMissingForWire && !missingRuntime;
   const leadershipBackbone = useMemo(() => assessLeadershipBackbone(fleetAgents, hierarchy), [fleetAgents, hierarchy]);
   const leadershipIssues = leadershipBackboneIssues(leadershipBackbone);
@@ -2553,6 +2579,54 @@ function TeamBuilder({
     };
   }
 
+  function verificationSummary(report: RuntimeVerificationReport): string {
+    const lines = report.rows.slice(0, 8).map((row) => {
+      const model = row.model ? ` / ${row.model}` : '';
+      return `- ${row.name}: ${row.label}${model}`;
+    });
+    return [
+      'Runtime verification:',
+      ...lines,
+      report.rows.length > lines.length ? `- +${report.rows.length - lines.length} more` : '',
+    ].filter(Boolean).join('\n');
+  }
+
+  async function verifyBuildRuntimes(batch: Array<Row & { slug: string }>): Promise<RuntimeVerificationReport | null> {
+    setVerifyMsg('verifying runtimes and models...');
+    setVerifying(true);
+    onBusy(true);
+    try {
+      const report = await call<RuntimeVerificationReport>('runtime:verifyAssignments', batch.map((r) => ({
+        name: r.slug,
+        runtime: r.runtime,
+        model: r.model,
+      })));
+      onRuntimeVerified?.(report);
+      if (!report.ok) {
+        const blocked = report.rows.filter((row) => !row.ok);
+        setError([
+          'Runtime verification blocked this build:',
+          ...blocked.slice(0, 8).map((row) => `- ${row.name}: ${row.detail}`),
+          blocked.length > 8 ? `- +${blocked.length - 8} more` : '',
+        ].filter(Boolean).join('\n'));
+        setVerifyMsg('runtime verification blocked');
+        onMessage('build blocked: runtime verification failed');
+        return null;
+      }
+      setVerifyMsg(`verified ${report.rows.length} runtime/model selection${report.rows.length === 1 ? '' : 's'}`);
+      return report;
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      setError(`Runtime verification failed: ${message}`);
+      setVerifyMsg('runtime verification failed');
+      onMessage('build blocked: runtime verification failed');
+      return null;
+    } finally {
+      setVerifying(false);
+      onBusy(false);
+    }
+  }
+
   async function build() {
     if (!targetTeam) { setError('Choose or name a team.'); return; }
     if (isReservedName(targetTeam)) { setError(`“${targetTeam}” is a reserved word — choose another team name.`); return; }
@@ -2576,6 +2650,8 @@ function TeamBuilder({
     ].filter(Boolean);
     const preflight = await preflightBuildTarget();
     if (!preflight) return;
+    const verification = await verifyBuildRuntimes(batch);
+    if (!verification) return;
     const mergeIntoExisting = preflight.teamExists;
     const backboneWarning = targetTeam !== PRIMARY_TEAM && !preflight.leadershipBackbone.ready
       ? `\n\nDefault leadership return path is incomplete:\n- ${leadershipBackboneIssues(preflight.leadershipBackbone).join('\n- ')}\n\nContinue only if you intend to build this team before wiring the default primary and validators.`
@@ -2587,7 +2663,7 @@ function TeamBuilder({
     const primaryGuard = coordinate && targetTeam === PRIMARY_TEAM
       ? `\n\nPrimary-route guard:\n- Current primary: ${primaryBefore}\n- Requested primary: ${PRIMARY_TEAM}/${DEFAULT_LEAD}\n- The primary write still rechecks hierarchy and roster after onboarding before it applies.`
       : '';
-    if (!window.confirm(`${mergeIntoExisting ? 'Build + merge' : 'Build'} ${batch.length} agent${batch.length === 1 ? '' : 's'} ${mergeIntoExisting ? `into existing ${targetTeam}` : `in ${targetTeam}`}?\n\nThis onboards and starts new agents${heartbeat ? ', adds heartbeats' : ''}${probeAfter ? ', and probes them' : ''}.${mergeNote}${postSteps.length ? `\n\nAfter build it will also ${postSteps.join('; ')}.` : ''}${primaryGuard}${backboneWarning}`)) return;
+    if (!window.confirm(`${mergeIntoExisting ? 'Build + merge' : 'Build'} ${batch.length} agent${batch.length === 1 ? '' : 's'} ${mergeIntoExisting ? `into existing ${targetTeam}` : `in ${targetTeam}`}?\n\nThis onboards and starts new agents${heartbeat ? ', adds heartbeats' : ''}${probeAfter ? ', and probes them' : ''}.${mergeNote}\n\n${verificationSummary(verification)}${postSteps.length ? `\n\nAfter build it will also ${postSteps.join('; ')}.` : ''}${primaryGuard}${backboneWarning}`)) return;
     setBuilding(true); onBusy(true); setError(''); setPost({});
     onMessage(`${mergeIntoExisting ? 'merging' : 'adding'} ${batch.length} new agent(s) ${mergeIntoExisting ? 'into' : 'to'} ${targetTeam}${alreadyThere.length ? ` (${alreadyThere.length} already there)` : ''}…`);
     // Freeze a plan per agent so a later "retry" re-runs the exact same spec.
@@ -2988,6 +3064,7 @@ function TeamBuilder({
             ) : null}
             {reserved.length ? <p className="status-error small">Reserved name(s): <span className="mono">{reserved.join(', ')}</span> — rename.</p> : null}
             {dupes.length ? <p className="status-error small">Duplicate name(s): <span className="mono">{dupes.join(', ')}</span>.</p> : null}
+            {verifyMsg ? <p className={`small ${/blocked|failed/.test(verifyMsg) ? 'status-error' : 'ok-text'}`}>runtime verification: {verifyMsg}</p> : null}
             {error ? <p className="status-error small">{error}</p> : null}
           </div>
         </div>

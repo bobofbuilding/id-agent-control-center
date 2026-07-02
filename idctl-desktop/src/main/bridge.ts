@@ -48,7 +48,7 @@ import { realpathSync } from 'node:fs';
 import { createHash, randomBytes } from 'node:crypto';
 import { ProviderClient } from '../../../idctl/src/settings/ProviderClient.ts';
 import { discoverLocalServers, mergeLocalDiscoveryCandidates, type DiscoveredServer } from '../../../idctl/src/settings/localDiscovery.ts';
-import { type HeadroomPilotSettings, type ProviderModelSelection, type ProviderProfile, type McpServerProfile, type ProjectEntry } from '../../../idctl/src/settings/schema.ts';
+import { type HeadroomPilotSettings, type ProviderKind, type ProviderModelSelection, type ProviderProfile, type McpServerProfile, type ProjectEntry } from '../../../idctl/src/settings/schema.ts';
 import { providerNeedsKey } from '../../../idctl/src/settings/providerCatalog.ts';
 import { buildProviderModelLanes, buildRuntimeCatalog, RUNTIMES, providerKindToRuntimes, isLocalProvider, settingsAvailableRuntimeSet, managedRuntimeHasEvidence, runtimeDisplayLabel, runtimeHasManagerHarness, type RuntimeModelLaneKind } from '../../../idctl/src/settings/runtimeCatalog.ts';
 import { subsStatus } from './subscriptions.ts';
@@ -63,7 +63,6 @@ import { buildOrgHierarchy, previewOrgSync, syncOrg, startOrgSyncLoop } from './
 import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { homedir } from 'node:os';
-import type { ProviderKind } from '../../../idctl/src/settings/schema.ts';
 import { secp256k1 } from '@noble/curves/secp256k1.js';
 import { keccak_256 } from '@noble/hashes/sha3.js';
 
@@ -490,6 +489,96 @@ async function probeAllRuntimes(): Promise<Record<string, string[]>> {
       }),
   );
   return runtimeCatalogWithCodex();
+}
+
+type RuntimeAssignment = { name?: string; runtime?: string; model?: string };
+type RuntimeAssignmentCheck = {
+  name: string;
+  runtime: string;
+  label: string;
+  model?: string;
+  ok: boolean;
+  detail: string;
+  source: 'harness' | 'provider';
+  provider?: string;
+  modelCount?: number;
+};
+type RuntimeAssignmentVerification = {
+  ok: boolean;
+  checkedAt: number;
+  rows: RuntimeAssignmentCheck[];
+  refreshedCatalog: Record<string, string[]>;
+  providers: ReturnType<typeof listProvidersEnriched>;
+};
+
+async function verifyRuntimeAssignments(assignments: RuntimeAssignment[]): Promise<RuntimeAssignmentVerification> {
+  const rowsIn = (Array.isArray(assignments) ? assignments : [])
+    .map((row, i) => ({
+      name: String(row?.name ?? `row ${i + 1}`).trim() || `row ${i + 1}`,
+      runtime: String(row?.runtime ?? '').trim(),
+      model: String(row?.model ?? '').trim(),
+    }));
+
+  const providerNames = Array.from(new Set(rowsIn.map((row) => providerLaneName(row.runtime)).filter(Boolean))) as string[];
+  await Promise.all(providerNames.map(async (name) => {
+    const p = loadSettings().providers.find((x) => x.name === name);
+    if (!p) return;
+    try {
+      const outcome = await new ProviderClient(p, resolveProviderKey(p)).probe(undefined, 8000);
+      recordProviderSync(p.name, {
+        at: Date.now(),
+        status: outcome.status,
+        modelCount: outcome.models.length,
+        models: outcome.models.slice(0, 200).map((m) => m.id),
+        keySource: keySourceOf(p),
+      });
+    } catch {
+      recordProviderSync(p.name, {
+        at: Date.now(),
+        status: 'error',
+        modelCount: 0,
+        models: [],
+        keySource: keySourceOf(p),
+      });
+    }
+  }));
+
+  const providers = listProvidersEnriched();
+  const managed = await subsStatus().then((rows) => Object.values(rows)).catch(() => []);
+  const availableHarnesses = settingsAvailableRuntimeSet(providers, managed);
+  const providerLanes = new Map(buildProviderModelLanes(providers).map((lane) => [lane.id, lane]));
+  const refreshedCatalog = runtimeCatalogWithCodex();
+  const rows = rowsIn.map((row): RuntimeAssignmentCheck => {
+    if (!row.runtime) {
+      return { name: row.name, runtime: '', label: 'None', model: row.model || undefined, ok: false, detail: 'No runtime selected.', source: 'harness', modelCount: 0 };
+    }
+    const providerName = providerLaneName(row.runtime);
+    if (providerName) {
+      const lane = providerLanes.get(row.runtime);
+      const models = refreshedCatalog[row.runtime] ?? lane?.models ?? [];
+      if (!lane) {
+        return { name: row.name, runtime: row.runtime, label: runtimeDisplayLabel(row.runtime), model: row.model || undefined, ok: false, detail: `Provider lane "${providerName}" is missing or disabled in Settings.`, source: 'provider', provider: providerName, modelCount: 0 };
+      }
+      if (!lane.selectable) {
+        return { name: row.name, runtime: row.runtime, label: lane.label, model: row.model || undefined, ok: false, detail: lane.detail, source: 'provider', provider: providerName, modelCount: models.length };
+      }
+      if (row.model && models.length && !models.includes(row.model)) {
+        return { name: row.name, runtime: row.runtime, label: lane.label, model: row.model, ok: false, detail: `Model "${row.model}" is not in the latest synced ${providerName} model list.`, source: 'provider', provider: providerName, modelCount: models.length };
+      }
+      return { name: row.name, runtime: row.runtime, label: lane.label, model: row.model || undefined, ok: true, detail: `Verified API provider lane (${models.length} model${models.length === 1 ? '' : 's'}).`, source: 'provider', provider: providerName, modelCount: models.length };
+    }
+
+    const models = refreshedCatalog[row.runtime] ?? [];
+    if (!availableHarnesses.has(row.runtime)) {
+      return { name: row.name, runtime: row.runtime, label: runtimeDisplayLabel(row.runtime), model: row.model || undefined, ok: false, detail: 'Runtime is not currently available from Settings.', source: 'harness', modelCount: models.length };
+    }
+    if (row.model && models.length && !models.includes(row.model)) {
+      return { name: row.name, runtime: row.runtime, label: runtimeDisplayLabel(row.runtime), model: row.model, ok: false, detail: `Model "${row.model}" is not in the current ${runtimeDisplayLabel(row.runtime)} catalog.`, source: 'harness', modelCount: models.length };
+    }
+    return { name: row.name, runtime: row.runtime, label: runtimeDisplayLabel(row.runtime), model: row.model || undefined, ok: true, detail: `Verified assignable harness (${models.length} model${models.length === 1 ? '' : 's'}).`, source: 'harness', modelCount: models.length };
+  });
+
+  return { ok: rows.every((row) => row.ok), checkedAt: Date.now(), rows, refreshedCatalog, providers };
 }
 
 /** Where a provider's API key resolves from, without exposing the value. */
@@ -1150,6 +1239,7 @@ const METHODS: Record<string, (...a: any[]) => Promise<unknown>> = {
   // Probe every enabled provider that backs a runtime, refresh its model list,
   // then return the rebuilt per-runtime catalog. This is "probe each runtime".
   'runtime:probe': async () => probeAllRuntimes(),
+  'runtime:verifyAssignments': async (assignments: RuntimeAssignment[]) => verifyRuntimeAssignments(assignments),
   // Per-runtime model freshness (live list + source + when last refreshed) for the
   // "models stay up to date" panel.
   'runtime:freshness': async () => runtimeFreshness(),

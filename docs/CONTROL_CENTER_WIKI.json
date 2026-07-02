@@ -4706,6 +4706,12 @@
         "Team Builder model pickers now populate from the same provider-lane model catalog used by Health, so OpenRouter, NVIDIA, and similar API backends can be selected during one-click team builds when Settings has keyed and synced them.",
         "Onboarding now resolves provider lanes in the main process after spawn, applies the selected provider model before rebuild, and keeps API keys process-local instead of storing them in renderer plans.",
         "Validation: npm test in idctl and npm run typecheck in idctl-desktop passed before release validation."
+      ],
+      "implementedTwoHundredThirtiethPass": [
+        "HR Manager Build now runs automated runtime/model verification before the final build confirmation.",
+        "The verifier live-probes only the selected API provider lanes, refreshes their cached model lists, and blocks stale provider/model rows before onboarding starts.",
+        "Verified rows are summarized in the Build confirmation prompt and the inline Build status now shows runtime verification progress/results.",
+        "runtime:verifyAssignments invalidates Settings/module/Brain sync domains because selected provider model snapshots can refresh during verification."
       ]
     },
     {
@@ -4769,5 +4775,5 @@
       "body": "# Wiki\n\nWiki is both the human documentation page and the editable schematic for the Control Center UI. Each article explains the operator purpose of a page; the structured sections below preserve tabs, tiles, fields, controls, displays, routes, and source files for implementation detail.\n\n## Use it for\n\n- Search pages, controls, routes, source files, and notes from inside the desktop app.\n- Confirm how a UI surface is intended to behave before editing code or filing follow-up work.\n- Keep app navigation metadata and human documentation in one reviewed JSON artifact.\n\n## Editing rule\n\nThe desktop app hot-reload polls CONTROL_CENTER_WIKI.json through the main-process wiki bridge. Sidebar labels, icons, order, and visibility still come from pages[].nav for implemented routes, so documentation edits must preserve that metadata and keep every page.body non-empty."
     }
   ],
-  "appVersion": "0.1.461"
+  "appVersion": "0.1.462"
 }
