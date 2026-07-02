@@ -50,6 +50,14 @@ export interface LocalStackInstallStatus {
   checkedAt: number;
 }
 
+export interface DockerStatus {
+  installed: boolean;
+  serverRunning: boolean;
+  version?: string;
+  serverVersion?: string;
+  error?: string;
+}
+
 // The system_profiler probe is slowish (~1s) but its result is static — cache it
 // so only the first Settings open pays for it; disk free is re-read every call.
 let _gpuCache: { gpu?: string; gpuCores?: number } | null = null;
@@ -118,8 +126,43 @@ async function pipPackageInstalled(name: string): Promise<boolean> {
     commandOk('pip', ['show', name]);
 }
 
-async function dockerContainerExists(name: string): Promise<boolean> {
-  return commandOk('docker', ['container', 'inspect', name]);
+async function dockerContainerState(name: string): Promise<string | null> {
+  try {
+    const { stdout } = await execFileP('docker', ['container', 'inspect', name, '--format', '{{.State.Status}}'], { env: cliEnv(), timeout: 3000 });
+    return stdout.trim() || null;
+  } catch {
+    return null;
+  }
+}
+
+export async function dockerStatus(): Promise<DockerStatus> {
+  let version: string | undefined;
+  try {
+    const { stdout } = await execFileP('docker', ['--version'], { env: cliEnv(), timeout: 2500 });
+    version = stdout.trim();
+  } catch (e) {
+    return {
+      installed: false,
+      serverRunning: false,
+      error: e instanceof Error ? e.message : String(e),
+    };
+  }
+  try {
+    const { stdout } = await execFileP('docker', ['info', '--format', '{{.ServerVersion}}'], { env: cliEnv(), timeout: 4000 });
+    return {
+      installed: true,
+      serverRunning: true,
+      version,
+      serverVersion: stdout.trim() || undefined,
+    };
+  } catch (e) {
+    return {
+      installed: true,
+      serverRunning: false,
+      version,
+      error: e instanceof Error ? e.message : String(e),
+    };
+  }
 }
 
 /**
@@ -149,8 +192,9 @@ export async function localStackInstallStatus(ids: string[]): Promise<Record<str
       installed = await pipPackageInstalled('vllm');
       source = installed ? 'pip package' : undefined;
     } else if (id === 'localai') {
-      installed = await dockerContainerExists('local-ai');
-      source = installed ? 'docker container' : undefined;
+      const state = await dockerContainerState('local-ai');
+      installed = !!state;
+      source = installed ? `docker container${state ? ` (${state})` : ''}` : undefined;
     }
     out[id] = {
       id,

@@ -39,6 +39,7 @@ type HardwareInfo = { platform: string; arch: string; appleSilicon: boolean; cpu
 type Discovered = DiscoveredServer & { alreadyAdded: boolean };
 type LocalStackInstallStatus = { id: string; installed: boolean; source?: string; detail?: string; checkedAt: number };
 type StackInstallDraft = { command: string; port?: number; originalPort?: number; baseUrl?: string; autoFixed?: boolean; note?: string };
+type DockerStatus = { installed: boolean; serverRunning: boolean; version?: string; serverVersion?: string; error?: string };
 
 const API_KINDS: ProviderKind[] = ['openai-compatible', 'openai', 'anthropic'];
 
@@ -1306,6 +1307,30 @@ export function Settings({ store, navigate }: { store: FleetStore; navigate?: (v
     const c = stackCommand(s.uninstall);
     return c && RUNNABLE_RE.test(c) ? c : null;
   }
+  function stackStartCmd(s: LocalStackEntry): string | null {
+    const c = stackCommand(s.start);
+    return c && RUNNABLE_RE.test(c) ? c : null;
+  }
+  function stackUsesDockerCommand(command?: string | null): boolean {
+    return /^docker\b/.test(command ?? '');
+  }
+  async function ensureDockerReady(s: LocalStackEntry, command: string): Promise<boolean> {
+    if (!stackUsesDockerCommand(command)) return true;
+    const status = await call<DockerStatus>('stack:dockerStatus').catch((e): DockerStatus => ({
+      installed: false,
+      serverRunning: false,
+      error: e instanceof Error ? e.message : String(e),
+    }));
+    if (!status.installed) {
+      setStackMsg(`${s.name} needs Docker Desktop or Docker Engine before IDACC can run this command.`);
+      return false;
+    }
+    if (!status.serverRunning) {
+      setStackMsg(`${s.name} needs Docker running first. Start Docker Desktop, then try again.`);
+      return false;
+    }
+    return true;
+  }
   function portFromBaseUrl(u?: string): number | null {
     if (!u) return null;
     try {
@@ -1555,10 +1580,25 @@ export function Settings({ store, navigate }: { store: FleetStore; navigate?: (v
       }, delay);
     });
   }
-  async function runStackCmd(s: LocalStackEntry, action: 'install' | 'uninstall' = 'install') {
+  async function runStackCmd(s: LocalStackEntry, action: 'install' | 'uninstall' | 'start' = 'install') {
     const draft = action === 'install' ? stackInstallDrafts[s.id] : undefined;
-    const cmd = action === 'install' ? (draft?.command ?? stackInstallCmd(s)) : stackUninstallCmd(s);
+    const cmd = action === 'install'
+      ? (draft?.command ?? stackInstallCmd(s))
+      : action === 'start'
+        ? stackStartCmd(s)
+        : stackUninstallCmd(s);
     if (!cmd) return;
+    if (!await ensureDockerReady(s, cmd)) return;
+    if (action === 'install' && stackUsesDockerCommand(cmd)) {
+      const status = await call<Record<string, LocalStackInstallStatus>>('stack:installStatus', [s.id]).catch((): Record<string, LocalStackInstallStatus> => ({}));
+      setStackInstallStatus((prev) => ({ ...prev, ...status }));
+      if (status[s.id]?.installed) {
+        setStackConfirm(null);
+        setStackInstallDraft(s.id, null);
+        setStackMsg(`${s.name} already has ${status[s.id]?.source ?? 'a Docker container'}; use Start or Uninstall instead of Install.`);
+        return;
+      }
+    }
     setStackConfirm(null);
     const r = await call<{ ran: boolean }>('app:runInTerminal', cmd).catch(() => ({ ran: false }));
     if (action === 'install') {
@@ -1568,8 +1608,14 @@ export function Settings({ store, navigate }: { store: FleetStore; navigate?: (v
     if (r.ran) {
       setStackMsg(action === 'install'
         ? `opened Terminal to install ${s.name}${draft?.port ? ` on port ${draft.port}` : ''}. Install only adds the app/server; start it before adding a backend.`
-        : `opened Terminal to uninstall ${s.name}. Review and stop it there if anything looks wrong.`);
-      scheduleStackInstallChecks(s, action);
+        : action === 'start'
+          ? `opened Terminal to start ${s.name}. After it answers locally, Scan running to add or refresh the backend.`
+          : `opened Terminal to uninstall ${s.name}. Review and stop it there if anything looks wrong.`);
+      if (action === 'start') {
+        setTimeout(() => void runDiscover({ autoAddKnownStacks: true }), 8000);
+      } else {
+        scheduleStackInstallChecks(s, action);
+      }
     } else {
       await copyText(cmd);
       setStackMsg(`Terminal automation was blocked — ${action} command copied to clipboard${draft?.port ? ` with port ${draft.port}` : ''}`);
@@ -2126,6 +2172,7 @@ export function Settings({ store, navigate }: { store: FleetStore; navigate?: (v
             const ic = stackInstallCmd(s);
             const installDraft = stackInstallDrafts[s.id];
             const installCommand = installDraft?.command ?? ic;
+            const sc = stackStartCmd(s);
             const uc = stackUninstallCmd(s);
             const installStatus = stackInstallStatus[s.id];
             const stackInstalled = installStatus?.installed === true;
@@ -2182,6 +2229,9 @@ export function Settings({ store, navigate }: { store: FleetStore; navigate?: (v
                       {installUnavailable ? <span className="muted small" title={installUnavailable}>guided setup required</span> : null}
                       {running && !configured && effectiveApiBase ? (
                         <button className="btn small primary" title={`Add ${effectiveApiBase} as an inference backend after a fresh scan`} onClick={() => void addStackBackend(s)}>Add backend</button>
+                      ) : null}
+                      {stackInstalled && !running && sc ? (
+                        <button className="btn small primary" title={sc} onClick={() => void runStackCmd(s, 'start')}>Start</button>
                       ) : null}
                       {configuredProviders.length === 1 ? (
                         <button className="btn small" title={`Remove inference backend ${configuredProviders[0].name}; does not uninstall the app/server`} onClick={() => void removeProviderProfile(configuredProviders[0].name)}>Remove backend</button>
