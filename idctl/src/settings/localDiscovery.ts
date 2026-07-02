@@ -12,8 +12,9 @@
  * never the sandboxed renderer.
  *
  * Candidates are pre-deduped by (port, path): when several products default to
- * the same port (llama.cpp / llamafile / LocalAI on 8080) a single probe can't
- * tell them apart, so we list one candidate and name the rest in `sharesPortWith`.
+ * the same port (llama.cpp / llamafile / LocalAI / MLX / TGI on 8080) a single
+ * probe can't tell them apart, so we list one candidate and name the rest in
+ * `sharesPortWith`.
  */
 
 import { ProviderClient, type ProbeStatus } from './ProviderClient.ts';
@@ -70,10 +71,10 @@ export const LOCAL_DISCOVERY_CANDIDATES: LocalServerCandidate[] = [
   { id: 'ollama', name: 'Ollama', kind: 'ollama', baseUrl: 'http://127.0.0.1:11434', port: 11434, popularity: 'high' },
   { id: 'lmstudio', name: 'LM Studio', kind: 'lmstudio', baseUrl: 'http://127.0.0.1:1234/v1', port: 1234, popularity: 'high' },
   {
-    id: 'llamacpp', name: 'llama.cpp / llamafile / LocalAI', kind: 'openai-compatible',
+    id: 'llamacpp', name: 'llama.cpp / LocalAI / MLX / TGI', kind: 'openai-compatible',
     baseUrl: 'http://127.0.0.1:8080/v1', port: 8080, popularity: 'high',
-    sharesPortWith: ['llama-server', 'llamafile', 'LocalAI'],
-    notes: 'Port 8080 is shared by several OpenAI-compatible servers — a probe lists models but can\'t say which one.',
+    sharesPortWith: ['llama-server', 'llamafile', 'LocalAI', 'MLX (mlx_lm.server)', 'Hugging Face TGI'],
+    notes: 'Port 8080 is shared by several OpenAI-compatible servers — a probe lists models but can\'t say which one answered.',
   },
   { id: 'vllm', name: 'vLLM', kind: 'openai-compatible', baseUrl: 'http://127.0.0.1:8000/v1', port: 8000, popularity: 'high' },
   { id: 'jan', name: 'Jan', kind: 'openai-compatible', baseUrl: 'http://127.0.0.1:1337/v1', port: 1337, popularity: 'high', notes: 'Jan\'s local API server is off until enabled in its settings.' },

@@ -528,9 +528,10 @@ Manager; this is the plumbing.)
 - **Local LLM stacks**: starter-first curated list with compact primary filters, an optional tag
   dropdown for advanced filters, **Scan running**, primary **Install** actions for command-backed
   start-here/easy/guided/advanced stacks, reviewed Run-in-Terminal/Uninstall actions, setup notes,
-  docs ↗, live/configured/shared-default port warnings with alternate-port hints, automatic backend
-  add for matching live backend presets after a scan, and row-level **Add backend** as a fallback
-  once a scanned local server is live.
+  docs ↗, live/configured/shared-default port warnings with alternate-port hints, local backend
+  presets for shared-port stacks such as LocalAI, MLX, and TGI, automatic backend add for matching
+  live backend presets after a scan, and row-level **Add backend** as a fallback once a scanned
+  local server is live.
 - **Inference backends**: provider table (★ default, enable, key badge, status, model list,
   **Connect & sync**, ✕), API/cloud-focused **Add a backend** catalog or custom API endpoint,
   provider-specific key requirements, NVIDIA API Catalog preset models, and cloud keys auto-detected

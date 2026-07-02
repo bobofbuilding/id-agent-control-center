@@ -2671,7 +2671,7 @@
         {
           "id": "local-stacks",
           "label": "Local LLM stacks",
-          "description": "Local inference stack catalog. It opens on a compact backend-presets filter, keeps common filters visible, moves advanced stack tags behind a tag dropdown, reviews install commands before visible Terminal runs, shows uninstall only after matching package/container install evidence, derives claimed ports from default/API/command host mappings, warns when a claimed port is running or configured, separates package install from backend add, auto-adds matching live backend presets after Scan running, and keeps row-level Add backend as a fresh-scan fallback.",
+          "description": "Local inference stack catalog. It opens on a compact backend-presets filter, keeps common filters visible, moves advanced stack tags behind a tag dropdown, reviews install commands before visible Terminal runs, shows uninstall only after matching package/container install evidence, derives claimed ports from default/API/command host mappings, warns when a claimed port is running or configured, separates package install from backend add, includes shared-port backend presets such as LocalAI, MLX, and TGI, auto-adds matching live backend presets after Scan running, and keeps row-level Add backend as a fresh-scan fallback.",
           "routesInto": [
             "app:runInTerminal",
             "providers:discover"
@@ -2820,7 +2820,7 @@
           "id": "discover-local",
           "label": "Scan running",
           "type": "button",
-          "description": "Scans local inference servers from Local LLM stacks and auto-adds matching live backend presets; installed-but-not-running stacks stay non-routable.",
+          "description": "Scans local inference servers from Local LLM stacks and auto-adds matching live backend presets; shared-port 8080 servers such as LocalAI, MLX, and TGI remain explicit choices, and installed-but-not-running stacks stay non-routable.",
           "routesInto": [
             "providers:discover"
           ]
@@ -4627,6 +4627,12 @@
         "The route requires admin authority, validates the target team already exists, blocks same-team moves, remote/public endpoints, and target agent-name collisions, and updates the durable team_id atomically at the row level.",
         "Running local agents are rebuilt under the target team; stopped agents remain stopped and return a warning instead of being silently started.",
         "Validation: npm run build and npx vitest run tests/integration/agent-team-move.test.ts passed in id-agents; the live 127.0.0.1:4100 manager was rebuilt/restarted and the route now returns JSON from the handler."
+      ],
+      "implementedTwoHundredSeventeenthPass": [
+        "Settings Local LLM stack shared-port warnings now map directly to visible local stack entries: LocalAI, MLX (mlx_lm.server), and Hugging Face TGI.",
+        "MLX and TGI are now local backend presets, so a live scan or row-level Add backend can configure them without sending the operator through the API/cloud picker.",
+        "TGI now displays and configures the host-facing http://127.0.0.1:8080/v1 endpoint while preserving the reviewed Docker -p 8080:80 command and alternate-port guidance.",
+        "Validation: npm run typecheck and npm run build passed after the local backend preset parity pass."
       ]
     },
     {
@@ -4690,5 +4696,5 @@
       "body": "# Wiki\n\nWiki is both the human documentation page and the editable schematic for the Control Center UI. Each article explains the operator purpose of a page; the structured sections below preserve tabs, tiles, fields, controls, displays, routes, and source files for implementation detail.\n\n## Use it for\n\n- Search pages, controls, routes, source files, and notes from inside the desktop app.\n- Confirm how a UI surface is intended to behave before editing code or filing follow-up work.\n- Keep app navigation metadata and human documentation in one reviewed JSON artifact.\n\n## Editing rule\n\nThe desktop app hot-reload polls CONTROL_CENTER_WIKI.json through the main-process wiki bridge. Sidebar labels, icons, order, and visibility still come from pages[].nav for implemented routes, so documentation edits must preserve that metadata and keep every page.body non-empty."
     }
   ],
-  "appVersion": "0.1.446"
+  "appVersion": "0.1.447"
 }

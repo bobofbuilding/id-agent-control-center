@@ -8,6 +8,9 @@ Every change pushed or merged to `main` carries its version number in the commit
 subject (`vX.Y.Z: …`), stamped automatically by the `commit-msg` hook — see
 [CONTRIBUTING.md](CONTRIBUTING.md).
 
+## [0.1.447] — 2026-07-02
+- Add MLX and TGI local backend presets
+
 ## [0.1.446] — 2026-07-02
 - Fix HR team rename source scoping and empty target creation
 

@@ -32,6 +32,8 @@ export const PROVIDER_CATALOG: ProviderCatalogEntry[] = [
   { id: 'vllm', name: 'vLLM (local)', kind: 'openai-compatible', baseUrl: 'http://127.0.0.1:8000/v1', needsKey: false, local: true, notes: 'Serves whatever --model it was launched with.' },
   { id: 'llamacpp', name: 'llama.cpp server (local)', kind: 'openai-compatible', baseUrl: 'http://127.0.0.1:8080/v1', needsKey: false, local: true },
   { id: 'localai', name: 'LocalAI (local)', kind: 'openai-compatible', baseUrl: 'http://127.0.0.1:8080/v1', needsKey: false, local: true },
+  { id: 'mlx-lm-server', name: 'MLX (local)', kind: 'openai-compatible', baseUrl: 'http://127.0.0.1:8080/v1', needsKey: false, local: true, notes: 'Apple Silicon mlx_lm.server; serves the --model it was launched with.' },
+  { id: 'tgi', name: 'Hugging Face TGI (local)', kind: 'openai-compatible', baseUrl: 'http://127.0.0.1:8080/v1', needsKey: false, local: true, notes: 'Docker TGI maps host 8080 to container 80 by default; serves the --model-id it was launched with.' },
   { id: 'jan', name: 'Jan (local)', kind: 'openai-compatible', baseUrl: 'http://127.0.0.1:1337/v1', needsKey: false, local: true },
 
   // ---- Cloud — first-party kinds ---------------------------------------
