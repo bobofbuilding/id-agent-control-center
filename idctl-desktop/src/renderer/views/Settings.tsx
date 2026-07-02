@@ -1243,12 +1243,20 @@ export function Settings({ store, navigate }: { store: FleetStore; navigate?: (v
   function stackCommand(command?: string): string {
     return (command ?? '').split('#')[0].trim();
   }
+  function browserStackPlatform(): LocalStackEntry['platforms'][number] | null {
+    const platform = (navigator.platform || '').toLowerCase();
+    const ua = (navigator.userAgent || '').toLowerCase();
+    if (platform.includes('mac') || ua.includes('mac os')) return 'macos';
+    if (platform.includes('win') || ua.includes('windows')) return 'windows';
+    if (platform.includes('linux') || ua.includes('linux')) return 'linux';
+    return null;
+  }
   function hostStackPlatform(): LocalStackEntry['platforms'][number] | null {
-    if (!hardware?.platform) return null;
+    if (!hardware?.platform) return browserStackPlatform();
     if (hardware.platform === 'darwin') return 'macos';
     if (hardware.platform === 'win32') return 'windows';
     if (hardware.platform === 'linux') return 'linux';
-    return null;
+    return browserStackPlatform();
   }
   function stackPlatformSupported(s: LocalStackEntry): boolean {
     const host = hostStackPlatform();
