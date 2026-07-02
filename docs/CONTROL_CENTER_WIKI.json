@@ -2965,6 +2965,12 @@
         "Settings now detects Jan, GPT4All, and MLX package install evidence and shows it separately from live-server routing authority.",
         "Install and Start actions schedule follow-up local scans that auto-add matching live stack backends, including detected alternate host ports from Docker containers.",
         "Local models & backends now exposes live local API chips, installed stack evidence, Ollama re-pull Update actions, and Gemma 4 MLX catalog entries."
+      ],
+      "implementedTwoHundredThirtySeventhPass": [
+        "Settings Local models & backends now checks local stack install evidence immediately on Settings open, so Jan, GPT4All, MLX, and Docker-backed installs can appear before a manual Scan running action.",
+        "The card header separates Ollama model count from local stack install count instead of implying the section is Ollama-only.",
+        "Installed local stacks now render as visible chips with installed, running, or backend state, while live local APIs remain a separate routing-authority row.",
+        "View stack setup now jumps to Local LLM stacks with the backend-presets filter selected."
       ]
     },
     {
@@ -4811,5 +4817,5 @@
       "body": "# Wiki\n\nWiki is both the human documentation page and the editable schematic for the Control Center UI. Each article explains the operator purpose of a page; the structured sections below preserve tabs, tiles, fields, controls, displays, routes, and source files for implementation detail.\n\n## Use it for\n\n- Search pages, controls, routes, source files, and notes from inside the desktop app.\n- Confirm how a UI surface is intended to behave before editing code or filing follow-up work.\n- Keep app navigation metadata and human documentation in one reviewed JSON artifact.\n\n## Editing rule\n\nThe desktop app hot-reload polls CONTROL_CENTER_WIKI.json through the main-process wiki bridge. Sidebar labels, icons, order, and visibility still come from pages[].nav for implemented routes, so documentation edits must preserve that metadata and keep every page.body non-empty."
     }
   ],
-  "appVersion": "0.1.468"
+  "appVersion": "0.1.469"
 }

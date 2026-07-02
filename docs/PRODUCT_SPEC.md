@@ -527,8 +527,9 @@ Manager; this is the plumbing.)
   under Inference backends instead. Antigravity CLI is managed from Settings as the consumer
   subscription successor, but is not offered as an agent harness until the manager exposes an
   Antigravity adapter.
-- **Local models & backends**: compact model/backend status, live local API chips, installed stack
-  evidence, one **Scan running** action, guarded next-step setup, local concurrency (1–16), Ollama
+- **Local models & backends**: compact model/backend status, live local API chips, visible installed
+  stack chips loaded on Settings open, one **Scan running** action, guarded next-step setup,
+  **View stack setup** handoff, local concurrency (1–16), Ollama
   installed chips with reviewed **Update** re-pull actions, **Download** by id (streamed progress),
   and a searchable **catalog** with capability filters, Gemma 4 MLX entries, and hardware
   fit-warnings.

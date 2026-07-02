@@ -1007,9 +1007,15 @@ export function Settings({ store, navigate }: { store: FleetStore; navigate?: (v
   const starterInstalled = modelInstalled(STARTER_LOCAL_MODEL_ID);
   const localBackendConfigured = localProviders.some((p) => p.enabled !== false);
   const localRouteReadyProviders = localProviders.filter(providerRouteReady);
-  const installedLocalStacks = TOP_LOCAL_STACKS
-    .filter((s) => stackInstallStatus[s.id]?.installed)
-    .map((s) => s.name);
+  const installedLocalStackRows = TOP_LOCAL_STACKS
+    .map((stack) => {
+      const status = stackInstallStatus[stack.id];
+      const running = stackClaimedPorts(stack).some((port) => runningPorts.has(port));
+      const configured = stackConfiguredProviders(stack).length > 0;
+      return { stack, status, running, configured };
+    })
+    .filter((row) => row.status?.installed);
+  const installedLocalStacks = installedLocalStackRows.map((row) => row.stack.name);
   const localBackendReady = localRouteReadyProviders.length > 0;
   const localSyncCandidate = localProviders.find((p) => p.enabled !== false && providerKeyReady(p) && !providerRouteReady(p));
   const localDrivingTone = localBackendReady ? 'ok' : localBackendConfigured || starterInstalled ? 'warn' : 'err';
@@ -1299,6 +1305,10 @@ export function Settings({ store, navigate }: { store: FleetStore; navigate?: (v
   }
   function stackFilterLabel(t: string): string {
     return t === STACK_BACKEND_PRESET_FILTER ? 'backend presets' : t;
+  }
+  function openStackSetup() {
+    setStackTag(STACK_BACKEND_PRESET_FILTER);
+    requestAnimationFrame(() => document.getElementById('local-llm-stacks')?.scrollIntoView({ behavior: 'smooth', block: 'start' }));
   }
   function stackPrimaryAction(s: LocalStackEntry): boolean {
     if (!stackInstallCmd(s)) return false;
@@ -1663,6 +1673,7 @@ export function Settings({ store, navigate }: { store: FleetStore; navigate?: (v
   }
   useEffect(() => {
     void loadOllama();
+    void checkStackInstalls();
     void loadConc();
     void loadImgServer();
     void call<HardwareInfo>('app:hardware').then(setHardware).catch(() => {});
@@ -1991,7 +2002,10 @@ export function Settings({ store, navigate }: { store: FleetStore; navigate?: (v
           <h3 style={{ margin: 0 }}>Local models & backends</h3>
           <span className="grow" />
           <span className={ollamaModels.length ? 'ok-text small' : 'warn-text small'}>
-            {ollamaModels.length ? `${ollamaModels.length} models` : 'no models'}
+            {ollamaModels.length ? `${ollamaModels.length} Ollama model${ollamaModels.length === 1 ? '' : 's'}` : 'no Ollama models'}
+          </span>
+          <span className={installedLocalStackRows.length ? 'ok-text small' : 'muted small'}>
+            {installedLocalStackRows.length ? `${installedLocalStackRows.length} stack install${installedLocalStackRows.length === 1 ? '' : 's'}` : 'no stack installs'}
           </span>
           <span className={localBackendReady ? 'ok-text small' : 'warn-text small'}>
             {localBackendReady ? 'backend ready' : localBackendConfigured ? 'sync needed' : 'backend not added'}
@@ -2000,7 +2014,7 @@ export function Settings({ store, navigate }: { store: FleetStore; navigate?: (v
             {discovering ? 'Scanning…' : 'Scan running'}
           </button>
         </div>
-        <div className="row-actions" style={{ flexWrap: 'wrap', gap: 6, marginBottom: 8 }}>
+        <div className="row-actions" style={{ flexWrap: 'wrap', gap: 6, marginBottom: 6 }}>
           <span className="muted small">local APIs:</span>
           {localRouteReadyProviders.length ? (
             <span className="chips grow">
@@ -2009,11 +2023,27 @@ export function Settings({ store, navigate }: { store: FleetStore; navigate?: (v
           ) : (
             <span className="muted small grow">none live yet</span>
           )}
-          {installedLocalStacks.length ? (
-            <span className="muted small" title={installedLocalStacks.join(', ')}>
-              installed stacks: {installedLocalStacks.slice(0, 3).join(', ')}{installedLocalStacks.length > 3 ? ` +${installedLocalStacks.length - 3}` : ''}
+        </div>
+        <div className="row-actions" style={{ flexWrap: 'wrap', gap: 6, marginBottom: 8 }}>
+          <span className="muted small">stack installs:</span>
+          {installedLocalStackRows.length ? (
+            <span className="chips grow">
+              {installedLocalStackRows.map(({ stack, status, running, configured }) => {
+                const state = configured ? 'backend' : running ? 'running' : 'installed';
+                const cls = configured || running ? 'chip tag' : 'chip';
+                return (
+                  <span className={cls} key={stack.id} title={status?.detail}>
+                    {stack.name} · {state}
+                  </span>
+                );
+              })}
             </span>
-          ) : null}
+          ) : (
+            <span className="muted small grow">none detected yet</span>
+          )}
+          <button className="btn small" type="button" onClick={openStackSetup}>
+            View stack setup
+          </button>
         </div>
         <div className={`local-driving-strip ${localDrivingTone}`}>
           <div className="grow">
@@ -2177,7 +2207,7 @@ export function Settings({ store, navigate }: { store: FleetStore; navigate?: (v
         </div>
       </section>
 
-      <section className="card">
+      <section className="card" id="local-llm-stacks">
         <h3>Local LLM stacks</h3>
         <p className="muted small" style={{ marginTop: -4 }}>
           Self-hostable inference servers you can run <b>next to Ollama</b>. <b>Install</b> only installs the app/server; <b>running</b> means a local API answered a scan; <b>backend added</b> means IDACC can route agents to it.
