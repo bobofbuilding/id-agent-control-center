@@ -506,11 +506,13 @@ Manager; this is the plumbing.)
   TUI/device-flow prompt. Sign out is shown only for installed/linked providers with a reviewed
   logout command. API-key and metered-provider accounts, including Perplexity, stay under
   **Inference backends** rather than the subscription sign-in card.
-  Agent Harness pickers only offer runtimes that Settings can currently prove through sign-in,
-  install, route-ready API backend, or synced local-backend evidence; existing assigned runtimes
-  remain visible as the current value for review. Synced API/cloud provider lanes such as
-  OpenRouter and NVIDIA are selectable in Health via the manager `provider-api` harness; unsynced
-  API lanes remain disabled until their model list is refreshed.
+  Agent Harness pickers only offer manager-executable runtimes that Settings can currently prove
+  through sign-in, route-ready API backend, or synced local-backend evidence; existing assigned
+  runtimes remain visible as the current value for review. Linked managed subscription CLIs without
+  a manager adapter, such as Grok Build, Antigravity, Copilot, Kiro, and legacy Q, show in Health as
+  adapter-needed read-only lanes instead of selectable harnesses. Synced API/cloud provider lanes
+  such as OpenRouter and NVIDIA are selectable in Health via the manager `provider-api` harness;
+  unsynced API lanes remain disabled until their model list is refreshed.
   Agent Model pickers are keyed to the currently
   staged harness model catalog, so switching to Kiro, Codex, Claude Code, or a local harness cannot
   carry a stale model from the previous harness forward as a valid choice. Gemini CLI
@@ -555,9 +557,10 @@ concurrency running/queued figures are a snapshot; clipboard fallbacks fail sile
 ## 14. Cross-cutting concepts
 
 - **Active-team scoping**: everything is scoped to `store.team`; switch via the status-bar selector.
-- **Runtimes**: `claude-*`, `codex`, `cursor-cli`, `grok`, `copilot`, `kiro-cli`, and
-  legacy `q` are managed CLI runtime lanes, with legacy `q` hidden from first-run Settings unless installed; Antigravity is a managed sign-in/install row until a
-  manager harness exists; `ollama` / local servers and metered API providers are
+- **Runtimes**: `claude-*`, `codex`, `cursor-cli`, and `ollama` are manager-executable harnesses today.
+  Grok, Antigravity, Copilot, Kiro, and legacy `q` are managed subscription CLI lanes that can be linked
+  in Settings and reviewed in Health, but they stay adapter-needed until the manager ships matching
+  harnesses. `ollama` / local servers and metered API providers are
   configured in Settings → Inference. MCP works where a runtime/tool harness supports it; skills and
   portable plugin packages are assigned as neutral metadata with Skill/MCP/native/direct-fallback
   adapters deciding execution.

@@ -50,7 +50,7 @@ import { ProviderClient } from '../../../idctl/src/settings/ProviderClient.ts';
 import { discoverLocalServers, mergeLocalDiscoveryCandidates, type DiscoveredServer } from '../../../idctl/src/settings/localDiscovery.ts';
 import { type HeadroomPilotSettings, type ProviderModelSelection, type ProviderProfile, type McpServerProfile, type ProjectEntry } from '../../../idctl/src/settings/schema.ts';
 import { providerNeedsKey } from '../../../idctl/src/settings/providerCatalog.ts';
-import { buildProviderModelLanes, buildRuntimeCatalog, RUNTIMES, providerKindToRuntimes, isLocalProvider, settingsAvailableRuntimeSet, type RuntimeModelLaneKind } from '../../../idctl/src/settings/runtimeCatalog.ts';
+import { buildProviderModelLanes, buildRuntimeCatalog, RUNTIMES, providerKindToRuntimes, isLocalProvider, settingsAvailableRuntimeSet, managedRuntimeHasEvidence, runtimeDisplayLabel, runtimeHasManagerHarness, type RuntimeModelLaneKind } from '../../../idctl/src/settings/runtimeCatalog.ts';
 import { subsStatus } from './subscriptions.ts';
 import { testMcpServer } from './mcpTest.ts';
 import { headroomBackendContractAudit, headroomCoreAudit, headroomStatus } from './headroom.ts';
@@ -420,6 +420,7 @@ async function runtimeFreshness(): Promise<RuntimeFreshness[]> {
   const cat = runtimeCatalogWithCodex();
   const managed = await subsStatus().then((rows) => Object.values(rows)).catch(() => []);
   const available = settingsAvailableRuntimeSet(enrichedProviders, managed);
+  const managedByRuntime = new Map(managed.filter(managedRuntimeHasEvidence).map((s) => [s.runtime, s]));
   // Newest enabled provider that has synced models AND backs this runtime.
   const providerFor = (rt: string): ProviderProfile | undefined =>
     providers
@@ -434,7 +435,12 @@ async function runtimeFreshness(): Promise<RuntimeFreshness[]> {
   const harnessRows = RUNTIMES.map((rt): RuntimeFreshness => {
     const models = cat[rt] ?? [];
     const selectable = available.has(rt);
-    const unavailableDetail = selectable ? undefined : 'Not currently available from Settings; install/sign in or sync a matching backend before assigning this harness.';
+    const linkedSubscription = managedByRuntime.has(rt) && !runtimeHasManagerHarness(rt);
+    const unavailableDetail = selectable
+      ? undefined
+      : linkedSubscription
+        ? `${runtimeDisplayLabel(rt)} is linked in Settings, but the current id-agents manager does not expose a runnable ${runtimeDisplayLabel(rt)} harness yet. Keep using a supported harness or synced API provider lane until an adapter is available.`
+        : 'Not currently available from Settings; install/sign in or sync a matching backend before assigning this harness.';
     if (rt === 'codex') {
       let mt: number | null = null;
       try { mt = statSync(join(homedir(), '.codex', 'models_cache.json')).mtimeMs; } catch { mt = null; }

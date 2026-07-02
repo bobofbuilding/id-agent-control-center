@@ -1476,7 +1476,7 @@
         {
           "id": "model-lanes",
           "label": "Model lanes",
-          "description": "Expanded Fleet panel showing Settings-available manager harnesses plus configured subscription, local, and API provider model lanes in aligned runtime/type/models/source/checked columns. Unavailable curated fallback harnesses are hidden unless already assigned, where they render as current-only; provider lanes are read-only catalog evidence until a manager provider-runtime adapter exists."
+          "description": "Expanded Fleet panel showing Settings-available manager harnesses plus linked managed subscriptions and configured subscription, local, and API provider model lanes in aligned runtime/type/models/source/checked columns. Linked subscription CLIs without a manager adapter render as adapter-needed, unavailable curated fallback harnesses are hidden unless already assigned, and provider lanes stay catalog evidence until a manager provider-runtime adapter exists."
         }
       ],
       "routing": {
@@ -4687,6 +4687,12 @@
         "Builder and Team maintenance inputs now canonicalize legacy starter aliases such as engineering, operations, onchain, and security before creating or renaming teams.",
         "Team maintenance no longer piles name-collision warnings onto a no-op same-source/same-target rename; it reports the no-change state cleanly.",
         "Validation: npm run typecheck in idctl-desktop and diff check passed before release validation."
+      ],
+      "implementedTwoHundredTwentySeventhPass": [
+        "Health runtime freshness now carries linked managed subscription evidence for Grok Build, Antigravity, Copilot, Kiro, and legacy Q without marking those rows assignable before the manager exposes matching harness adapters.",
+        "The Health Harness dropdown shows linked-but-unsupported subscriptions under a disabled adapter-needed group while keeping manager-executable harnesses and synced API provider lanes selectable.",
+        "The Fleet model-lanes panel labels linked unsupported subscriptions as adapter needed instead of current-only, so Settings account state is visible without letting it overwrite agent runtime status.",
+        "Validation: npm test in idctl, npm run typecheck in idctl-desktop, wiki drift, diff check, and npm run build passed before release validation."
       ]
     },
     {
@@ -4750,5 +4756,5 @@
       "body": "# Wiki\n\nWiki is both the human documentation page and the editable schematic for the Control Center UI. Each article explains the operator purpose of a page; the structured sections below preserve tabs, tiles, fields, controls, displays, routes, and source files for implementation detail.\n\n## Use it for\n\n- Search pages, controls, routes, source files, and notes from inside the desktop app.\n- Confirm how a UI surface is intended to behave before editing code or filing follow-up work.\n- Keep app navigation metadata and human documentation in one reviewed JSON artifact.\n\n## Editing rule\n\nThe desktop app hot-reload polls CONTROL_CENTER_WIKI.json through the main-process wiki bridge. Sidebar labels, icons, order, and visibility still come from pages[].nav for implemented routes, so documentation edits must preserve that metadata and keep every page.body non-empty."
     }
   ],
-  "appVersion": "0.1.458"
+  "appVersion": "0.1.459"
 }

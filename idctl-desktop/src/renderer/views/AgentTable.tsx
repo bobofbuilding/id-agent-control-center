@@ -3,7 +3,7 @@ import { call, agentsLeadFirst, type FleetStore, type TeamAgent } from '../store
 import { statusClass } from '../agentStatus.ts';
 import type { RuntimeCooldown } from '../../../../idctl/src/api/client.ts';
 import type { Agent } from '../../../../idctl/src/api/types.ts';
-import { RUNTIMES, offerableRuntimes, effortOptions, runtimeHasEffort, speedOptions, runtimeHasSpeed, runtimeDisplayLabel, type RuntimeModelLaneKind } from '../../../../idctl/src/settings/runtimeCatalog.ts';
+import { RUNTIMES, offerableRuntimes, effortOptions, runtimeHasEffort, speedOptions, runtimeHasSpeed, runtimeDisplayLabel, managedRuntimeHasEvidence, type RuntimeModelLaneKind } from '../../../../idctl/src/settings/runtimeCatalog.ts';
 
 /**
  * The fleet agent grid — per-agent runtime/model switching + lifecycle actions, with a
@@ -259,11 +259,17 @@ export function AgentTable({ store, onProbe, probeBusy, navigate }: { store: Fle
   const selectedRateLimit = sel ? runtimeRateLimitOf(sel) : null;
   const selectedFailover = sel ? runtimeFailoverOf(sel) : null;
   const currentRuntimeSet = new Set(shown.map((a) => runtimeOf(a)).filter(Boolean) as string[]);
+  const linkedManagedRuntimeSet = new Set(
+    Object.values(managedRuntimes)
+      .filter(managedRuntimeHasEvidence)
+      .map((s) => s.runtime)
+      .filter(Boolean) as string[],
+  );
   const visibleFreshness = freshness.filter((f) => {
     if (!f.count && f.source === 'none') return false;
     const kind = f.kind ?? 'harness';
     if (kind !== 'harness') return true;
-    return f.selectable !== false || currentRuntimeSet.has(f.runtime);
+    return f.selectable !== false || currentRuntimeSet.has(f.runtime) || linkedManagedRuntimeSet.has(f.runtime);
   });
   const apiModelLaneOpts = visibleFreshness
     .filter((f) => f.kind === 'api')
@@ -590,6 +596,9 @@ export function AgentTable({ store, onProbe, probeBusy, navigate }: { store: Fle
     const runtimeOpts = Array.from(new Set([currentHarness, ...offerableRuntimes(providers, currentHarness, Object.values(managedRuntimes))].filter(Boolean))) as string[];
     const providerLaneOpts = selectableApiLaneOpts.filter((f) => f.runtime !== currentProviderLane);
     const readonlyApiLaneOpts = apiModelLaneOpts.filter((f) => f.runtime !== currentProviderLane && f.selectable === false);
+    const linkedSubscriptionLaneOpts = visibleFreshness
+      .filter((f) => (f.kind ?? 'harness') === 'harness' && f.selectable === false && linkedManagedRuntimeSet.has(f.runtime) && f.runtime !== currentHarness && !runtimeOpts.includes(f.runtime))
+      .sort((a, b) => runtimeLabel(a.runtime).localeCompare(runtimeLabel(b.runtime)));
     const mismatch = modelDrift
       ? `${runtimeLabel(displayRuntime ?? '')} model list does not include "${displayModelRaw}". Choose one of this harness's current model options.`
       : runtimeModelMismatch(displayRuntime, displayModel);
@@ -607,11 +616,18 @@ export function AgentTable({ store, onProbe, probeBusy, navigate }: { store: Fle
         <td onClick={(e) => e.stopPropagation()}>
           {isLocal ? (
             <select className="cell-select" value={displayRuntime ?? ''} onChange={(e) => stageRuntime(a, e.target.value)}
-              title="Settings-available harnesses and synced API provider lanes are selectable. Unsynced API lanes stay read-only until Connect & sync succeeds.">
+              title="Settings-available manager harnesses and synced API provider lanes are selectable. Linked subscriptions without manager adapters stay read-only.">
               <optgroup label="Assignable harnesses">
                 {currentProviderLane ? <option value={currentProviderLane}>{runtimeLabel(currentProviderLane)} (current model lane)</option> : null}
                 {runtimeOpts.map((r) => <option key={r} value={r}>{runtimeLabel(r)}</option>)}
               </optgroup>
+              {linkedSubscriptionLaneOpts.length ? (
+                <optgroup label="Linked subscriptions (adapter needed)">
+                  {linkedSubscriptionLaneOpts.map((f) => (
+                    <option key={f.runtime} value={`readonly:${f.runtime}`} disabled>{runtimeLabel(f.runtime)}</option>
+                  ))}
+                </optgroup>
+              ) : null}
               {providerLaneOpts.length ? (
                 <optgroup label="API provider lanes">
                   {providerLaneOpts.map((f) => (
@@ -706,7 +722,7 @@ export function AgentTable({ store, onProbe, probeBusy, navigate }: { store: Fle
         {showModels ? (
           <div className="card model-lanes-panel">
             <div className="muted small" style={{ marginBottom: 4 }}>
-              Assignable harnesses &amp; provider model lanes — auto-refreshed on boot + every 6h, or hit <b>Probe runtimes</b> now.
+              Assignable harnesses, linked subscriptions, and provider model lanes — auto-refreshed on boot + every 6h, or hit <b>Probe runtimes</b> now.
             </div>
             {visibleFreshness.length ? (
               <div className="model-lanes-grid">
@@ -717,17 +733,20 @@ export function AgentTable({ store, onProbe, probeBusy, navigate }: { store: Fle
                 <div className="model-lanes-head">checked</div>
                 {visibleFreshness.map((f) => {
                   const kind = f.kind ?? 'harness';
-                  const currentOnly = kind === 'harness' && f.selectable === false;
+                  const unavailableHarness = kind === 'harness' && f.selectable === false;
+                  const linkedSubscription = unavailableHarness && linkedManagedRuntimeSet.has(f.runtime);
+                  const chipText = unavailableHarness ? (linkedSubscription ? 'adapter needed' : 'current only') : KIND_LABEL[kind];
+                  const sourceText = unavailableHarness ? (linkedSubscription ? 'linked subscription' : 'not available in Settings') : `${SOURCE_LABEL[f.source]}${f.provider ? ` · ${f.provider}` : ''}`;
                   return (
                     <div key={f.runtime} className="model-lanes-row">
                       <b className="model-lane-name" title={f.label ?? runtimeLabel(f.runtime)}>{f.label ?? runtimeLabel(f.runtime)}</b>
-                      <span className={`chip model-lane-kind${currentOnly ? ' brain-review' : ''}`} title={currentOnly ? (f.detail ?? 'Current assignment only; not available for new selection from Settings.') : kind === 'harness' ? 'Settings-available manager execution harness' : f.detail}>
-                        {currentOnly ? 'current only' : KIND_LABEL[kind]}
+                      <span className={`chip model-lane-kind${unavailableHarness ? ' brain-review' : ''}`} title={unavailableHarness ? (f.detail ?? 'Not available for new selection from Settings.') : kind === 'harness' ? 'Settings-available manager execution harness' : f.detail}>
+                        {chipText}
                       </span>
                       <span className="muted small model-lane-count">{f.count} model{f.count === 1 ? '' : 's'}</span>
-                      <span className={`small model-lane-source ${currentOnly || f.source === 'curated' || f.source === 'none' ? 'warn-text' : 'ok-text'}`}
+                      <span className={`small model-lane-source ${unavailableHarness || f.source === 'curated' || f.source === 'none' ? 'warn-text' : 'ok-text'}`}
                         title={f.detail ?? (f.source === 'curated' ? 'No live model API for this runtime — using a curated fallback list (subscription runtimes have no /models endpoint).' : SOURCE_LABEL[f.source])}>
-                        {currentOnly ? 'not available in Settings' : `${SOURCE_LABEL[f.source]}${f.provider ? ` · ${f.provider}` : ''}`}
+                        {sourceText}
                       </span>
                       <span className="muted small model-lane-checked">{f.lastCheckedMs ? `checked ${agoMs(f.lastCheckedMs)}` : '—'}</span>
                     </div>
