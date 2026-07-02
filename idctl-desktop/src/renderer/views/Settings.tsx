@@ -22,6 +22,8 @@ const API_FIRST_PROVIDER = PROVIDER_CATALOG.find((e) => !e.local) ?? findProvide
 const DISCOVERY_MAX_AGE_MS = 2 * 60 * 1000;
 const STACK_BACKEND_PRESET_FILTER = 'backend-presets';
 const STACK_PRIMARY_FILTERS = ['all', STACK_BACKEND_PRESET_FILTER, 'start-here', 'easy', 'guided', 'advanced'];
+const STACK_RUNNABLE_CMD_RE = /^(brew|python3?|pip3?|pipx|uv|cargo|curl|docker|conda|npm|npx)\b/;
+const STACK_PLACEHOLDER_CMD_RE = /<[^>\s][^>]*>/;
 const LOCAL_PROVIDER_STACK_IDS: Record<string, string> = {
   ollama: 'ollama',
   lmstudio: 'lm-studio',
@@ -751,7 +753,7 @@ export function Settings({ store, navigate }: { store: FleetStore; navigate?: (v
   async function autoAddInstalledStackBackendPlaceholders(status: Record<string, LocalStackInstallStatus>): Promise<Set<string>> {
     const installed = TOP_LOCAL_STACKS
       .filter((s) => s.id !== 'ollama' && status[s.id]?.installed && stackKind(s) && stackApiBaseForInstallStatus(s, status[s.id]))
-      .filter((s) => !PLACEHOLDER_CMD_RE.test(stackCommand(s.install)));
+      .filter((s) => !STACK_PLACEHOLDER_CMD_RE.test(stackCommand(s.install)));
     if (!installed.length) return new Set();
     const latest = await freshProviders();
     const taken = new Set(latest.map((p) => p.name));
@@ -1394,8 +1396,6 @@ export function Settings({ store, navigate }: { store: FleetStore; navigate?: (v
     } finally { setRemoving(null); setConfirmRemove(null); }
   }
   // Stack install/uninstall commands: runnable (open Terminal) vs app-download (link out).
-  const RUNNABLE_RE = /^(brew|python3?|pip3?|pipx|uv|cargo|curl|docker|conda|npm|npx)\b/;
-  const PLACEHOLDER_CMD_RE = /<[^>\s][^>]*>/;
   function stackCommand(command?: string): string {
     return (command ?? '').split('#')[0].trim();
   }
@@ -1430,16 +1430,16 @@ export function Settings({ store, navigate }: { store: FleetStore; navigate?: (v
       return `${s.name} is listed for ${s.platforms.map(platformLabel).join('/')} hosts; this machine is ${platformLabel(host)}. Open the docs or run it on a compatible host, then add its API backend here.`;
     }
     if (!command) return 'No safe one-click install command is registered; open the project docs.';
-    if (PLACEHOLDER_CMD_RE.test(command)) return 'This command is a template and needs values such as a model id before it can run safely; open the docs and add the running API as a backend afterward.';
-    if (!RUNNABLE_RE.test(command)) return 'No safe one-click install command is registered; open the project docs.';
+    if (STACK_PLACEHOLDER_CMD_RE.test(command)) return 'This command is a template and needs values such as a model id before it can run safely; open the docs and add the running API as a backend afterward.';
+    if (!STACK_RUNNABLE_CMD_RE.test(command)) return 'No safe one-click install command is registered; open the project docs.';
     return null;
   }
   function stackInstallUnavailableLabel(s: LocalStackEntry): string {
     const command = stackCommand(s.install);
     const host = hostStackPlatform();
     if (host && !s.platforms.includes(host)) return `${s.platforms.map(platformLabel).join('/')} host required`;
-    if (command && PLACEHOLDER_CMD_RE.test(command)) return 'choose model first';
-    if (!command || !RUNNABLE_RE.test(command)) return 'manual setup';
+    if (command && STACK_PLACEHOLDER_CMD_RE.test(command)) return 'choose model first';
+    if (!command || !STACK_RUNNABLE_CMD_RE.test(command)) return 'manual setup';
     return 'setup review required';
   }
   function stackEaseLabel(s: LocalStackEntry): string {
@@ -1468,15 +1468,15 @@ export function Settings({ store, navigate }: { store: FleetStore; navigate?: (v
   function stackInstallCmd(s: LocalStackEntry): string | null {
     const c = stackCommand(s.install);
     if (!c || stackInstallUnavailableReason(s)) return null;
-    return c && RUNNABLE_RE.test(c) ? c : null;
+    return c && STACK_RUNNABLE_CMD_RE.test(c) ? c : null;
   }
   function stackUninstallCmd(s: LocalStackEntry): string | null {
     const c = stackCommand(s.uninstall);
-    return c && RUNNABLE_RE.test(c) ? c : null;
+    return c && STACK_RUNNABLE_CMD_RE.test(c) ? c : null;
   }
   function stackStartCmd(s: LocalStackEntry): string | null {
     const c = stackCommand(s.start);
-    return c && RUNNABLE_RE.test(c) ? c : null;
+    return c && STACK_RUNNABLE_CMD_RE.test(c) ? c : null;
   }
   function stackUsesDockerCommand(command?: string | null): boolean {
     return /^docker\b/.test(command ?? '');
