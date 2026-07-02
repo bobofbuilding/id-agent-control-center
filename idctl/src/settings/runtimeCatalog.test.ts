@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { buildProviderModelLanes, buildRuntimeCatalog, offerableRuntimes } from './runtimeCatalog.ts';
+import { buildProviderModelLanes, buildRuntimeCatalog, managedRuntimeHasEvidence, offerableRuntimes } from './runtimeCatalog.ts';
 import type { ProviderProfile } from './schema.ts';
 
 const providers = [
@@ -136,6 +136,12 @@ assert.deepEqual(
   offerableRuntimes([], 'grok', [{ runtime: 'grok', installed: true, loggedIn: false, statusSupported: false }]),
   ['grok'],
   'current unsupported assignments should remain visible for review and migration',
+);
+
+assert.equal(
+  managedRuntimeHasEvidence({ runtime: 'q', installed: true, loggedIn: true, statusSupported: true }),
+  false,
+  'legacy q should stay out of linked runtime lanes even if installed',
 );
 
 console.log('[runtimeCatalog.test] OK');

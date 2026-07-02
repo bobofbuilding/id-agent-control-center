@@ -8,6 +8,9 @@ Every change pushed or merged to `main` carries its version number in the commit
 subject (`vX.Y.Z: …`), stamped automatically by the `commit-msg` hook — see
 [CONTRIBUTING.md](CONTRIBUTING.md).
 
+## [0.1.484] — 2026-07-02
+- Retire legacy q linked runtime lane
+
 ## [0.1.483] — 2026-07-02
 - Enable Antigravity runtime adapter gate
 

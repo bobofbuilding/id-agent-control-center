@@ -210,6 +210,10 @@ function addRuntime(out: string[], runtime?: string, options: { allowUnsupported
 
 export function managedRuntimeHasEvidence(s: ManagedRuntimeForOffer): boolean {
   if (!s.runtime || s.installed === false) return false;
+  // Legacy Amazon Q (`q`) is intentionally not promoted into Health/HR linked
+  // runtime lanes. Settings may still show it when installed, and existing q
+  // agent assignments remain visible through the current-runtime keep path.
+  if (s.runtime === 'q') return false;
   return s.installed === true || s.loggedIn === true;
 }
 

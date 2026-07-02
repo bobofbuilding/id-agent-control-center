@@ -3006,6 +3006,11 @@
         "Settings and Health now treat Google Antigravity as assignable only after the id-agents manager exposes the new antigravity harness adapter and Settings confirms live sign-in/model access through `agy models`.",
         "The Antigravity model catalog is populated from `agy models` when available, falling back to the current Gemini, Claude Thinking, and GPT-OSS model labels if the CLI cannot be read.",
         "Validation: npm test in idctl, npm run typecheck in idctl-desktop, wiki JSON parse, and npm run build passed before release validation."
+      ],
+      "implementedTwoHundredFortyThirdPass": [
+        "Legacy Amazon Q (`q`) is no longer promoted into Health/HR linked runtime lanes from installed/account evidence; Settings may still show the legacy row when installed, and existing q agent assignments remain visible through the current-runtime keep path.",
+        "This retires the last adapter-needed subscription lane from the default model picker without deleting compatibility for older q-assigned agents.",
+        "Validation: npm test in idctl, npm run typecheck in idctl-desktop, wiki JSON parse, and npm run build passed before release validation."
       ]
     },
     {
@@ -4866,6 +4871,12 @@
         "IDACC now offers Antigravity only when Settings confirms live model access, merges `agy models` into the Health/HR model catalog, and labels freshness as Antigravity CLI models instead of adapter-needed linked evidence.",
         "Legacy q remains adapter-needed linked subscription evidence until a manager harness is implemented or the row is retired.",
         "Validation: npm run build and npx vitest run tests/unit/runtime-registry.test.ts in id-agents; npm test in idctl; npm run typecheck, wiki JSON parse, and npm run build in idctl-desktop passed before release validation."
+      ],
+      "implementedTwoHundredFortyFourthPass": [
+        "Legacy Amazon Q (`q`) has been retired from linked runtime lane evidence: installed or logged-in q status no longer creates an adapter-needed Health/HR model lane.",
+        "Settings can still display the q row when the binary is installed, and existing q-assigned agents stay visible through the current-runtime keep path for review or migration.",
+        "The managed subscription adapter sweep now leaves Codex, Claude, Cursor, Copilot, Kiro, Grok, Antigravity, API provider lanes, and local lanes as the actionable picker set, with q treated as legacy compatibility only.",
+        "Validation: npm test in idctl; npm run typecheck, wiki JSON parse, and npm run build in idctl-desktop passed before release validation."
       ]
     },
     {
@@ -4929,5 +4940,5 @@
       "body": "# Wiki\n\nWiki is both the human documentation page and the editable schematic for the Control Center UI. Each article explains the operator purpose of a page; the structured sections below preserve tabs, tiles, fields, controls, displays, routes, and source files for implementation detail.\n\n## Use it for\n\n- Search pages, controls, routes, source files, and notes from inside the desktop app.\n- Confirm how a UI surface is intended to behave before editing code or filing follow-up work.\n- Keep app navigation metadata and human documentation in one reviewed JSON artifact.\n\n## Editing rule\n\nThe desktop app hot-reload polls CONTROL_CENTER_WIKI.json through the main-process wiki bridge. Sidebar labels, icons, order, and visibility still come from pages[].nav for implemented routes, so documentation edits must preserve that metadata and keep every page.body non-empty."
     }
   ],
-  "appVersion": "0.1.483"
+  "appVersion": "0.1.484"
 }
