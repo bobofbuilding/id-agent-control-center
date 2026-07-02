@@ -63,6 +63,7 @@ import { buildOrgHierarchy, previewOrgSync, syncOrg, startOrgSyncLoop } from './
 import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { homedir } from 'node:os';
+import { execFileSync } from 'node:child_process';
 import { secp256k1 } from '@noble/curves/secp256k1.js';
 import { keccak_256 } from '@noble/hashes/sha3.js';
 
@@ -386,11 +387,30 @@ function codexModelsFromCache(): string[] {
   }
 }
 
-/** Catalog with the codex runtime's models merged from the live codex cache. */
-function runtimeCatalogWithCodex(): Record<string, string[]> {
+function grokModelsFromCli(): string[] {
+  try {
+    const stdout = execFileSync('grok', ['models'], {
+      encoding: 'utf8',
+      stdio: ['pipe', 'pipe', 'pipe'],
+      timeout: 15000,
+    });
+    if (!/available models/i.test(stdout) || /not authenticated|not logged in|signed out|login required/i.test(stdout)) return [];
+    return stdout
+      .split(/\r?\n/)
+      .map((line) => line.trim().replace(/^[*-]\s*/, '').replace(/\s+\(default\)$/i, '').trim())
+      .filter((line) => /^[a-z0-9][a-z0-9._:-]*$/i.test(line));
+  } catch {
+    return [];
+  }
+}
+
+/** Catalog with subscription CLI live model lists merged into curated/runtime providers. */
+function runtimeCatalogWithLiveCliModels(): Record<string, string[]> {
   const cat = buildRuntimeCatalog(loadSettings().providers);
   const codex = codexModelsFromCache();
   if (codex.length) cat.codex = Array.from(new Set([...codex, ...(cat.codex ?? [])]));
+  const grok = grokModelsFromCli();
+  if (grok.length) cat.grok = Array.from(new Set([...grok, ...(cat.grok ?? [])]));
   return cat;
 }
 
@@ -407,7 +427,7 @@ type RuntimeFreshness = {
   kind?: 'harness' | RuntimeModelLaneKind;
   models: string[];
   count: number;
-  source: 'codex-cache' | 'provider' | 'curated' | 'none';
+  source: 'codex-cache' | 'grok-cli' | 'provider' | 'curated' | 'none';
   provider?: string;
   lastCheckedMs: number | null;
   selectable?: boolean;
@@ -416,7 +436,7 @@ type RuntimeFreshness = {
 async function runtimeFreshness(): Promise<RuntimeFreshness[]> {
   const providers = loadSettings().providers;
   const enrichedProviders = listProvidersEnriched();
-  const cat = runtimeCatalogWithCodex();
+  const cat = runtimeCatalogWithLiveCliModels();
   const managed = await subsStatus().then((rows) => Object.values(rows)).catch(() => []);
   const available = settingsAvailableRuntimeSet(enrichedProviders, managed);
   const managedByRuntime = new Map(managed.filter(managedRuntimeHasEvidence).map((s) => [s.runtime, s]));
@@ -445,6 +465,10 @@ async function runtimeFreshness(): Promise<RuntimeFreshness[]> {
       try { mt = statSync(join(homedir(), '.codex', 'models_cache.json')).mtimeMs; } catch { mt = null; }
       const live = codexModelsFromCache().length > 0;
       return { runtime: rt, kind: 'harness', models, count: models.length, source: live ? 'codex-cache' : 'curated', lastCheckedMs: live ? mt : null, selectable, detail: unavailableDetail };
+    }
+    if (rt === 'grok') {
+      const live = grokModelsFromCli().length > 0;
+      return { runtime: rt, kind: 'harness', models, count: models.length, source: live ? 'grok-cli' : 'curated', lastCheckedMs: live ? Date.now() : null, selectable, detail: unavailableDetail };
     }
     const p = providerFor(rt);
     if (p) return { runtime: rt, kind: 'harness', models, count: models.length, source: 'provider', provider: p.name, lastCheckedMs: p.lastSync?.at ?? null, selectable, detail: unavailableDetail };
@@ -488,7 +512,7 @@ async function probeAllRuntimes(): Promise<Record<string, string[]>> {
         }
       }),
   );
-  return runtimeCatalogWithCodex();
+  return runtimeCatalogWithLiveCliModels();
 }
 
 type RuntimeAssignment = { name?: string; runtime?: string; model?: string };
@@ -547,7 +571,7 @@ async function verifyRuntimeAssignments(assignments: RuntimeAssignment[]): Promi
   const managed = await subsStatus().then((rows) => Object.values(rows)).catch(() => []);
   const availableHarnesses = settingsAvailableRuntimeSet(providers, managed);
   const providerLanes = new Map(buildProviderModelLanes(providers).map((lane) => [lane.id, lane]));
-  const refreshedCatalog = runtimeCatalogWithCodex();
+  const refreshedCatalog = runtimeCatalogWithLiveCliModels();
   const rows = rowsIn.map((row): RuntimeAssignmentCheck => {
     if (!row.runtime) {
       return { name: row.name, runtime: '', label: 'None', model: row.model || undefined, ok: false, detail: 'No runtime selected.', source: 'harness', modelCount: 0 };
@@ -1244,7 +1268,7 @@ const METHODS: Record<string, (...a: any[]) => Promise<unknown>> = {
   'onboard:run': (plan: OnboardPlan) => runOnboarding(client, plan, { prepareRuntime: prepareOnboardRuntime }),
 
   // dashboard: per-runtime model catalog (synced providers + codex cache + curated)
-  'runtime:models': async () => runtimeCatalogWithCodex(),
+  'runtime:models': async () => runtimeCatalogWithLiveCliModels(),
   // Probe every enabled provider that backs a runtime, refresh its model list,
   // then return the rebuilt per-runtime catalog. This is "probe each runtime".
   'runtime:probe': async () => probeAllRuntimes(),

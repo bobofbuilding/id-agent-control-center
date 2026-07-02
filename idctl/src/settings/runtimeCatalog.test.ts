@@ -12,7 +12,7 @@ const providers = [
 const managed = [
   { runtime: 'codex', installed: true, loggedIn: true, statusSupported: true },
   { runtime: 'cursor-cli', installed: true, loggedIn: false, statusSupported: true },
-  { runtime: 'grok', installed: true, loggedIn: false, statusSupported: false },
+  { runtime: 'grok', installed: true, loggedIn: true, statusSupported: true },
   { runtime: 'antigravity', installed: true, loggedIn: false, statusSupported: false },
   { runtime: 'copilot', installed: true, loggedIn: false, statusSupported: false },
   { runtime: 'kiro-cli', installed: true, loggedIn: true, statusSupported: true },
@@ -22,7 +22,7 @@ const managed = [
 
 assert.deepEqual(
   offerableRuntimes(providers, undefined, managed),
-  ['codex', 'copilot', 'kiro-cli', 'claude-code-cli', 'claude-code-local', 'claude-agent-sdk', 'ollama'],
+  ['codex', 'grok', 'copilot', 'kiro-cli', 'claude-code-cli', 'claude-code-local', 'claude-agent-sdk', 'ollama'],
   'runtime pickers should list Settings-proven manager harnesses, with linked subscription CLIs only after adapters ship',
 );
 
@@ -105,7 +105,13 @@ assert.deepEqual(
 assert.deepEqual(
   offerableRuntimes([], undefined, [{ runtime: 'grok', installed: true, loggedIn: false, statusSupported: false }]),
   [],
-  'Grok CLI should stay linked-only until the manager exposes a Grok harness',
+  'Grok CLI should require signed-in status evidence before assignment',
+);
+
+assert.deepEqual(
+  offerableRuntimes([], undefined, [{ runtime: 'grok', installed: true, loggedIn: true, statusSupported: true }]),
+  ['grok'],
+  'Grok CLI should become assignable once the manager exposes the Grok harness and Settings confirms sign-in',
 );
 
 assert.deepEqual(

@@ -107,7 +107,7 @@ const SUB_META: Record<SubProvider, SubProviderMeta> = {
     install: 'curl -fsSL https://x.ai/cli/install.sh | bash',
     installHint: 'grok CLI not installed',
     postInstall: 'After install, IDACC will detect the grok binary. Use Manage account in IDACC to launch Grok OAuth.',
-    statusNote: 'Installed. IDACC can launch Grok login/logout, but Grok does not expose a safe non-interactive account-status command.',
+    statusNote: 'Installed. IDACC checks Grok sign-in and model availability with `grok models`.',
   },
   antigravity: {
     provider: 'antigravity',
@@ -373,6 +373,33 @@ function grokAccount(): Pick<SubStatus, 'account' | 'accountSource' | 'email' | 
   };
 }
 
+async function grokStatus(): Promise<SubStatus> {
+  if (!cliPath(SUB_META.grok.bin)) return notInstalled('grok');
+  const account = grokAccount();
+  try {
+    const { stdout, stderr } = await execFileP('grok', ['models'], { env: cliEnv(), timeout: 15000 });
+    const out = `${stdout}${stderr}`.trim();
+    const loggedIn = /available models/i.test(out) && !/not authenticated|not logged in|signed out|login required/i.test(out);
+    return baseStatus('grok', {
+      loggedIn,
+      installed: true,
+      statusSupported: true,
+      ...account,
+      linked: account.linked && !loggedIn ? true : undefined,
+      detail: truncateDetail(out),
+    });
+  } catch (e: unknown) {
+    const err = e as { stdout?: string; stderr?: string; message?: string };
+    return baseStatus('grok', {
+      installed: true,
+      statusSupported: true,
+      ...account,
+      loggedIn: false,
+      detail: truncateDetail(err.stdout || err.stderr || err.message || SUB_META.grok.statusNote || ''),
+    });
+  }
+}
+
 function copilotAccount(): Pick<SubStatus, 'account' | 'accountSource' | 'linked' | 'detail'> {
   const home = process.env.COPILOT_HOME || join(homedir(), '.copilot');
   const cfg = readJsonWithLineComments(join(home, 'config.json'));
@@ -428,12 +455,11 @@ async function whoamiStatus(provider: 'kiro-cli' | 'q', command: CommandSpec): P
   }
 }
 
-async function cliPresenceStatus(provider: 'grok' | 'antigravity' | 'copilot'): Promise<SubStatus> {
+async function cliPresenceStatus(provider: 'antigravity' | 'copilot'): Promise<SubStatus> {
   const meta = SUB_META[provider];
   if (!cliPath(meta.bin)) return notInstalled(provider);
   const account =
-    provider === 'grok' ? grokAccount()
-    : provider === 'copilot' ? copilotAccount()
+    provider === 'copilot' ? copilotAccount()
     : googleAccountHint();
   return baseStatus(provider, {
     installed: true,
@@ -449,9 +475,9 @@ async function providerStatus(provider: SubProvider): Promise<SubStatus> {
     case 'claude': return claudeStatus();
     case 'chatgpt': return codexStatus();
     case 'cursor': return cursorStatus();
+    case 'grok': return grokStatus();
     case 'kiro-cli': return whoamiStatus('kiro-cli', ['kiro-cli', ['whoami']]);
     case 'q': return whoamiStatus('q', ['q', ['whoami']]);
-    case 'grok':
     case 'antigravity':
     case 'copilot':
       return cliPresenceStatus(provider);

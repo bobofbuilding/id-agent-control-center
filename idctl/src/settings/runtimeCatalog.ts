@@ -5,9 +5,9 @@
  *   claude-* runtimes         ← anthropic provider (GET /v1/models with a key)
  *   codex runtime             ← openai provider
  *   cursor-cli runtime        ← (no public model API) curated only
- *   grok/antigravity/q
- *                              ← managed subscription CLIs; linked in Settings,
+ *   antigravity/q              ← managed subscription CLIs; linked in Settings,
  *                                 assignable only after id-agents exposes a harness
+ *   grok                       ← managed Grok Build CLI harness
  *   copilot                    ← managed GitHub Copilot CLI harness
  *   kiro-cli                   ← managed Kiro CLI harness
  *   gemini                     ← legacy/current-only CLI id; API setup lives in providers
@@ -47,6 +47,7 @@ export const MANAGER_EXECUTION_RUNTIMES = [
   'claude-code-local',
   'codex',
   'cursor-cli',
+  'grok',
   'copilot',
   'kiro-cli',
   'ollama',
@@ -245,10 +246,12 @@ function managedRuntimeReady(s: ManagedRuntimeForOffer): boolean {
   // These CLIs do not expose a safe non-interactive account status in Settings;
   // binary presence is the strongest read-only availability signal we have.
   // The manager-harness gate is applied separately before a runtime is offered
-  // for assignment. Gemini CLI is excluded from managed sign-ins; use Google
-  // Gemini API under Inference backends. Existing gemini assignments remain
+  // for assignment. Grok exposes `grok models`, so it should arrive here with
+  // statusSupported=true and loggedIn=true rather than using installed-only
+  // evidence. Gemini CLI is excluded from managed sign-ins; use Google Gemini
+  // API under Inference backends. Existing gemini assignments remain
   // current-only via keep.
-  return s.installed === true && ['grok', 'antigravity', 'copilot'].includes(s.runtime);
+  return s.installed === true && ['antigravity', 'copilot'].includes(s.runtime);
 }
 
 /**
@@ -308,6 +311,7 @@ export const RUNTIME_EFFORTS: Record<string, string[]> = {
   codex: ['minimal', 'low', 'medium', 'high'],
   'claude-code-cli': ['low', 'medium', 'high', 'xhigh'],
   'claude-code-local': ['low', 'medium', 'high', 'xhigh'],
+  grok: ['low', 'medium', 'high', 'xhigh', 'max'],
   copilot: ['none', 'low', 'medium', 'high', 'xhigh', 'max'],
   'kiro-cli': ['low', 'medium', 'high', 'xhigh', 'max'],
 };
@@ -350,8 +354,8 @@ export const RUNTIME_CURATED: Record<string, string[]> = {
   // Fallback only — the bridge merges the live list from ~/.codex/models_cache.json.
   codex: ['gpt-5.5', 'gpt-5.4', 'gpt-5.4-mini', 'gpt-5.3-codex-spark', 'gpt-5.3-codex'],
   'cursor-cli': ['sonnet-4', 'composer-2'],
+  grok: ['grok-composer-2.5-fast', 'grok-build'],
   // These managed CLIs own model/account selection; keep fallback catalogs minimal.
-  grok: ['default'],
   antigravity: ['default'],
   gemini: ['default'],
   copilot: ['default'],

@@ -19,7 +19,7 @@ type RuntimeFreshness = {
   label?: string;
   kind?: 'harness' | RuntimeModelLaneKind;
   count: number;
-  source: 'codex-cache' | 'provider' | 'curated' | 'none';
+  source: 'codex-cache' | 'grok-cli' | 'provider' | 'curated' | 'none';
   provider?: string;
   lastCheckedMs: number | null;
   selectable?: boolean;
@@ -39,7 +39,7 @@ interface AgentConfigDraft {
 }
 const DEFAULT_BACKBONE_AGENTS = new Set(['lead', 'coder', 'researcher']);
 const SOURCE_LABEL: Record<RuntimeFreshness['source'], string> = {
-  'codex-cache': 'codex CLI cache', provider: 'live provider sync', curated: 'curated fallback', none: 'no models',
+  'codex-cache': 'codex CLI cache', 'grok-cli': 'grok CLI models', provider: 'live provider sync', curated: 'curated fallback', none: 'no models',
 };
 const KIND_LABEL: Record<RuntimeModelLaneKind | 'harness', string> = {
   harness: 'harness',
