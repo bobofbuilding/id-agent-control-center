@@ -60,6 +60,7 @@ import { replayContextBudgetFromChatHistory, type ContextBudgetHistoryReplayOpti
 import { decomposeWork, createAndDispatchPlan, fanOutObjective, teamLeads, triageUnassigned, type SubTask } from './work.ts';
 import { normalizeGoalDriverConfig, runGoalDriverOnce, startGoalDriverLoop, syncActiveWorkGoalInstructions, type GoalDriverConfig } from './goaldriver.ts';
 import { buildOrgHierarchy, previewOrgSync, syncOrg, startOrgSyncLoop } from './orgSync.ts';
+import { syncDomainsForMethod } from '../shared/syncDomains.ts';
 import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { homedir } from 'node:os';
@@ -904,10 +905,29 @@ const COALESCED_READ_METHODS = new Set([
   'runtime:models',
   'runtime:freshness',
   'runtime:cooldowns',
+  'work:teamLeads',
   'libraryPluginInspections',
   'query:poll',
 ]);
 const inFlightReadCalls = new Map<string, Promise<unknown>>();
+const readResultCache = new Map<string, { at: number; result: unknown }>();
+const READ_CACHE_TTL_MS = new Map<string, number>([
+  ['agents', 1500],
+  ['teams', 1500],
+  ['agents:allTeams', 4000],
+  ['events:multi', 4000],
+  ['news:allTeams', 4000],
+  ['inboxPending', 2000],
+  ['tasks:allTeams', 4000],
+  ['work:teamLeads', 5000],
+]);
+const READ_ONLY_SYNC_METHODS = new Set([
+  'providers:list',
+  'providers:probe',
+  'providers:discover',
+  'runtime:probe',
+  'runtime:verifyAssignments',
+]);
 
 function coalescedCallKey(method: string, args: unknown[]): string {
   try {
@@ -919,9 +939,19 @@ function coalescedCallKey(method: string, args: unknown[]): string {
 
 async function coalesceReadCall(method: string, args: unknown[], run: () => Promise<unknown>): Promise<unknown> {
   const key = coalescedCallKey(method, args);
+  const ttl = READ_CACHE_TTL_MS.get(method) ?? 0;
+  if (ttl > 0) {
+    const cached = readResultCache.get(key);
+    if (cached && Date.now() - cached.at < ttl) return cached.result;
+  }
   const current = inFlightReadCalls.get(key);
   if (current) return current;
-  const next = run().finally(() => { inFlightReadCalls.delete(key); });
+  const next = run()
+    .then((result) => {
+      if (ttl > 0) readResultCache.set(key, { at: Date.now(), result });
+      return result;
+    })
+    .finally(() => { inFlightReadCalls.delete(key); });
   inFlightReadCalls.set(key, next);
   return next;
 }
@@ -1601,11 +1631,13 @@ function normUrl(u: string): string {
 async function callRaw(method: string, args: unknown[] = []): Promise<unknown> {
   if (method === 'setTeam') {
     inFlightReadCalls.clear();
+    readResultCache.clear();
     client = client.withTeam(String(args[0]) || undefined);
     return info();
   }
   if (method === 'setManager') {
     inFlightReadCalls.clear();
+    readResultCache.clear();
     cfg = { ...cfg, managerUrl: String(args[0]) };
     client = new ManagerClient(cfg);
     return info();
@@ -1658,7 +1690,11 @@ export async function call(method: string, args: unknown[] = []): Promise<unknow
   if (COALESCED_READ_METHODS.has(method)) {
     return coalesceReadCall(method, args, () => callRaw(method, args));
   }
-  return callRaw(method, args);
+  const result = await callRaw(method, args);
+  if (!READ_ONLY_SYNC_METHODS.has(method) && syncDomainsForMethod(method).length > 0) {
+    readResultCache.clear();
+  }
+  return result;
 }
 
 export function info() {

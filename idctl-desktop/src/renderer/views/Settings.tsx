@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useState } from 'react';
+import { Fragment, useEffect, useRef, useState } from 'react';
 import { call, type FleetStore } from '../store.ts';
 import { defaultBaseUrl, type EvmRpcKeySource, type EvmRpcProfile, type EvmRpcRequest, type ProviderKind, type ProviderModelSelection, type ProviderProfile } from '../../../../idctl/src/settings/schema.ts';
 import type { ProbeOutcome } from '../../../../idctl/src/settings/ProviderClient.ts';
@@ -18,6 +18,7 @@ const STARTER_LOCAL_MODEL_ID = 'qwen3:1.7b';
 const SUB_NOTICE_TTL_MS = 18_000;
 const SUB_AUTO_REFRESH_MS = 5 * 60 * 1000;
 const OLLAMA_CATALOG_REFRESH_MS = 6 * 60 * 60 * 1000;
+const SETTINGS_FOCUS_REFRESH_MIN_MS = 60 * 1000;
 const API_FIRST_PROVIDER = PROVIDER_CATALOG.find((e) => !e.local) ?? findProvider('openai');
 const DISCOVERY_MAX_AGE_MS = 2 * 60 * 1000;
 const STACK_BACKEND_PRESET_FILTER = 'backend-presets';
@@ -169,6 +170,11 @@ export function Settings({ store, navigate }: { store: FleetStore; navigate?: (v
   const [discovering, setDiscovering] = useState(false);
   const [discovered, setDiscovered] = useState<Discovered[] | null>(null);
   const [discoveredAt, setDiscoveredAt] = useState<number | null>(null);
+  const discoverPromiseRef = useRef<Promise<Discovered[]> | null>(null);
+  const localRefreshRunningRef = useRef(false);
+  const localRefreshLastAtRef = useRef(0);
+  const subRefreshRunningRef = useRef(false);
+  const subRefreshLastAtRef = useRef(0);
   const [stackInstallStatus, setStackInstallStatus] = useState<Record<string, LocalStackInstallStatus>>({});
   const [stackInstallChecking, setStackInstallChecking] = useState(false);
   const [showStackMoreFilters, setShowStackMoreFilters] = useState(false);
@@ -364,18 +370,27 @@ export function Settings({ store, navigate }: { store: FleetStore; navigate?: (v
 
   useEffect(() => {
     let cancelled = false;
-    const tick = async () => {
-      const next = await call<Record<SubKey, Sub>>('subs:status').catch(() => null);
-      if (!cancelled && next) {
-        setSubs(next);
-        setSubsCheckedAt(Date.now());
+    const tick = async (reason: 'timer' | 'focus' | 'visibility' = 'timer') => {
+      const now = Date.now();
+      if (subRefreshRunningRef.current) return;
+      if (reason !== 'timer' && now - subRefreshLastAtRef.current < SETTINGS_FOCUS_REFRESH_MIN_MS) return;
+      subRefreshRunningRef.current = true;
+      subRefreshLastAtRef.current = now;
+      try {
+        const next = await call<Record<SubKey, Sub>>('subs:status').catch(() => null);
+        if (!cancelled && next) {
+          setSubs(next);
+          setSubsCheckedAt(Date.now());
+        }
+        void call<Record<string, string[]>>('runtime:models').catch(() => null);
+        void call('runtime:freshness').catch(() => null);
+      } finally {
+        subRefreshRunningRef.current = false;
       }
-      void call<Record<string, string[]>>('runtime:models').catch(() => null);
-      void call('runtime:freshness').catch(() => null);
     };
-    const onVisibility = () => { if (!document.hidden) void tick(); };
-    const onFocus = () => { void tick(); };
-    const interval = window.setInterval(() => void tick(), SUB_AUTO_REFRESH_MS);
+    const onVisibility = () => { if (!document.hidden) void tick('visibility'); };
+    const onFocus = () => { void tick('focus'); };
+    const interval = window.setInterval(() => void tick('timer'), SUB_AUTO_REFRESH_MS);
     document.addEventListener('visibilitychange', onVisibility);
     window.addEventListener('focus', onFocus);
     return () => {
@@ -692,8 +707,10 @@ export function Settings({ store, navigate }: { store: FleetStore; navigate?: (v
     }
   }
   async function runDiscover(opts: { autoAddKnownStacks?: boolean } = {}): Promise<Discovered[]> {
-    setDiscovering(true);
-    try {
+    if (discoverPromiseRef.current) return discoverPromiseRef.current;
+    let task: Promise<Discovered[]>;
+    task = (async () => {
+      setDiscovering(true);
       const [found] = await Promise.all([
         call<Discovered[]>('providers:discover', stackExtraDiscoveryCandidates()).catch(() => []),
         checkStackInstalls(),
@@ -705,9 +722,14 @@ export function Settings({ store, navigate }: { store: FleetStore; navigate?: (v
       setDiscovered(displayed);
       setDiscoveredAt(Date.now());
       return displayed;
-    } finally {
-      setDiscovering(false);
-    }
+    })().finally(() => {
+      if (discoverPromiseRef.current === task) {
+        discoverPromiseRef.current = null;
+        setDiscovering(false);
+      }
+    });
+    discoverPromiseRef.current = task;
+    return task;
   }
   /** Normalize a baseUrl for matching a discovered server against existing providers. */
   function normUrl(u: string): string {
@@ -1971,11 +1993,27 @@ export function Settings({ store, navigate }: { store: FleetStore; navigate?: (v
   }, []);
 
   useEffect(() => {
-    const refreshLocal = () => { void loadLocalModelCatalog(); void loadOllama(); void runDiscover({ autoAddKnownStacks: true }); };
-    window.addEventListener('focus', refreshLocal);
-    const timer = window.setInterval(refreshLocal, 5 * 60 * 1000);
+    const refreshLocal = (reason: 'timer' | 'focus' = 'timer') => {
+      const now = Date.now();
+      if (localRefreshRunningRef.current) return;
+      if (reason === 'focus' && now - localRefreshLastAtRef.current < SETTINGS_FOCUS_REFRESH_MIN_MS) return;
+      localRefreshRunningRef.current = true;
+      localRefreshLastAtRef.current = now;
+      void Promise.allSettled([
+        loadLocalModelCatalog(),
+        loadOllama(),
+        runDiscover(),
+      ]).finally(() => {
+        localRefreshRunningRef.current = false;
+      });
+    };
+    const onFocus = () => refreshLocal('focus');
+    window.addEventListener('focus', onFocus);
+    const timer = window.setInterval(() => {
+      if (!document.hidden) refreshLocal('timer');
+    }, 5 * 60 * 1000);
     return () => {
-      window.removeEventListener('focus', refreshLocal);
+      window.removeEventListener('focus', onFocus);
       window.clearInterval(timer);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps

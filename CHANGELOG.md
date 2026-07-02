@@ -8,6 +8,9 @@ Every change pushed or merged to `main` carries its version number in the commit
 subject (`vX.Y.Z: …`), stamped automatically by the `commit-msg` hook — see
 [CONTRIBUTING.md](CONTRIBUTING.md).
 
+## [0.1.487] — 2026-07-02
+- Throttle dashboard and Settings sync loops to reduce manager load and app lag
+
 ## [0.1.486] — 2026-07-02
 - Remove Settings first-run readiness tile
 

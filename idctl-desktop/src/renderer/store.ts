@@ -108,6 +108,13 @@ export interface FleetStore {
 }
 
 const EVENT_BUFFER = 1000;
+const SNAPSHOT_POLL_MS = 5000;
+const ALL_TEAMS_POLL_MS = 10000;
+const HIDDEN_POLL_MS = 30000;
+
+function fleetPollDelay(baseMs: number): number {
+  return typeof document !== 'undefined' && document.hidden ? Math.max(baseMs, HIDDEN_POLL_MS) : baseMs;
+}
 
 export function useFleet(): FleetStore {
   const [connection, setConnection] = useState<Connection>('connecting');
@@ -129,12 +136,22 @@ export function useFleet(): FleetStore {
   const viewAll = true;
   const [allAgents, setAllAgents] = useState<TeamAgent[]>([]);
   const [tick, setTick] = useState(0);
+  const refreshTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [streamEpoch, setStreamEpoch] = useState(0); // bumped ONLY on team change → never resets the event cursor on a plain refresh
   const epoch = useRef(0); // bump on team change to reset the event cursor loop
   const teamRef = useRef<string | undefined>(undefined);
   useEffect(() => { teamRef.current = team; }, [team]);
 
-  const refresh = useCallback(() => setTick((t) => t + 1), []);
+  const refresh = useCallback(() => {
+    if (refreshTimer.current) return;
+    refreshTimer.current = setTimeout(() => {
+      refreshTimer.current = null;
+      setTick((t) => t + 1);
+    }, 100);
+  }, []);
+  useEffect(() => () => {
+    if (refreshTimer.current) clearTimeout(refreshTimer.current);
+  }, []);
   // Cheap, targeted badge refresh — re-reads ONLY the unread count, without
   // restarting the snapshot/event-stream poll loops (a plain refresh() would).
   const refreshChatUnread = useCallback(async () => {
@@ -190,7 +207,7 @@ export function useFleet(): FleetStore {
         wasOnlineRef.current = false; // re-arm so the next reconnect re-applies settings
         setLastError(err instanceof Error ? err.message : String(err));
       } finally {
-        if (alive) timer = setTimeout(poll, 3000);
+        if (alive) timer = setTimeout(poll, fleetPollDelay(SNAPSHOT_POLL_MS));
       }
     };
     poll();
@@ -244,7 +261,7 @@ export function useFleet(): FleetStore {
         if (!alive) return;
         setAllAgents(groups.flatMap((g) => g.agents.map((a) => ({ ...a, team: g.team }))));
       } catch { /* keep last */ }
-      finally { if (alive) timer = setTimeout(load, 3000); }
+      finally { if (alive) timer = setTimeout(load, fleetPollDelay(ALL_TEAMS_POLL_MS)); }
     };
     void load();
     return () => { alive = false; clearTimeout(timer); };
