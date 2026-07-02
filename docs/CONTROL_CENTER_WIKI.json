@@ -2986,6 +2986,11 @@
         "Settings LM Studio setup now separates successful Homebrew app install from local server readiness: the stack row opens LM Studio and tells the operator to load or download a model, start the Local Server on port 1234, then Scan running.",
         "Curated local stack commands allow macOS open handoffs for GUI-first stacks without treating an installed app as a routable backend until a model-listing API answers.",
         "Validation: npm run typecheck in idctl-desktop, wiki JSON parse, and npm run build passed before release validation."
+      ],
+      "implementedTwoHundredThirtyNinthPass": [
+        "Settings and Health now treat GitHub Copilot as assignable only after the id-agents manager exposes the new copilot harness adapter.",
+        "The runtime picker still leaves Grok Build, Google Antigravity, Kiro, and legacy q under linked subscription adapter-needed state until their manager adapters ship.",
+        "Validation: npm test in idctl, npm run typecheck in idctl-desktop, wiki JSON parse, and npm run build passed before release validation."
       ]
     },
     {
@@ -4819,6 +4824,12 @@
         "Settings LM Studio setup now treats brew install --cask lm-studio as app install only, then exposes a Start/Open handoff that launches LM Studio and instructs the operator to load a model and start the Local Server on port 1234 before scanning.",
         "The local stack safe-command allowlist now permits reviewed macOS open commands, so GUI-first stacks can be launched from IDACC without collapsing install success into backend readiness.",
         "Validation: npm run typecheck in idctl-desktop, wiki JSON parse, and npm run build passed before release validation."
+      ],
+      "implementedTwoHundredFortiethPass": [
+        "GitHub Copilot is the first linked-subscription adapter pass: the id-agents manager now has a copilot runtime profile and Copilot CLI harness path, while IDACC's runtime catalog offers Copilot only when Settings has local CLI/account evidence.",
+        "The Copilot harness uses a private prompt-file handoff instead of placing the full agent task on the process command line, checks the copilot binary at manager preflight, and keeps model strings provider-owned.",
+        "Grok Build, Google Antigravity, Kiro, and legacy q remain adapter-needed/read-only linked subscription evidence until their manager harnesses are implemented.",
+        "Validation: npm run build:core and npx vitest run tests/unit/runtime-registry.test.ts in id-agents; npm test in idctl; npm run typecheck, wiki JSON parse, and npm run build in idctl-desktop passed before release validation."
       ]
     },
     {
@@ -4882,5 +4893,5 @@
       "body": "# Wiki\n\nWiki is both the human documentation page and the editable schematic for the Control Center UI. Each article explains the operator purpose of a page; the structured sections below preserve tabs, tiles, fields, controls, displays, routes, and source files for implementation detail.\n\n## Use it for\n\n- Search pages, controls, routes, source files, and notes from inside the desktop app.\n- Confirm how a UI surface is intended to behave before editing code or filing follow-up work.\n- Keep app navigation metadata and human documentation in one reviewed JSON artifact.\n\n## Editing rule\n\nThe desktop app hot-reload polls CONTROL_CENTER_WIKI.json through the main-process wiki bridge. Sidebar labels, icons, order, and visibility still come from pages[].nav for implemented routes, so documentation edits must preserve that metadata and keep every page.body non-empty."
     }
   ],
-  "appVersion": "0.1.479"
+  "appVersion": "0.1.480"
 }

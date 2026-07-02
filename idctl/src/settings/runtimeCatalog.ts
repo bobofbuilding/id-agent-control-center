@@ -5,9 +5,10 @@
  *   claude-* runtimes         ← anthropic provider (GET /v1/models with a key)
  *   codex runtime             ← openai provider
  *   cursor-cli runtime        ← (no public model API) curated only
- *   grok/antigravity/copilot/kiro/q
+ *   grok/antigravity/kiro/q
  *                              ← managed subscription CLIs; linked in Settings,
  *                                 assignable only after id-agents exposes a harness
+ *   copilot                    ← managed GitHub Copilot CLI harness
  *   gemini                     ← legacy/current-only CLI id; API setup lives in providers
  *
  * When a backing provider is configured and has a synced model list, we use it
@@ -45,6 +46,7 @@ export const MANAGER_EXECUTION_RUNTIMES = [
   'claude-code-local',
   'codex',
   'cursor-cli',
+  'copilot',
   'ollama',
 ];
 
@@ -304,6 +306,7 @@ export const RUNTIME_EFFORTS: Record<string, string[]> = {
   codex: ['minimal', 'low', 'medium', 'high'],
   'claude-code-cli': ['low', 'medium', 'high', 'xhigh'],
   'claude-code-local': ['low', 'medium', 'high', 'xhigh'],
+  copilot: ['none', 'low', 'medium', 'high', 'xhigh', 'max'],
 };
 
 /** The effort scale this runtime honors (empty if it has no reasoning-effort knob). */

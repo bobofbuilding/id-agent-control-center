@@ -22,8 +22,8 @@ const managed = [
 
 assert.deepEqual(
   offerableRuntimes(providers, undefined, managed),
-  ['codex', 'claude-code-cli', 'claude-code-local', 'claude-agent-sdk', 'ollama'],
-  'runtime pickers should list only Settings-proven manager harnesses, not linked subscription CLIs without adapters',
+  ['codex', 'copilot', 'claude-code-cli', 'claude-code-local', 'claude-agent-sdk', 'ollama'],
+  'runtime pickers should list Settings-proven manager harnesses, with linked subscription CLIs only after adapters ship',
 );
 
 const providerLanes = buildProviderModelLanes([
@@ -112,6 +112,12 @@ assert.deepEqual(
   offerableRuntimes([], undefined, [{ runtime: 'kiro-cli', installed: true, loggedIn: true, statusSupported: true }]),
   [],
   'Kiro CLI should stay linked-only until the manager exposes a Kiro harness',
+);
+
+assert.deepEqual(
+  offerableRuntimes([], undefined, [{ runtime: 'copilot', installed: true, loggedIn: false, statusSupported: false }]),
+  ['copilot'],
+  'Copilot CLI should become assignable once the manager exposes the Copilot harness',
 );
 
 assert.deepEqual(
