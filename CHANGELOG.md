@@ -8,6 +8,9 @@ Every change pushed or merged to `main` carries its version number in the commit
 subject (`vX.Y.Z: …`), stamped automatically by the `commit-msg` hook — see
 [CONTRIBUTING.md](CONTRIBUTING.md).
 
+## [0.1.457] — 2026-07-02
+- Fix HR preloaded team canonical names
+
 ## [0.1.456] — 2026-07-02
 - Merge HR relay into hierarchy
 

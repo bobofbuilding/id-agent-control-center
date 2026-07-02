@@ -80,6 +80,12 @@ function isDefaultBackboneAgent(team: string, agent: string): boolean {
 function isDefaultLead(team: string, agent: string): boolean {
   return team === PRIMARY_TEAM && slugName(agent) === DEFAULT_LEAD;
 }
+const STANDARD_TEAM_ALIASES: Record<string, string> = {
+  operations: 'ops-team',
+  engineering: 'engineering-team',
+  onchain: 'onchain-execution',
+  security: 'technology-security',
+};
 const RECOMMENDED_TEAM_BLUEPRINTS: TeamBlueprint[] = [
   {
     id: 'default-leadership',
@@ -94,10 +100,10 @@ const RECOMMENDED_TEAM_BLUEPRINTS: TeamBlueprint[] = [
   },
   {
     id: 'operations-team',
-    team: 'operations',
+    team: 'ops-team',
     label: 'Operations team',
     description: 'git, release, monitoring, maintenance, wiki/content ops',
-    spec: `team: operations
+    spec: `team: ops-team
 
 - **ops-lead** - Coordinator for operational work. Breaks requests into specialist tasks, delegates in parallel, reports one concise status, and escalates production deploys, deletes, mainnet, or release ambiguity.
 - **git-manager** - Owns non-destructive git hygiene for project repositories: status, intentional staging, commits, branch sync, conflict surfacing, and push coordination.
@@ -109,10 +115,10 @@ const RECOMMENDED_TEAM_BLUEPRINTS: TeamBlueprint[] = [
   },
   {
     id: 'engineering-team',
-    team: 'engineering',
+    team: 'engineering-team',
     label: 'Engineering team',
     description: 'product engineering, testing, architecture, delivery',
-    spec: `team: engineering
+    spec: `team: engineering-team
 
 - **engineering-lead** - Coordinator for implementation objectives. Distills product or platform goals into independent work packets, delegates to engineers, collects summaries, and returns accomplishments for default-team validation.
 - **frontend-engineer** - Builds and verifies polished UI, stateful controls, accessibility, responsive layout, and browser behavior.
@@ -135,10 +141,10 @@ const RECOMMENDED_TEAM_BLUEPRINTS: TeamBlueprint[] = [
   },
   {
     id: 'onchain-team',
-    team: 'onchain',
+    team: 'onchain-execution',
     label: 'Onchain team',
     description: 'wallets, contracts, protocol research, transaction safety',
-    spec: `team: onchain
+    spec: `team: onchain-execution
 
 - **onchain-lead** - Coordinator for wallet, contract, protocol, and transaction-safety objectives. Delegates specialist work and escalates irreversible or value-moving actions.
 - **wallet-engineer** - Reviews wallet flows, account abstraction, session keys, signing boundaries, and transaction simulation requirements.
@@ -374,8 +380,8 @@ const VALIDATION_RETURN_PATH = `RETURN PATH — substantial completed work shoul
 - Validators judge the accomplishments against the active primary goal first, then secondary goals, then the original objective.
 - If either validator bounces the work back, refine with the responsible teammate or team lead and repeat the validation pass. Do not dump unvalidated raw work straight to **default/lead** unless the operator explicitly asks for an unvalidated fast path.`;
 
-const FIRST_RUN_LEAD_TARGETS = ['engineering/engineering-lead', 'operations/ops-lead', 'research/research-lead', 'onchain/onchain-lead'];
-const OPTIONAL_LEAD_TARGETS = ['legal/general-counsel', 'security/security-router'];
+const FIRST_RUN_LEAD_TARGETS = ['engineering-team/engineering-lead', 'ops-team/ops-lead', 'research/research-lead', 'onchain-execution/onchain-lead'];
+const OPTIONAL_LEAD_TARGETS = ['legal/general-counsel', 'technology-security/security-router'];
 
 /** Ready-made "act as the team coordinator" directive with generic coder/researcher
  *  teammates — used as the Team Builder fallback when no explicit teammates exist. */
@@ -1520,10 +1526,12 @@ export function Teams({ store, focus, onFocusHandled }: { store: FleetStore; foc
   const [maintDeleteSource, setMaintDeleteSource] = useState(true);
   const [maintBusy, setMaintBusy] = useState(false);
   const [maintMsg, setMaintMsg] = useState('');
-  const maintTarget = cleanTeamName(maintTo);
+  const maintTarget = canonicalTeamName(maintTo);
   const maintSourceAgents = maintFrom ? (visibleGraphGroups.find((g) => g.team === maintFrom)?.agents ?? []) : [];
   const maintTargetAgents = maintTarget ? (visibleGraphGroups.find((g) => g.team === maintTarget)?.agents ?? []) : [];
-  const maintCollisions = maintSourceAgents.filter((a) => maintTargetAgents.some((b) => slugName(b.name) === slugName(a.name))).map((a) => a.name);
+  const maintCollisions = maintFrom && maintTarget && maintFrom !== maintTarget
+    ? maintSourceAgents.filter((a) => maintTargetAgents.some((b) => slugName(b.name) === slugName(a.name))).map((a) => a.name)
+    : [];
   const maintCanRun = Boolean(maintFrom && maintTarget && maintFrom !== maintTarget)
     && !isReservedName(maintTarget)
     && maintFrom !== PRIMARY_TEAM
@@ -1535,10 +1543,12 @@ export function Teams({ store, focus, onFocusHandled }: { store: FleetStore; foc
     maintTarget && isReservedName(maintTarget) ? `"${maintTarget}" is reserved` : '',
     maintFrom && maintTarget && maintFrom === maintTarget ? 'source and target are the same' : '',
     maintCollisions.length ? `name collision: ${maintCollisions.join(', ')}` : '',
-    maintTarget && maintMode === 'rename' && allKnownTeamNames.includes(maintTarget) && maintTargetAgents.length ? 'target has agents; use Merge' : '',
+    maintFrom !== maintTarget && maintTarget && maintMode === 'rename' && allKnownTeamNames.includes(maintTarget) && maintTargetAgents.length ? 'target has agents; use Merge' : '',
   ].filter(Boolean);
   const maintSummary = maintFrom
-    ? `${maintSourceAgents.length} agent${maintSourceAgents.length === 1 ? '' : 's'} will move; routing and instructions sync after review.`
+    ? maintFrom === maintTarget
+      ? 'No change: choose a different target team.'
+      : `${maintSourceAgents.length} agent${maintSourceAgents.length === 1 ? '' : 's'} will move; routing and instructions sync after review.`
     : 'Choose a source team to rename or merge.';
   async function runTeamMaintenance() {
     const source = maintFrom;
@@ -1977,13 +1987,17 @@ export function Teams({ store, focus, onFocusHandled }: { store: FleetStore; foc
                 <option value="rename">Rename team</option>
                 <option value="merge">Merge into team</option>
               </select>
-              <select className="cell-select" disabled={maintBusy} value={maintFrom} onChange={(e) => setMaintFrom(e.target.value)}>
+              <select className="cell-select" disabled={maintBusy} value={maintFrom} onChange={(e) => {
+                const next = e.target.value;
+                setMaintFrom(next);
+                if (next && canonicalTeamName(maintTo) === next) setMaintTo('');
+              }}>
                 <option value="">source team…</option>
                 {allKnownTeamNames.filter((t) => t !== PRIMARY_TEAM).map((t) => <option key={t} value={t}>{t}</option>)}
               </select>
               <span className="muted small">→</span>
               {maintMode === 'rename' ? (
-                <input value={maintTo} disabled={maintBusy} placeholder="new-team-name" onChange={(e) => setMaintTo(e.target.value)} onBlur={() => setMaintTo(cleanTeamName(maintTo))} />
+                <input value={maintTo} disabled={maintBusy} placeholder="new-team-name" onChange={(e) => setMaintTo(e.target.value)} onBlur={() => setMaintTo(canonicalTeamName(maintTo))} />
               ) : (
                 <select className="cell-select" disabled={maintBusy} value={maintTo} onChange={(e) => setMaintTo(e.target.value)}>
                   <option value="">target team…</option>
@@ -2245,10 +2259,10 @@ function TeamBuilder({
       .sort((a, b) => Number(active.has(b)) - Number(active.has(a)) || a.localeCompare(b));
   }, [activeTeams, existingTeams]);
   const [teamSel, setTeamSel] = useState<string>(team && existingTeams.includes(team) ? team : '__new__');
-  const [newTeam, setNewTeam] = useState(team && !existingTeams.includes(team) ? cleanTeamName(team) : '');
+  const [newTeam, setNewTeam] = useState(team && !existingTeams.includes(team) ? canonicalTeamName(team) : '');
   const [teamTouched, setTeamTouched] = useState(false);
   const usingNewTeam = teamSel === '__new__';
-  const targetTeam = usingNewTeam ? cleanTeamName(newTeam) : teamSel;
+  const targetTeam = usingNewTeam ? canonicalTeamName(newTeam) : teamSel;
   const teamExists = existingTeams.includes(targetTeam);
 
   // ---- spec / AI design ----
@@ -2343,7 +2357,10 @@ function TeamBuilder({
     setRows(parsed.agents.length ? parsed.agents.map(toRow) : [blankRow()]);
     // Only adopt the spec's team name when we're building a NEW team — never
     // hijack an "add agents to <existing team>" session.
-    if (parsed.team && !teamTouched && teamSel === '__new__') setNewTeam((p) => p || parsed.team || '');
+    if (parsed.team && !teamTouched && teamSel === '__new__') {
+      const parsedTeam = canonicalTeamName(parsed.team);
+      setNewTeam((p) => p || parsedTeam || '');
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [spec]);
 
@@ -2369,7 +2386,10 @@ function TeamBuilder({
         if (!mapped.some((m) => m.lead)) mapped[0].lead = true;
         setRows(mapped); setRowsDirty(true);
       }
-      if (r?.team && !teamTouched && teamSel === '__new__') setNewTeam((p) => p || r.team || '');
+      if (r?.team && !teamTouched && teamSel === '__new__') {
+        const designedTeam = canonicalTeamName(r.team);
+        setNewTeam((p) => p || designedTeam || '');
+      }
       setAiSuggestions(r?.suggestions);
       const suggestionCount = (r?.suggestions?.agents?.length ?? 0) + (r?.suggestions?.skills?.length ?? 0);
       onMessage(`AI designed ${r?.agents?.length ?? 0} agent(s)${suggestionCount ? ` and suggested ${suggestionCount} fleet improvement(s)` : ''}`);
@@ -2427,7 +2447,7 @@ function TeamBuilder({
       const src = kind === 'tpl' ? templates.find((x) => x.name === name) : configs.find((x) => x.name === name);
       const desc = src && typeof (src as { description?: unknown }).description === 'string' ? (src as { description?: string }).description : '';
       nextSpec = `Base this team on the "${name}" ${kind === 'tpl' ? 'library template' : 'saved config'}${desc ? ` (${desc})` : ''}: recreate its roster — a lead coordinator plus workers — and adjust as needed.`;
-      targetHint = cleanTeamName(name);
+      targetHint = canonicalTeamName(name);
     }
     setRowsDirty(false);
     setAiSuggestions(undefined);
@@ -2822,7 +2842,7 @@ function TeamBuilder({
                     value={newTeam}
                     disabled={locked}
                     onChange={(e) => { setTeamTouched(true); setNewTeam(e.target.value); }}
-                    onBlur={() => setNewTeam(cleanTeamName(newTeam))}
+                    onBlur={() => setNewTeam(canonicalTeamName(newTeam))}
                   />
                 ) : null}
               </span>
@@ -2993,6 +3013,11 @@ function TeamBuilder({
 
 function cleanTeamName(name: string): string {
   return name.trim().toLowerCase().replace(/\s+/g, '-');
+}
+
+function canonicalTeamName(name: string): string {
+  const cleaned = cleanTeamName(name);
+  return STANDARD_TEAM_ALIASES[cleaned] ?? cleaned;
 }
 
 function countAgents(agents?: number | unknown[]): number | undefined {
