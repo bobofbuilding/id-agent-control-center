@@ -22,7 +22,7 @@ const API_FIRST_PROVIDER = PROVIDER_CATALOG.find((e) => !e.local) ?? findProvide
 const DISCOVERY_MAX_AGE_MS = 2 * 60 * 1000;
 const STACK_BACKEND_PRESET_FILTER = 'backend-presets';
 const STACK_PRIMARY_FILTERS = ['all', STACK_BACKEND_PRESET_FILTER, 'start-here', 'easy', 'guided', 'advanced'];
-const STACK_RUNNABLE_CMD_RE = /^(brew|python3?|pip3?|pipx|uv|cargo|curl|docker|conda|npm|npx)\b/;
+const STACK_RUNNABLE_CMD_RE = /^(brew|python3?|pip3?|pipx|uv|cargo|curl|docker|conda|npm|npx|open)\b/;
 const STACK_PLACEHOLDER_CMD_RE = /<[^>\s][^>]*>/;
 const LOCAL_PROVIDER_STACK_IDS: Record<string, string> = {
   ollama: 'ollama',
