@@ -490,7 +490,7 @@ Manager; this is the plumbing.)
   handoff for hierarchy/routing changes.
 - **Self-update**: version, status, **auto-upgrade** toggle, **Check now**. Background checks
   stage newer builds, auto-upgrade applies a previously staged build on the next app launch, and
-  stale/consumed staged zips are pruned from app storage.
+  stale/consumed staged zips are gated during status, check, staging, and apply.
 - **Managed subscription sign-ins**: CLI OAuth/device/browser flows (no API key) for `claude-*`,
   `codex`, `cursor-cli`, `grok`, Antigravity `agy`, `copilot`, `kiro-cli`, and legacy `q` only when installed. Rows distinguish
   status-inspectable CLIs from TUI-owned account state, auto-detect installed binaries after a

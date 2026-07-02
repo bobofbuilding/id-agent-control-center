@@ -42,6 +42,7 @@ export interface UpdateStatus {
 let status: UpdateStatus = { current: app.getVersion(), available: false, staged: false, checking: false };
 let timer: ReturnType<typeof setInterval> | null = null;
 let mainWindow: BrowserWindow | null = null;
+type PruneReport = { removed: number; errors: string[] };
 
 function stagedDir(): string {
   return join(app.getPath('userData'), 'staged-update');
@@ -165,23 +166,50 @@ async function stage(manifest: UpdateManifest): Promise<string> {
     writeFileSync(dest, buf);
   }
   writeFileSync(stagedMetaPath(), JSON.stringify({ version: manifest.version, zip: dest, notes: manifest.notes ?? '' }));
-  pruneStaged(dest);
+  requirePruned(pruneStaged(dest));
   return dest;
 }
 
 /** Remove spent download zips from the staging dir, keeping only `keep` when a
  *  pending staged update still exists. Without this, every staged version's
  *  ~100MB zip can pile up forever. */
-function pruneStaged(keep?: string): void {
+function pruneStaged(keep?: string): PruneReport {
+  const report: PruneReport = { removed: 0, errors: [] };
+  const dir = stagedDir();
+  if (!existsSync(dir)) return report;
+  const keepPath = keep ? resolve(keep) : '';
   try {
-    const dir = stagedDir();
     for (const f of readdirSync(dir)) {
-      if (!/^update-.*\.zip$/.test(f)) continue;
+      if (!/\.zip$/i.test(f)) continue;
       const full = join(dir, f);
-      if (keep && full === keep) continue;
-      rmSync(full, { force: true });
+      if (keepPath && resolve(full) === keepPath) continue;
+      try {
+        rmSync(full, { force: true });
+        if (existsSync(full)) report.errors.push(`${f}: still exists after remove`);
+        else report.removed += 1;
+      } catch (err) {
+        report.errors.push(`${f}: ${err instanceof Error ? err.message : String(err)}`);
+      }
     }
-  } catch { /* best-effort */ }
+  } catch (err) {
+    report.errors.push(err instanceof Error ? err.message : String(err));
+  }
+  return report;
+}
+
+function pruneError(report: PruneReport): string | undefined {
+  if (!report.errors.length) return undefined;
+  return `staged zip prune failed: ${report.errors.slice(0, 3).join('; ')}`;
+}
+
+function markPruneError(report: PruneReport): void {
+  const error = pruneError(report);
+  if (error) status = { ...status, error };
+}
+
+function requirePruned(report: PruneReport): void {
+  const error = pruneError(report);
+  if (error) throw new Error(error);
 }
 
 function readStaged(): { version: string; zip: string; notes: string } | null {
@@ -200,15 +228,24 @@ function readStaged(): { version: string; zip: string; notes: string } | null {
 function cleanupStagedState(): { version: string; zip: string; notes: string } | null {
   const staged = readStaged();
   if (staged) {
-    pruneStaged(staged.zip);
+    markPruneError(pruneStaged(staged.zip));
     return staged;
   }
   try { rmSync(stagedMetaPath(), { force: true }); } catch { /* ignore */ }
-  pruneStaged();
+  markPruneError(pruneStaged());
   return null;
 }
 
 export function getStatus(): UpdateStatus {
+  const staged = cleanupStagedState();
+  status = {
+    ...status,
+    current: app.getVersion(),
+    staged: !!staged,
+    available: status.available || !!staged,
+    latest: staged?.version ?? status.latest,
+    notes: staged?.notes ?? status.notes,
+  };
   return status;
 }
 
@@ -218,8 +255,9 @@ export async function checkForUpdate(): Promise<UpdateStatus> {
   status = { ...status, checking: true, error: undefined };
   emit();
   try {
+    const stagedBeforeCheck = cleanupStagedState();
     if (!s || (!s.updateManifestUrl && !s.updateRepo)) {
-      status = { ...status, checking: false, available: false, lastChecked: Date.now() };
+      status = { ...status, checking: false, available: !!stagedBeforeCheck, staged: !!stagedBeforeCheck, latest: stagedBeforeCheck?.version ?? status.latest, notes: stagedBeforeCheck?.notes ?? status.notes, lastChecked: Date.now() };
       return status;
     }
     const latest = await fetchLatest(s);
@@ -281,12 +319,24 @@ else
   echo "[apply] ERROR: failed to extract $ZIP"
 fi
 /bin/rm -rf "$TMP"
+STAGED_DIR="$(dirname "$0")"
+ZIP_PRUNE_STATUS=0
 # A freshly-downloaded, unsigned .app carries com.apple.quarantine, which makes
 # 'open' silently refuse to relaunch it — strip it before reopening.
 /usr/bin/xattr -dr com.apple.quarantine "$BUNDLE" 2>/dev/null || true
 if [ "$APPLIED" = "1" ]; then
-  /bin/rm -f "$ZIP"
-  echo "[apply] consumed zip removed"
+  echo "[apply] bundle applied; pruning staged zips"
+else
+  echo "[apply] bundle was not applied; pruning staged zips because staged metadata was cleared"
+fi
+for OLDZIP in "$STAGED_DIR"/*.zip; do
+  [ -e "$OLDZIP" ] || continue
+  /bin/rm -f "$OLDZIP" || ZIP_PRUNE_STATUS=1
+done
+if [ "$ZIP_PRUNE_STATUS" = "0" ]; then
+  echo "[apply] staged zip prune complete"
+else
+  echo "[apply] ERROR: one or more staged zips could not be pruned"
 fi
 ${reopen}
 echo "[apply] relaunch issued"

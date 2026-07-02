@@ -2635,7 +2635,7 @@
         {
           "id": "self-update",
           "label": "Self-update",
-          "description": "Version, staged/latest status, auto-upgrade toggle, check now, main-process-owned background checks, launch-time staged-update auto-apply, and stale/consumed staged zip pruning.",
+          "description": "Version, staged/latest status, auto-upgrade toggle, check now, main-process-owned background checks, launch-time staged-update auto-apply, and gated stale/consumed staged zip pruning.",
           "routesInto": [
             "update:*"
           ]
@@ -2779,7 +2779,7 @@
           "id": "update-check",
           "label": "Check now",
           "type": "button",
-          "description": "Checks release manifest for updates, stages newer builds, and prunes stale staged downloads when no valid pending update remains.",
+          "description": "Checks release manifest for updates, stages newer builds, and gates stale staged download pruning before reporting update status.",
           "routesInto": [
             "update:check"
           ]
@@ -4639,6 +4639,12 @@
         "The fixed command is shown inline before Terminal runs, the chosen alternate port is remembered by the stack row, and Add backend follows the adjusted base URL after the server starts.",
         "providers:discover now accepts guarded loopback-only extra candidates so IDACC can probe reviewed alternate ports such as 8081 without opening arbitrary network discovery.",
         "Validation: npm run typecheck, node --test providerCatalog/localDiscovery tests, wiki drift, diff check, and npm run build passed after the local stack auto-port pass."
+      ],
+      "implementedTwoHundredNineteenthPass": [
+        "Self-update staged zip cleanup now runs as a guarded invariant during status reads, update checks, staging, and apply-helper cleanup.",
+        "Staging a new update fails visibly if old staged zips cannot be removed, instead of silently allowing app-storage zip buildup.",
+        "The detached apply helper now sweeps every zip in the staged-update directory after the bundle swap attempt because staged metadata has already been cleared.",
+        "Validation: npm run typecheck, npm test in idctl, wiki drift, diff check, and npm run build passed after the staged zip pruning gate."
       ]
     },
     {
@@ -4702,5 +4708,5 @@
       "body": "# Wiki\n\nWiki is both the human documentation page and the editable schematic for the Control Center UI. Each article explains the operator purpose of a page; the structured sections below preserve tabs, tiles, fields, controls, displays, routes, and source files for implementation detail.\n\n## Use it for\n\n- Search pages, controls, routes, source files, and notes from inside the desktop app.\n- Confirm how a UI surface is intended to behave before editing code or filing follow-up work.\n- Keep app navigation metadata and human documentation in one reviewed JSON artifact.\n\n## Editing rule\n\nThe desktop app hot-reload polls CONTROL_CENTER_WIKI.json through the main-process wiki bridge. Sidebar labels, icons, order, and visibility still come from pages[].nav for implemented routes, so documentation edits must preserve that metadata and keep every page.body non-empty."
     }
   ],
-  "appVersion": "0.1.449"
+  "appVersion": "0.1.450"
 }
