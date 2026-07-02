@@ -1419,6 +1419,14 @@ export function Settings({ store, navigate }: { store: FleetStore; navigate?: (v
     if (!RUNNABLE_RE.test(command)) return 'No safe one-click install command is registered; open the project docs.';
     return null;
   }
+  function stackInstallUnavailableLabel(s: LocalStackEntry): string {
+    const command = stackCommand(s.install);
+    const host = hostStackPlatform();
+    if (host && !s.platforms.includes(host)) return `${s.platforms.map(platformLabel).join('/')} host required`;
+    if (command && PLACEHOLDER_CMD_RE.test(command)) return 'choose model first';
+    if (!command || !RUNNABLE_RE.test(command)) return 'manual setup';
+    return 'setup review required';
+  }
   function stackEaseLabel(s: LocalStackEntry): string {
     if (s.installEase === 'start-here') return 'start here';
     if (s.installEase === 'easy') return 'easy';
@@ -2482,7 +2490,7 @@ export function Settings({ store, navigate }: { store: FleetStore; navigate?: (v
                       ) : !stackInstalled ? (
                         <a className="btn small" href={s.homepage} target="_blank" rel="noreferrer" title={installUnavailable ?? 'No CLI install — opens the download page'}>Docs ↗</a>
                       ) : null}
-                      {installUnavailable ? <span className="muted small" title={installUnavailable}>guided setup required</span> : null}
+                      {installUnavailable ? <span className="muted small" title={installUnavailable}>{stackInstallUnavailableLabel(s)}</span> : null}
                       {running && !configured && effectiveApiBase ? (
                         <button className="btn small primary" title={`Add ${effectiveApiBase} as an inference backend after a fresh scan`} onClick={() => void addStackBackend(s)}>Add backend</button>
                       ) : null}

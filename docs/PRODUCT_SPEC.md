@@ -548,8 +548,9 @@ Manager; this is the plumbing.)
   shared-port stacks such as LocalAI, MLX, and TGI, automatic conflict-safe install command rewrites
   for Docker `-p`, `--port`, and `--tcp` port flags, automatic pending backend rows for installed
   local provider stacks even before their API server is running, automatic backend add/upgrade for
-  matching live backend presets after a scan or after an Install/Start follow-up scan, and row-level
-  **Add backend** as a fallback once a scanned local server is live.
+  matching live backend presets after a scan or after an Install/Start follow-up scan, concrete
+  unavailable-install labels such as `Linux host required`, `choose model first`, or `manual setup`,
+  and row-level **Add backend** as a fallback once a scanned local server is live.
 - **Ollama catalog checks**: Settings performs a read-only public Ollama library scan on startup
   and every six hours while mounted. It compares installed `/api/tags` digests with public tag
   digests, surfaces explicit **Update** actions for changed installed tags, and lists newly

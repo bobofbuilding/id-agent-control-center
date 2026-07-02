@@ -8,6 +8,9 @@ Every change pushed or merged to `main` carries its version number in the commit
 subject (`vX.Y.Z: …`), stamped automatically by the `commit-msg` hook — see
 [CONTRIBUTING.md](CONTRIBUTING.md).
 
+## [0.1.473] — 2026-07-02
+- Clarify local stack setup requirement labels
+
 ## [0.1.472] — 2026-07-02
 - Add guarded Ollama catalog checks for local model updates
 
