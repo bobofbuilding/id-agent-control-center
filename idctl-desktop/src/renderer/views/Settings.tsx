@@ -30,6 +30,7 @@ const LOCAL_PROVIDER_STACK_IDS: Record<string, string> = {
   'mlx-lm-server': 'mlx-lm-server',
   tgi: 'tgi',
   jan: 'jan',
+  gpt4all: 'gpt4all',
 };
 
 /** Hardware of the machine the control center commands (the manager host; localhost here). */
@@ -653,6 +654,7 @@ export function Settings({ store, navigate }: { store: FleetStore; navigate?: (v
         }
         return next;
       });
+      await autoAddInstalledStackBackendPlaceholders(status);
       return status;
     } finally {
       setStackInstallChecking(false);
@@ -699,16 +701,72 @@ export function Settings({ store, navigate }: { store: FleetStore; navigate?: (v
         : {}),
     };
   }
+  function stackApiBaseForInstallStatus(s: LocalStackEntry, status?: LocalStackInstallStatus): string | undefined {
+    if (!s.apiBase) return undefined;
+    const port = status?.port ?? stackPortOverride(s);
+    return port ? withBaseUrlPort(s.apiBase, port) : s.apiBase;
+  }
+  function stackKind(s: LocalStackEntry): ProviderKind | null {
+    return ['ollama', 'lmstudio', 'openai-compatible', 'anthropic', 'openai'].includes(s.apiKind)
+      ? s.apiKind as ProviderKind
+      : null;
+  }
+  function stackPlaceholderProfile(s: LocalStackEntry, providerName: string, status?: LocalStackInstallStatus): ProviderProfile | null {
+    const kind = stackKind(s);
+    const baseUrl = stackApiBaseForInstallStatus(s, status);
+    if (!kind || !baseUrl) return null;
+    return {
+      name: providerName,
+      kind,
+      baseUrl,
+      enabled: false,
+      needsKey: false,
+    };
+  }
   function findDiscoveredMatch(list: Discovered[], s: Discovered): Discovered | undefined {
     return list.find((x) => x.id === s.id && x.kind === s.kind && normUrl(x.baseUrl) === normUrl(s.baseUrl));
+  }
+  async function autoAddInstalledStackBackendPlaceholders(status: Record<string, LocalStackInstallStatus>): Promise<Set<string>> {
+    const installed = TOP_LOCAL_STACKS
+      .filter((s) => s.id !== 'ollama' && status[s.id]?.installed && stackKind(s) && stackApiBaseForInstallStatus(s, status[s.id]))
+      .filter((s) => !PLACEHOLDER_CMD_RE.test(stackCommand(s.install)));
+    if (!installed.length) return new Set();
+    const latest = await freshProviders();
+    const taken = new Set(latest.map((p) => p.name));
+    const existingUrls = new Set(latest.map((p) => normUrl(p.baseUrl)));
+    let nextProviders: ProviderRow[] | null = null;
+    const added = new Set<string>();
+    const addedNames: string[] = [];
+    for (const stack of installed) {
+      const baseUrl = stackApiBaseForInstallStatus(stack, status[stack.id]);
+      if (!baseUrl || existingUrls.has(normUrl(baseUrl))) continue;
+      const providerName = uniqueProviderName(stackProviderId(stack), taken);
+      const profile = stackPlaceholderProfile(stack, providerName, status[stack.id]);
+      if (!profile) continue;
+      taken.add(providerName);
+      existingUrls.add(normUrl(baseUrl));
+      nextProviders = await call<ProviderRow[]>('providers:add', profile);
+      added.add(normUrl(baseUrl));
+      addedNames.push(providerName);
+    }
+    if (nextProviders) {
+      setProviders(nextProviders);
+      setProviderMsg(`added pending local backend${addedNames.length === 1 ? '' : 's'}: ${addedNames.join(', ')}`);
+      setStackMsg(`added pending backend${addedNames.length === 1 ? '' : 's'}: ${addedNames.join(', ')} — start the server, then Connect & sync`);
+    }
+    return added;
   }
   async function autoAddKnownStackBackends(found: Discovered[]): Promise<Set<string>> {
     const stackBases = new Set(TOP_LOCAL_STACKS.flatMap((s) => [s.apiBase, stackApiBase(s)]).filter((u): u is string => Boolean(u)).map(normUrl));
     const liveKnown = found.filter((s) => s.status === 'live' && stackBases.has(normUrl(s.baseUrl)));
     if (!liveKnown.length) return new Set();
     const latest = await freshProviders();
-    const existingUrls = new Set(latest.map((p) => normUrl(p.baseUrl)));
-    const pending = liveKnown.filter((s) => !existingUrls.has(normUrl(s.baseUrl)));
+    const byUrl = new Map(latest.map((p) => [normUrl(p.baseUrl), p]));
+    const pending = liveKnown.filter((s) => {
+      const existing = byUrl.get(normUrl(s.baseUrl));
+      if (!existing) return true;
+      return existing.enabled === false && !existing.lastSync && !providerModelReady(existing);
+    });
     if (!pending.length) {
       setProviders(latest);
       return new Set();
@@ -720,7 +778,8 @@ export function Settings({ store, navigate }: { store: FleetStore; navigate?: (v
       const taken = new Set(latest.map((p) => p.name));
       let nextProviders: ProviderRow[] | null = null;
       for (const server of pending) {
-        const providerName = uniqueProviderName(server.id, taken);
+        const existing = byUrl.get(normUrl(server.baseUrl));
+        const providerName = existing?.name ?? uniqueProviderName(server.id, taken);
         taken.add(providerName);
         nextProviders = await call<ProviderRow[]>('providers:add', discoveredToProfile(server, providerName));
         addedUrls.add(normUrl(server.baseUrl));
@@ -1138,6 +1197,12 @@ export function Settings({ store, navigate }: { store: FleetStore; navigate?: (v
   }
   function providerStatus(p: ProviderRow): string | undefined {
     return probe[p.name]?.status ?? p.lastSync?.status;
+  }
+  function providerInstalledStack(p: ProviderRow): LocalStackEntry | undefined {
+    return TOP_LOCAL_STACKS.find((s) => {
+      const baseUrl = stackApiBaseForInstallStatus(s, stackInstallStatus[s.id]);
+      return !!baseUrl && normUrl(baseUrl) === normUrl(p.baseUrl) && stackInstallStatus[s.id]?.installed;
+    });
   }
   function providerReplaceIsNoop(existing: ProviderRow | undefined, draft: ProviderProfile): boolean {
     return !!existing &&
@@ -2348,10 +2413,14 @@ export function Settings({ store, navigate }: { store: FleetStore; navigate?: (v
             {providers.map((p) => {
               const o = probe[p.name];
               const sync = p.lastSync;
+              const installedStack = providerInstalledStack(p);
+              const pendingInstalledStack = !!installedStack && p.enabled === false && !sync && !o;
               const syncedModels = syncedProviderModels(p);
               const offeredModels = savedProviderModels(p);
               const apiModelFilterable = !isLocalProvider(p) && syncedModels.length > 0;
-              const statusText = o
+              const statusText = pendingInstalledStack
+                ? 'installed · start server + connect'
+                : o
                 ? o.status === 'live'
                   ? `live · ${o.models.length} models`
                   : o.status
