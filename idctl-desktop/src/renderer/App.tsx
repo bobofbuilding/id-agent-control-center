@@ -6,7 +6,6 @@ import { Dashboard } from './views/Dashboard.tsx';
 import { Teams } from './views/Teams.tsx';
 import { Inbox } from './views/Inbox.tsx';
 import { Tasks } from './views/Tasks.tsx';
-import { Health } from './views/Health.tsx';
 import { Identity } from './views/Identity.tsx';
 import { Modules } from './views/Modules.tsx';
 import { Projects } from './views/Projects.tsx';
@@ -17,14 +16,13 @@ import { CommandPalette } from './views/dashboard/CommandPalette.tsx';
 import { ControlDrawer } from './views/dashboard/ControlDrawer.tsx';
 
 type ViewId = 'dashboard' | 'inbox' | 'tasks' | 'projects' | 'health' | 'identity' | 'schedule' | 'teams' | 'modules' | 'computer' | 'settings' | 'wiki';
-type TeamsFocus = 'route-hierarchy';
+type TeamsFocus = 'route-hierarchy' | 'health';
 
 const DEFAULT_NAV: { id: ViewId; label: string; icon: string; order: number }[] = [
   { id: 'dashboard', label: 'Dashboard', icon: '▦', order: 10 },
   { id: 'inbox', label: 'Inbox', icon: '□', order: 20 },
   { id: 'tasks', label: 'Work', icon: '☑', order: 40 },
   { id: 'projects', label: 'Projects', icon: '◆', order: 50 },
-  { id: 'health', label: 'Health', icon: '✚', order: 60 },
   { id: 'identity', label: 'Identity & Keys', icon: '⬡', order: 70 },
   { id: 'teams', label: 'HR Manager', icon: '⛌', order: 80 },
   { id: 'modules', label: 'Capabilities', icon: '◫', order: 90 },
@@ -32,7 +30,7 @@ const DEFAULT_NAV: { id: ViewId; label: string; icon: string; order: number }[] 
   { id: 'settings', label: 'Settings', icon: '⚙', order: 110 },
   { id: 'wiki', label: 'Wiki', icon: '▤', order: 120 },
 ];
-const IMPLEMENTED_VIEWS = new Set<ViewId>([...DEFAULT_NAV.map((n) => n.id), 'inbox', 'schedule']);
+const IMPLEMENTED_VIEWS = new Set<ViewId>([...DEFAULT_NAV.map((n) => n.id), 'health', 'inbox', 'schedule']);
 
 function isViewId(id: string | null | undefined): id is ViewId {
   return !!id && IMPLEMENTED_VIEWS.has(id as ViewId);
@@ -69,16 +67,18 @@ interface UpdateStatus {
 
 export function App() {
   const store = useFleet();
+  const [initialTarget] = useState<string | null>(() => {
+    const v = new URLSearchParams(window.location.search).get('view');
+    if (v) return v;
+    try { return localStorage.getItem('idctl.view'); } catch { return null; }
+  });
   const [view, setView] = useState<ViewId>(() => {
     // 'schedule' is a Tasks tab now (not in NAV) but still a valid deep-link target.
-    const v = new URLSearchParams(window.location.search).get('view');
-    if (isViewId(v)) return v;
-    // Otherwise reopen on the view the user last had — e.g. after a self-update relaunch.
-    let saved: string | null = null;
-    try { saved = localStorage.getItem('idctl.view'); } catch { /* no storage */ }
-    return isViewId(saved) ? saved : 'dashboard';
+    // 'health' is now an HR Manager tab, but remains a valid legacy route.
+    if (initialTarget === 'health') return 'teams';
+    return isViewId(initialTarget) ? initialTarget : 'dashboard';
   });
-  const [teamsFocus, setTeamsFocus] = useState<TeamsFocus | undefined>();
+  const [teamsFocus, setTeamsFocus] = useState<TeamsFocus | undefined>(() => initialTarget === 'health' ? 'health' : undefined);
   useEffect(() => { try { localStorage.setItem('idctl.view', view); } catch { /* no storage */ } }, [view]);
   const [version, setVersion] = useState<string>('');
   const [update, setUpdate] = useState<UpdateStatus | null>(null);
@@ -97,6 +97,11 @@ export function App() {
   const navigateTo = useCallback((target: string) => {
     if (target === 'teams:route') {
       setTeamsFocus('route-hierarchy');
+      setView('teams');
+      return;
+    }
+    if (target === 'teams:health' || target === 'health') {
+      setTeamsFocus('health');
       setView('teams');
       return;
     }
@@ -241,13 +246,13 @@ function Router({ view, store, navigate, teamsFocus, onTeamsFocusHandled, wiki, 
     case 'dashboard':
       return <Dashboard store={store} />;
     case 'teams':
-      return <Teams store={store} focus={teamsFocus} onFocusHandled={onTeamsFocusHandled} />;
+      return <Teams store={store} focus={teamsFocus} onFocusHandled={onTeamsFocusHandled} navigate={navigate} />;
     case 'inbox':
       return <Inbox store={store} />;
     case 'tasks':
       return <Tasks store={store} />;
     case 'health':
-      return <Health store={store} navigate={navigate} />;
+      return <Teams store={store} focus="health" onFocusHandled={onTeamsFocusHandled} navigate={navigate} />;
     case 'identity':
       return <Identity store={store} />;
     case 'schedule':

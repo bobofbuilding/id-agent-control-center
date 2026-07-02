@@ -34,10 +34,11 @@ and drives, it never owns the runtime.
 ## 2. Global UI (present on every page)
 
 ### 2.1 Sidebar navigation
-Eleven destinations: **Dashboard** ▦, **Chat** ✦, **Inbox** ✉ (badge = pending messages),
-**Work** ☑, **Projects** ◆, **Health** ✚, **Identity & Keys** ⬡, **HR Manager** ⛌,
-**Capabilities** ◫, **Computer Use** 🖥, **Settings** ⚙. The Chat item also carries an unread-reply
-badge. The last-open view is remembered across launches (and self-update relaunches).
+Ten destinations: **Dashboard** ▦, **Inbox** ✉ (badge = pending messages), **Work** ☑,
+**Projects** ◆, **Identity & Keys** ⬡, **HR Manager** ⛌, **Capabilities** ◫,
+**Computer Use** 🖥, **Settings** ⚙, and **Wiki** ▤. Health now lives inside HR Manager as
+the **Health** tab, while the legacy `health` route still opens that tab for compatibility.
+The last-open view is remembered across launches (and self-update relaunches).
 
 ### 2.2 Status bar (footer)
 `● <connection> · <manager URL> · view [<selector>] · <N/M> agents active · <K> teams running`.
@@ -276,7 +277,7 @@ headers wrap long names/actions instead of overflowing.
 
 ---
 
-## 8. Health (nav: "Health" ✚, route: `health`)
+## 8. Health (HR Manager tab: "Health"; legacy route: `health`)
 
 **Purpose:** Fleet health — reported token-throughput telemetry + a cross-team roster
 with on-demand liveness probes.
@@ -349,7 +350,7 @@ primary cross-team lead), edit per-agent instructions, and govern cross-team del
 behavior, and future page optimization proposals. Escalate legal-team policy or personnel-process
 questions through `legal/general-counsel`.
 
-**What you can do** — three top-level tabs: **Structure · Build · Manage**, plus header
+**What you can do** — four top-level tabs: **Structure · Health · Build · Manage**, plus header
 **+ From template** and **✦ Build a team**.
 - **AI Team Builder** (describe/paste a spec → live deterministic parse → **✦ Build with AI**
   (`team:designAI`, constrained to valid runtimes/models/skills) → editable roster (per-agent ★lead,
@@ -369,6 +370,9 @@ questions through `legal/general-counsel`.
   member rows only for teams still present in the current team list, successful team deletes are
   tombstoned locally, and Structure plus Manage routing overview hide the manager-reserved empty
   `public` namespace until it contains actual public-agent registrations.
+- **Health**: the former top-level Health page embedded between Structure and Build. It owns token
+  throughput, all-team fleet roster, liveness probes, runtime/model draft changes, and read-only
+  model-lane evidence in the same HR context as team structure and staffing.
 - **Build**: one-click builder for a new team or direct merge of reviewed new agent rows into an
   existing team; the compact Team maintenance row handles rename/merge for already-created source
   teams through the manager-backed `/agents/:id/team` move route, scoped to the source team and able

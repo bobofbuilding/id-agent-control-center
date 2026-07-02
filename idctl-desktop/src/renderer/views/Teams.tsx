@@ -7,6 +7,7 @@ import { MCP_CATALOG, buildFromCatalog } from '../../../../idctl/src/settings/mc
 import { parseTeamSpec, slugName, isReservedName } from '../../../../idctl/src/api/teamSpec.ts';
 import type { Agent } from '../../../../idctl/src/api/types.ts';
 import { TeamGraph, type GraphSelection } from './TeamGraph.tsx';
+import { Health } from './Health.tsx';
 
 type ProviderRow = { kind: string; baseUrl?: string; enabled?: boolean; keySource?: string; needsKey?: boolean; lastSync?: { status?: string; modelCount?: number; models?: string[] } };
 type ManagedRuntimeStatus = { runtime?: string; installed?: boolean; loggedIn?: boolean; statusSupported?: boolean };
@@ -33,7 +34,7 @@ type OrgCfg = { enabled?: boolean; autoRebuild?: boolean };
 type SecLead = { agent: string; team: string; leadsTeams: string[] };
 type TeamBlueprint = { id: string; team: string; label: string; description: string; spec: string };
 type BlueprintCoverage = TeamBlueprint & { present: number; total: number; missing: string[]; complete: boolean };
-type HrFocus = 'route-hierarchy';
+type HrFocus = 'route-hierarchy' | 'health';
 type LeadershipBackbone = {
   ready: boolean;
   missingAgents: string[];
@@ -445,14 +446,14 @@ ${VALIDATION_RETURN_PATH}
 ${COORDINATION_TAIL}`;
 }
 
-export function Teams({ store, focus, onFocusHandled }: { store: FleetStore; focus?: HrFocus; onFocusHandled?: () => void }) {
+export function Teams({ store, focus, onFocusHandled, navigate }: { store: FleetStore; focus?: HrFocus; onFocusHandled?: () => void; navigate?: (target: string) => void }) {
   const syncVersion = useSyncVersion(['goals', 'work', 'org', 'agents']);
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<string>('');
   const hrOwner = useMemo(() => resolveHrManagerAgent(store), [store.allAgents, store.agents, store.team]);
 
   // HR pillars as tabs + the live structure graph.
-  const [tab, setTab] = useState<'structure' | 'build' | 'route'>('structure');
+  const [tab, setTab] = useState<'structure' | 'health' | 'build' | 'route'>('structure');
   const [routePane, setRoutePane] = useState<'operations' | 'overview' | 'hierarchy'>('operations');
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
   const [graphGroups, setGraphGroups] = useState<{ team: string; agents: Agent[] }[]>([]);
@@ -462,6 +463,8 @@ export function Teams({ store, focus, onFocusHandled }: { store: FleetStore; foc
     if (focus === 'route-hierarchy') {
       setTab('route');
       setRoutePane('hierarchy');
+    } else if (focus === 'health') {
+      setTab('health');
     }
     onFocusHandled?.();
   }, [focus, onFocusHandled]);
@@ -1769,7 +1772,7 @@ export function Teams({ store, focus, onFocusHandled }: { store: FleetStore; foc
         </span>
       </header>
       <div className="tabs">
-        {([['structure', 'Structure'], ['build', 'Build'], ['route', 'Manage']] as const).map(([k, lbl]) => (
+        {([['structure', 'Structure'], ['health', 'Health'], ['build', 'Build'], ['route', 'Manage']] as const).map(([k, lbl]) => (
           <button key={k} className={`tab${tab === k ? ' active' : ''}`} onClick={() => setTab(k)}>{lbl}</button>
         ))}
       </div>
@@ -1898,6 +1901,10 @@ export function Teams({ store, focus, onFocusHandled }: { store: FleetStore; foc
             <p className="muted small" style={{ marginTop: 8 }}>Select an agent or team in the graph to manage it.</p>
           )}
         </section>
+      ) : null}
+
+      {tab === 'health' ? (
+        <Health store={store} navigate={navigate} embedded />
       ) : null}
 
       {tab === 'route' ? (

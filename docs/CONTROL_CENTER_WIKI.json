@@ -1288,13 +1288,14 @@
       "route": "health",
       "component": "Health",
       "nav": {
-        "label": "Health",
+        "label": "HR Manager · Health",
         "icon": "✚",
         "order": 60,
-        "visible": true
+        "visible": false
       },
       "sourceFiles": [
         "idctl-desktop/src/renderer/views/Health.tsx",
+        "idctl-desktop/src/renderer/views/Teams.tsx",
         "idctl-desktop/src/renderer/views/AgentTable.tsx",
         "idctl/src/settings/runtimeCatalog.ts",
         "idctl-desktop/src/tauri/adapter.ts",
@@ -1313,8 +1314,8 @@
         "idctl-desktop/resources/idacc-context-retrieval/tools/contract.mjs",
         "idctl-desktop/scripts/headroom-plugin-path-smoke.mjs"
       ],
-      "purpose": "Fleet health, local-model token throughput, liveness probes, and the full fleet roster with harness/model/lifecycle controls, neutral provider model-lane visibility, and read-only lead markers. Hidden context-budget savings are backend-only and not displayed here.",
-      "scope": "Usage spans local-model providers and refreshes as its own 15s observability stream; roster is holistic and grouped by team through AgentTable.",
+      "purpose": "HR Manager Health tab for fleet health, local-model token throughput, liveness probes, and the full fleet roster with harness/model/lifecycle controls, neutral provider model-lane visibility, and read-only lead markers. Hidden context-budget savings are backend-only and not displayed here.",
+      "scope": "Embedded in HR Manager between Structure and Build; the legacy health route opens this tab. Usage spans local-model providers and refreshes as its own 15s observability stream; roster is holistic and grouped by team through AgentTable.",
       "tiles": [
         {
           "id": "usage",
@@ -4693,6 +4694,12 @@
         "The Health Harness dropdown shows linked-but-unsupported subscriptions under a disabled adapter-needed group while keeping manager-executable harnesses and synced API provider lanes selectable.",
         "The Fleet model-lanes panel labels linked unsupported subscriptions as adapter needed instead of current-only, so Settings account state is visible without letting it overwrite agent runtime status.",
         "Validation: npm test in idctl, npm run typecheck in idctl-desktop, wiki drift, diff check, and npm run build passed before release validation."
+      ],
+      "implementedTwoHundredTwentyEighthPass": [
+        "Health moved from the top-level sidebar into HR Manager as the tab order Structure, Health, Build, Manage.",
+        "The legacy health route and command-palette Health action now open HR Manager with the Health tab focused, preserving saved links while making HR Manager the visible owner page.",
+        "Health renders in an embedded mode inside HR Manager while keeping token throughput, Probe all, AgentTable, runtime/model staging, and model-lane guardrails intact.",
+        "Validation: npm run typecheck in idctl-desktop, wiki drift, diff check, and npm run build passed before release validation."
       ]
     },
     {
@@ -4756,5 +4763,5 @@
       "body": "# Wiki\n\nWiki is both the human documentation page and the editable schematic for the Control Center UI. Each article explains the operator purpose of a page; the structured sections below preserve tabs, tiles, fields, controls, displays, routes, and source files for implementation detail.\n\n## Use it for\n\n- Search pages, controls, routes, source files, and notes from inside the desktop app.\n- Confirm how a UI surface is intended to behave before editing code or filing follow-up work.\n- Keep app navigation metadata and human documentation in one reviewed JSON artifact.\n\n## Editing rule\n\nThe desktop app hot-reload polls CONTROL_CENTER_WIKI.json through the main-process wiki bridge. Sidebar labels, icons, order, and visibility still come from pages[].nav for implemented routes, so documentation edits must preserve that metadata and keep every page.body non-empty."
     }
   ],
-  "appVersion": "0.1.459"
+  "appVersion": "0.1.460"
 }

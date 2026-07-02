@@ -103,7 +103,7 @@ const VIEWS: { id: string; label: string; kw?: string }[] = [
   { id: 'inbox', label: 'Inbox', kw: 'messages questions' },
   { id: 'tasks', label: 'Work · Tasks', kw: 'board kanban plans schedule loops dream' },
   { id: 'projects', label: 'Projects', kw: 'repo git register' },
-  { id: 'health', label: 'Health', kw: 'status roster probe' },
+  { id: 'health', label: 'HR Manager · Health', kw: 'health status roster probe' },
   { id: 'identity', label: 'Identity & Keys', kw: 'wallet safe session' },
   { id: 'teams', label: 'HR Manager', kw: 'create team agent spawn org' },
   { id: 'modules', label: 'Capabilities', kw: 'skills plugins mcp' },

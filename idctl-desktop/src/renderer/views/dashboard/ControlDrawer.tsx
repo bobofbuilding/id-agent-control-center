@@ -64,7 +64,7 @@ function QuickControlsPanel({ store, navigate, onClose }: { store: FleetStore; n
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
           <button className="btn" disabled={busy} onClick={() => go('projects')}>Open Projects</button>
           <button className="btn" disabled={busy} onClick={() => go('teams:route')} title="Open HR Manager Manage → Hierarchy & sync">Open HR Manage</button>
-          <button className="btn" disabled={busy} onClick={() => go('health')}>Open Health</button>
+          <button className="btn" disabled={busy} onClick={() => go('teams:health')}>Open HR Health</button>
         </div>
       </section>
 

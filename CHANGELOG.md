@@ -8,6 +8,9 @@ Every change pushed or merged to `main` carries its version number in the commit
 subject (`vX.Y.Z: …`), stamped automatically by the `commit-msg` hook — see
 [CONTRIBUTING.md](CONTRIBUTING.md).
 
+## [0.1.460] — 2026-07-02
+- Move Health into HR Manager tabs
+
 ## [0.1.459] — 2026-07-02
 - Show linked subscriptions as adapter-needed Health lanes
 

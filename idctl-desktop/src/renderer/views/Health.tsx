@@ -158,7 +158,7 @@ function UsageSection({
   );
 }
 
-export function Health({ store, navigate }: { store: FleetStore; navigate?: (view: string) => void }) {
+export function Health({ store, navigate, embedded = false }: { store: FleetStore; navigate?: (view: string) => void; embedded?: boolean }) {
   const [probing, setProbing] = useState<string | null>(null);
   const [usage, setUsage] = useState<UsageReport | null | undefined>(undefined); // undefined = loading
   const [usageError, setUsageError] = useState<string | null>(null);
@@ -241,9 +241,9 @@ export function Health({ store, navigate }: { store: FleetStore; navigate?: (vie
     }
   }
   return (
-    <div className="view">
+    <div className={embedded ? 'health-pane' : 'view'}>
       <header className="view-head">
-        <h1>Health &amp; Probes</h1>
+        {embedded ? <h2>Health &amp; Probes</h2> : <h1>Health &amp; Probes</h1>}
         <button className="btn primary" disabled={!!probing} onClick={() => void probeAllVisible()}>
           {probing === 'all' ? 'Probing…' : 'Probe all'}
         </button>
