@@ -817,8 +817,16 @@ select:focus, input:focus { border-color: var(--accent); }
 .cu-perm.bad .cu-perm-dot { background: #d2432f; }
 .cu-perm-body { flex: 1; }
 .cu-perm-actions { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
-.cu-bless-add { display: flex; gap: 6px; margin-top: 8px; }
-.cu-bless-add .cell-select { flex: 1; }
+.cu-bless-add { display: flex; flex-direction: column; gap: 8px; margin-top: 8px; }
+.cu-bless-list { display: flex; flex-direction: column; gap: 4px; max-height: 178px; overflow-y: auto; border: 1px solid var(--border); border-radius: 8px; padding: 6px; background: rgba(0,0,0,.12); }
+.cu-bless-choice { display: flex; align-items: center; gap: 8px; min-width: 0; padding: 6px 7px; border: 1px solid transparent; border-radius: 7px; cursor: pointer; }
+.cu-bless-choice:hover { background: rgba(255,255,255,.035); }
+.cu-bless-choice.selected { border-color: color-mix(in srgb, var(--accent) 42%, var(--border)); background: color-mix(in srgb, var(--accent) 10%, transparent); }
+.cu-bless-choice input { flex: 0 0 auto; margin: 0; }
+.cu-bless-choice-text { display: flex; flex-direction: column; min-width: 0; }
+.cu-bless-choice-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 650; }
+.cu-bless-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.cu-bless-actions .btn.primary { margin-left: auto; }
 .cu-blessed { margin-top: 10px; display: flex; flex-direction: column; gap: 6px; }
 .cu-blessed-row { display: flex; align-items: center; justify-content: space-between; padding: 6px 8px; background: var(--panel-2, rgba(255,255,255,.03)); border: 1px solid var(--border); border-radius: 8px; }
 .cu-msg { margin-top: 8px; color: var(--accent-text, #8ab4ff); }

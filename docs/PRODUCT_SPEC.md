@@ -458,8 +458,8 @@ Accessibility gates.
 
 **What you can do:** **Arm/Disarm** (Arm blesses the currently-attached agents); **Pause/Resume**;
 **PANIC** (■, never blocked, global hotkey ⌘⌥⇧P); watch the **live view** of the primary display;
-manage **Permissions** (Open Settings / Relaunch / Re-check); **Bless / Remove** a capable agent
-(attaches the bundled `mac-control` MCP server + rebuilds); read the **Activity log** (last 40,
+manage **Permissions** (Open Settings / Relaunch / Re-check); **Bless / Remove** one or more
+capable agents (attaches the bundled `mac-control` MCP server + rebuilds); read the **Activity log** (last 40,
 blocked actions flagged); toggle **Safety → "Approve every action"** (supervised default-on; in
 autonomous mode risky actions — Trash, ⌘Q, destructive shell — are still held); respond to
 **approval prompts** (Allow/Deny, 60s auto-decline).
