@@ -1327,6 +1327,34 @@ export function Settings({ store, navigate }: { store: FleetStore; navigate?: (v
     if (!providerModelReady(p)) return 'The backend has no synced/preset model list yet.';
     return `Current status is ${providerStatus(p) ?? 'not synced'}.`;
   }
+  function localProviderStatusHint(p: ProviderRow, stack?: LocalStackEntry): string {
+    if (!isLocalProvider(p) || providerRouteReady(p)) return '';
+    const label = stack?.name ?? p.name;
+    const status = providerStatus(p);
+    if (status === 'live' && !providerModelReady(p)) {
+      return `${label} answered, but its model list is empty. Load or download a model in ${label}, then re-check models. Agents cannot route here until at least one model is synced.`;
+    }
+    if (status === 'unreachable') {
+      return `${label} is saved as a backend, but no API server is listening at ${p.baseUrl}. Start its local API server, then re-check.`;
+    }
+    if (status === 'auth-error') {
+      return `${label} answered but requires a key or token before models can be listed.`;
+    }
+    if (p.enabled === false && stack) {
+      return `${label} is installed but not enabled for routing. Start the server, then connect it when ready.`;
+    }
+    if (!providerModelReady(p)) {
+      return `${label} has no synced model list yet. Start the server and re-check before assigning agents.`;
+    }
+    return '';
+  }
+  function localProviderConnectLabel(p: ProviderRow): string {
+    if (!isLocalProvider(p)) return 'Connect & sync';
+    const status = providerStatus(p);
+    if (status === 'live' && !providerModelReady(p)) return 'Re-check models';
+    if (status === 'unreachable') return 'Re-check';
+    return 'Connect & sync';
+  }
   function normalizeModels(models: string[] | undefined): string[] {
     return Array.from(new Set((models ?? []).map((m) => String(m).trim()).filter(Boolean)));
   }
@@ -2689,6 +2717,7 @@ export function Settings({ store, navigate }: { store: FleetStore; navigate?: (v
               const syncedModels = syncedProviderModels(p);
               const offeredModels = savedProviderModels(p);
               const apiModelFilterable = !isLocalProvider(p) && syncedModels.length > 0;
+              const localHint = localProviderStatusHint(p, installedStack);
               const statusText = pendingInstalledStack
                 ? 'installed · start server + connect'
                 : o
@@ -2744,11 +2773,17 @@ export function Settings({ store, navigate }: { store: FleetStore; navigate?: (v
                           {expanded === p.name ? 'hide' : 'models'}
                         </button>
                       ) : null}
+                      {localHint ? <div className="muted small provider-status-hint">{localHint}</div> : null}
                     </td>
                     <td className="row-actions">
                       <button className="btn primary" disabled={busy} onClick={() => void connect(p.name)} title="Validate the key live and sync the model list">
-                        Connect &amp; sync
+                        {localProviderConnectLabel(p)}
                       </button>
+                      {localHint ? (
+                        <button className="btn" type="button" onClick={openStackSetup} title="Jump to Local LLM stacks for install/start guidance">
+                          Stack setup
+                        </button>
+                      ) : null}
                       <button className="btn" onClick={() => void removeProviderProfile(p.name)}>
                         ✕
                       </button>

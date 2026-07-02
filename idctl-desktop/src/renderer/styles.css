@@ -229,6 +229,7 @@ button.chip.incompat:hover { border-color: var(--line); }
 .local-backend-model-row { display: grid; grid-template-columns: minmax(150px, 220px) minmax(240px, 1fr) auto; align-items: center; gap: 8px; min-height: 30px; }
 .local-backend-model-title { display: flex; align-items: baseline; gap: 8px; min-width: 0; flex-wrap: wrap; }
 .local-backend-model-title b { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.provider-status-hint { margin-top: 4px; max-width: 620px; line-height: 1.35; }
 @media (max-width: 780px) {
   .local-backend-model-row { grid-template-columns: 1fr; align-items: start; }
 }

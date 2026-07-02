@@ -8,6 +8,9 @@ Every change pushed or merged to `main` carries its version number in the commit
 subject (`vX.Y.Z: …`), stamped automatically by the `commit-msg` hook — see
 [CONTRIBUTING.md](CONTRIBUTING.md).
 
+## [0.1.478] — 2026-07-02
+- Clarify local backend no-model and unreachable states
+
 ## [0.1.477] — 2026-07-02
 - Add local model catalog overlay and backend model summaries
 
