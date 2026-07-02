@@ -13,14 +13,17 @@ const managed = [
   { runtime: 'codex', installed: true, loggedIn: true, statusSupported: true },
   { runtime: 'cursor-cli', installed: true, loggedIn: false, statusSupported: true },
   { runtime: 'grok', installed: true, loggedIn: false, statusSupported: false },
+  { runtime: 'antigravity', installed: true, loggedIn: false, statusSupported: false },
+  { runtime: 'copilot', installed: true, loggedIn: false, statusSupported: false },
+  { runtime: 'kiro-cli', installed: true, loggedIn: true, statusSupported: true },
   { runtime: 'gemini', installed: true, loggedIn: false, statusSupported: true },
   { runtime: 'claude-code-cli', installed: true, loggedIn: true, statusSupported: true },
 ];
 
 assert.deepEqual(
   offerableRuntimes(providers, undefined, managed),
-  ['codex', 'grok', 'claude-code-cli', 'claude-code-local', 'claude-agent-sdk', 'ollama'],
-  'runtime pickers should list only Settings-proven runtimes, not the whole catalog or an installed-but-not-usable Gemini CLI',
+  ['codex', 'claude-code-cli', 'claude-code-local', 'claude-agent-sdk', 'ollama'],
+  'runtime pickers should list only Settings-proven manager harnesses, not linked subscription CLIs without adapters',
 );
 
 const providerLanes = buildProviderModelLanes([
@@ -97,6 +100,24 @@ assert.deepEqual(
   offerableRuntimes([], undefined, [{ runtime: 'antigravity', installed: true, loggedIn: false, statusSupported: false }]),
   [],
   'Antigravity CLI should not become assignable until the manager exposes an Antigravity harness',
+);
+
+assert.deepEqual(
+  offerableRuntimes([], undefined, [{ runtime: 'grok', installed: true, loggedIn: false, statusSupported: false }]),
+  [],
+  'Grok CLI should stay linked-only until the manager exposes a Grok harness',
+);
+
+assert.deepEqual(
+  offerableRuntimes([], undefined, [{ runtime: 'kiro-cli', installed: true, loggedIn: true, statusSupported: true }]),
+  [],
+  'Kiro CLI should stay linked-only until the manager exposes a Kiro harness',
+);
+
+assert.deepEqual(
+  offerableRuntimes([], 'grok', [{ runtime: 'grok', installed: true, loggedIn: false, statusSupported: false }]),
+  ['grok'],
+  'current unsupported assignments should remain visible for review and migration',
 );
 
 console.log('[runtimeCatalog.test] OK');
