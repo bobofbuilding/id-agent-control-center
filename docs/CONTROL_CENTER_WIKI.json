@@ -2668,7 +2668,7 @@
         {
           "id": "image-server",
           "label": "Local image generator",
-          "description": "Configures an optional local-first image server URL and API style for chat image generation, with image-capable API backends as fallback.",
+          "description": "Configures an optional local-first image server URL and API style for chat image generation, with image-capable API backends as fallback. The URL input is an unsaved draft until Save succeeds, and Scan local checks Automatic1111/Forge plus configured loopback OpenAI-compatible providers before common image API defaults.",
           "routesInto": [
             "image:getServer",
             "image:setServer",
@@ -4787,6 +4787,12 @@
         "Stack claimed-port display no longer keeps parsing stale default install command ports after an installed stack has a detected/operator-selected alternate port.",
         "Inference backend rows now render live no-model probes as warnings and no longer treat them as route-ready until a synced/probed model list exists.",
         "Validation: npm run typecheck in idctl-desktop, wiki JSON parse, and npm run build passed before release validation."
+      ],
+      "implementedTwoHundredThirtyFifthPass": [
+        "Settings Local image generator now distinguishes saved local preference from an unsaved URL draft; the placeholder no longer looks like a configured localhost URL, and Save is disabled until a real changed URL exists.",
+        "Scan local now checks configured loopback OpenAI-compatible provider URLs before common defaults, so alternate LocalAI-style image APIs such as a provider on port 8082 can be detected.",
+        "Configured provider detection handles base URLs that already end in /v1 without probing a duplicated /v1/v1/models path.",
+        "Validation: npm run typecheck in idctl-desktop, wiki JSON parse, and npm run build passed before release validation."
       ]
     },
     {
@@ -4850,5 +4856,5 @@
       "body": "# Wiki\n\nWiki is both the human documentation page and the editable schematic for the Control Center UI. Each article explains the operator purpose of a page; the structured sections below preserve tabs, tiles, fields, controls, displays, routes, and source files for implementation detail.\n\n## Use it for\n\n- Search pages, controls, routes, source files, and notes from inside the desktop app.\n- Confirm how a UI surface is intended to behave before editing code or filing follow-up work.\n- Keep app navigation metadata and human documentation in one reviewed JSON artifact.\n\n## Editing rule\n\nThe desktop app hot-reload polls CONTROL_CENTER_WIKI.json through the main-process wiki bridge. Sidebar labels, icons, order, and visibility still come from pages[].nav for implemented routes, so documentation edits must preserve that metadata and keep every page.body non-empty."
     }
   ],
-  "appVersion": "0.1.474"
+  "appVersion": "0.1.475"
 }

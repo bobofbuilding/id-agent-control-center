@@ -537,7 +537,9 @@ Manager; this is the plumbing.)
   keys are encrypted and the Identity page mirrors the enabled chain allowlist without exposing
   secrets.
 - **Local image generator**: URL + API style (Stable Diffusion WebUI / OpenAI Images API),
-  **Scan local**, Save/Clear (local first for in-chat images; image-capable API backend fallback).
+  **Scan local**, Save/Clear, explicit saved-vs-draft state, configured loopback provider detection
+  for alternate LocalAI-style ports, and local-first in-chat images with image-capable API backend
+  fallback.
 - **Local LLM stacks**: starter-first curated list with compact primary filters, an optional tag
   dropdown for advanced filters, **Scan running**, primary **Install** actions for command-backed
   start-here/easy/guided/advanced stacks, reviewed Run-in-Terminal/Uninstall actions, setup notes,

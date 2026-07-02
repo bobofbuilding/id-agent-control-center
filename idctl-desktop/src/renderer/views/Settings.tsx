@@ -130,7 +130,7 @@ function imageServerStamp(server: { url: string; type: string; model?: string } 
 }
 function imageMessageClass(msg: string): string {
   if (/(failed|blocked|changed)/i.test(msg)) return 'status-error';
-  if (/(no server|not found|not configured)/i.test(msg)) return 'warn-text';
+  if (/(no server|not found|not configured|draft|unsaved)/i.test(msg)) return 'warn-text';
   return 'ok-text';
 }
 
@@ -976,10 +976,22 @@ export function Settings({ store, navigate }: { store: FleetStore; navigate?: (v
     setImgBusy(true); setImgMsg('scanning localhost…');
     try {
       const found = await call<ImgServer | null>('image:detectServer').catch(() => null);
-      if (found) { setImgUrl(found.url); setImgType(found.type); setImgMsg(`found ${found.type === 'auto1111' ? 'Stable Diffusion WebUI' : 'OpenAI Images API'} at ${found.url} — click Save to use it`); }
-      else setImgMsg('no server found on localhost ports 7860, 7861, 8080, or 1234');
+      if (found) {
+        setImgUrl(found.url);
+        setImgType(found.type);
+        setImgMsg(`found ${found.type === 'auto1111' ? 'Stable Diffusion WebUI' : 'OpenAI-style local API'} at ${found.url} — click Save to use it${found.type === 'openai' ? ' if it supports images' : ''}`);
+      } else {
+        setImgMsg('no local image server found on 7860/7861, common OpenAI-image ports, or configured local providers');
+      }
     } finally { setImgBusy(false); }
   }
+  const imageDraftServer: ImgServer | null = imgUrl.trim()
+    ? { url: imgUrl.trim().replace(/\/+$/, ''), type: imgType }
+    : null;
+  const imageSavedStamp = imageServerStamp(imgServer);
+  const imageDraftStamp = imageServerStamp(imageDraftServer);
+  const imageDraftChanged = !!imageDraftServer && imageDraftStamp !== imageSavedStamp;
+  const imageSaveDisabled = imgBusy || !imageDraftServer || !imageDraftChanged;
 
   async function loadOllama() {
     const r = await call<{ ok: boolean; models: OllamaModel[] }>('ollama:tags').catch(() => ({ ok: false, models: [] as OllamaModel[] }));
@@ -2391,13 +2403,13 @@ export function Settings({ store, navigate }: { store: FleetStore; navigate?: (v
           Optional local image server for chat image requests. IDACC tries this first; if it is unset or unreachable, image generation falls back to an image-capable API backend configured under <b>Inference backends</b>. Run <a className="ext-link" href="https://github.com/AUTOMATIC1111/stable-diffusion-webui" target="_blank" rel="noreferrer">Automatic1111</a> / Forge with <span className="mono">--api</span> on <span className="mono">:7860</span>, or a <a className="ext-link" href="https://localai.io" target="_blank" rel="noreferrer">LocalAI</a>-style OpenAI Images API on <span className="mono">:8080</span>.
         </p>
         <div className="local-image-actions">
-          <input className="local-image-url" placeholder="http://127.0.0.1:7860" value={imgUrl} disabled={imgBusy} onChange={(e) => setImgUrl(e.target.value)} />
+          <input className="local-image-url" placeholder="paste URL or scan local providers…" value={imgUrl} disabled={imgBusy} onChange={(e) => setImgUrl(e.target.value)} />
           <select className="local-image-type" value={imgType} disabled={imgBusy} onChange={(e) => setImgType(e.target.value as 'auto1111' | 'openai')} title="Local image API style">
             <option value="auto1111">Stable Diffusion WebUI</option>
             <option value="openai">OpenAI Images API</option>
           </select>
           <button className="btn" disabled={imgBusy} onClick={() => void detectImg()}>Scan local</button>
-          <button className="btn primary" disabled={imgBusy} onClick={() => void saveImgServer()}>{imgBusy ? '…' : 'Save'}</button>
+          <button className="btn primary" disabled={imageSaveDisabled} title={!imageDraftServer ? 'Enter a URL or use Scan local first' : !imageDraftChanged ? 'This preference is already saved' : 'Save this local image generator preference'} onClick={() => void saveImgServer()}>{imgBusy ? '…' : 'Save'}</button>
           {imgServer ? <button className="btn" disabled={imgBusy} title="Clear — use an image-capable API backend when available" onClick={() => void saveImgServer(null)}>Clear</button> : null}
         </div>
         <div className="local-image-status">
@@ -2405,8 +2417,13 @@ export function Settings({ store, navigate }: { store: FleetStore; navigate?: (v
             <span className="muted small">Local preference</span>{' '}
             {imgServer
               ? <><b className="accent-text">{imgServer.type === 'auto1111' ? 'Stable Diffusion WebUI' : 'OpenAI Images API'}</b> <span className="mono">{imgServer.url}</span></>
-              : <span className="muted">not configured</span>}
+              : imageDraftServer
+                ? <><b className="warn-text">draft not saved</b> <span className="mono">{imageDraftServer.url}</span></>
+                : <span className="muted">not configured</span>}
           </div>
+          {imgServer && imageDraftChanged && imageDraftServer ? (
+            <div className="warn-text small">Unsaved draft: {imageDraftServer.type === 'auto1111' ? 'Stable Diffusion WebUI' : 'OpenAI Images API'} <span className="mono">{imageDraftServer.url}</span></div>
+          ) : null}
           <div className="muted small">Fallback: image-capable API backend from Inference backends when available.</div>
           {imgMsg ? <div className={`small ${imageMessageClass(imgMsg)}`}>{imgMsg}</div> : null}
         </div>

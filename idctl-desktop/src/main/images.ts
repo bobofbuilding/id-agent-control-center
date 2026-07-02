@@ -173,13 +173,37 @@ export async function detectImageServer(): Promise<ImageServerConfig | null> {
   const tryFetch = async (u: string): Promise<boolean> => {
     try { const r = await fetch(u, { signal: AbortSignal.timeout(1500) }); return r.ok; } catch { return false; }
   };
+  const openAiModelsEndpoint = (url: string): string => {
+    const base = url.replace(/\/+$/, '');
+    return /\/v\d+$/i.test(base) ? `${base}/models` : `${base}/v1/models`;
+  };
+  const localProviderCandidates = (): string[] => {
+    const seen = new Set<string>();
+    const out: string[] = [];
+    for (const p of loadSettings().providers ?? []) {
+      if (p.enabled === false || !p.baseUrl || !['openai-compatible', 'openai', 'lmstudio'].includes(p.kind)) continue;
+      try {
+        const url = new URL(p.baseUrl);
+        if (!['127.0.0.1', 'localhost', '::1'].includes(url.hostname)) continue;
+        const normalized = url.toString().replace(/\/+$/, '');
+        const key = normalized.toLowerCase().replace('://localhost', '://127.0.0.1');
+        if (seen.has(key)) continue;
+        seen.add(key);
+        out.push(normalized);
+      } catch {
+        /* ignore malformed provider URLs */
+      }
+    }
+    return out;
+  };
   // Automatic1111 / Forge (SD WebUI) — the most common free local generator.
   for (const url of ['http://127.0.0.1:7860', 'http://127.0.0.1:7861']) {
     if (await tryFetch(`${url}/sdapi/v1/sd-models`)) return { url, type: 'auto1111' };
   }
-  // OpenAI-style images API (LocalAI default 8080, or others).
-  for (const url of ['http://127.0.0.1:8080', 'http://127.0.0.1:1234']) {
-    if (await tryFetch(`${url}/v1/models`)) return { url, type: 'openai' };
+  // OpenAI-style images API (configured local providers first, then common defaults).
+  const openAiCandidates = [...localProviderCandidates(), 'http://127.0.0.1:8080', 'http://127.0.0.1:1234'];
+  for (const url of openAiCandidates) {
+    if (await tryFetch(openAiModelsEndpoint(url))) return { url, type: 'openai' };
   }
   return null;
 }
