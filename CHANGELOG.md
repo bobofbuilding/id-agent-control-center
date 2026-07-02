@@ -8,6 +8,9 @@ Every change pushed or merged to `main` carries its version number in the commit
 subject (`vX.Y.Z: …`), stamped automatically by the `commit-msg` hook — see
 [CONTRIBUTING.md](CONTRIBUTING.md).
 
+## [0.1.455] — 2026-07-02
+- Hide empty public namespace from HR routing overview
+
 ## [0.1.454] — 2026-07-02
 - Allow batch Computer Use agent blessing
 

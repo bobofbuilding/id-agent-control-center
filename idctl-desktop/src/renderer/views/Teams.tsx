@@ -833,6 +833,10 @@ export function Teams({ store, focus, onFocusHandled }: { store: FleetStore; foc
     void call<{ team: string; delegates: string[] | null }[]>('relay:matrix').then(setRelayMatrix).catch(() => setRelayMatrix([]));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tab, activeTeam, savedDelegates, store.lastUpdated]);
+  const visibleRelayMatrix = useMemo(
+    () => relayMatrix.filter((row) => allKnownTeamSet.has(row.team)),
+    [relayMatrix, allKnownTeamSet],
+  );
 
   function pickMode(m: RelayMode) {
     setRelayMsg('');
@@ -1902,7 +1906,7 @@ export function Teams({ store, focus, onFocusHandled }: { store: FleetStore; foc
             <tr><th>Team</th><th>Lead</th><th>Relays to</th><th>Agents</th><th></th></tr>
           </thead>
           <tbody>
-            {(relayMatrix.length ? relayMatrix : allKnownTeamNames.map((team) => ({ team, delegates: null as string[] | null })))
+            {(visibleRelayMatrix.length ? visibleRelayMatrix : allKnownTeamNames.map((team) => ({ team, delegates: null as string[] | null })))
               .sort((a, b) => (a.team === activeTeam ? -1 : b.team === activeTeam ? 1 : a.team.localeCompare(b.team)))
               .map((row) => {
                 const ags = visibleGraphGroups.find((g) => g.team === row.team)?.agents ?? [];

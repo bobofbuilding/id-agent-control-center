@@ -367,8 +367,8 @@ questions through `legal/general-counsel`.
   all**), teams table (switch/manage/delete empty non-default), lead-hierarchy coordinators.
   Structure now treats `/teams` as team-existence authority: all-agent roster groups can populate
   member rows only for teams still present in the current team list, successful team deletes are
-  tombstoned locally, and the manager-reserved empty `public` namespace is hidden until it contains
-  actual public-agent registrations.
+  tombstoned locally, and Structure plus Manage routing overview hide the manager-reserved empty
+  `public` namespace until it contains actual public-agent registrations.
 - **Build**: one-click builder for a new team or direct merge of reviewed new agent rows into an
   existing team; the compact Team maintenance row handles rename/merge for already-created source
   teams through the manager-backed `/agents/:id/team` move route, scoped to the source team and able

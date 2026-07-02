@@ -4668,6 +4668,12 @@
         "Batch Bless rechecks every selected agent against the current all-team roster and the current attached list before and after confirmation, then attaches and rebuilds each stable target.",
         "Already-armed Computer Use sessions refresh the active blessed list after a successful batch attach, while unarmed sessions tell the operator to Arm before agents can drive.",
         "Validation: npm run typecheck in idctl-desktop and diff check passed before release validation."
+      ],
+      "implementedTwoHundredTwentyFourthPass": [
+        "HR Manager Manage routing overview now filters the manager relay matrix through the same visible-team authority used by Structure and other Manage panes.",
+        "The reserved empty public-agent namespace no longer leaks into Routing overview when /teams reports public but the all-team roster has zero public agents.",
+        "Public still reappears automatically when real public-agent registrations exist, preserving public-agent-remote support without exposing empty infrastructure rows.",
+        "Validation: npm run typecheck in idctl-desktop and diff check passed before release validation."
       ]
     },
     {
@@ -4731,5 +4737,5 @@
       "body": "# Wiki\n\nWiki is both the human documentation page and the editable schematic for the Control Center UI. Each article explains the operator purpose of a page; the structured sections below preserve tabs, tiles, fields, controls, displays, routes, and source files for implementation detail.\n\n## Use it for\n\n- Search pages, controls, routes, source files, and notes from inside the desktop app.\n- Confirm how a UI surface is intended to behave before editing code or filing follow-up work.\n- Keep app navigation metadata and human documentation in one reviewed JSON artifact.\n\n## Editing rule\n\nThe desktop app hot-reload polls CONTROL_CENTER_WIKI.json through the main-process wiki bridge. Sidebar labels, icons, order, and visibility still come from pages[].nav for implemented routes, so documentation edits must preserve that metadata and keep every page.body non-empty."
     }
   ],
-  "appVersion": "0.1.454"
+  "appVersion": "0.1.455"
 }
