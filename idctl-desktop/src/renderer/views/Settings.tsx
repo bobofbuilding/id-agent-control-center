@@ -961,7 +961,9 @@ export function Settings({ store, navigate }: { store: FleetStore; navigate?: (v
 
   // Local image generator (preferred over API fallback for image creation).
   type ImgServer = { url: string; type: 'auto1111' | 'openai'; model?: string };
+  type ImgProbe = { ok: boolean; url: string; type: 'auto1111' | 'openai'; detail: string };
   const [imgServer, setImgServer] = useState<ImgServer | null>(null);
+  const [imgProbe, setImgProbe] = useState<ImgProbe | null>(null);
   const [imgUrl, setImgUrl] = useState('');
   const [imgType, setImgType] = useState<'auto1111' | 'openai'>('auto1111');
   const [imgMsg, setImgMsg] = useState('');
@@ -969,7 +971,16 @@ export function Settings({ store, navigate }: { store: FleetStore; navigate?: (v
   async function loadImgServer() {
     const s = await call<ImgServer | null>('image:getServer').catch(() => null);
     setImgServer(s);
+    setImgProbe(null);
     if (s) { setImgUrl(s.url); setImgType(s.type); }
+    if (s) void probeImgServer(s);
+  }
+  async function probeImgServer(server?: ImgServer | null): Promise<ImgProbe | null> {
+    const target = server ?? imageDraftServer;
+    if (!target?.url) { setImgProbe(null); return null; }
+    const probe = await call<ImgProbe | null>('image:probeServer', target).catch(() => null);
+    setImgProbe(probe);
+    return probe;
   }
   async function saveImgServer(next?: { url: string; type: 'auto1111' | 'openai' } | null) {
     setImgBusy(true); setImgMsg('');
@@ -998,7 +1009,12 @@ export function Settings({ store, navigate }: { store: FleetStore; navigate?: (v
       setImgServer(saved);
       if (saved) { setImgUrl(saved.url); setImgType(saved.type); }
       else setImgUrl('');
-      setImgMsg(url ? 'saved ✓ — local image server will be tried first' : 'cleared — image creation will use an image-capable API backend when available');
+      const probe = saved ? await probeImgServer(saved) : null;
+      setImgMsg(url
+        ? probe?.ok
+          ? `saved ✓ — ${probe.detail}`
+          : `saved, but ${probe?.detail ?? 'not reachable'}; image generation will fall back to API when available`
+        : 'cleared — image creation will use an image-capable API backend when available');
     } catch {
       setImgMsg('save failed');
     } finally { setImgBusy(false); }
@@ -1010,7 +1026,8 @@ export function Settings({ store, navigate }: { store: FleetStore; navigate?: (v
       if (found) {
         setImgUrl(found.url);
         setImgType(found.type);
-        setImgMsg(`found ${found.type === 'auto1111' ? 'Stable Diffusion WebUI' : 'OpenAI-style local API'} at ${found.url} — click Save to use it${found.type === 'openai' ? ' if it supports images' : ''}`);
+        const probe = await probeImgServer(found);
+        setImgMsg(`found ${found.type === 'auto1111' ? 'Stable Diffusion WebUI' : 'OpenAI-style local API'} at ${found.url} — click Save to use it${probe?.detail ? ` (${probe.detail})` : ''}`);
       } else {
         setImgMsg('no local image server found on 7860/7861, common OpenAI-image ports, or configured local providers');
       }
@@ -2526,6 +2543,14 @@ export function Settings({ store, navigate }: { store: FleetStore; navigate?: (v
                 ? <><b className="warn-text">draft not saved</b> <span className="mono">{imageDraftServer.url}</span></>
                 : <span className="muted">not configured</span>}
           </div>
+          {imgServer ? (
+            <div className="small">
+              <span className="muted">Local check</span>{' '}
+              {imgProbe && imageServerStamp(imgProbe) === imageSavedStamp
+                ? <span className={imgProbe.ok ? 'ok-text' : 'warn-text'}>{imgProbe.detail}</span>
+                : <span className="muted">not checked yet</span>}
+            </div>
+          ) : null}
           {imgServer && imageDraftChanged && imageDraftServer ? (
             <div className="warn-text small">Unsaved draft: {imageDraftServer.type === 'auto1111' ? 'Stable Diffusion WebUI' : 'OpenAI Images API'} <span className="mono">{imageDraftServer.url}</span></div>
           ) : null}

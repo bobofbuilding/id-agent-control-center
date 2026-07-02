@@ -22,7 +22,7 @@ import { listGoals, getGoal, saveGoal, removeGoal, type Goal } from './goalstore
 import { listDreams, getDream, saveDream, removeDream, type Dream } from './dreamstore.ts';
 import { listQuestions, addQuestion, removeQuestion, type BlockerQuestion } from './questionstore.ts';
 import { getMaterial, importMaterialFiles, listMaterials, markRecommendation, pickMaterialFiles, pickMaterialFolder, processMaterial, processNextMaterial, removeMaterial, saveMaterial, updateMaterialPriority, type CreateMaterialInput, type LearnMaterial, type LearnPriority, type LearnReviewState, type ProcessMaterialContext } from './materialstore.ts';
-import { generateImage, readImage, imageModels, getImageServer, detectImageServer } from './images.ts';
+import { generateImage, readImage, imageModels, getImageServer, detectImageServer, probeImageServer } from './images.ts';
 import { readWiki } from './wiki.ts';
 import { listLocalModelCatalog, loadSettings, mergeLocalModelCatalog, removeEvmRpc, saveSettings, setUpdateSettings, setImageServer, upsertEvmRpc, recordEvmRpcRequest } from '../../../idctl/src/settings/store.ts';
 import type { EvmRpcKeySource, EvmRpcProfile, EvmRpcRequest, ImageServerConfig } from '../../../idctl/src/settings/schema.ts';
@@ -693,6 +693,8 @@ async function appCall(method: string, args: unknown[]): Promise<unknown> {
       return setImageServer((args[0] as ImageServerConfig | null) ?? null).imageServer ?? null;
     case 'image:detectServer':
       return detectImageServer();
+    case 'image:probeServer':
+      return probeImageServer((args[0] as ImageServerConfig | null | undefined) ?? undefined);
     case 'app:runInTerminal':
       return runInTerminal(args[0] as string);
     case 'wiki:get':

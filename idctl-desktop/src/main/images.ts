@@ -31,6 +31,7 @@ function imageProvider() {
 }
 
 export interface ImageResult { ok: boolean; path?: string; dataUrl?: string; model?: string; costUsd?: number; provider?: string; error?: string }
+export interface ImageServerProbe { ok: boolean; url: string; type: ImageServerConfig['type']; detail: string }
 
 /** Persist a decoded image buffer to the cache; returns its path + a data URL. */
 function cacheImage(buf: Buffer, mime: string): { path: string; dataUrl: string } {
@@ -208,6 +209,32 @@ export async function detectImageServer(): Promise<ImageServerConfig | null> {
   return null;
 }
 
+/** Lightweight reachability check for the saved local image preference.
+ *  OpenAI-style local APIs can expose `/models` without an image model, so this
+ *  intentionally reports reachability separately from full generation support. */
+export async function probeImageServer(server?: ImageServerConfig | null): Promise<ImageServerProbe | null> {
+  const s = server ?? loadSettings().imageServer ?? null;
+  if (!s?.url) return null;
+  const base = s.url.replace(/\/+$/, '');
+  const endpoint = s.type === 'auto1111'
+    ? `${base}/sdapi/v1/sd-models`
+    : (/\/v\d+$/i.test(base) ? `${base}/models` : `${base}/v1/models`);
+  try {
+    const r = await fetch(endpoint, { signal: AbortSignal.timeout(2000) });
+    if (!r.ok) return { ok: false, url: s.url, type: s.type, detail: `unreachable (${r.status})` };
+    return {
+      ok: true,
+      url: s.url,
+      type: s.type,
+      detail: s.type === 'auto1111'
+        ? 'Stable Diffusion API reachable'
+        : 'OpenAI-style API reachable; image model support is verified on generation',
+    };
+  } catch {
+    return { ok: false, url: s.url, type: s.type, detail: 'unreachable' };
+  }
+}
+
 const MIME: Record<string, string> = { png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', gif: 'image/gif', webp: 'image/webp', bmp: 'image/bmp', svg: 'image/svg+xml' };
 /** Allowed generated subtypes → cache-file extension (must match MIME above). */
 const EXT_FOR: Record<string, string> = { 'image/png': 'png', 'image/jpeg': 'jpg', 'image/jpg': 'jpg', 'image/gif': 'gif', 'image/webp': 'webp', 'image/bmp': 'bmp', 'image/svg+xml': 'svg' };
@@ -242,7 +269,7 @@ export function getImageServer(): ImageServerConfig | null {
 export async function imageModels(): Promise<string[]> {
   const out: string[] = [];
   const local = loadSettings().imageServer;
-  if (local?.url) out.push(`local:${local.type}`); // makes image generation available even with no API provider
+  if (local?.url && (await probeImageServer(local))?.ok) out.push(`local:${local.type}`);
   const prov = imageProvider();
   if (prov) {
     const key = resolveProviderKey(prov);

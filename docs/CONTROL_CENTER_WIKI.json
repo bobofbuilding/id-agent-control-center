@@ -2590,6 +2590,7 @@
         "idctl-desktop/src/main/system.ts",
         "idctl-desktop/src/main/subscriptions.ts",
         "idctl-desktop/src/main/ollama.ts",
+        "idctl-desktop/src/main/images.ts",
         "idctl-desktop/src/main/updater.ts",
         "idctl-desktop/src/tauri/adapter.ts",
         "idctl/src/api/controlCenterContract.ts",
@@ -2669,11 +2670,12 @@
         {
           "id": "image-server",
           "label": "Local image generator",
-          "description": "Configures an optional local-first image server URL and API style for chat image generation, with image-capable API backends as fallback. The URL input is an unsaved draft until Save succeeds, and Scan local checks Automatic1111/Forge plus configured loopback OpenAI-compatible providers before common image API defaults.",
+          "description": "Configures an optional local-first image server URL and API style for chat image generation, with image-capable API backends as fallback. The URL input is an unsaved draft until Save succeeds, saved preferences are probed separately from generation availability, unreachable saved servers render as fallback-needed, and Scan local checks Automatic1111/Forge plus configured loopback OpenAI-compatible providers before common image API defaults.",
           "routesInto": [
             "image:getServer",
             "image:setServer",
-            "image:detectServer"
+            "image:detectServer",
+            "image:probeServer"
           ]
         },
         {
@@ -4941,5 +4943,5 @@
       "body": "# Wiki\n\nWiki is both the human documentation page and the editable schematic for the Control Center UI. Each article explains the operator purpose of a page; the structured sections below preserve tabs, tiles, fields, controls, displays, routes, and source files for implementation detail.\n\n## Use it for\n\n- Search pages, controls, routes, source files, and notes from inside the desktop app.\n- Confirm how a UI surface is intended to behave before editing code or filing follow-up work.\n- Keep app navigation metadata and human documentation in one reviewed JSON artifact.\n\n## Editing rule\n\nThe desktop app hot-reload polls CONTROL_CENTER_WIKI.json through the main-process wiki bridge. Sidebar labels, icons, order, and visibility still come from pages[].nav for implemented routes, so documentation edits must preserve that metadata and keep every page.body non-empty."
     }
   ],
-  "appVersion": "0.1.487"
+  "appVersion": "0.1.488"
 }
