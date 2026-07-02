@@ -37,7 +37,7 @@ type HardwareInfo = { platform: string; arch: string; appleSilicon: boolean; cpu
 
 /** A discovered local server enriched by the bridge with whether it's already configured. */
 type Discovered = DiscoveredServer & { alreadyAdded: boolean };
-type LocalStackInstallStatus = { id: string; installed: boolean; source?: string; detail?: string; checkedAt: number };
+type LocalStackInstallStatus = { id: string; installed: boolean; source?: string; detail?: string; port?: number; checkedAt: number };
 type StackInstallDraft = { command: string; port?: number; originalPort?: number; baseUrl?: string; autoFixed?: boolean; note?: string };
 type DockerStatus = { installed: boolean; serverRunning: boolean; version?: string; serverVersion?: string; error?: string };
 
@@ -646,6 +646,13 @@ export function Settings({ store, navigate }: { store: FleetStore; navigate?: (v
     try {
       const status = await call<Record<string, LocalStackInstallStatus>>('stack:installStatus', TOP_LOCAL_STACKS.map((s) => s.id)).catch((): Record<string, LocalStackInstallStatus> => ({}));
       setStackInstallStatus(status);
+      setStackPortOverrides((prev) => {
+        const next = { ...prev };
+        for (const [id, row] of Object.entries(status)) {
+          if (row.port) next[id] = row.port;
+        }
+        return next;
+      });
       return status;
     } finally {
       setStackInstallChecking(false);
@@ -1567,6 +1574,8 @@ export function Settings({ store, navigate }: { store: FleetStore; navigate?: (v
       setTimeout(async () => {
         const status = await call<Record<string, LocalStackInstallStatus>>('stack:installStatus', [s.id]).catch((): Record<string, LocalStackInstallStatus> => ({}));
         setStackInstallStatus((prev) => ({ ...prev, ...status }));
+        const detectedPort = status[s.id]?.port;
+        if (detectedPort) setStackPortOverrides((prev) => ({ ...prev, [s.id]: detectedPort }));
         const installed = status[s.id]?.installed === true;
         if (action === 'install' && installed) {
           setStackMsg(`${s.name} installed. Start its local server, then Scan running to add it as a backend.`);
@@ -1592,6 +1601,8 @@ export function Settings({ store, navigate }: { store: FleetStore; navigate?: (v
     if (action === 'install' && stackUsesDockerCommand(cmd)) {
       const status = await call<Record<string, LocalStackInstallStatus>>('stack:installStatus', [s.id]).catch((): Record<string, LocalStackInstallStatus> => ({}));
       setStackInstallStatus((prev) => ({ ...prev, ...status }));
+      const detectedPort = status[s.id]?.port;
+      if (detectedPort) setStackPortOverrides((prev) => ({ ...prev, [s.id]: detectedPort }));
       if (status[s.id]?.installed) {
         setStackConfirm(null);
         setStackInstallDraft(s.id, null);

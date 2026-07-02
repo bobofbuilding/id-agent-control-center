@@ -47,6 +47,8 @@ export interface LocalStackInstallStatus {
   /** Evidence source that matches the uninstall command IDACC can review. */
   source?: string;
   detail?: string;
+  /** Host port mapped to the stack's primary API port, when detected from the package/container. */
+  port?: number;
   checkedAt: number;
 }
 
@@ -126,13 +128,30 @@ async function pipPackageInstalled(name: string): Promise<boolean> {
     commandOk('pip', ['show', name]);
 }
 
-async function dockerContainerState(name: string): Promise<string | null> {
+type DockerContainerInspect = {
+  State?: { Status?: string };
+  HostConfig?: { PortBindings?: Record<string, Array<{ HostIp?: string; HostPort?: string }>> };
+};
+
+async function dockerContainerInspect(name: string): Promise<DockerContainerInspect | null> {
   try {
-    const { stdout } = await execFileP('docker', ['container', 'inspect', name, '--format', '{{.State.Status}}'], { env: cliEnv(), timeout: 3000 });
-    return stdout.trim() || null;
+    const { stdout } = await execFileP('docker', ['container', 'inspect', name], { env: cliEnv(), timeout: 3000, maxBuffer: 1024 * 1024 });
+    const rows = JSON.parse(stdout) as DockerContainerInspect[];
+    return rows[0] ?? null;
   } catch {
     return null;
   }
+}
+
+function dockerContainerState(row: DockerContainerInspect | null): string | null {
+  return row?.State?.Status ?? null;
+}
+
+function dockerHostPort(row: DockerContainerInspect | null, containerPort: number): number | undefined {
+  const bindings = row?.HostConfig?.PortBindings?.[`${containerPort}/tcp`] ?? [];
+  const hit = bindings.find((binding) => binding.HostPort);
+  const port = Number(hit?.HostPort);
+  return Number.isInteger(port) && port > 0 && port < 65536 ? port : undefined;
 }
 
 export async function dockerStatus(): Promise<DockerStatus> {
@@ -192,9 +211,22 @@ export async function localStackInstallStatus(ids: string[]): Promise<Record<str
       installed = await pipPackageInstalled('vllm');
       source = installed ? 'pip package' : undefined;
     } else if (id === 'localai') {
-      const state = await dockerContainerState('local-ai');
+      const inspect = await dockerContainerInspect('local-ai');
+      const state = dockerContainerState(inspect);
+      const port = dockerHostPort(inspect, 8080);
       installed = !!state;
       source = installed ? `docker container${state ? ` (${state})` : ''}` : undefined;
+      out[id] = {
+        id,
+        installed,
+        source,
+        port,
+        detail: installed
+          ? `Detected ${source}${port ? ` on host port ${port}` : ''}; uninstall action matches this install path.`
+          : 'No matching package/container install evidence found.',
+        checkedAt,
+      };
+      continue;
     }
     out[id] = {
       id,
