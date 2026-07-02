@@ -2,7 +2,7 @@ import { Fragment, useEffect, useState } from 'react';
 import { call, type FleetStore } from '../store.ts';
 import { defaultBaseUrl, type EvmRpcKeySource, type EvmRpcProfile, type EvmRpcRequest, type ProviderKind, type ProviderProfile } from '../../../../idctl/src/settings/schema.ts';
 import type { ProbeOutcome } from '../../../../idctl/src/settings/ProviderClient.ts';
-import type { DiscoveredServer } from '../../../../idctl/src/settings/localDiscovery.ts';
+import type { DiscoveredServer, LocalServerCandidate } from '../../../../idctl/src/settings/localDiscovery.ts';
 import { PROVIDER_CATALOG, findProvider, providerNeedsKey } from '../../../../idctl/src/settings/providerCatalog.ts';
 import { TOP_LOCAL_MODEL_CATALOG, type ModelCapability, type LocalModelEntry } from '../../../../idctl/src/settings/modelCatalog.ts';
 import { TOP_LOCAL_STACKS, type LocalStackEntry } from '../../../../idctl/src/settings/localStacks.ts';
@@ -27,6 +27,8 @@ const LOCAL_PROVIDER_STACK_IDS: Record<string, string> = {
   vllm: 'vllm',
   llamacpp: 'llama-cpp',
   localai: 'localai',
+  'mlx-lm-server': 'mlx-lm-server',
+  tgi: 'tgi',
   jan: 'jan',
 };
 
@@ -36,6 +38,7 @@ type HardwareInfo = { platform: string; arch: string; appleSilicon: boolean; cpu
 /** A discovered local server enriched by the bridge with whether it's already configured. */
 type Discovered = DiscoveredServer & { alreadyAdded: boolean };
 type LocalStackInstallStatus = { id: string; installed: boolean; source?: string; detail?: string; checkedAt: number };
+type StackInstallDraft = { command: string; port?: number; originalPort?: number; baseUrl?: string; autoFixed?: boolean; note?: string };
 
 const API_KINDS: ProviderKind[] = ['openai-compatible', 'openai', 'anthropic'];
 
@@ -647,7 +650,7 @@ export function Settings({ store, navigate }: { store: FleetStore; navigate?: (v
     setDiscovering(true);
     try {
       const [found] = await Promise.all([
-        call<Discovered[]>('providers:discover').catch(() => []),
+        call<Discovered[]>('providers:discover', stackExtraDiscoveryCandidates()).catch(() => []),
         checkStackInstalls(),
       ]);
       const autoAddedUrls = opts.autoAddKnownStacks ? await autoAddKnownStackBackends(found) : new Set<string>();
@@ -763,15 +766,16 @@ export function Settings({ store, navigate }: { store: FleetStore; navigate?: (v
     }
   }
   async function addStackBackend(s: LocalStackEntry) {
-    if (!s.apiBase) {
+    const apiBase = stackApiBase(s);
+    if (!apiBase) {
       setStackMsg(`${s.name} does not expose an addable local API preset.`);
       return;
     }
     setStackMsg(`checking ${s.name} before adding backend…`);
     const fresh = await runDiscover();
-    const match = fresh.find((x) => normUrl(x.baseUrl) === normUrl(s.apiBase ?? ''));
+    const match = fresh.find((x) => normUrl(x.baseUrl) === normUrl(apiBase));
     if (!match || match.status !== 'live') {
-      setStackMsg(`${s.name} is installed, but no live server answered at ${s.apiBase}. Start its server, then scan again.`);
+      setStackMsg(`${s.name} is installed, but no live server answered at ${apiBase}. Start its server, then scan again.`);
       return;
     }
     await addDiscovered(match);
@@ -792,6 +796,8 @@ export function Settings({ store, navigate }: { store: FleetStore; navigate?: (v
   const [confirmRemove, setConfirmRemove] = useState<string | null>(null);
   const [removing, setRemoving] = useState<string | null>(null);
   const [stackConfirm, setStackConfirm] = useState<string | null>(null);
+  const [stackInstallDrafts, setStackInstallDrafts] = useState<Record<string, StackInstallDraft>>({});
+  const [stackPortOverrides, setStackPortOverrides] = useState<Record<string, number>>({});
   const [stackMsg, setStackMsg] = useState('');
 
   // How many local-model (ollama) queries the manager runs at once. Cloud runtimes
@@ -1187,8 +1193,112 @@ export function Settings({ store, navigate }: { store: FleetStore; navigate?: (v
     const c = stackCommand(s.uninstall);
     return c && RUNNABLE_RE.test(c) ? c : null;
   }
+  function portFromBaseUrl(u?: string): number | null {
+    if (!u) return null;
+    try {
+      const url = new URL(u);
+      if (url.port) return Number(url.port);
+      if (url.protocol === 'http:') return 80;
+      if (url.protocol === 'https:') return 443;
+      return null;
+    } catch {
+      return null;
+    }
+  }
+  function withBaseUrlPort(baseUrl: string, port: number): string {
+    try {
+      const url = new URL(baseUrl);
+      url.hostname = url.hostname === 'localhost' ? '127.0.0.1' : url.hostname;
+      url.port = String(port);
+      return url.toString().replace(/\/+$/, '');
+    } catch {
+      return baseUrl;
+    }
+  }
+  function stackPortOverride(s: LocalStackEntry): number | undefined {
+    return stackInstallDrafts[s.id]?.port ?? stackPortOverrides[s.id];
+  }
+  function stackApiBase(s: LocalStackEntry): string | undefined {
+    if (!s.apiBase) return undefined;
+    const override = stackPortOverride(s);
+    return override ? withBaseUrlPort(s.apiBase, override) : s.apiBase;
+  }
+  function stackInstallEffectiveCmd(s: LocalStackEntry): string | null {
+    return stackInstallDrafts[s.id]?.command ?? stackInstallCmd(s);
+  }
+  function stackProviderId(s: LocalStackEntry): string {
+    return Object.entries(LOCAL_PROVIDER_STACK_IDS).find(([, stackId]) => stackId === s.id)?.[0] ?? s.id;
+  }
+  function stackExtraDiscoveryCandidate(s: LocalStackEntry): LocalServerCandidate | null {
+    const port = stackPortOverride(s);
+    const apiBase = stackApiBase(s);
+    if (!port || !apiBase || !['ollama', 'lmstudio', 'openai-compatible'].includes(s.apiKind)) return null;
+    return {
+      id: stackProviderId(s),
+      name: s.name,
+      kind: s.apiKind as ProviderKind,
+      baseUrl: apiBase,
+      port,
+      popularity: 'medium',
+      notes: 'Operator-selected alternate port from Local LLM stack install review.',
+    };
+  }
+  function stackExtraDiscoveryCandidates(): LocalServerCandidate[] {
+    return TOP_LOCAL_STACKS
+      .map(stackExtraDiscoveryCandidate)
+      .filter((x): x is LocalServerCandidate => Boolean(x));
+  }
+  function suggestFreeStackPort(port: number): number | undefined {
+    const configuredPorts = providers.map(providerPort).filter((p): p is number => typeof p === 'number');
+    const catalogPorts = TOP_LOCAL_STACKS.flatMap((row) => {
+      const ports = new Set<number>();
+      if (row.defaultPort) ports.add(row.defaultPort);
+      const apiPort = portFromBaseUrl(row.apiBase);
+      if (apiPort) ports.add(apiPort);
+      const cmd = stackCommand(row.install);
+      for (const match of cmd.matchAll(/\s-p\s+(?:(?:\d{1,3}\.){3}\d{1,3}:)?(\d+):\d+/g)) ports.add(Number(match[1]));
+      for (const match of cmd.matchAll(/(?:--port|--tcp)\s+(\d+)/g)) ports.add(Number(match[1]));
+      return [...ports];
+    });
+    const blocked = new Set<number>([...runningPorts, ...configuredPorts, ...catalogPorts, ...Object.values(stackPortOverrides)]);
+    for (let next = port + 1; next < Math.min(65535, port + 100); next += 1) {
+      if (!blocked.has(next)) return next;
+    }
+    return undefined;
+  }
+  function rewriteStackCommandPort(command: string, fromPort: number, toPort: number): { command: string; changed: boolean } {
+    const escaped = String(fromPort).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    let next = command;
+    next = next.replace(new RegExp(`(\\s-p\\s+)((?:(?:\\d{1,3}\\.){3}\\d{1,3}:)?)${escaped}:(\\d+)`, 'g'), `$1$2${toPort}:$3`);
+    next = next.replace(new RegExp(`(--port\\s+)${escaped}\\b`, 'g'), `$1${toPort}`);
+    next = next.replace(new RegExp(`(--tcp\\s+)${escaped}\\b`, 'g'), `$1${toPort}`);
+    return { command: next, changed: next !== command };
+  }
+  function stackInstallAutoFix(s: LocalStackEntry, port: number): StackInstallDraft | null {
+    const command = stackInstallCmd(s);
+    const suggested = suggestFreeStackPort(port);
+    if (!command || !suggested) return null;
+    const rewritten = rewriteStackCommandPort(command, port, suggested);
+    if (!rewritten.changed) return null;
+    return {
+      command: rewritten.command,
+      port: suggested,
+      originalPort: port,
+      baseUrl: s.apiBase ? withBaseUrlPort(s.apiBase, suggested) : undefined,
+      autoFixed: true,
+      note: `Auto-adjusted ${s.name} from port ${port} to ${suggested}.`,
+    };
+  }
+  function setStackInstallDraft(id: string, draft: StackInstallDraft | null) {
+    setStackInstallDrafts((prev) => {
+      const next = { ...prev };
+      if (draft) next[id] = draft;
+      else delete next[id];
+      return next;
+    });
+  }
   function stackConfiguredProviders(s: LocalStackEntry): ProviderRow[] {
-    const apiBase = s.apiBase ? normUrl(s.apiBase) : null;
+    const apiBase = stackApiBase(s) ? normUrl(stackApiBase(s) ?? '') : null;
     return providers.filter((p) => apiBase && normUrl(p.baseUrl) === apiBase);
   }
   function stackClaimedPorts(s: LocalStackEntry): number[] {
@@ -1197,14 +1307,9 @@ export function Settings({ store, navigate }: { store: FleetStore; navigate?: (v
       const n = typeof value === 'number' ? value : Number(value);
       if (Number.isInteger(n) && n > 0 && n < 65536) ports.add(n);
     };
-    addPort(s.defaultPort);
-    if (s.apiBase) {
-      try {
-        const u = new URL(s.apiBase);
-        addPort(u.port || (u.protocol === 'http:' ? 80 : u.protocol === 'https:' ? 443 : null));
-      } catch { /* ignore catalog display hints that are not parseable URLs */ }
-    }
-    const install = stackCommand(s.install);
+    addPort(stackPortOverride(s) ?? s.defaultPort);
+    addPort(portFromBaseUrl(stackApiBase(s)));
+    const install = stackInstallEffectiveCmd(s) ?? stackCommand(s.install);
     for (const match of install.matchAll(/\s-p\s+(?:(?:\d{1,3}\.){3}\d{1,3}:)?(\d+):\d+/g)) addPort(match[1]);
     for (const match of install.matchAll(/(?:--port|--tcp)\s+(\d+)/g)) addPort(match[1]);
     return [...ports].sort((a, b) => a - b);
@@ -1264,20 +1369,34 @@ export function Settings({ store, navigate }: { store: FleetStore; navigate?: (v
     return `use port ${suggested} when starting this server`;
   }
   function reviewStackInstall(s: LocalStackEntry) {
+    const command = stackInstallCmd(s);
+    if (!command) return;
     const conflicts = stackPortConflicts(s);
     const shared = stackSharedPorts(s);
+    const hardPorts = [...new Set([...conflicts.live, ...conflicts.configured.map((hit) => hit.port)])];
+    const softPorts = shared.map((hit) => hit.port);
+    const fixPort = hardPorts[0] ?? softPorts[0];
+    const fixedDraft = fixPort ? stackInstallAutoFix(s, fixPort) : null;
     const warnings = [
       conflicts.live.length ? `Live server detected on port ${conflicts.live.join(', ')}; stop it or edit the Terminal command to use another port.` : '',
       ...conflicts.configured.map((hit) => `Configured inference backend on port ${hit.port}: ${hit.names.join(', ')}.`),
       ...shared.map((hit) => `Port ${hit.port} is also used by ${hit.names.join(', ')}; run only one on that port or ${stackPortEditHint(s, hit.port, hit.suggested)}.`),
     ].filter(Boolean);
+    const draft = fixedDraft ?? { command };
+    const fixLines = fixedDraft ? [
+      '',
+      `IDACC will use a conflict-safe command: port ${fixedDraft.originalPort} → ${fixedDraft.port}.`,
+      fixedDraft.baseUrl ? `Backend URL after scan/add: ${fixedDraft.baseUrl}` : '',
+    ].filter(Boolean) : [];
     if (warnings.length && !window.confirm([
       `Review install for ${s.name}?`,
       '',
       ...warnings.map((w) => `- ${w}`),
+      ...fixLines,
       '',
       'The command will open visibly in Terminal and can be edited or cancelled there.',
     ].join('\n'))) return;
+    setStackInstallDraft(s.id, draft);
     setStackConfirm(`i:${s.id}`);
   }
   async function reviewStackUninstall(s: LocalStackEntry, running: boolean, configuredProviders: ProviderRow[]) {
@@ -1321,18 +1440,23 @@ export function Settings({ store, navigate }: { store: FleetStore; navigate?: (v
     });
   }
   async function runStackCmd(s: LocalStackEntry, action: 'install' | 'uninstall' = 'install') {
-    const cmd = action === 'install' ? stackInstallCmd(s) : stackUninstallCmd(s);
+    const draft = action === 'install' ? stackInstallDrafts[s.id] : undefined;
+    const cmd = action === 'install' ? (draft?.command ?? stackInstallCmd(s)) : stackUninstallCmd(s);
     if (!cmd) return;
     setStackConfirm(null);
     const r = await call<{ ran: boolean }>('app:runInTerminal', cmd).catch(() => ({ ran: false }));
+    if (action === 'install') {
+      if (draft?.port) setStackPortOverrides((prev) => ({ ...prev, [s.id]: draft.port as number }));
+      setStackInstallDraft(s.id, null);
+    }
     if (r.ran) {
       setStackMsg(action === 'install'
-        ? `opened Terminal to install ${s.name}. Install only adds the app/server; start it before adding a backend.`
+        ? `opened Terminal to install ${s.name}${draft?.port ? ` on port ${draft.port}` : ''}. Install only adds the app/server; start it before adding a backend.`
         : `opened Terminal to uninstall ${s.name}. Review and stop it there if anything looks wrong.`);
       scheduleStackInstallChecks(s, action);
     } else {
       await copyText(cmd);
-      setStackMsg(`Terminal automation was blocked — ${action} command copied to clipboard`);
+      setStackMsg(`Terminal automation was blocked — ${action} command copied to clipboard${draft?.port ? ` with port ${draft.port}` : ''}`);
     }
   }
   /** Port conflict display separates hard evidence (live/configured) from lighter shared-default risk. */
@@ -1884,9 +2008,12 @@ export function Settings({ store, navigate }: { store: FleetStore; navigate?: (v
             const running = stackClaimedPorts(s).some((port) => runningPorts.has(port));
             const pw = stackPortWarn(s);
             const ic = stackInstallCmd(s);
+            const installDraft = stackInstallDrafts[s.id];
+            const installCommand = installDraft?.command ?? ic;
             const uc = stackUninstallCmd(s);
             const installStatus = stackInstallStatus[s.id];
             const stackInstalled = installStatus?.installed === true;
+            const effectiveApiBase = stackApiBase(s);
             const configuredProviders = stackConfiguredProviders(s);
             const configured = configuredProviders.length > 0;
             const confirmInstall = stackConfirm === `i:${s.id}`;
@@ -1914,11 +2041,12 @@ export function Settings({ store, navigate }: { store: FleetStore; navigate?: (v
                 <p className="muted small stack-blurb">{s.blurb}</p>
                 {s.installNote ? <p className="muted small stack-blurb">{s.installNote}</p> : null}
                 <div className="stack-install">
-                  {confirmInstall && ic && !stackInstalled ? (
+                  {confirmInstall && installCommand && !stackInstalled ? (
                     <>
-                      <code className="mono">{ic}</code>
+                      <code className="mono" title={installDraft?.note}>{installCommand}</code>
+                      {installDraft?.autoFixed ? <span className="small ok-text">auto-fixed port {installDraft.originalPort} → {installDraft.port}</span> : null}
                       <button className={`btn small${stackPrimaryAction(s) ? ' primary' : ''}`} title="Runs in your Terminal — visible and abortable" onClick={() => void runStackCmd(s, 'install')}>Run install</button>
-                      <button className="btn small" onClick={() => setStackConfirm(null)}>Cancel</button>
+                      <button className="btn small" onClick={() => { setStackConfirm(null); setStackInstallDraft(s.id, null); }}>Cancel</button>
                     </>
                   ) : confirmUninstall && uc && stackInstalled ? (
                     <>
@@ -1933,8 +2061,8 @@ export function Settings({ store, navigate }: { store: FleetStore; navigate?: (v
                       ) : !stackInstalled ? (
                         <a className="btn small" href={s.homepage} target="_blank" rel="noreferrer" title="No CLI install — opens the download page">Get ↗</a>
                       ) : null}
-                      {running && !configured && s.apiBase ? (
-                        <button className="btn small primary" title={`Add ${s.apiBase} as an inference backend after a fresh scan`} onClick={() => void addStackBackend(s)}>Add backend</button>
+                      {running && !configured && effectiveApiBase ? (
+                        <button className="btn small primary" title={`Add ${effectiveApiBase} as an inference backend after a fresh scan`} onClick={() => void addStackBackend(s)}>Add backend</button>
                       ) : null}
                       {configuredProviders.length === 1 ? (
                         <button className="btn small" title={`Remove inference backend ${configuredProviders[0].name}; does not uninstall the app/server`} onClick={() => void removeProviderProfile(configuredProviders[0].name)}>Remove backend</button>

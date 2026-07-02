@@ -9,7 +9,7 @@
 import { inspectLibraryPluginMetadata, ManagerClient } from '../../../idctl/src/api/client.ts';
 import type { Agent } from '../../../idctl/src/api/types.ts';
 import { ProviderClient } from '../../../idctl/src/settings/ProviderClient.ts';
-import { discoverLocalServers, type DiscoveredServer } from '../../../idctl/src/settings/localDiscovery.ts';
+import { discoverLocalServers, mergeLocalDiscoveryCandidates, type DiscoveredServer } from '../../../idctl/src/settings/localDiscovery.ts';
 import { SCOPE_PRESETS, TTL_PRESETS } from '../../../idctl/src/keys/types.ts';
 import type { AgentAccount, KeyAuthorityTarget, LegacyKeyAuthority, SessionKey } from '../../../idctl/src/keys/types.ts';
 import { defaultHeadroomPilotSettings, type HeadroomPilotSettings, type ProviderProfile, type McpServerProfile, type ProjectEntry } from '../../../idctl/src/settings/schema.ts';
@@ -1020,8 +1020,8 @@ const M: Record<string, (...a: any[]) => Promise<unknown>> = {
     lsSet('idctl.providers', list);
     return { providers: enrichProviders(list), outcome };
   },
-  'providers:discover': async () => {
-    const found = await discoverLocalServers();
+  'providers:discover': async (extraCandidates?: unknown) => {
+    const found = await discoverLocalServers({ candidates: mergeLocalDiscoveryCandidates(extraCandidates) });
     const norm = (u: string) => u.trim().toLowerCase().replace('://localhost', '://127.0.0.1').replace(/\/+$/, '');
     const have = new Set(lsGet<ProviderProfile[]>('idctl.providers', []).map((p) => norm(p.baseUrl)));
     return found.map((s: DiscoveredServer) => ({ ...s, alreadyAdded: have.has(norm(s.baseUrl)) }));

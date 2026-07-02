@@ -20,6 +20,9 @@
 import { ProviderClient, type ProbeStatus } from './ProviderClient.ts';
 import type { ProviderKind, ProviderProfile } from './schema.ts';
 
+const EXTRA_DISCOVERY_LIMIT = 12;
+const LOCAL_DISCOVERY_KINDS = new Set<ProviderKind>(['ollama', 'lmstudio', 'openai-compatible']);
+
 export interface LocalServerCandidate {
   /** Stable kebab-case id (also the suggested provider name). */
   id: string;
@@ -86,6 +89,62 @@ export const LOCAL_DISCOVERY_CANDIDATES: LocalServerCandidate[] = [
   { id: 'cortex-jan', name: 'Cortex (Jan-embedded)', kind: 'openai-compatible', baseUrl: 'http://127.0.0.1:39291/v1', port: 39291, popularity: 'low' },
   { id: 'litellm', name: 'LiteLLM proxy', kind: 'openai-compatible', baseUrl: 'http://127.0.0.1:4000/v1', port: 4000, popularity: 'low', needsKey: true },
 ];
+
+function discoveryKey(c: LocalServerCandidate): string {
+  return `${c.kind}|${c.baseUrl.toLowerCase().replace('://localhost', '://127.0.0.1').replace(/\/+$/, '')}`;
+}
+
+function localPortFromUrl(baseUrl: string): { ok: true; port: number; normalized: string } | { ok: false } {
+  try {
+    const u = new URL(baseUrl);
+    if (u.protocol !== 'http:') return { ok: false };
+    if (!['127.0.0.1', 'localhost', '[::1]', '::1'].includes(u.hostname)) return { ok: false };
+    const port = Number(u.port || 80);
+    if (!Number.isInteger(port) || port <= 0 || port >= 65536) return { ok: false };
+    u.hostname = '127.0.0.1';
+    return { ok: true, port, normalized: u.toString().replace(/\/+$/, '') };
+  } catch {
+    return { ok: false };
+  }
+}
+
+function sanitizeExtraCandidate(raw: unknown): LocalServerCandidate | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const row = raw as Partial<LocalServerCandidate>;
+  const id = typeof row.id === 'string' && /^[a-z0-9][a-z0-9-]{0,63}$/i.test(row.id) ? row.id : '';
+  const name = typeof row.name === 'string' && row.name.trim() ? row.name.trim().slice(0, 96) : id;
+  const kind = row.kind;
+  const url = typeof row.baseUrl === 'string' ? localPortFromUrl(row.baseUrl.trim()) : { ok: false as const };
+  if (!id || !name || !kind || !LOCAL_DISCOVERY_KINDS.has(kind) || !url.ok) return null;
+  const port = Number(row.port ?? url.port);
+  if (!Number.isInteger(port) || port !== url.port) return null;
+  return {
+    id,
+    name,
+    kind,
+    baseUrl: url.normalized,
+    port,
+    popularity: ['high', 'medium', 'low', 'niche'].includes(String(row.popularity)) ? row.popularity as LocalServerCandidate['popularity'] : 'medium',
+    needsKey: row.needsKey === true,
+    sharesPortWith: Array.isArray(row.sharesPortWith) ? row.sharesPortWith.map(String).filter(Boolean).slice(0, 8) : undefined,
+    notes: typeof row.notes === 'string' ? row.notes.slice(0, 240) : undefined,
+  };
+}
+
+export function mergeLocalDiscoveryCandidates(extra?: unknown): LocalServerCandidate[] {
+  const merged: LocalServerCandidate[] = [...LOCAL_DISCOVERY_CANDIDATES];
+  const seen = new Set(merged.map(discoveryKey));
+  const rows = Array.isArray(extra) ? extra.slice(0, EXTRA_DISCOVERY_LIMIT) : [];
+  for (const raw of rows) {
+    const candidate = sanitizeExtraCandidate(raw);
+    if (!candidate) continue;
+    const key = discoveryKey(candidate);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    merged.push(candidate);
+  }
+  return merged;
+}
 
 /** Build a throwaway profile so we can reuse ProviderClient's probe logic. */
 function candidateProfile(c: LocalServerCandidate): ProviderProfile {

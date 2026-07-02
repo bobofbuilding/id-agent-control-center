@@ -46,7 +46,7 @@ import { detectProjectsRoot, scanProjectsRoot } from './projects.ts';
 import { realpathSync } from 'node:fs';
 import { createHash, randomBytes } from 'node:crypto';
 import { ProviderClient } from '../../../idctl/src/settings/ProviderClient.ts';
-import { discoverLocalServers, type DiscoveredServer } from '../../../idctl/src/settings/localDiscovery.ts';
+import { discoverLocalServers, mergeLocalDiscoveryCandidates, type DiscoveredServer } from '../../../idctl/src/settings/localDiscovery.ts';
 import { type HeadroomPilotSettings, type ProviderProfile, type McpServerProfile, type ProjectEntry } from '../../../idctl/src/settings/schema.ts';
 import { providerNeedsKey } from '../../../idctl/src/settings/providerCatalog.ts';
 import { buildProviderModelLanes, buildRuntimeCatalog, RUNTIMES, providerKindToRuntimes, isLocalProvider, settingsAvailableRuntimeSet, type RuntimeModelLaneKind } from '../../../idctl/src/settings/runtimeCatalog.ts';
@@ -1386,8 +1386,8 @@ const METHODS: Record<string, (...a: any[]) => Promise<unknown>> = {
   },
   // Scan localhost for running LLM servers and flag which are already configured
   // (matched by normalized baseUrl, so adding the same server twice is avoided).
-  'providers:discover': async () => {
-    const found = await discoverLocalServers();
+  'providers:discover': async (extraCandidates?: unknown) => {
+    const found = await discoverLocalServers({ candidates: mergeLocalDiscoveryCandidates(extraCandidates) });
     const have = new Set(loadSettings().providers.map((p) => normUrl(p.baseUrl)));
     return found.map((s: DiscoveredServer) => ({ ...s, alreadyAdded: have.has(normUrl(s.baseUrl)) }));
   },
