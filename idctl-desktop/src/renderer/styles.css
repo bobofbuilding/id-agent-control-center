@@ -266,6 +266,11 @@ button.chip.incompat:hover { border-color: var(--line); }
 .skill-catalog { display: flex; flex-direction: column; gap: 8px; margin-top: 10px; }
 .skill-card { border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; background: var(--bg-2); }
 .skill-card-head { display: flex; align-items: center; gap: 8px; }
+.skill-agent-live { display: flex; flex-direction: column; gap: 6px; margin: 8px 0; padding: 8px 10px; border: 1px solid var(--line); border-radius: 8px; background: color-mix(in srgb, var(--bg-3) 56%, transparent); }
+.skill-agent-live-row,
+.skill-recommendations { display: flex; align-items: center; gap: 7px; flex-wrap: wrap; }
+.skill-agent-select { min-width: 240px; max-width: 420px; flex: 0 1 360px; }
+.skill-rec-chip { cursor: pointer; }
 .plans-toolbar { display: flex; flex-direction: column; gap: 8px; }
 .plans-toolbar-main,
 .plans-filter-row,

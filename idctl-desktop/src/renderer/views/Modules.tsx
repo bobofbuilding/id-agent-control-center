@@ -1,5 +1,5 @@
 import { Fragment, useEffect, useMemo, useState } from 'react';
-import { call, type FleetStore } from '../store.ts';
+import { call, useSyncVersion, type FleetStore } from '../store.ts';
 import type { LibrarySkillEntry, LibraryPluginEntry, LibraryPluginInspection, McpServerSpec, SetMcpResult, CreateSkillInput, ProjectPluginSkillResult } from '../../../../idctl/src/api/client.ts';
 import {
   type McpServerProfile,
@@ -21,6 +21,7 @@ const TRANSPORTS: McpTransport[] = ['stdio', 'http', 'sse'];
 interface TestResult { ok?: boolean; tools?: string[]; error?: string; testing?: boolean }
 type TargetAgent = Agent & { team?: string };
 type TeamAgentsGroup = { team: string; agents: Agent[] };
+type SkillAgentRecommendation = { agent: TargetAgent; score: number; reasons: string[]; installed: boolean };
 type PluginRow = LibraryPluginEntry & Partial<LibraryPluginInspection> & { packageSource: string; bundledPortable?: boolean };
 type BrainSkillStats = { totalSkills?: number; chainable?: number; nonChainable?: number; domains?: number; tags?: number; averageComputeCost?: number | null; maxUseCount?: number };
 type BrainSkillFacet = { domain?: string; tag?: string; name?: string; count?: number };
@@ -128,6 +129,14 @@ type BrainDashboardTabSpec = {
 };
 type LiveFleetTotals = { total: number; running: number };
 type BrainDashboardReviewMap = Partial<Record<BrainDashboardTab, string | null | undefined>>;
+
+const SKILL_ROLE_RULES: Array<{ role: string[]; skill: string[]; reason: string }> = [
+  { role: ['lead', 'coordinator', 'manager', 'ops', 'operations', 'hr'], skill: ['coordination', 'workflow', 'communication', 'messaging', 'planning', 'admin', 'routing'], reason: 'coordination role' },
+  { role: ['coder', 'code', 'engineer', 'frontend', 'backend', 'implementation'], skill: ['coding', 'deployment', 'documentation', 'testing', 'plugin', 'registry', 'workflow'], reason: 'engineering role' },
+  { role: ['research', 'researcher', 'analyst', 'knowledge'], skill: ['research', 'knowledge', 'documentation', 'catalog', 'learning'], reason: 'research role' },
+  { role: ['onchain', 'chain', 'wallet', 'settlement', 'token', 'economist'], skill: ['onchain', 'wallet', 'marketplace', 'identity', 'token'], reason: 'onchain role' },
+  { role: ['security', 'legal', 'counsel', 'policy'], skill: ['identity', 'admin', 'documentation', 'security', 'policy'], reason: 'governance role' },
+];
 
 const BRAIN_DASHBOARD_TABS: BrainDashboardTabSpec[] = [
   { tab: 'fleet', label: 'Fleet', path: '/dashboard' },
@@ -668,6 +677,7 @@ export function Modules({ store }: { store: FleetStore }) {
   // the catalog display + tag search for skills whose SKILL.md has no tags).
   const [autoTags, setAutoTags] = useState<Record<string, string[]>>({});
   const [categorizing, setCategorizing] = useState(false);
+  const [skillCatalogRefreshing, setSkillCatalogRefreshing] = useState(false);
   const [brainSkills, setBrainSkills] = useState<BrainSkillSummary>(null);
   const [brainCore, setBrainCore] = useState<BrainCoreHealthReport>(null);
   const [brainAgents, setBrainAgents] = useState<BrainAgentsReport>(null);
@@ -679,6 +689,7 @@ export function Modules({ store }: { store: FleetStore }) {
   const [pluginInspections, setPluginInspections] = useState<LibraryPluginInspection[]>([]);
   const [busy, setBusy] = useState(false);
   const [note, setNote] = useState<string>('');
+  const modulesVersion = useSyncVersion('modules');
   const [tab, setTab] = useState<CapabilityTab>(() => {
     const t = new URLSearchParams(window.location.search).get('tab');
     return t === 'skills' || t === 'plugins' ? t : 'mcp';
@@ -748,6 +759,50 @@ export function Modules({ store }: { store: FleetStore }) {
   function skillCount(skill: string): number {
     return targetAgents.filter((a) => (((a.metadata as any)?.skills ?? []) as string[]).includes(skill)).length;
   }
+  function agentSkillList(a: { metadata?: unknown }): string[] {
+    return (((a.metadata as any)?.skills ?? []) as string[]).map(String);
+  }
+  function agentHasSkill(a: { metadata?: unknown }, skill: string): boolean {
+    return agentSkillList(a).includes(skill);
+  }
+  function skillAgentKey(a: TargetAgent): string {
+    return `${targetTeamOf(a)}:${a.id || a.name}`;
+  }
+  function skillAgentLabel(a: TargetAgent): string {
+    return `${targetTeamOf(a)}/${a.name}`;
+  }
+  function agentRoleText(a: TargetAgent): string {
+    const meta = (a.metadata ?? {}) as Record<string, unknown>;
+    const values = [
+      targetTeamOf(a),
+      a.name,
+      a.alias,
+      a.type,
+      agentRuntime(a),
+      meta.description,
+      meta.role,
+      meta.persona,
+      meta.instructions,
+    ];
+    return values
+      .filter((v): v is string => typeof v === 'string' && v.length > 0)
+      .join(' ')
+      .toLowerCase();
+  }
+  const skillAttachAgents = useMemo<TargetAgent[]>(() => {
+    const source = store.allAgents.length
+      ? store.allAgents
+      : store.agents.map((a) => ({ ...a, team: activeTeam }));
+    const byKey = new Map<string, TargetAgent>();
+    for (const a of source) {
+      const item: TargetAgent = { ...a, team: a.team ?? activeTeam };
+      byKey.set(skillAgentKey(item), item);
+    }
+    return [...byKey.values()].sort((a, b) => skillAgentLabel(a).localeCompare(skillAgentLabel(b)));
+  }, [store.allAgents, store.agents, activeTeam]);
+  function findSkillAttachAgent(key: string): TargetAgent | null {
+    return skillAttachAgents.find((a) => skillAgentKey(a) === key) ?? null;
+  }
 
   // add-MCP: catalog-driven (default) + custom (advanced)
   const [catId, setCatId] = useState<string>(MCP_CATALOG[0]?.id ?? '');
@@ -813,7 +868,34 @@ export function Modules({ store }: { store: FleetStore }) {
   }
   useEffect(() => {
     reload();
-  }, [store.team, store.lastUpdated]);
+  }, [store.team, store.lastUpdated, modulesVersion]);
+
+  async function refreshSkillCatalog() {
+    setSkillCatalogRefreshing(true);
+    setNote('refreshing skill catalog…');
+    try {
+      const before = skillCatalogStamp(skills, autoTags);
+      const [latestSkills, latestTags, latestBrain] = await Promise.all([
+        call<LibrarySkillEntry[]>('librarySkills').catch(() => skills),
+        call<Record<string, string[]>>('skills:autoTags').catch(() => autoTags),
+        call<BrainSkillSummary>('skills:brainSummary').catch(() => brainSkills),
+      ]);
+      const after = skillCatalogStamp(latestSkills, latestTags);
+      setSkills(latestSkills);
+      setAutoTags(latestTags);
+      setBrainSkills(latestBrain);
+      if (after !== before) {
+        setBrainDrift({ kind: 'retagged', skill: 'skill catalog', at: Date.now() });
+        setNote(`skill catalog refreshed: ${latestSkills.length} local skills · review Brain sync`);
+      } else {
+        setNote(`skill catalog current: ${latestSkills.length} local skills`);
+      }
+    } catch (err) {
+      setNote(`skill refresh failed: ${err instanceof Error ? err.message : String(err)}`);
+    } finally {
+      setSkillCatalogRefreshing(false);
+    }
+  }
 
   // Auto-categorize on load: any skill with neither frontmatter tags nor a cached
   // overlay gets tagged via one batch AI call (heuristic fallback), cached so it
@@ -1148,6 +1230,7 @@ export function Modules({ store }: { store: FleetStore }) {
 
   // ---- Skills catalog: search + tag filtering ----------------------------
   const [skillQuery, setSkillQuery] = useState('');
+  const [skillAgentDrafts, setSkillAgentDrafts] = useState<Record<string, string>>({});
   const [tagFilter, setTagFilter] = useState<Set<string>>(new Set());
   const allTags = useMemo(() => {
     const set = new Set<string>();
@@ -1224,6 +1307,8 @@ export function Modules({ store }: { store: FleetStore }) {
       setNote(`created skill ${entry.name} ✓ — now in the catalog`);
       setNs(blankSkill);
       setShowCreate(false);
+      setSkillQuery(entry.name);
+      setTagFilter(new Set());
       await reload();
       setBrainDrift({ kind: 'created', skill: entry.name, at: Date.now() });
     } catch (err) {
@@ -1251,6 +1336,8 @@ export function Modules({ store }: { store: FleetStore }) {
       const result = await call<ProjectPluginSkillResult>('projectPluginSkill', plugin.name);
       const skillName = result.entry?.name ?? plugin.name;
       setNote(`digested plugin ${plugin.name} into skill ${skillName} ✓ — sync Brain when ready`);
+      setSkillQuery(skillName);
+      setTagFilter(new Set());
       await reload();
       setBrainDrift({ kind: 'created', skill: skillName, at: Date.now() });
     } catch (err) {
@@ -1312,6 +1399,97 @@ export function Modules({ store }: { store: FleetStore }) {
     return groups
       .flatMap((g) => g.agents.map((a) => ({ ...a, team: g.team })))
       .filter((a) => (((a.metadata as any)?.skills ?? []) as string[]).includes(skill));
+  }
+  function skillTagsFor(skill: LibrarySkillEntry): string[] {
+    return [...new Set([...(skill.tags ?? []), ...(autoTags[skill.name] ?? [])].map(String).filter(Boolean))];
+  }
+  function skillSearchText(skill: LibrarySkillEntry): string {
+    return [skill.name, skill.description ?? '', ...skillTagsFor(skill)].join(' ').toLowerCase();
+  }
+  function skillTokens(skill: LibrarySkillEntry): string[] {
+    return [...new Set(skillSearchText(skill).split(/[^a-z0-9]+/).filter((t) => t.length >= 4))];
+  }
+  function skillRecommendations(skill: LibrarySkillEntry): SkillAgentRecommendation[] {
+    const skillText = skillSearchText(skill);
+    const tokens = skillTokens(skill);
+    return skillAttachAgents
+      .map((agent) => {
+        const roleText = agentRoleText(agent);
+        const installed = agentHasSkill(agent, skill.name);
+        const reasons: string[] = [];
+        let score = installed ? 1 : 0;
+        for (const token of tokens) {
+          if (roleText.includes(token)) {
+            score += 4;
+            if (reasons.length < 3) reasons.push(token);
+          }
+        }
+        for (const rule of SKILL_ROLE_RULES) {
+          if (rule.skill.some((token) => skillText.includes(token)) && rule.role.some((token) => roleText.includes(token))) {
+            score += 8;
+            if (!reasons.includes(rule.reason)) reasons.push(rule.reason);
+          }
+        }
+        const team = targetTeamOf(agent).toLowerCase();
+        if (team && skillText.includes(team.replace(/-team$/, ''))) {
+          score += 3;
+          if (reasons.length < 3) reasons.push('team match');
+        }
+        return { agent, score, reasons, installed };
+      })
+      .filter((r) => r.score > 0)
+      .sort((a, b) => b.score - a.score || Number(a.installed) - Number(b.installed) || skillAgentLabel(a.agent).localeCompare(skillAgentLabel(b.agent)));
+  }
+  async function applySkillToAgent(skill: string, rendered: TargetAgent, action: 'install' | 'uninstall') {
+    const actionLabel = action === 'install' ? 'attach' : 'remove';
+    const expectedTeam = targetTeamOf(rendered);
+    setBusy(true);
+    setNote(`checking ${expectedTeam}/${rendered.name} before ${actionLabel}…`);
+    try {
+      const groups = await freshGroups();
+      const current = findFreshTarget(groups, rendered);
+      if (!current) {
+        setNote(`${actionLabel} blocked: ${expectedTeam}/${rendered.name} is no longer in the current roster. Refreshed; review and try again.`);
+        store.refresh();
+        return;
+      }
+      if (capabilityAgentStamp(current, expectedTeam) !== capabilityAgentStamp({ ...rendered, team: expectedTeam }, expectedTeam)) {
+        setNote(`${actionLabel} blocked: ${expectedTeam}/${rendered.name} changed since this row rendered. Refreshed; review the current row before applying.`);
+        store.refresh();
+        return;
+      }
+      const hasSkill = agentHasSkill(current, skill);
+      if (action === 'install' && hasSkill) {
+        setNote(`${expectedTeam}/${current.name} already has ${skill}`);
+        return;
+      }
+      if (action === 'uninstall' && !hasSkill) {
+        setNote(`${expectedTeam}/${current.name} does not have ${skill}`);
+        return;
+      }
+      const prompt = [
+        `${actionLabel === 'attach' ? 'Attach' : 'Remove'} skill "${skill}" ${actionLabel === 'attach' ? 'to' : 'from'} ${expectedTeam}/${current.name}?`,
+        '',
+        'IDACC will recheck the current roster again before writing.',
+        'This changes one agent capability and can affect the next rebuild or runtime sync.',
+      ].join('\n');
+      if (!window.confirm(prompt)) return;
+      const recheckGroups = await freshGroups();
+      const latest = findFreshTarget(recheckGroups, current);
+      if (!latest || capabilityAgentStamp(latest, expectedTeam) !== capabilityAgentStamp(current, expectedTeam)) {
+        setNote(`${actionLabel} blocked: ${expectedTeam}/${current.name} changed during confirmation. Refreshed; review and try again.`);
+        store.refresh();
+        return;
+      }
+      await call(action === 'install' ? 'installSkill' : 'uninstallSkill', skill, latest.name, expectedTeam);
+      await reload();
+      setNote(`${skill} ${action === 'install' ? 'attached to' : 'removed from'} ${expectedTeam}/${latest.name} ✓`);
+      store.refresh();
+    } catch (err) {
+      setNote(`${actionLabel} failed: ${err instanceof Error ? err.message : String(err)}`);
+    } finally {
+      setBusy(false);
+    }
   }
   const brainTotal = brainSkills?.summary?.totalSkills;
   const brainMissingLocal = typeof brainTotal === 'number' && brainTotal < skills.length;
@@ -1661,6 +1839,12 @@ export function Modules({ store }: { store: FleetStore }) {
           <span className="chip tag" title="Local SKILL.md folders found in the manager library">
             Local {skills.length}
           </span>
+          <span className="chip tag" title="HR-synced agents available for direct skill attachment">
+            Agents {skillAttachAgents.length}
+          </span>
+          <button className="btn small" disabled={skillCatalogRefreshing} onClick={() => void refreshSkillCatalog()}>
+            {skillCatalogRefreshing ? 'Refreshing…' : 'Refresh'}
+          </button>
           <span className={`chip ${brainSkillSyncVisible ? 'brain-review' : typeof brainTotal === 'number' ? 'tag' : ''}`} title={brainSkillStatusTitle}>
             {brainSkillStatusLabel}
           </span>
@@ -1673,7 +1857,7 @@ export function Modules({ store }: { store: FleetStore }) {
           </button>
         </div>
         <p className="muted small" style={{ marginTop: -4 }}>
-          SKILL.md instructions for <b>{targetLabel}</b>. Install to targets, then sync Brain when the catalog changes.
+          Searchable SKILL.md catalog for <b>{targetLabel}</b>. Attach skills to any HR-synced agent, then sync Brain when the catalog changes.
         </p>
 
         {brainSkillSyncVisible ? (
@@ -1778,11 +1962,17 @@ export function Modules({ store }: { store: FleetStore }) {
           </div>
         ) : null}
 
-        <div className="skill-catalog">
+          <div className="skill-catalog">
           {filteredSkills.map((s) => {
             const have = skillCount(s.name);
             const fleetHave = skillFleetUsage(s.name).length;
             const all = targetCount > 0 && have === targetCount;
+            const recommendations = skillRecommendations(s);
+            const topRecommendations = recommendations.filter((r) => !r.installed).slice(0, 4);
+            const recommendedKey = topRecommendations[0] ? skillAgentKey(topRecommendations[0].agent) : '';
+            const selectedAgentKey = skillAgentDrafts[s.name] || recommendedKey || (skillAttachAgents[0] ? skillAgentKey(skillAttachAgents[0]) : '');
+            const selectedAgent = selectedAgentKey ? findSkillAttachAgent(selectedAgentKey) : null;
+            const selectedAgentHasSkill = selectedAgent ? agentHasSkill(selectedAgent, s.name) : false;
             return (
               <div className="skill-card" key={s.name}>
                 <div className="skill-card-head">
@@ -1818,6 +2008,51 @@ export function Modules({ store }: { store: FleetStore }) {
                   </div>
                 ) : null}
                 {s.description ? <p className="muted small skill-desc"><LinkedDescription text={s.description} /></p> : null}
+                <div className="skill-agent-live">
+                  <div className="skill-agent-live-row">
+                    <span className="muted small">Attach</span>
+                    <select
+                      className="skill-agent-select"
+                      disabled={busy || skillAttachAgents.length === 0}
+                      value={selectedAgentKey}
+                      onChange={(e) => setSkillAgentDrafts((prev) => ({ ...prev, [s.name]: e.target.value }))}
+                    >
+                      {skillAttachAgents.length === 0 ? <option value="">No agents</option> : null}
+                      {skillAttachAgents.map((a) => {
+                        const key = skillAgentKey(a);
+                        return (
+                          <option key={key} value={key}>
+                            {skillAgentLabel(a)}{agentHasSkill(a, s.name) ? ' · attached' : ''}
+                          </option>
+                        );
+                      })}
+                    </select>
+                    <button className="btn small" disabled={busy || !selectedAgent || selectedAgentHasSkill} onClick={() => selectedAgent && void applySkillToAgent(s.name, selectedAgent, 'install')}>
+                      {selectedAgentHasSkill ? 'Attached' : 'Attach'}
+                    </button>
+                    {selectedAgentHasSkill && selectedAgent ? (
+                      <button className="btn small" disabled={busy} onClick={() => void applySkillToAgent(s.name, selectedAgent, 'uninstall')}>
+                        Remove
+                      </button>
+                    ) : null}
+                  </div>
+                  {topRecommendations.length > 0 ? (
+                    <div className="skill-recommendations">
+                      <span className="muted small">Recommended</span>
+                      {topRecommendations.map((r) => (
+                        <button
+                          key={skillAgentKey(r.agent)}
+                          className="chip tag skill-rec-chip"
+                          disabled={busy}
+                          title={`Role match: ${r.reasons.slice(0, 3).join(', ') || 'metadata match'}`}
+                          onClick={() => void applySkillToAgent(s.name, r.agent, 'install')}
+                        >
+                          + {skillAgentLabel(r.agent)}
+                        </button>
+                      ))}
+                    </div>
+                  ) : null}
+                </div>
                 {(() => {
                   const fm = new Set(s.tags ?? []);
                   const tags = [...new Set([...(s.tags ?? []), ...(autoTags[s.name] ?? [])])];
