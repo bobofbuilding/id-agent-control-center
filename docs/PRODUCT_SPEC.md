@@ -487,15 +487,13 @@ subscriptions/local models/image servers, and self-update. (Team composition is 
 Manager; this is the plumbing.)
 
 **What you can do** (by card):
-- **First-run readiness**: manager connection, Control Center manager-extension
-  feature/route compatibility, open-or-pinned provider routing, local runtime
-  readiness, backend readiness, and contextual fixes only when a blocker exists
-  (sync/scan when no backend is ready, manager diagnostics when the extension
-  check is not green).
 - **Hardware**: read-only host compute (chip, cores, GPU, memory, disk) — used for local-model fit
   warnings.
 - **Connection**: manager URL, active team, read-only coordinator status, and an HR Manager Manage
   handoff for hierarchy/routing changes.
+- **Manager/local/backend diagnostics**: manager extension compatibility,
+  open-or-pinned provider routing, local runtime readiness, backend readiness, and contextual fixes
+  live in the cards that own those systems instead of a separate first-run checkpoint.
 - **Self-update**: version, status, **auto-upgrade** toggle, **Check now**. Background checks
   stage newer builds, auto-upgrade applies a previously staged build on the next app launch, and
   stale/consumed staged zips are gated during status, check, staging, and apply.
