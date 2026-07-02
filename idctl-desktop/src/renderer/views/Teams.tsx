@@ -447,7 +447,7 @@ export function Teams({ store, focus, onFocusHandled }: { store: FleetStore; foc
 
   // HR pillars as tabs + the live structure graph.
   const [tab, setTab] = useState<'structure' | 'build' | 'route'>('structure');
-  const [routePane, setRoutePane] = useState<'operations' | 'overview' | 'relay' | 'hierarchy'>('operations');
+  const [routePane, setRoutePane] = useState<'operations' | 'overview' | 'hierarchy'>('operations');
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
   const [graphGroups, setGraphGroups] = useState<{ team: string; agents: Agent[] }[]>([]);
   const [locallyDeletedTeams, setLocallyDeletedTeams] = useState<string[]>([]);
@@ -910,7 +910,7 @@ export function Teams({ store, focus, onFocusHandled }: { store: FleetStore; foc
     }
     setRelayMsg('');
     if (team !== activeTeam) await store.setTeam(team);
-    setRoutePane('relay');
+    setRoutePane('hierarchy');
     setTab('route');
   }
 
@@ -1637,6 +1637,119 @@ export function Teams({ store, focus, onFocusHandled }: { store: FleetStore; foc
   const selectedTeamLead = selectedTeamName ? (hier.coordinators[selectedTeamName] || (hier.primary?.team === selectedTeamName ? hier.primary.agent : '')) : '';
   const selectedTeamSecondaries = selectedTeamName ? secondaries.filter((s) => s.leadsTeams.includes(selectedTeamName)) : [];
 
+  function RelayPolicySection() {
+    return (
+      <div style={{ marginTop: 16, paddingTop: 12, borderTop: '1px solid var(--border, #2a2a2a)' }}>
+        <h4 style={{ margin: 0 }}>Cross-team relay — {activeTeam}</h4>
+        <p className="muted small" style={{ marginTop: 4 }}>
+          Which teams <b>{activeTeam}</b>'s agents may delegate to (relay work via <span className="mono">/ask &lt;team&gt;/&lt;agent&gt;</span>).
+          Unset = permissive (any team).
+        </p>
+        {activeTeam === PRIMARY_TEAM ? (
+          <p className={`small ${defaultRelayBlocked ? 'warn-text' : 'muted'}`} style={{ marginTop: -2 }}>
+            Default leadership guard: <b>{PRIMARY_TEAM}/{DEFAULT_LEAD}</b>, <b>{PRIMARY_TEAM}/coder</b>, and <b>{PRIMARY_TEAM}/researcher</b> need at least one outbound relay path for delegation and validator bounce-backs.
+          </p>
+        ) : null}
+        <div className="relay-modes">
+          {([
+            ['permissive', 'Any team (default)'],
+            ['all', 'All teams (*)'],
+            ['select', 'Only selected teams'],
+            ['none', 'Blocked (none)'],
+          ] as [RelayMode, string][]).map(([m, label]) => (
+            <label key={m} className={`relay-mode${mode === m ? ' active' : ''}`} title={activeTeam === PRIMARY_TEAM && m === 'none' ? 'Default leadership needs at least one relay path' : undefined}>
+              <input type="radio" name="relay-mode" checked={mode === m} disabled={activeTeam === PRIMARY_TEAM && m === 'none'} onChange={() => pickMode(m)} /> {label}
+            </label>
+          ))}
+        </div>
+        {mode === 'select' ? (
+          <div className="chips" style={{ marginTop: 10 }}>
+            {otherTeams.length === 0 ? (
+              <span className="muted small">No other teams to relay to yet.</span>
+            ) : (
+              otherTeams.map((n) => {
+                const on = (delegates ?? []).includes(n);
+                return (
+                  <button key={n} className={`chip${on ? ' on' : ''}`} onClick={() => toggleTeam(n)}>
+                    {on ? '✓ ' : ''}{n}
+                  </button>
+                );
+              })
+            )}
+          </div>
+        ) : null}
+        <div className="row-actions" style={{ marginTop: 12 }}>
+          <span className="muted small grow">
+            saved: <span className="mono">{describeRelay(savedDelegates)}</span>
+            {relayDirty ? <span className="warn-text" style={{ marginLeft: 8 }}>● unsaved changes</span> : null}
+            {defaultRelayBlocked ? <span className="warn-text" style={{ marginLeft: 8 }}>default leadership would be blocked</span> : null}
+          </span>
+          {relayMsg ? (
+            <span className={`small${relayMsg.startsWith('failed') ? ' status-error' : ' ok-text'}`} style={{ marginRight: 10 }}>
+              {relayMsg}
+            </span>
+          ) : null}
+          <button className="btn primary" disabled={relayBusy || !relayDirty || defaultRelayBlocked} onClick={() => void saveRelay()}>
+            {relayBusy ? 'Saving…' : 'Save relay policy'}
+          </button>
+        </div>
+
+        <h4 style={{ marginTop: 18, marginBottom: 0 }}>Per-agent relay overrides</h4>
+        <p className="muted small" style={{ marginTop: 4 }}>
+          Override the team policy for an individual agent, such as letting one agent relay to other teams when the team is restricted.
+        </p>
+        {store.agents.length === 0 ? (
+          <p className="muted small">No agents in {activeTeam}.</p>
+        ) : (
+          agentsLeadFirst(store.agents, store.coordinator).map((a) => {
+            const pol = (a.metadata as { delegates_to?: unknown })?.delegates_to;
+            const roleLocked = isDefaultBackboneAgent(activeTeam, a.name);
+            const m = agentEditing === a.id ? 'select' : modeOf(Array.isArray(pol) ? (pol as string[]) : null);
+            const label =
+              m === 'permissive' ? 'inherits team' : m === 'all' ? 'any team' : m === 'none' ? 'blocked' : Array.isArray(pol) ? pol.join(', ') : '';
+            const selectedOverrideWouldBlock = roleLocked && agentEditing === a.id && agentSel.length === 0;
+            return (
+              <div key={a.id} className="kv" style={{ gridTemplateColumns: '130px 1fr', gap: '4px 12px', marginBottom: 10 }}>
+                <span className="b">{a.name}</span>
+                <span>
+                  <select className="cell-select" disabled={busy} value={m} onChange={(e) => pickAgentMode(a, e.target.value as RelayMode)}>
+                    <option value="permissive">Inherit team</option>
+                    <option value="all">Any team (*)</option>
+                    <option value="select">Selected teams...</option>
+                    <option value="none" disabled={roleLocked}>Blocked (none)</option>
+                  </select>
+                  <span className={roleLocked && m === 'none' ? 'warn-text small' : 'muted small'} style={{ marginLeft: 8 }}>{label}</span>
+                  {roleLocked ? <span className="muted small" style={{ marginLeft: 8 }}>default backbone</span> : null}
+                  {agentEditing === a.id ? (
+                    <div className="chips" style={{ marginTop: 6 }}>
+                      {otherTeams.length === 0 ? (
+                        <span className="muted small">No other teams.</span>
+                      ) : (
+                        otherTeams.map((n) => {
+                          const on = agentSel.includes(n);
+                          return (
+                            <button key={n} className={`chip${on ? ' on' : ''}`} onClick={() => toggleAgentTeam(n)}>
+                              {on ? '✓ ' : ''}{n}
+                            </button>
+                          );
+                        })
+                      )}
+                      {selectedOverrideWouldBlock ? <span className="warn-text small">choose at least one relay target</span> : null}
+                      <button className="btn" disabled={busy || selectedOverrideWouldBlock} onClick={() => { void applyAgent(a, agentSel, `${a.name} relay`).then((ok) => { if (ok) setAgentEditing(null); }); }}>
+                        Save
+                      </button>
+                      <button className="btn" onClick={() => setAgentEditing(null)}>Cancel</button>
+                    </div>
+                  ) : null}
+                </span>
+              </div>
+            );
+          })
+        )}
+      </div>
+    );
+  }
+
   return (
     <div className="view modules">
       <header className="view-head">
@@ -1690,7 +1803,7 @@ export function Teams({ store, focus, onFocusHandled }: { store: FleetStore; foc
                     <option value="">{selectedAgentLocked ? 'locked role' : selectedAgent.reassignTargets.length === 0 ? 'no other teams' : 'reassign to…'}</option>
                     {selectedAgent.reassignTargets.map((n) => <option key={n} value={n}>{n}</option>)}
                   </select>
-                  <button className="btn small" disabled={busy} title="Edit this agent's team relay (switches to its team — a team-wide setting)" onClick={() => void openRelayForTeam(selectedAgent!.team)}>⇄ Routing</button>
+                  <button className="btn small" disabled={busy} title="Edit this agent's team relay in Manage > Hierarchy" onClick={() => void openRelayForTeam(selectedAgent!.team)}>⇄ Routing</button>
                   <button className="btn small" disabled={busy} onClick={() => void rebuildSelectedStructureAgent(selectedAgent!.agent, selectedAgent!.team)}>Rebuild</button>
                 </span>
               </div>
@@ -1753,7 +1866,7 @@ export function Teams({ store, focus, onFocusHandled }: { store: FleetStore; foc
                 <h4 style={{ margin: 0 }}>{hier.primary?.team === selectedTeamName ? '⭑ ' : ''}{selectedTeamName} <span className="muted small">· {selectedTeamRunning}/{selectedTeamKnownTotal} running</span></h4>
                 <span className="row-actions" style={{ gap: 6 }}>
                   <button className="btn small primary" onClick={() => setTab('build')}>✦ Build / add agents</button>
-                  <button className="btn small" title="Edit this team's relay (switches to it — a team-wide setting)" onClick={() => void openRelayForTeam(selectedTeamName)}>⇄ Relay</button>
+                  <button className="btn small" title="Edit this team's relay in Manage > Hierarchy" onClick={() => void openRelayForTeam(selectedTeamName)}>⇄ Routing</button>
                   <button className="btn small" title="Start / stop this team in Manage > Team ops" onClick={() => { setTab('route'); setRoutePane('operations'); }}>⏻ Start / stop</button>
                 </span>
               </div>
@@ -1779,7 +1892,7 @@ export function Teams({ store, focus, onFocusHandled }: { store: FleetStore; foc
 
       {tab === 'route' ? (
         <div className="tabs" style={{ marginTop: -4 }}>
-          {([['operations', 'Team ops'], ['overview', 'Overview'], ['relay', 'Relay'], ['hierarchy', 'Hierarchy']] as const).map(([k, lbl]) => (
+          {([['operations', 'Team ops'], ['overview', 'Overview'], ['hierarchy', 'Hierarchy']] as const).map(([k, lbl]) => (
             <button key={k} className={`tab${routePane === k ? ' active' : ''}`} onClick={() => setRoutePane(k)}>{lbl}</button>
           ))}
         </div>
@@ -1899,7 +2012,7 @@ export function Teams({ store, focus, onFocusHandled }: { store: FleetStore; foc
       <section className="card">
         <h3>Routing overview <span className="muted small">· every team's outbound relay, at a glance</span></h3>
         <p className="muted small" style={{ marginTop: -4 }}>
-          Who each team may delegate work to (via <span className="mono">/ask &lt;team&gt;/&lt;agent&gt;</span>). <b>Edit</b> opens Relay for that team.
+          Who each team may delegate work to (via <span className="mono">/ask &lt;team&gt;/&lt;agent&gt;</span>). <b>Edit</b> opens Hierarchy for that team.
         </p>
         <table className="grid">
           <thead>
@@ -1929,117 +2042,6 @@ export function Teams({ store, focus, onFocusHandled }: { store: FleetStore; foc
               })}
           </tbody>
         </table>
-      </section>
-      ) : null}
-
-      {tab === 'route' && routePane === 'relay' ? (
-      <section className="card">
-        <h3>Cross-team relay — {activeTeam}</h3>
-        <p className="muted small" style={{ marginTop: -4 }}>
-          Which teams <b>{activeTeam}</b>'s agents may delegate to (relay work via <span className="mono">/ask &lt;team&gt;/&lt;agent&gt;</span>).
-          Unset = permissive (any team).
-        </p>
-        {activeTeam === PRIMARY_TEAM ? (
-          <p className={`small ${defaultRelayBlocked ? 'warn-text' : 'muted'}`} style={{ marginTop: -4 }}>
-            Default leadership guard: <b>{PRIMARY_TEAM}/{DEFAULT_LEAD}</b>, <b>{PRIMARY_TEAM}/coder</b>, and <b>{PRIMARY_TEAM}/researcher</b> need at least one outbound relay path for delegation and validator bounce-backs.
-          </p>
-        ) : null}
-        <div className="relay-modes">
-          {([
-            ['permissive', 'Any team (default)'],
-            ['all', 'All teams (*)'],
-            ['select', 'Only selected teams'],
-            ['none', 'Blocked (none)'],
-          ] as [RelayMode, string][]).map(([m, label]) => (
-            <label key={m} className={`relay-mode${mode === m ? ' active' : ''}`} title={activeTeam === PRIMARY_TEAM && m === 'none' ? 'Default leadership needs at least one relay path' : undefined}>
-              <input type="radio" name="relay-mode" checked={mode === m} disabled={activeTeam === PRIMARY_TEAM && m === 'none'} onChange={() => pickMode(m)} /> {label}
-            </label>
-          ))}
-        </div>
-        {mode === 'select' ? (
-          <div className="chips" style={{ marginTop: 10 }}>
-            {otherTeams.length === 0 ? (
-              <span className="muted small">No other teams to relay to yet.</span>
-            ) : (
-              otherTeams.map((n) => {
-                const on = (delegates ?? []).includes(n);
-                return (
-                  <button key={n} className={`chip${on ? ' on' : ''}`} onClick={() => toggleTeam(n)}>
-                    {on ? '✓ ' : ''}{n}
-                  </button>
-                );
-              })
-            )}
-          </div>
-        ) : null}
-        <div className="row-actions" style={{ marginTop: 12 }}>
-          <span className="muted small grow">
-            saved: <span className="mono">{describeRelay(savedDelegates)}</span>
-            {relayDirty ? <span className="warn-text" style={{ marginLeft: 8 }}>● unsaved changes</span> : null}
-            {defaultRelayBlocked ? <span className="warn-text" style={{ marginLeft: 8 }}>default leadership would be blocked</span> : null}
-          </span>
-          {relayMsg ? (
-            <span className={`small${relayMsg.startsWith('failed') ? ' status-error' : ' ok-text'}`} style={{ marginRight: 10 }}>
-              {relayMsg}
-            </span>
-          ) : null}
-          <button className="btn primary" disabled={relayBusy || !relayDirty || defaultRelayBlocked} onClick={() => void saveRelay()}>
-            {relayBusy ? 'Saving…' : 'Save relay policy'}
-          </button>
-        </div>
-
-        <h3 style={{ marginTop: 18 }}>Per-agent overrides</h3>
-        <p className="muted small" style={{ marginTop: -4 }}>
-          Override the team policy for an individual agent — e.g. let one agent relay to other teams even when the team is restricted (or block a single agent). Applies immediately.
-        </p>
-        {store.agents.length === 0 ? (
-          <p className="muted small">No agents in {activeTeam}.</p>
-        ) : (
-          agentsLeadFirst(store.agents, store.coordinator).map((a) => {
-            const pol = (a.metadata as { delegates_to?: unknown })?.delegates_to;
-            const roleLocked = isDefaultBackboneAgent(activeTeam, a.name);
-            const m = agentEditing === a.id ? 'select' : modeOf(Array.isArray(pol) ? (pol as string[]) : null);
-            const label =
-              m === 'permissive' ? 'inherits team' : m === 'all' ? 'any team' : m === 'none' ? 'blocked' : Array.isArray(pol) ? pol.join(', ') : '';
-            const selectedOverrideWouldBlock = roleLocked && agentEditing === a.id && agentSel.length === 0;
-            return (
-              <div key={a.id} className="kv" style={{ gridTemplateColumns: '130px 1fr', gap: '4px 12px', marginBottom: 10 }}>
-                <span className="b">{a.name}</span>
-                <span>
-                  <select className="cell-select" disabled={busy} value={m} onChange={(e) => pickAgentMode(a, e.target.value as RelayMode)}>
-                    <option value="permissive">Inherit team</option>
-                    <option value="all">Any team (*)</option>
-                    <option value="select">Selected teams…</option>
-                    <option value="none" disabled={roleLocked}>Blocked (none)</option>
-                  </select>
-                  <span className={roleLocked && m === 'none' ? 'warn-text small' : 'muted small'} style={{ marginLeft: 8 }}>{label}</span>
-                  {roleLocked ? <span className="muted small" style={{ marginLeft: 8 }}>default backbone</span> : null}
-                  {agentEditing === a.id ? (
-                    <div className="chips" style={{ marginTop: 6 }}>
-                      {otherTeams.length === 0 ? (
-                        <span className="muted small">No other teams.</span>
-                      ) : (
-                        otherTeams.map((n) => {
-                          const on = agentSel.includes(n);
-                          return (
-                            <button key={n} className={`chip${on ? ' on' : ''}`} onClick={() => toggleAgentTeam(n)}>
-                              {on ? '✓ ' : ''}{n}
-                            </button>
-                          );
-                        })
-                      )}
-                      {selectedOverrideWouldBlock ? <span className="warn-text small">choose at least one relay target</span> : null}
-                      <button className="btn" disabled={busy || selectedOverrideWouldBlock} onClick={() => { void applyAgent(a, agentSel, `${a.name} relay`).then((ok) => { if (ok) setAgentEditing(null); }); }}>
-                        Save
-                      </button>
-                      <button className="btn" onClick={() => setAgentEditing(null)}>Cancel</button>
-                    </div>
-                  ) : null}
-                </span>
-              </div>
-            );
-          })
-        )}
       </section>
       ) : null}
 
@@ -2092,6 +2094,8 @@ export function Teams({ store, focus, onFocusHandled }: { store: FleetStore; foc
             No primary lead yet — set the <b>default</b> team coordinator, then make default primary so it delegates across teams.
           </p>
         ) : null}
+
+        <RelayPolicySection />
 
         {/* Reactive Org Sync — secondary leads + auto-composed goals files */}
         <div style={{ marginTop: 16, paddingTop: 12, borderTop: '1px solid var(--border, #2a2a2a)' }}>

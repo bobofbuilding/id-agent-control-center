@@ -375,8 +375,8 @@ questions through `legal/general-counsel`.
   to create an empty target team only for reviewed rename actions.
 - **Manage**: merged management + routing workspace. **Team ops** owns lifecycle-only controls
   (Probe/Start/Stop/Rebuild/Delete empty teams); **Overview** shows cross-team relay at a glance;
-  **Relay** owns team relay and per-agent overrides; **Hierarchy** owns coordinators, default-primary
-  review, protected default validators, additional default-team validators, coverage, and org sync.
+  **Hierarchy** owns coordinators, default-primary review, team relay, per-agent relay overrides,
+  protected default validators, additional default-team validators, coverage, and org sync.
 
 **Data & actions:** `agents:allTeams`, `runtime:models`, `librarySkills`, `providers:list`,
 `teamConfig`, `setTeamDelegates`, `setAgentDelegates`, `agent:getInstructions/setInstructions`,
