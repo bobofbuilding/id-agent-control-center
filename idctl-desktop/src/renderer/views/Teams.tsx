@@ -2264,7 +2264,8 @@ function TeamBuilder({
   const aiRun = useRef(0); // bumps to invalidate a stale/cancelled design wait
 
   // ---- options applied to every agent ----
-  const [mcp, setMcp] = useState('');
+  const [mcpIds, setMcpIds] = useState<string[]>([]);
+  const [sharedSkills, setSharedSkills] = useState<string[]>([]);
   const [heartbeat, setHeartbeat] = useState(false);
   const [hbInterval, setHbInterval] = useState(3600);
   const [wallet, setWallet] = useState(false);
@@ -2285,6 +2286,8 @@ function TeamBuilder({
   const [post, setPost] = useState<{ coord?: PostStat; coordErr?: string; leadName?: string; relay?: PostStat; relayErr?: string }>({});
 
   const mcpChoices = MCP_CATALOG.filter((entry) => !(entry.inputs ?? []).some((input) => input.required && !input.default));
+  const availableMcpChoices = mcpChoices.filter((entry) => !mcpIds.includes(entry.id));
+  const availableSharedSkills = skillCatalog.filter((skill) => !sharedSkills.includes(skill));
   const named = rows.map((r) => ({ ...r, slug: slugName(r.name) })).filter((r) => r.slug);
   const reserved = [...new Set(named.filter((r) => isReservedName(r.slug)).map((r) => r.slug))];
   const dupes = [...new Set(named.map((r) => r.slug).filter((s, i, a) => a.indexOf(s) !== i))];
@@ -2380,6 +2383,14 @@ function TeamBuilder({
     setRowsDirty(true);
     setRows((rs) => rs.map((r, j) => (j === i ? { ...r, skills: r.skills.includes(name) ? r.skills.filter((x) => x !== name) : [...r.skills, name] } : r)));
   }
+  function addMcp(id: string) {
+    if (!id) return;
+    setMcpIds((ids) => ids.includes(id) ? ids : [...ids, id]);
+  }
+  function addSharedSkill(name: string) {
+    if (!name) return;
+    setSharedSkills((skills) => skills.includes(name) ? skills : [...skills, name]);
+  }
   function pickTeam(v: string) { setTeamTouched(true); setTeamSel(v); }
 
   function applyStartSource(value: string) {
@@ -2415,6 +2426,7 @@ function TeamBuilder({
   }
 
   function planFor(r: Row): OnboardPlan {
+    const skills = Array.from(new Set([...sharedSkills, ...r.skills]));
     return {
       name: slugName(r.name),
       team: targetTeam,
@@ -2422,10 +2434,10 @@ function TeamBuilder({
       model: r.model || undefined,
       role: r.role.trim() || undefined,
       description: r.description.trim() || undefined,
-      skills: r.skills.length ? r.skills : undefined,
+      skills: skills.length ? skills : undefined,
       wallet,
       heartbeatSeconds: heartbeat ? hbInterval : undefined,
-      mcpServers: mcpFromChoice(mcp),
+      mcpServers: mcpFromChoices(mcpIds),
       probeAfter,
     };
   }
@@ -2681,10 +2693,42 @@ function TeamBuilder({
             <div className="muted small" style={{ margin: '14px 0 4px' }}>applied to every agent</div>
             <div className="kv" style={{ gridTemplateColumns: '90px 1fr', gap: '8px 10px', alignItems: 'center' }}>
               <span>MCP</span>
-              <select className="cell-select" disabled={locked} value={mcp} onChange={(e) => setMcp(e.target.value)} style={{ maxWidth: 260 }}>
-                <option value="">none</option>
-                {mcpChoices.map((entry) => <option key={entry.id} value={entry.id}>{entry.name}</option>)}
-              </select>
+              <span>
+                <select className="cell-select" disabled={locked || !availableMcpChoices.length} value="" onChange={(e) => {
+                  addMcp(e.target.value);
+                  e.currentTarget.value = '';
+                }} style={{ maxWidth: 260 }}>
+                  <option value="">{availableMcpChoices.length ? 'add MCP server…' : 'all attachable MCP selected'}</option>
+                  {availableMcpChoices.map((entry) => <option key={entry.id} value={entry.id}>{entry.name}</option>)}
+                </select>
+                <span className="chips" style={{ marginLeft: 8 }}>
+                  {mcpIds.length ? mcpIds.map((id) => {
+                    const entry = mcpChoices.find((item) => item.id === id);
+                    return (
+                      <button key={id} className="chip on" disabled={locked} title="Remove MCP server" onClick={() => setMcpIds((ids) => ids.filter((x) => x !== id))}>
+                        ✓ {entry?.name ?? id} ×
+                      </button>
+                    );
+                  }) : <span className="muted small">none</span>}
+                </span>
+              </span>
+              <span>skills</span>
+              <span>
+                <select className="cell-select" disabled={locked || !availableSharedSkills.length} value="" onChange={(e) => {
+                  addSharedSkill(e.target.value);
+                  e.currentTarget.value = '';
+                }} style={{ maxWidth: 260 }}>
+                  <option value="">{availableSharedSkills.length ? 'add shared skill…' : skillCatalog.length ? 'all skills selected' : 'no library skills'}</option>
+                  {availableSharedSkills.map((skill) => <option key={skill} value={skill}>{skill}</option>)}
+                </select>
+                <span className="chips" style={{ marginLeft: 8 }}>
+                  {sharedSkills.length ? sharedSkills.map((skill) => (
+                    <button key={skill} className="chip on" disabled={locked} title="Remove shared skill" onClick={() => setSharedSkills((skills) => skills.filter((x) => x !== skill))}>
+                      ✓ {skill} ×
+                    </button>
+                  )) : <span className="muted small">none</span>}
+                </span>
+              </span>
               <span>heartbeat</span>
               <span>
                 <input type="checkbox" checked={heartbeat} disabled={locked} onChange={(e) => setHeartbeat(e.target.checked)} />{' '}
@@ -2952,11 +2996,13 @@ function summarizeFleetRoster(agents: HrAgentCandidate[], activeTeams: string[])
     .slice(0, 6000);
 }
 
-function mcpFromChoice(id: string): McpServerSpec[] | undefined {
-  if (!id) return undefined;
-  const entry = MCP_CATALOG.find((item) => item.id === id);
-  if (!entry || entry.inputs?.some((input) => input.required && !input.default)) return undefined;
-  const profile = buildFromCatalog(entry, entry.id, {});
-  const { enabled: _enabled, ...server } = profile;
-  return [server];
+function mcpFromChoices(ids: string[]): McpServerSpec[] | undefined {
+  const servers = Array.from(new Set(ids)).flatMap((id) => {
+    const entry = MCP_CATALOG.find((item) => item.id === id);
+    if (!entry || entry.inputs?.some((input) => input.required && !input.default)) return [];
+    const profile = buildFromCatalog(entry, entry.id, {});
+    const { enabled: _enabled, ...server } = profile;
+    return [server];
+  });
+  return servers.length ? servers : undefined;
 }
