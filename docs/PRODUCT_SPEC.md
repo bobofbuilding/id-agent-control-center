@@ -461,10 +461,12 @@ denial. If the operator verifies the IDACC app directly in macOS Settings, the r
 verified locally; that is a UI readback override only and does not weaken the Screen Recording or
 Accessibility gates.
 
-**What you can do:** **Arm/Disarm** (Arm blesses the currently-attached agents); **Pause/Resume**;
+**What you can do:** **Arm/Disarm** (Arm blesses the currently-attached agents across HR-synced
+teams); **Pause/Resume**;
 **PANIC** (■, never blocked, global hotkey ⌘⌥⇧P); watch the **live view** of the primary display;
 manage **Permissions** (Open Settings / Relaunch / Re-check); **Bless / Remove** one or more
-capable agents (attaches the bundled `mac-control` MCP server + rebuilds); read the **Activity log** (last 40,
+capable agents from any HR Manager team (attaches the bundled `mac-control` MCP server + rebuilds
+that agent in its own team); read the **Activity log** (last 40,
 blocked actions flagged); toggle **Safety → "Approve every action"** (supervised default-on; in
 autonomous mode risky actions — Trash, ⌘Q, destructive shell — are still held); respond to
 **approval prompts** (Allow/Deny, 60s auto-decline).
@@ -473,9 +475,8 @@ autonomous mode risky actions — Trash, ⌘Q, destructive shell — are still h
 confirm/watch/openPermission/relaunch/attach/detach`, `rebuildAgent`; push events `onComputerFrame/
 Pending/Panic`; 2.5s poll.
 
-**Polish:** bless eligibility is runtime-name regex; "bless applies on next Arm" copy contradicts the
-re-sync-while-armed behavior; attach-then-rebuild-fail leaves an agent blessed-but-not-wired (only the
-`⚠` text signals it); primary-display only; per-frame React state churn.
+**Polish:** bless eligibility is runtime-name regex; attach-then-rebuild-fail leaves an agent
+blessed-but-not-wired (only the `⚠` text signals it); primary-display only; per-frame React state churn.
 
 ---
 

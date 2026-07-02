@@ -8,6 +8,9 @@ Every change pushed or merged to `main` carries its version number in the commit
 subject (`vX.Y.Z: …`), stamped automatically by the `commit-msg` hook — see
 [CONTRIBUTING.md](CONTRIBUTING.md).
 
+## [0.1.463] — 2026-07-02
+- Computer Use can bless HR-synced agents across teams
+
 ## [0.1.462] — 2026-07-02
 - Add automated HR Build runtime verification
 

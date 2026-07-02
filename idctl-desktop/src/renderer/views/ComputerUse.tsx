@@ -156,14 +156,24 @@ export function ComputerUse({ store }: { store: FleetStore }) {
     if (resolvedRef.current.size) resolvedRef.current = new Set([...resolvedRef.current].filter((id) => incoming.some((p) => p.id === id)));
   }
 
-  const eligible = store.agents.filter((a) => mcpCapable(agentRuntime(a)));
   const activeTeam = store.team ?? 'default';
-  const availableBlessTargets = eligible.filter((a) => !attached.some((x) => x.id === a.id));
-  const availableBlessKey = sortedKey(availableBlessTargets.map((a) => a.id));
+  const teamOf = (a: { team?: string }, fallbackTeam = activeTeam) => a.team ?? fallbackTeam;
+  const authorityOf = (a: { name: string; team?: string; authority?: string }, fallbackTeam = activeTeam) => a.authority ?? `${teamOf(a, fallbackTeam)}:${a.name}`;
+  const targetKey = (a: { id?: string; name: string; team?: string }, fallbackTeam = activeTeam) => `${teamOf(a, fallbackTeam)}:${a.id || a.name}`;
+  const rosterTargets = (store.allAgents.length
+    ? store.allAgents
+    : store.agents.map((a) => ({ ...a, team: activeTeam })))
+    .map((a) => ({ ...a, team: teamOf(a) })) as ComputerUseTarget[];
+  const rosterTeamNames = [...new Set([activeTeam, ...rosterTargets.map((a) => teamOf(a))].filter(Boolean))];
+  const rosterTeamKey = sortedKey(rosterTeamNames);
+  const eligible = rosterTargets
+    .filter((a) => mcpCapable(agentRuntime(a)))
+    .filter((a, i, arr) => arr.findIndex((x) => targetKey(x) === targetKey(a)) === i);
+  const availableBlessTargets = eligible.filter((a) => !attached.some((x) => authorityOf(x) === authorityOf(a)));
+  const availableBlessKey = sortedKey(availableBlessTargets.map((a) => targetKey(a)));
   const selectedBlessTargets = selectedBlessIds
-    .map((id) => availableBlessTargets.find((a) => a.id === id))
-    .filter((a): a is Agent => !!a);
-  const authorityOf = (a: { name: string; team?: string; authority?: string }, fallbackTeam = activeTeam) => a.authority ?? `${a.team ?? fallbackTeam}:${a.name}`;
+    .map((id) => availableBlessTargets.find((a) => targetKey(a) === id))
+    .filter((a): a is ComputerUseTarget => !!a);
   const armed = !!status?.armed;
   const cuUnavailable = status?.available === false;
   const cuUnavailableReason = status?.unavailableReason ?? 'Computer Use requires the Electron desktop broker.';
@@ -192,7 +202,7 @@ export function ComputerUse({ store }: { store: FleetStore }) {
     : automationNeedsManualReview
       ? 'Needs verification - Automation is granted per target app and may stay unknown until IDACC first controls that app.'
       : permissionText(perms?.automation?.status);
-  const attachedStamp = (list: AttachedAgent[]) => sortedKey((list ?? []).map((a) => `${a.id}:${authorityOf(a)}`));
+  const attachedStamp = (list: AttachedAgent[], fallbackTeam = activeTeam) => sortedKey((list ?? []).map((a) => `${a.id}:${authorityOf(a, fallbackTeam)}`));
   const describeAttached = (list: AttachedAgent[]) => list.length
     ? list.map((a) => `${a.team ?? activeTeam}/${a.name}`).join(', ')
     : 'no blessed agents';
@@ -212,8 +222,7 @@ export function ComputerUse({ store }: { store: FleetStore }) {
     if (sep < 0) return undefined;
     const team = authority.slice(0, sep);
     const name = authority.slice(sep + 1);
-    if (team !== activeTeam) return undefined;
-    const found = eligible.find((a) => a.name === name);
+    const found = eligible.find((a) => teamOf(a) === team && a.name === name);
     return found ? { ...found, team } : undefined;
   }
   async function copyLegacyAuthority(authority: string) {
@@ -233,13 +242,37 @@ export function ComputerUse({ store }: { store: FleetStore }) {
       ? `${key === 'inputMonitoring' ? 'Input Monitoring' : 'Automation'} marked verified from macOS Settings.`
       : `${key === 'inputMonitoring' ? 'Input Monitoring' : 'Automation'} manual verification cleared.`);
   }
+  async function fetchAttachedForTeams(teams = rosterTeamNames): Promise<AttachedAgent[]> {
+    const scoped = await Promise.all([...new Set(teams.length ? teams : [activeTeam])].map(async (team) => {
+      const list = await call<AttachedAgent[]>('cu:attached', team).catch(() => []);
+      return (list ?? []).map((a) => ({ ...a, team: a.team ?? team }));
+    }));
+    return scoped.flat();
+  }
+  function teamsFromTargets(list: { team?: string }[]): string[] {
+    return [...new Set(list.map((a) => teamOf(a)).filter(Boolean))];
+  }
+  function attachedForTeam(list: AttachedAgent[], team: string): AttachedAgent[] {
+    return (list ?? []).filter((a) => teamOf(a) === team);
+  }
+  function attachedTeams(list: AttachedAgent[]): string[] {
+    return teamsFromTargets(list);
+  }
+  async function armAttachedTeams(list: AttachedAgent[], fallbackTeams: string[]): Promise<void> {
+    const teams = attachedTeams(list);
+    const teamsToArm = teams.length ? teams : [...new Set(fallbackTeams.length ? fallbackTeams : [activeTeam])];
+    for (const team of teamsToArm) {
+      const scoped = attachedForTeam(list, team);
+      await call('cu:arm', team, attachedStamp(scoped, team));
+    }
+  }
 
   async function refresh() {
-    const authorityTargets = eligible.map((a) => ({ name: a.name, team: activeTeam }));
+    const authorityTargets = eligible.map((a) => ({ name: a.name, team: teamOf(a) }));
     const [p, s, at, au, legacy] = await Promise.all([
       call<Perms>('cu:permissions').catch(() => null),
       call<Status>('cu:status').catch(() => null),
-      call<AttachedAgent[]>('cu:attached', activeTeam).catch(() => []),
+      fetchAttachedForTeams(rosterTeamNames),
       call<AuditEntry[]>('cu:audit', 40).catch(() => []),
       call<LegacyComputerUseAuthority[]>('cu:legacyAuthority', authorityTargets).catch(() => []),
     ]);
@@ -350,14 +383,14 @@ export function ComputerUse({ store }: { store: FleetStore }) {
     const offPanic = eventApi?.onComputerPanic?.(() => { setPanicFlash(true); setTimeout(() => setPanicFlash(false), 2500); void refresh(); }) ?? (() => {});
     return () => { clearInterval(t); off(); offPending(); offPanic(); void call('cu:watch', false); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeTeam]);
+  }, [activeTeam, rosterTeamKey]);
   useEffect(() => {
     setSelectedBlessIds([]);
     setMsg('');
     setAllowEmptyArm(false);
   }, [activeTeam]);
   useEffect(() => {
-    const available = new Set(availableBlessTargets.map((a) => a.id));
+    const available = new Set(availableBlessTargets.map((a) => targetKey(a)));
     setSelectedBlessIds((prev) => prev.filter((id) => available.has(id)));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [availableBlessKey]);
@@ -379,7 +412,7 @@ export function ComputerUse({ store }: { store: FleetStore }) {
       // captured at arm. Re-arm to refresh after blessing/removing an agent.
       const [currentStatus, at] = await Promise.all([
         call<Status>('cu:status'),
-        call<AttachedAgent[]>('cu:attached', activeTeam),
+        fetchAttachedForTeams(rosterTeamNames),
       ]);
       if (currentStatus.armed) {
         setStatus(currentStatus);
@@ -399,7 +432,7 @@ export function ComputerUse({ store }: { store: FleetStore }) {
       if (!window.confirm(`Arm Computer Use now?\n\n${detail}\n\nOnly the current blessed list can request screenshots or input. Input actions still follow the approval mode shown on this page.`)) return;
       const [afterStatus, latestAttached] = await Promise.all([
         call<Status>('cu:status'),
-        call<AttachedAgent[]>('cu:attached', activeTeam),
+        fetchAttachedForTeams(rosterTeamNames),
       ]);
       if (afterStatus.armed) {
         setStatus(afterStatus);
@@ -412,7 +445,7 @@ export function ComputerUse({ store }: { store: FleetStore }) {
         setMsg('Blessed agents changed during confirmation. Refreshed; review Who can drive and press Arm again.');
         return;
       }
-      await call('cu:arm', activeTeam, beforeStamp);
+      await armAttachedTeams(latestAttached ?? [], [activeTeam]);
       setAllowEmptyArm(false);
       await refresh();
     } catch (e) {
@@ -472,7 +505,7 @@ export function ComputerUse({ store }: { store: FleetStore }) {
   }
   function findAttached(list: AttachedAgent[], rendered: AttachedAgent): AttachedAgent | null {
     const team = rendered.team ?? activeTeam;
-    return list.find((a) => a.id === rendered.id)
+    return list.find((a) => a.id === rendered.id && teamOf(a) === team)
       ?? list.find((a) => authorityOf(a, team) === authorityOf(rendered, team))
       ?? list.find((a) => a.name === rendered.name && (a.team ?? activeTeam) === team)
       ?? null;
@@ -482,33 +515,35 @@ export function ComputerUse({ store }: { store: FleetStore }) {
     const latest = await call<AttachedAgent[]>('cu:attached', team);
     const current = findAttached(latest ?? [], { ...rendered, team });
     if (!current) {
-      setAttached(latest ?? []);
+      setAttached(await fetchAttachedForTeams(rosterTeamNames));
       setMsg(`${label} blocked: ${team}/${rendered.name} is no longer blessed. Refreshed Who can drive.`);
       return null;
     }
     const before = `${rendered.id}:${authorityOf({ ...rendered, team }, team)}`;
     const after = `${current.id}:${authorityOf(current, team)}`;
     if (before !== after) {
-      setAttached(latest ?? []);
+      setAttached(await fetchAttachedForTeams(rosterTeamNames));
       setMsg(`${label} blocked: ${team}/${rendered.name} changed authority since this page rendered. Refreshed; review Who can drive and try again.`);
       return null;
     }
     return current;
   }
-  async function syncArmedBlessedForTeam(team: string): Promise<boolean> {
+  async function syncArmedBlessedForTeams(teams: string[]): Promise<boolean> {
     const currentStatus = await call<Status>('cu:status');
     if (!currentStatus.armed) return false;
-    const latestAttached = await call<AttachedAgent[]>('cu:attached', team);
-    await call('cu:arm', team, attachedStamp(latestAttached ?? []));
+    const scopedTeams = [...new Set(teams.length ? teams : [activeTeam])];
+    for (const team of scopedTeams) {
+      const latestAttached = (await call<AttachedAgent[]>('cu:attached', team)).map((a) => ({ ...a, team: a.team ?? team }));
+      await call('cu:arm', team, attachedStamp(latestAttached ?? [], team));
+    }
     return true;
   }
 
   async function blessMany(renderedTargets: ComputerUseTarget[]) {
     setBusy(true); setMsg('');
-    const team = activeTeam;
     const targets = renderedTargets
-      .map((a) => ({ ...a, team: a.team ?? team }))
-      .filter((a, i, arr) => arr.findIndex((x) => x.id === a.id) === i);
+      .map((a) => ({ ...a, team: teamOf(a) }))
+      .filter((a, i, arr) => arr.findIndex((x) => targetKey(x) === targetKey(a)) === i);
     try {
       if (!targets.length) {
         setMsg('Select one or more eligible agents to bless for Computer Use.');
@@ -516,22 +551,25 @@ export function ComputerUse({ store }: { store: FleetStore }) {
       }
       const currentTargets = validateBlessTargets(await freshGroups(), targets, 'Bless');
       if (!currentTargets) return;
-      const beforeAttached = await call<AttachedAgent[]>('cu:attached', team);
+      const targetTeams = teamsFromTargets(currentTargets);
+      const beforeAttached = await fetchAttachedForTeams(targetTeams);
       const attachable = currentTargets.filter((current) => !findAttached(beforeAttached ?? [], current));
       if (!attachable.length) {
-        setAttached(beforeAttached ?? []);
+        setAttached(await fetchAttachedForTeams(rosterTeamNames));
         setSelectedBlessIds([]);
         setMsg('Selected agents are already blessed for Computer Use. Refreshed Who can drive.');
         return;
       }
-      const label = attachable.length === 1 ? `${team}/${attachable[0].name}` : `${attachable.length} agents`;
+      const label = attachable.length === 1
+        ? `${teamOf(attachable[0])}/${attachable[0].name}`
+        : `${attachable.length} agents across ${teamsFromTargets(attachable).length} teams`;
       if (!window.confirm(`Bless ${label} for Computer Use?\n\nAgents: ${describeTargets(attachable)}\n\nThis attaches the local computer-use MCP server and rebuilds each selected agent so it can request screenshots and input while Computer Use is armed.`)) return;
       const afterConfirmTargets = validateBlessTargets(await freshGroups(), attachable, 'Bless');
       if (!afterConfirmTargets) return;
-      const latestAttached = await call<AttachedAgent[]>('cu:attached', team);
+      const latestAttached = await fetchAttachedForTeams(teamsFromTargets(afterConfirmTargets));
       const stillAttachable = afterConfirmTargets.filter((current) => !findAttached(latestAttached ?? [], current));
       if (!stillAttachable.length) {
-        setAttached(latestAttached ?? []);
+        setAttached(await fetchAttachedForTeams(rosterTeamNames));
         setSelectedBlessIds([]);
         setMsg('Selected agents were blessed while you were confirming. Refreshed Who can drive.');
         return;
@@ -540,6 +578,7 @@ export function ComputerUse({ store }: { store: FleetStore }) {
       const attachFailures: string[] = [];
       let attachedCount = 0;
       for (const target of stillAttachable) {
+        const team = teamOf(target);
         try {
           setMsg(`Attaching computer-use to ${team}/${target.name} (${attachedCount + 1}/${stillAttachable.length})...`);
           await call('cu:attach', target.id, target.name, team);      // throws on failure -> caught below (never silently "succeeds")
@@ -553,9 +592,9 @@ export function ComputerUse({ store }: { store: FleetStore }) {
           attachFailures.push(`${team}/${target.name}: ${e instanceof Error ? e.message : String(e)}`);
         }
       }
-      const armedListRefreshed = await syncArmedBlessedForTeam(team); // re-sync the live bless-list from the current attached list if already armed
+      const armedListRefreshed = await syncArmedBlessedForTeams(teamsFromTargets(stillAttachable)); // re-sync the live bless-list from the current attached list if already armed
       await refresh();
-      setSelectedBlessIds((prev) => prev.filter((id) => !stillAttachable.some((a) => a.id === id)));
+      setSelectedBlessIds((prev) => prev.filter((id) => !stillAttachable.some((a) => targetKey(a) === id)));
       if (attachFailures.length || rebuildFailures.length) {
         const parts = [
           attachedCount ? `attached ${attachedCount}/${stillAttachable.length}` : '',
@@ -583,7 +622,7 @@ export function ComputerUse({ store }: { store: FleetStore }) {
       const exactAgent = findFreshTargetById(groups, { id: afterConfirm.id, name: afterConfirm.name, team });
       await call('cu:detach', afterConfirm.id, afterConfirm.name, team);
       if (exactAgent) await call('rebuildAgent', exactAgent.name, team).catch(() => {});
-      await syncArmedBlessedForTeam(team);
+      await syncArmedBlessedForTeams([team]);
       await refresh();
       setMsg(exactAgent
         ? `Removed computer-use from ${team}/${afterConfirm.name}.`
@@ -749,22 +788,23 @@ export function ComputerUse({ store }: { store: FleetStore }) {
 
           <section className="card">
             <h3>Who can drive</h3>
-            <div className="muted small">Bless a Claude/codex agent to let it see + control your Mac. It rebuilds to pick up the tools and is scoped to the active team.</div>
+            <div className="muted small">Bless eligible agents synced from HR Manager. Each grant stays scoped to that agent's team.</div>
             <div className="cu-bless-add">
               <div className="cu-bless-list" aria-label="Agents available for Computer Use">
                 {availableBlessTargets.length ? availableBlessTargets.map((a) => {
-                  const selected = selectedBlessIds.includes(a.id);
+                  const key = targetKey(a);
+                  const selected = selectedBlessIds.includes(key);
                   return (
-                    <label key={a.id} className={`cu-bless-choice${selected ? ' selected' : ''}`}>
+                    <label key={key} className={`cu-bless-choice${selected ? ' selected' : ''}`}>
                       <input
                         type="checkbox"
                         checked={selected}
                         disabled={busy || cuUnavailable}
-                        onChange={(e) => setBlessSelected(a.id, e.target.checked)}
+                        onChange={(e) => setBlessSelected(key, e.target.checked)}
                       />
                       <span className="cu-bless-choice-text">
-                        <span className="cu-bless-choice-name">{a.name}</span>
-                        <span className="muted small">{agentRuntime(a)}</span>
+                        <span className="cu-bless-choice-name">{teamOf(a)}/{a.name}</span>
+                        <span className="muted small">{agentRuntime(a)} · {a.status ?? 'unknown'}</span>
                       </span>
                     </label>
                   );
@@ -773,10 +813,10 @@ export function ComputerUse({ store }: { store: FleetStore }) {
                 )}
               </div>
               <div className="cu-bless-actions">
-                <button className="btn small" disabled={busy || cuUnavailable || !availableBlessTargets.length || selectedBlessTargets.length === availableBlessTargets.length} onClick={() => setSelectedBlessIds(availableBlessTargets.map((a) => a.id))}>Select all</button>
+                <button className="btn small" disabled={busy || cuUnavailable || !availableBlessTargets.length || selectedBlessTargets.length === availableBlessTargets.length} onClick={() => setSelectedBlessIds(availableBlessTargets.map((a) => targetKey(a)))}>Select all</button>
                 <button className="btn small" disabled={busy || cuUnavailable || !selectedBlessTargets.length} onClick={() => setSelectedBlessIds([])}>Clear</button>
                 <span className="muted small">{selectedBlessTargets.length} selected</span>
-                <button className="btn primary" disabled={busy || cuUnavailable || !selectedBlessTargets.length} title={cuUnavailable ? cuUnavailableReason : undefined} onClick={() => void blessMany(selectedBlessTargets.map((a) => ({ ...a, team: activeTeam })))}>
+                <button className="btn primary" disabled={busy || cuUnavailable || !selectedBlessTargets.length} title={cuUnavailable ? cuUnavailableReason : undefined} onClick={() => void blessMany(selectedBlessTargets)}>
                   Bless selected
                 </button>
               </div>
@@ -784,7 +824,7 @@ export function ComputerUse({ store }: { store: FleetStore }) {
             {attached.length ? (
               <div className="cu-blessed">
                 {attached.map((a) => (
-                  <div key={a.id} className="cu-blessed-row">
+                  <div key={targetKey(a)} className="cu-blessed-row">
                     <span>🖥️ {a.team ?? activeTeam}/{a.name}</span>
                     <button className="btn icon-danger" disabled={busy || cuUnavailable} title={cuUnavailable ? cuUnavailableReason : undefined} onClick={() => void unbless(a)}>Remove</button>
                   </div>
@@ -798,7 +838,7 @@ export function ComputerUse({ store }: { store: FleetStore }) {
                   const firstAuthority = row.currentAuthorities[0] ?? '';
                   const target = row.currentAuthorities.map(eligibleByAuthority).find(Boolean);
                   const alreadyBlessed = target ? attached.some((a) => authorityOf(a, activeTeam) === authorityOf(target, activeTeam)) : false;
-                  const selectedForBless = target ? selectedBlessIds.includes(target.id) : false;
+                  const selectedForBless = target ? selectedBlessIds.includes(targetKey(target)) : false;
                   return (
                     <div key={`${row.source}:${row.agent}`} className="cu-legacy-row">
                       <span className="muted">
@@ -806,7 +846,7 @@ export function ComputerUse({ store }: { store: FleetStore }) {
                       </span>
                       <span className="legacy-review-actions">
                         {target ? (
-                          <button className="btn small" disabled={busy || alreadyBlessed || selectedForBless} onClick={() => { setBlessSelected(target.id, true); setMsg(`Selected ${target.team}/${target.name}. Use Bless selected to mint scoped Computer Use authority; old bare-name tokens remain blocked.`); }}>
+                          <button className="btn small" disabled={busy || alreadyBlessed || selectedForBless} onClick={() => { setBlessSelected(targetKey(target), true); setMsg(`Selected ${target.team}/${target.name}. Use Bless selected to mint scoped Computer Use authority; old bare-name tokens remain blocked.`); }}>
                             {alreadyBlessed ? 'Already blessed' : selectedForBless ? 'Selected' : 'Select for bless'}
                           </button>
                         ) : null}
