@@ -8,6 +8,9 @@ Every change pushed or merged to `main` carries its version number in the commit
 subject (`vX.Y.Z: …`), stamped automatically by the `commit-msg` hook — see
 [CONTRIBUTING.md](CONTRIBUTING.md).
 
+## [0.1.446] — 2026-07-02
+- Fix HR team rename source scoping and empty target creation
+
 ## [0.1.445] — 2026-07-02
 - Add multi-select shared MCP and skills in HR team builder
 

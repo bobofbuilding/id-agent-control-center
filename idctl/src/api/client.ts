@@ -610,9 +610,9 @@ export class ManagerClient {
    * the new team, and leaves stopped agents stopped with a warning. Rejects on name
    * collision in the target team (409) or same team (400).
    */
-  async moveAgent(agentId: string, team: string, signal?: AbortSignal): Promise<{ ok: boolean; agent?: string; team?: string; rebuilt?: boolean; warning?: string; message?: string }> {
+  async moveAgent(agentId: string, team: string, opts: { createTarget?: boolean; signal?: AbortSignal } = {}): Promise<{ ok: boolean; agent?: string; team?: string; rebuilt?: boolean; warning?: string; message?: string }> {
     return this.requireRoute('Reassign an agent to another team', () =>
-      this.post(`/agents/${encodeURIComponent(agentId)}/team`, { team }, signal));
+      this.post(`/agents/${encodeURIComponent(agentId)}/team`, { team, ...(opts.createTarget ? { createTarget: true } : {}) }, opts.signal));
   }
 
   /** Restart an agent so a pending model/runtime change takes effect. */

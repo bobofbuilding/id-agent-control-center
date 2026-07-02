@@ -1071,7 +1071,8 @@ const METHODS: Record<string, (...a: any[]) => Promise<unknown>> = {
   setAgentSpeed: (id: string, speed: string, team?: string) =>
     (team ? client.withTeam(String(team)) : client).setAgentSpeed(String(id), String(speed ?? '')),
   // reassign a local agent to another team (rebuilds it there)
-  'agent:move': (id: string, team: string) => client.moveAgent(String(id), String(team)),
+  'agent:move': (id: string, team: string, sourceTeam?: string, createTarget?: boolean) =>
+    (sourceTeam ? client.withTeam(String(sourceTeam)) : client).moveAgent(String(id), String(team), { createTarget: Boolean(createTarget) }),
 
   // per-agent persistent instructions (system-prompt addendum, e.g. coordinator role).
   // Optional `team` scopes the read to a specific team (so the HR structure editor can load a

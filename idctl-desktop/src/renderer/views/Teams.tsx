@@ -1033,7 +1033,7 @@ export function Teams({ store, focus, onFocusHandled }: { store: FleetStore; foc
       }
       if (!window.confirm(`Move current agent "${fresh.name}" from "${fromTeam}" to "${toTeam}"?\n\nIt will be rebuilt under the new team and leave ${fromTeam}.`)) return;
       setMsg(`moving ${fresh.name} → ${toTeam}…`);
-      const r = await call<{ rebuilt?: boolean; warning?: string }>('agent:move', fresh.id, toTeam);
+      const r = await call<{ rebuilt?: boolean; warning?: string }>('agent:move', fresh.id, toTeam, fromTeam, false);
       store.refresh();
       setMsg(r?.warning ? `moved ${fresh.name} → ${toTeam} (⚠ ${r.warning})` : `moved ${fresh.name} → ${toTeam} ✓`);
     } catch (err) {
@@ -1581,6 +1581,7 @@ export function Teams({ store, focus, onFocusHandled }: { store: FleetStore; foc
       const steps = [
         `${maintMode === 'rename' ? 'Rename' : 'Merge'} ${source} -> ${target}`,
         `Move ${sourceAgents.length} agent(s): ${sourceAgents.map((a) => a.name).join(', ')}`,
+        !targetExists && maintMode === 'rename' ? `Create empty target team: ${target}` : `Target team exists: ${target}`,
         sourceCoord ? `Preserve coordinator: ${sourceCoord} on ${target}` : 'No source coordinator to preserve',
         `Preserve source relay on ${target}: ${describeRelay(sourceRelay)}`,
         maintDeleteSource ? `Delete ${source} after it is empty` : `Keep empty ${source}`,
@@ -1598,8 +1599,9 @@ export function Teams({ store, focus, onFocusHandled }: { store: FleetStore; foc
       }
       setMaintMsg(`moving ${sourceAgents.length} agent(s)…`);
       const moved: string[] = [];
+      const createTarget = maintMode === 'rename' && !targetExists;
       for (const agent of sourceAgents) {
-        await call('agent:move', agent.id, target);
+        await call('agent:move', agent.id, target, source, createTarget);
         moved.push(agent.name);
       }
       if (sourceCoord && moved.includes(sourceCoord)) await call('coordinator:set', target, sourceCoord).catch(() => {});

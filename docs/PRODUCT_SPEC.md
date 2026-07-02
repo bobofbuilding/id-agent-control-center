@@ -371,7 +371,8 @@ questions through `legal/general-counsel`.
   actual public-agent registrations.
 - **Build**: one-click builder for a new team or direct merge of reviewed new agent rows into an
   existing team; the compact Team maintenance row handles rename/merge for already-created source
-  teams through the manager-backed `/agents/:id/team` move route.
+  teams through the manager-backed `/agents/:id/team` move route, scoped to the source team and able
+  to create an empty target team only for reviewed rename actions.
 - **Manage**: merged management + routing workspace. **Team ops** owns lifecycle-only controls
   (Probe/Start/Stop/Rebuild/Delete empty teams); **Overview** shows cross-team relay at a glance;
   **Relay** owns team relay and per-agent overrides; **Hierarchy** owns coordinators, default-primary
